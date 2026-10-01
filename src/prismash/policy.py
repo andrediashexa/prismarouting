@@ -1112,11 +1112,18 @@ def _set_lines(pol, term, fam=None, direction="import"):
         elif what == "extended-community":
             op, name = args
             members = pol.ext_communities.get(name, [])
+            # FRR 10.7.1's `set extcommunity rt|soo` MERGES into what the
+            # route carries, and takes no `additive`: vtysh -C passed the
+            # word as one more value, bgpd refused the line, and the clause
+            # ran with no set at all (lab/policy-a.sh, 2026-10-01). So add is
+            # the plain statement, and set clears first - `none`, then the
+            # values, which a pair of bgpd measured as the replacement.
+            if op == "set":
+                out.append(" set extcommunity none")
             for kind in EXT_KINDS:
                 vals = [v for k, v in members if k == kind]
                 if vals:
-                    out.append(f" set extcommunity {kind} {' '.join(vals)}"
-                               + (" additive" if op == "add" else ""))
+                    out.append(f" set extcommunity {kind} {' '.join(vals)}")
         elif what == "metric-type" and direction.startswith("ospf:"):
             out.append(f" set metric-type type-{args[0]}")
     return out

@@ -1,6 +1,6 @@
 # Política de roteamento (policy-options)
 
-Referência de tudo o que `policy-options` aceita no `prismash`: listas de prefixos, communities, expressões de AS-path, políticas com seus terms, onde uma política é aplicada e como conferi-la antes e depois. Para quem escreve filtros de BGP ou decide o que entra no OSPF e no IS-IS.
+Referência de tudo o que `policy-options` aceita no `prismash`: listas de prefixos, communities, large e extended communities, expressões de AS-path, políticas com seus terms, onde uma política é aplicada e como conferi-la antes e depois. Para quem escreve filtros de BGP ou decide o que entra no OSPF e no IS-IS.
 
 A política é escrita uma vez, com nome, no formato do Junos, e aplicada em quantos lugares for preciso. A caixa a traduz para o que o roteamento entende no `commit`.
 
@@ -57,9 +57,11 @@ policy-options
 |---------|-----------|-----------|
 | `prefix-list` | `<nome>`  | cria ou edita uma lista de redes e entra nela |
 | `community` | `<nome> members <asn:valor>...` | um conjunto nomeado de communities. Cada membro é `ASN:valor`, os dois de 0 a 65535. Digitar o mesmo nome de novo **substitui** o conjunto |
+| `large-community` | `<nome> members <asn:valor:valor>...` | um conjunto nomeado de large communities (RFC 8092). Cada parte vai de 0 a 4294967295. Digitar o mesmo nome de novo substitui o conjunto |
+| `extended-community` | `<nome> members rt:<asn>:<valor>\|soo:<asn>:<valor>...` | um conjunto nomeado de extended communities: route target (`rt`) e site of origin (`soo`). O primeiro campo é um ASN ou um endereço IPv4. Com ASN de até 65535 o valor vai até 4294967295; com ASN maior ou com endereço, até 65535 |
 | `as-path` | `<nome> <expressão>` | uma expressão regular de AS-path com nome. Aspas em volta são tiradas. Digitar o mesmo nome de novo substitui a expressão |
 | `policy-statement` | `<nome>`  | cria ou edita uma política e entra nela |
-| `no`    | `<declaração>` | remove uma lista, uma community, um as-path ou uma política, com tudo o que ela tem dentro |
+| `no`    | `<declaração>` | remove uma lista, uma community, um conjunto de large ou extended communities, um as-path ou uma política, com tudo o que ela tem dentro |
 
 Um nome, de lista, community, as-path, política ou term, tem letras, números, `.`, `_` e `-`, começa por letra ou número e tem até 32 caracteres.
 
@@ -83,6 +85,7 @@ Na expressão de AS-path, `_` é a regra do roteamento: qualquer fronteira (come
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
 | `term`  | `<nome>`  | cria ou edita um term e entra nele. Os terms são avaliados **na ordem em que foram criados**, não pela ordem do nome |
+| `default-action` | `accept` ou `reject` | o que a política faz com a rota que nenhum term decidiu, no lugar do padrão de onde ela é aplicada. Digitar de novo substitui |
 | `no`    | `term <nome>` | remove o term inteiro |
 
 # O term: `from`, `set` e `then`
@@ -103,10 +106,23 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 | `from protocol` | `bgp`, `ospf`, `isis`, `static`, `direct` ou `kernel` | a rota veio desse protocolo. `direct` são as redes das próprias interfaces |
 | `from tag` | `<0-4294967295>` | a rota carrega essa tag |
 | `from metric` | `<0-4294967295>` | a rota tem essa métrica |
+| `from neighbor` | `<endereço>` | a rota veio desse vizinho BGP |
+| `from family` | `inet` ou `inet6` | o prefixo é IPv4 (`inet`) ou IPv6 (`inet6`). Sem outra condição de prefixo, casa todos os prefixos da família |
+| `from origin` | `igp`, `egp` ou `incomplete` | o atributo origin do BGP |
+| `from local-preference` | `<0-4294967295>` | a rota tem essa preferência local |
+| `from next-hop` | `<endereço>` | o próximo salto do BGP é esse |
+| `from large-community` | `<nome>` | a rota carrega a large community do conjunto |
+| `from extended-community` | `<nome>` | a rota carrega a extended community do conjunto |
+| `from validation-state` | `valid`, `invalid` ou `unknown` | o resultado da validação RPKI de origem. `unknown` é a rota que nenhum ROA cobre |
+| `from policy` | `<política>` | chama outra política como sub-rotina: se ela rejeita, a rota é rejeitada; se aceita, o term segue. Um term chama uma política só |
 
 **Condições do mesmo tipo valem como "ou"; de tipos diferentes, como "e".** Duas `from prefix-list` casam uma rota que esteja em qualquer das duas; uma `from prefix-list` e uma `from community` exigem as duas coisas. `from prefix-list` e `from route-filter` são do mesmo tipo: as duas falam do prefixo.
 
 `from tag` e `from metric` valem por um valor só: um segundo, no mesmo term, fica no lugar do primeiro.
+
+`from neighbor`, `from origin`, `from local-preference`, `from next-hop` e `from validation-state` aceitam vários valores, que valem como "ou". Cada combinação deles vira uma regra no roteamento, e um term pode ter no máximo 10 combinações: mais que isso é recusado no `commit`, e a saída é dividir o term em dois.
+
+`from validation-state` só tem sentido com um cache RPKI configurado. Sem cache, toda rota é `unknown`, e o `commit` avisa.
 
 **Um term sem** `**from**` **casa com qualquer rota.** É assim que se escreve o "todo o resto" no fim de uma política.
 
@@ -114,14 +130,25 @@ Um term tem três partes. `from` diz o que a rota precisa casar, `set` diz o que
 
 | Ação | Argumento | O que faz |
 |------|-----------|-----------|
-| `set local-preference` | `<0-4294967295>` | a preferência local do BGP |
+| `set local-preference` | `<0-4294967295>`, `+<n>` ou `-<n>` | a preferência local do BGP, ou somada ou subtraída da que a rota tem |
 | `set community` | `add <nome>` | acrescenta as communities do conjunto às que a rota já tem |
 | `set community` | `set <nome>` | troca as communities da rota pelas do conjunto |
 | `set community` | `delete <nome>` | tira da rota as communities do conjunto |
+| `set large-community` | `add`, `set` ou `delete` `<nome>` | acrescenta, troca ou tira as large communities do conjunto |
+| `set extended-community` | `add` ou `set` `<nome>` | acrescenta ou troca as extended communities do conjunto. Não há `delete`: o roteamento não sabe tirar extended communities por lista |
 | `set as-path-prepend` | `<asn>...` | prepende esses ASNs, na ordem digitada |
+| `set as-path-prepend` | `last-as <1-10>` | repete o primeiro AS do caminho (o do vizinho) essa quantidade de vezes |
+| `set as-path` | `remove-private` | tira do AS-path todo AS privado (64512 a 65534 e 4200000000 a 4294967294), onde quer que esteja, inclusive o do próprio vizinho |
 | `set metric` | `<0-4294967295>` | a métrica: o MED no BGP, o custo no OSPF e no IS-IS |
 | `set tag` | `<0-4294967295>` | a tag da rota |
 | `set next-hop` | `<endereço>` | o próximo salto no BGP, IPv4 ou IPv6 |
+| `set next-hop` | `self` | num `export`, anuncia esta caixa como próximo salto |
+| `set next-hop` | `peer-address` | num `import`, usa o endereço do vizinho como próximo salto |
+| `set next-hop` | `discard` | descarta o tráfego para o prefixo: é o blackhole disparado remotamente (RTBH). O próximo salto vira 192.0.2.1 (ou 100::1 no IPv6), que a caixa resolve para um blackhole. Num vizinho eBGP direto, o vizinho precisa de `neighbor <vizinho> disable-connected-check`: sem isso o roteamento não resolve esse próximo salto, a rota não é instalada e o tráfego segue a rota menos específica. O `commit` recusa e diz a linha que falta |
+| `set med` | `<0-4294967295>`, `+<n>`, `-<n>` ou `igp` | o MED do BGP; `igp` usa a métrica do IGP até o próximo salto |
+| `set weight` | `<0-65535>` | o peso, que só vale nesta caixa e pesa antes da preferência local |
+| `set origin` | `igp`, `egp` ou `incomplete` | o atributo origin |
+| `set metric-type` | `1` ou `2` | o tipo da rota externa no OSPF. Só num `export` para o OSPF |
 
 Os `set` só são aplicados quando o term casa.
 
@@ -132,6 +159,7 @@ Os `set` só são aplicados quando o term casa.
 | `then accept` | aceita a rota, com os `set` do term, e **para** a avaliação |
 | `then reject` | rejeita a rota e para a avaliação |
 | `then next term` | aplica os `set` e segue para o próximo term |
+| `then next policy` | aplica os `set` e passa a rota para a próxima política da cadeia. Numa política sozinha, vale o padrão de onde ela é aplicada |
 | sem `then` | o mesmo que `then next term` |
 
 Um term tem um `then` só: digitar outro substitui o anterior.
@@ -157,7 +185,9 @@ O padrão depende de onde a política é usada, como no Junos:
 | `import` ou `export` num vizinho BGP | **aceita**                                |
 | `export` para OSPF ou IS-IS | **não exportada**                         |
 
-Para rejeitar o resto no BGP, termine a política com um term sem `from` e com `then reject`. Para exportar o resto para um IGP, termine com um term sem `from` e com `then accept`.
+Para rejeitar o resto no BGP, use `default-action reject` na política, ou termine com um term sem `from` e com `then reject`. Para exportar o resto para um IGP, `default-action accept`, ou um term sem `from` e com `then accept`.
+
+Numa cadeia, a rota que nenhum term de uma política decidiu passa para a próxima; o `default-action` de uma política, quando existe, decide ali mesmo.
 
 # Onde uma política é aplicada
 
@@ -179,9 +209,13 @@ router bgp 65000
 | `neighbor <vizinho> import <política>` | a política filtra e altera o que chega desse vizinho |
 | `neighbor <vizinho> export <política>` | a política filtra e altera o que se anuncia para ele |
 
+### Uma cadeia de políticas
+
+No lugar de uma política, uma lista entre colchetes: `neighbor 10.0.0.2 import [ BOGONS CLIENTES ]`. A rota passa pelas políticas na ordem; a primeira que aceita ou rejeita decide, e `then next policy` passa a rota adiante com o que o term mudou. O mesmo vale para `export [ ... ]` no OSPF e no IS-IS. Uma política não pode aparecer duas vezes na mesma cadeia.
+
 A política precisa existir: `import` ou `export` de um nome que nenhum `policy-statement` tem é recusado no prompt. Num vizinho BGP as rotas são do BGP, então um term com `from protocol` que não inclua `bgp` não se aplica ali.
 
-Na configuração em vigor o vizinho aparece com a `route-map` em que a política foi traduzida: `neighbor 10.0.0.2 route-map PO-SAIDA-OUT out`. Todos os nomes que começam por `PO-` são dessa tradução, e uma `route-map` ou lista digitada à mão com esse começo é recusada.
+Na configuração em vigor o vizinho aparece com a `route-map` em que a política foi traduzida: `neighbor 10.0.0.2 route-map PO-SAIDA-OUT out`, ou `PO-BOGONS+CLIENTES-IN` para uma cadeia. Todos os nomes que começam por `PO-` são dessa tradução, e uma `route-map` ou lista digitada à mão com esse começo é recusada.
 
 ## Num IGP: `export <política>`
 
@@ -219,7 +253,7 @@ policy-statement SAIDA
   applied: neighbor 10.0.0.2 export, ospf export
 ```
 
-Uma política escrita e ainda não usada em lugar nenhum diz `applied: nowhere in the running routing`.
+Uma política escrita e ainda não usada em lugar nenhum diz `applied: nowhere in the running routing`. Uma política numa cadeia aparece com a cadeia inteira: `neighbor 10.0.0.2 import [ BOGONS CLIENTES ]`. O `default-action`, quando existe, aparece antes dos terms.
 
 `test policy` percorre os terms na ordem e para no que decide:
 
@@ -230,7 +264,7 @@ prisma> test policy SAIDA 203.0.113.0/24
 result: accept (set as-path-prepend 65000 65000), by term 10
 ```
 
-O teste parte só do prefixo. Uma condição que o prefixo sozinho não responde (community, as-path, protocolo, tag, métrica) não é adivinhada: o term aparece como "decide, se a rota tiver aquilo", e o teste segue como se não tivesse, para você ver os dois caminhos. Quando nenhum term decide, a resposta dá os dois padrões:
+O teste parte só do prefixo. `from family` ele responde pelo prefixo. Uma condição que o prefixo sozinho não responde (community, large ou extended community, as-path, protocolo, tag, métrica, vizinho, origin, preferência local, próximo salto, validação RPKI, política chamada) não é adivinhada: o term aparece como "decide, se a rota tiver aquilo", e o teste segue como se não tivesse, para você ver os dois caminhos. Um term com `then next policy` termina o teste com `result: next policy, by term <term>`. Uma política com `default-action` termina com `result: reject, by the policy's default-action` (ou `accept`). Quando nenhum term decide e não há `default-action`, a resposta dá os dois padrões:
 
 ```
 prisma> test policy SAIDA 198.51.100.0/24
@@ -256,20 +290,31 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | `from route-filter 10.0.0.0/8 upto /4` | `the length is between 8 and 32` |
 | `from protocol rip` | `from protocol: bgp, ospf, isis, static, direct or kernel` |
 | `from metric 99999999999` | `from metric <0-4294967295>` |
-| uma condição que não existe | `from: prefix-list, route-filter, community, as-path, protocol, tag or metric` |
-| uma ação que não existe | `set: local-preference, community add\|set\|delete, as-path-prepend, metric, tag or next-hop` |
+| uma condição que não existe | `from:` seguido da lista das condições |
+| `large-community L members 1:2` | `'1:2' is not a large community: ASN:value:value, each 0-4294967295` |
+| `extended-community E members xx:1:2` | `'xx:1:2' is not an extended community: rt:<asn>:<value> or soo:<asn>:<value>, or an address in place of the ASN` |
+| `from family ipx`, `from origin bgp`, `from validation-state good` | a lista do que a condição aceita |
+| `set extended-community delete E` | `set extended-community add\|set <name>`: o roteamento não tira extended communities por lista |
+| `then next hop` | `then: accept, reject, next term or next policy; a change to the route is 'set ...'` |
+| um segundo `from policy` no mesmo term | `a term calls one policy` |
+| `neighbor ... import [ A A ]` ou dois nomes sem colchetes | `usage: neighbor <peer> import\|export <policy> \| [ <policy>... ]` |
+| `set next-hop self` numa política aplicada como `import`, `set next-hop peer-address` como `export`, `set metric-type` fora de um `export` para o OSPF | `this policy cannot be applied as import; nothing staged` (ou `export`), com uma linha por term culpado |
+| uma ação que não existe | `set:` seguido da lista das ações |
 | `set next-hop abc` | `set next-hop: 'abc' is not an address` |
 | `then` com outra coisa que não `accept`, `reject` ou `next term` | `then: accept, reject or next term; a change to the route is 'set ...'` |
 | `no` de algo que não existe | `policy-options has no such statement; nothing removed`, com a declaração |
 | `neighbor ... import` ou `export` de uma política que não existe, ou `export` num IGP | `no policy-statement named <nome>` |
 | uma `route-map` ou lista com nome começado por `PO-` | `the PO- names belong to policy-options; nothing staged` |
-| no `commit`, um term que cita uma `prefix-list`, `community` ou `as-path` que não existe | `policy-statement <política> term <term>: no prefix-list <lista>` (ou `community`, `as-path`); nada é aplicado |
+| no `commit`, um term que cita uma `prefix-list`, `community`, `large-community`, `extended-community`, `as-path` ou política que não existe | `policy-statement <política> term <term>: no prefix-list <lista>` (ou o tipo que for); nada é aplicado |
+| no `commit`, `set next-hop discard` no `import` de um vizinho eBGP direto sem `disable-connected-check` | `set next-hop discard is not resolved on a single-hop eBGP neighbor: add 'neighbor <vizinho> disable-connected-check', or the route is never installed and its traffic is forwarded` |
+| no `commit`, políticas que se chamam em roda com `from policy` | `policy-statement <política>: from policy reaches itself again` |
+| no `commit`, um term com mais de 10 combinações | `more than 10 combinations of neighbor, origin, local-preference, next-hop and validation-state; split it into terms` |
 
 ## O que só existe no BGP, exportado para um IGP
 
 Uma rota de OSPF ou de IS-IS não tem community, AS-path, preferência local nem próximo salto de BGP. Um term que fala dessas coisas é recusado na hora do `export`: a caixa responde `this policy cannot be exported into isis; nothing staged` (ou `ospf`) e, embaixo, uma linha por term culpado, dizendo o term e o que nele `is for BGP routes`.
 
-O que conta como só de BGP: `from community`, `from as-path`, `set local-preference`, `set community`, `set as-path-prepend` e `set next-hop`. A recusa existe porque ignorar a condição em silêncio exportaria justamente o que o term foi escrito para segurar. Se a mesma lógica serve aos dois, escreva duas políticas: uma para o vizinho BGP, outra para o IGP.
+O que conta como só de BGP: `from community`, `from as-path`, `from neighbor`, `from origin`, `from local-preference`, `from next-hop`, `from large-community`, `from extended-community`, `from validation-state`, `set local-preference`, `set community`, `set large-community`, `set extended-community`, `set as-path-prepend`, `set as-path`, `set med`, `set weight`, `set origin` e `set next-hop`. Vale também para as políticas que a exportada chama com `from policy` ou que vêm depois dela na cadeia. A recusa existe porque ignorar a condição em silêncio exportaria justamente o que o term foi escrito para segurar. Se a mesma lógica serve aos dois, escreva duas políticas: uma para o vizinho BGP, outra para o IGP.
 
 
 :::warning

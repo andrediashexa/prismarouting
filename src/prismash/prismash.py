@@ -414,6 +414,71 @@ def policy_uses(routing):
     return uses
 
 
+def discard_findings(pol, routing):
+    """
+    [(statement, why)]: each BGP import that reaches `set next-hop discard`
+    on a single-hop eBGP neighbor FRR will not resolve it on (#535).
+
+    Measured on FRR 10.7.1, a pair of bgpd and lab/policy-a.sh: an inbound
+    `set ip next-hop 192.0.2.1` from a single-hop eBGP neighbor left the
+    route in zebra as `192.0.2.1 inactive`, because bgpd lets zebra resolve
+    an eBGP next hop recursively only for iBGP, multihop, or a neighbor with
+    `disable-connected-check`. With that statement the route went to the
+    kernel as `blackhole` and VPP dropped it. Without it the /32 never left
+    BGP, and traffic to it followed the next less specific route - which on
+    a box with a default route is forwarding, the opposite of RTBH.
+    """
+    # Two passes: what each block says of each neighbor, whatever the order
+    # it was said in - a batch stages the import before the statement that
+    # makes it work as often as after - and then each import.
+    blocks, imports, block = {}, [], None
+    for line in routing:
+        w = line.split()
+        if w[:2] == ["router", "bgp"]:
+            # The same block said twice - FRR's text, then what was staged
+            # into it - is one block.
+            block = " ".join(w)
+            blocks.setdefault(block, {})
+            continue
+        # A staged line is unindented, under the `router bgp` staged
+        # before it: only the words say what it is.
+        no = w[:1] == ["no"]
+        w = w[1:] if no else w
+        if block is None or len(w) < 3 or w[0] != "neighbor":
+            continue
+        said = blocks[block].setdefault(w[1], set())
+        stmt = " ".join(w[2:])
+        if w[2] == "peer-group" and len(w) == 4:
+            stmt = f"group {w[3]}"
+        (said.discard if no else said.add)(stmt)
+        m = re.fullmatch(r"neighbor (\S+) route-map PO-(\S+)-IN in",
+                         " ".join(w))
+        if m and not no:
+            imports.append((block, m.group(1), m.group(2)))
+    out = []
+    for block, peer, chain in imports:
+        if not any(("next-hop", ["discard"]) in t.sets
+                   for p in policy_mod.reached(pol, policy_mod.chain(chain))
+                   for t in pol.statements.get(p, {}).values()):
+            continue
+        said = blocks[block]
+        mine = set(said.get(peer, ()))
+        for g in [x.split()[1] for x in mine if x.startswith("group ")]:
+            mine |= said.get(g, set())
+        asn = block.split()[2] if len(block.split()) > 2 else None
+        if f"remote-as {asn}" in mine or "remote-as internal" in mine \
+                or "disable-connected-check" in mine \
+                or any(x.startswith(("ebgp-multihop", "ttl-security"))
+                       for x in mine):
+            continue
+        out.append((f"neighbor {peer} route-map PO-{chain}-IN in",
+                    f"set next-hop discard is not resolved on a single-hop "
+                    f"eBGP neighbor: add 'neighbor {peer} "
+                    f"disable-connected-check', or the route is never "
+                    f"installed and its traffic is forwarded"))
+    return out
+
+
 def policy_names(words):
     """
     The policies an `import`, `export` or IGP `export` names (#535): one
@@ -10196,6 +10261,18 @@ class Shell:
                     self.say_finding("error", why.split(":")[0], why)
                     ok = False
 
+            # RTBH that would not drop (#535): discard_findings() has the
+            # measurement. Refused only when this change brings it.
+            _pt = policy_mod.parse(target.policy)[0]
+            carried = {stmt for stmt, _ in discard_findings(
+                policy_mod.parse(running.policy)[0], running.routing)}
+            for stmt, why in discard_findings(_pt, target.routing):
+                if stmt in carried:
+                    self.say_finding("warning", stmt, why)
+                else:
+                    self.say_finding("error", stmt, why)
+                    ok = False
+
             # An eBGP neighbour with no maximum-prefix (#145). A warning and
             # never a refusal: running a session without a limit is a real
             # design and the operator's call, which is what the issue asking
@@ -15668,9 +15745,16 @@ class Shell:
                 continue
             print(f"  term {term}: {verdict}")
             print(f"      {why}")
-        term, verdict, _ = rows[-1]
+        term, verdict, why = rows[-1]
         if term is not None:
             print(f"result: {verdict}, by term {term}")
+        elif why.startswith("next policy"):
+            # #535: the term passed the route on; what follows it decides.
+            print(f"result: next policy, by term {rows[-2][0]}")
+            print_prose("in a chain the policies after this one decide; "
+                        "alone, the default for the use does")
+        elif "default-action" in why:
+            print(f"result: {verdict}, by the policy's default-action")
         else:
             # The default depends on the use, and a test is asked before
             # any use - so both are said.

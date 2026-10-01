@@ -479,8 +479,8 @@ check("route-map PO-IN-A+IN-B-IN deny 20\n match rpki invalid\nexit" in out,
 check(" match peer 10.0.0.2\n match origin igp\n set local-preference +20"
       "\n set weight 100\n set metric -5\n set origin incomplete\n"
       " set large-community 65000:1:2 additive\n set large-comm-list "
-      "PO-L-LCX delete\n set extcommunity rt 65000:100 additive\n"
-      " set extcommunity soo 65000:200 additive\n set as-path exclude "
+      "PO-L-LCX delete\n set extcommunity rt 65000:100\n"
+      " set extcommunity soo 65000:200\n set as-path exclude "
       "as-path-access-list PO-PRIVATE-AS\n set ip next-hop peer-address\n"
       " on-match goto 1000\nexit" in out
       and "route-map PO-IN-A+IN-B-IN permit 31\n match ip address "
@@ -510,6 +510,13 @@ check(" set as-path prepend last-as 3\n set ip next-hop peer-address\nexit"
       "export: last-as, and next-hop self as FRR's outbound peer-address")
 check("route-map PO-OSPF-EXT-OSPF-STATIC permit 10\n set metric-type "
       "type-1\nexit" in out, "metric-type on an export into OSPF")
+_es, _ = policy.parse([f"{P} extended-community E members rt:1:2",
+                      f"{P} policy-statement X term 1 set extended-community "
+                      "set E"])
+check(policy._set_lines(_es, _es.statements["X"]["1"])
+      == [" set extcommunity none", " set extcommunity rt 1:2"],
+      "extended-community set clears first: FRR's set merges, and takes no "
+      "additive")
 check(policy.compile_all(pa, uses) == policy.compile_all(pa, set(uses)),
       "deterministic")
 check(policy._compile_term(pa, "OUT", pa.statements["OUT"]["1"], 1, 0,

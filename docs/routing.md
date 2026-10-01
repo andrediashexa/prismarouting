@@ -4211,39 +4211,98 @@ a
   this half, a `set` that applied to everything would pass every test that only
   checked the routes it was supposed to affect.
 
-## Routing policy: `policy-options` (#458)
+## Routing policy: `policy-options` (#458, #535)
 
 The maintainer chose Junos's shape (2026-09-25). Named prefix lists,
-communities and AS-path expressions, and `policy-statement`s made of ordered
-`term`s, live under `policy-options`. A policy is applied per BGP neighbor or
-peer group, inside the address family, as `neighbor X import <policy>` or
-`export <policy>`.
+communities, large and extended communities and AS-path expressions, and
+`policy-statement`s made of ordered `term`s, live under `policy-options`. A
+policy is applied per BGP neighbor or peer group, inside the address family,
+as `neighbor X import <policy>` or `export <policy>`, or into an IGP as
+`export <policy>` inside `router ospf` or `router isis`. Each place takes one
+policy or a chain, `[ A B ]`.
 
 - **`from`** conditions: `prefix-list`, `route-filter <net>
-  exact|orlonger|longer|upto /n`, `community`, `as-path`, and since step 2
-  `protocol`, `tag` and `metric`. Conditions of the same kind are ORed;
-  different kinds are ANDed.
-- **`set`** actions: `local-preference`, `community add|set|delete`,
-  `as-path-prepend`, and since step 2 `metric`, `tag` and `next-hop`.
+  exact|orlonger|longer|upto /n`, `community`, `as-path`, `protocol`, `tag`,
+  `metric`, and since #535 `neighbor <address>`, `family inet|inet6`,
+  `origin igp|egp|incomplete`, `local-preference <n>`, `next-hop <address>`,
+  `large-community <name>`, `extended-community <name>`,
+  `validation-state valid|invalid|unknown` and `policy <name>`. Conditions of
+  the same kind are ORed; different kinds are ANDed.
+- **`set`** actions: `local-preference <n>|+n|-n`, `community
+  add|set|delete`, `large-community add|set|delete`, `extended-community
+  add|set`, `as-path-prepend <asn>...`, `as-path-prepend last-as <1-10>`,
+  `as-path remove-private`, `metric`, `med <n>|+n|-n|igp`, `weight`,
+  `origin`, `tag`, `next-hop <address>|self|peer-address|discard` and
+  `metric-type 1|2`.
 - **`then`**: `accept` and `reject` end the evaluation. `next term`, or no
-  `then`, applies the sets and goes on.
+  `then`, applies the sets and goes on. `next policy` applies the sets and
+  hands the route to the next policy of the chain.
 - **The default, decided with the maintainer, is Junos's.** A route no term
-  decided is accepted, by a last clause at 65535.
+  decided is accepted on a BGP neighbor and not exported into an IGP, unless
+  the policy says otherwise with `default-action accept|reject`.
 
 **Compiled, not interpreted.** `src/prismash/policy.py` is a pure compiler
 from the flat model lines to FRR:
-- one route-map per use, `PO-<policy>-IN|OUT`, with clause seq term x 10;
+- one route-map per use, `PO-<policy>-IN|OUT` or `PO-<policy>-OSPF|ISIS-<FROM>`,
+  with clause seq term x 10, and the use's default as a last clause at 65535;
 - a term that matches prefixes of both families is split into one clause per
   family, because FRR ANDs `match ip` with `match ipv6` in a single clause;
 - the prefix conditions of a term are one generated prefix-list per family.
+  `from family` keeps only that family's list, or with no prefix condition
+  matches every prefix of it (`0.0.0.0/0 le 32`, `::/0 le 128`);
+- FRR takes one `match peer`, `match origin`, `match local-preference`,
+  `match ... next-hop` and `match rpki` per clause, so a term ORing several
+  of them is one clause per combination. More than 10 would run into the next
+  term's numbers, and the commit refuses it;
+- a chain is one map, named for its policies, `PO-A+B-IN`. Policy k's clauses
+  start at k x 1000. `then next policy` is `on-match goto` the next policy's
+  first clause, or the use's default at 65535 for the last one. A
+  `default-action` is a clause at the end of its policy's block, 65534 when
+  the policy is alone;
+- `from policy X` is `call PO-X-SUB-IN` (or `-OUT`, or the IGP's), a map of X
+  alone with its own default. The semantics are FRR's, measured in the lab:
+  X's reject rejects the route, X's accept goes on into the calling term. A
+  term calls one policy, and a policy that reaches itself is refused;
+- `next-hop discard` is `set ip next-hop 192.0.2.1` and `set ipv6 next-hop
+  global 100::1`, with `ip route 192.0.2.1/32 blackhole tag 4294967294` and
+  its IPv6 twin emitted beside the maps. FRR 10.7.1 refuses `set ip next-hop
+  blackhole` outright, so the discard is an address that resolves to a
+  blackhole. The tag is how the box knows those two routes are the
+  compiler's. On a single-hop eBGP neighbor FRR will not resolve that next
+  hop recursively - measured, the route stayed in zebra as `192.0.2.1
+  inactive` and its traffic followed the next less specific route - unless
+  the neighbor has `disable-connected-check`, so the commit refuses an import
+  that reaches a discard on such a neighbor without it, and names the
+  statement;
+- `next-hop self` and `peer-address` are both FRR's `set ip next-hop
+  peer-address`, which means this box outbound and the neighbor inbound.
+  `self` is refused on an import and `peer-address` on an export, at the
+  neighbor;
+- `as-path remove-private` is `set as-path exclude as-path-access-list
+  PO-PRIVATE-AS`, a list of RFC 6996's private ranges. FRR applies it to each
+  ASN, wherever it stands: a peer's own private AS goes with the rest;
+- `extended-community add` is FRR's plain `set extcommunity rt|soo`, which
+  merges into what the route carries. FRR takes no `additive` there: vtysh's
+  check passed the word as one more value, bgpd refused the line, and the
+  clause ran with no set at all. `set` clears first, with `set extcommunity
+  none`. FRR has no list delete for extended communities, so neither has
+  this;
+- `metric-type` is emitted only into OSPF; elsewhere it is refused where the
+  policy is applied. `validation-state unknown` is FRR's `notfound`, and the
+  commit warns when no RPKI cache is configured, because then every route is
+  notfound.
 
-Its output for a realistic policy was fed to `vtysh -C -f` in the product's
-FRR image. It returned 0, and the same file with one bad line appended
-returned 2, naming it.
+Its output for a policy using every one of these was fed to `vtysh -C -f` in
+the product's FRR image (`prisma-frr:0.148.6`, FRR 10.7.1). It returned 0, and
+the same file with one bad line appended returned 2, naming it. What
+compiled before #535 compiles byte for byte as before:
+`test/policy-golden-0.148.6.txt` is 0.148.6's output for the suite's
+fixtures, and `test/test_prismash_policy.py` compares against it.
 
 **The source lives beside the configuration.** FRR hands back only the
-compiled text, so `running_config()` strips every `PO-` object from FRR's
-running configuration and reads the policy from `/etc/prisma-routing/policy-options`.
+compiled text, so `running_config()` strips every `PO-` object, and the two
+tagged discard routes, from FRR's running configuration and reads the policy
+from `/etc/prisma-routing/policy-options`.
 That file is written by rename after FRR took the compiled text. `frr_lines()`
 is the one place the compiled text and the routing are joined, and a reload,
 a check and a commit check all go through it. The `PO-` namespace is the
@@ -4262,9 +4321,37 @@ behind it:
 MODE=off, which commits without the `import`/`export` lines, turns 6 checks
 red.
 
-Not yet: `from protocol`/`tag`/`metric`, `set metric`/`next-hop`, OSPF and
-IS-IS `export`, `show policy` with FRR's counters, and `test policy`. These
-are the next steps on #458.
+**Measured in `lab/policy-a.sh`** (#535), on the same topology, with the peer
+marking what it sends and a `stayrtr` cache on the box:
+- RTBH: a /32 carrying 65535:666 took the next hop 192.0.2.1, the VPP FIB
+  holds the /32 itself as a drop, and five pings sent to it through the box
+  never left it - with a default route pointing back out, so a /32 that had
+  not become a drop would have been forwarded. Without
+  `disable-connected-check` on the session the commit refused, naming it;
+- `validation-state invalid` rejected the prefix its ROA gives to another
+  AS, and the valid one stayed;
+- each new `from` selected its route, and each `set` was read back in the
+  box's BGP table or the neighbor's: large communities added and deleted,
+  extended communities added and set, origin, MED +10, weight, `last-as`,
+  `remove-private`, `peer-address` over a third-party next hop, `local-
+  preference +50` on one neighbor only;
+- the chain: the first policy set a local preference and passed the route
+  on, and the second decided on it; the second policy's `default-action
+  reject` removed what neither took;
+- `from policy`: the subroutine's accept went on into the term, its reject
+  removed the route;
+- `metric-type 1` in the box's own external LSA;
+- `next-hop self` on an import and `metric-type` on a BGP export were refused
+  at the neighbor.
+
+MODE=off, which commits the same policies without the `import`/`export`
+lines, turns 27 checks red. `from family inet6` is measured in the unit suite
+only: the lab's sessions are IPv4.
+
+`show policy` says `default-action` and where a chain is applied, under each
+of its policies. `test policy` answers `from family` from the prefix, says the
+conditions the prefix cannot answer, ends at `then next policy`, and reports
+a `default-action` when no term decided.
 
 ## A route-map referenced and not defined
 
