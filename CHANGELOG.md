@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.14 - the UDP IPFIX export leaves from the log container too
+
+### Added
+
 * **UDP IPFIX leaves the dataplane too: the log container sends the RFC 8158
   export - #550's third step.** ([#550](https://github.com/andrediashexa/hexarouting/issues/550))
   While the log container carries the streams and its socket is bound to the
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   allocations across VPP -> container -> VPP all reached the collector once
   each, none twice, every datagram from 10.0.0.1:4739, and still 0 packets
   lost during the spill replays.
-
-### Fixed
 
 ## 0.149.13 - PRISMA-ROUTING-MIB under the product's own IANA PEN, 67033
 
