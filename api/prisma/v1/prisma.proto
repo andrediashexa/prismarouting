@@ -273,6 +273,10 @@ service OperationalService {
   // are refused, and so is `monitor`, which redraws a terminal a call has not
   // got - TelemetryService is the API's live view.
   rpc Show(ShowRequest) returns (ShowResponse);
+  // The CGNAT log export (#555): each stream - syslog and IPFIX over TCP,
+  // IPFIX over UDP - who carries it, its collector, its counters and whether
+  // it is delivering, read from the same screen as `show cgnat logging`.
+  rpc GetLogging(GetLoggingRequest) returns (LoggingState);
 }
 
 message GetVersionRequest {}
@@ -659,6 +663,92 @@ message ShowResponse {
   string text = 1;
 }
 
+// ---------------------------------------------- the CGNAT log export (#555)
+//
+// Read from `show bpa logging` - the screen `show cgnat logging` prints - so
+// the API and the prompt can never disagree. COUNTERS ("counter" below) count
+// up from the dataplane's start and are those of the stream's CURRENT
+// carrier: when a stream moves between the log container and the dataplane
+// (#550) a counter may jump or start again, and a client takes a decrease as
+// a reset. GAUGES ("gauge") are what is true now. Absent figures are 0: a
+// stream that is not configured has configured false and every other field
+// empty or 0.
+
+message GetLoggingRequest {}
+
+message LogStream {
+  // "syslog" (RFC 5424 over TCP), "ipfix-tcp" (RFC 8158 over TCP),
+  // "ipfix-udp" (RFC 8158 over UDP).
+  string kind = 1;
+  bool configured = 2;
+  // "address:port" of the collector; empty when not configured.
+  string collector = 3;
+  // The source address the UDP export is sent from; empty for TCP streams.
+  string source = 4;
+  // "log-container" or "dataplane" (#550); empty when not configured.
+  string carrier = 5;
+  // Why the dataplane sends a stream the log container could (a VRF, a
+  // source it could not bind); empty otherwise.
+  string carrier_reason = 6;
+  // TCP: "connected", "connecting" or "disconnected". Empty for UDP.
+  string connection = 7;
+  // Counter: records the carrier wrote (syslog lines, IPFIX records).
+  uint64 records = 8;
+  // Counter: bytes the TCP connection took. 0 for UDP.
+  uint64 bytes_sent = 9;
+  // Counter: UDP datagrams the log container sent; 0 when the dataplane
+  // sends them (the dataplane counts records, not packets) and for TCP.
+  uint64 packets_sent = 10;
+  // Gauge: bytes waiting in memory for the collector. TCP only.
+  uint64 pending_bytes = 11;
+  // Gauge: the spill file's size now. TCP only.
+  uint64 spill_bytes = 12;
+  // The spill file's cap, in bytes (256 MiB). TCP only.
+  uint64 spill_cap_bytes = 13;
+  // Counter: bytes dropped because the spill file was at its cap.
+  uint64 dropped_over_cap = 14;
+  // Counter: UDP sends the log container's socket refused.
+  uint64 send_failures = 15;
+  // Counter: records this stream dropped (nowhere to write them).
+  uint64 dropped = 16;
+  // The server's verdict, by the rule docs/api.md gives: false when the
+  // stream has had something waiting (TCP) or failing (UDP) and delivered
+  // nothing for a minute. A stream with nothing to send is delivering.
+  bool delivering = 17;
+  // Why it is not delivering; empty when it is.
+  string stalled_reason = 18;
+  // When the stream last got something out, or last had nothing to send.
+  google.protobuf.Timestamp last_progress = 19;
+}
+
+message LoggingState {
+  // When the screen was read.
+  google.protobuf.Timestamp at = 1;
+  // syslog, ipfix-tcp, ipfix-udp - always all three, in that order.
+  repeated LogStream streams = 2;
+  // Who carries the TCP streams: "log-container" or "dataplane".
+  string carrier = 3;
+  // The log container's process id while it carries them; 0 otherwise.
+  uint32 logger_pid = 4;
+  // Counter: events dropped because the log container's ring was full.
+  uint64 export_ring_dropped = 5;
+  // Counter: events dropped because a worker's queue was full.
+  uint64 worker_queue_dropped = 6;
+  // Counter: exhaustion events not reported, once a subscriber per 10 s
+  // (#549) - expected under exhaustion, not a loss.
+  uint64 exhaustion_repeats_not_reported = 7;
+  // Counter: packets the interface toward the IPFIX collector failed to
+  // send - FROM EVERY SENDER on it, forwarded traffic included.
+  uint64 transmit_failed = 8;
+  // That interface's name; empty when none reaches the collector.
+  string transmit_interface = 9;
+  // True when the event rings are in their shared segment, outside the
+  // dataplane's heap (#550); false when the box fell back to the heap.
+  bool rings_shared = 10;
+  // The screen itself, verbatim, as `show cgnat logging` prints it.
+  string text = 11;
+}
+
 // ------------------------------------------------------------- telemetry
 
 service TelemetryService {
@@ -682,6 +772,11 @@ message SubscribeRequest {
   bool cgnat_totals = 4;
   // Configuration events: commits, confirm windows, rollbacks.
   bool events = 5;
+  // The CGNAT log export's events (#555), as Events whose kind starts
+  // "log-": "log-connected", "log-disconnected", "log-carrier",
+  // "log-spill", "log-spill-full", "log-stalled", "log-delivering". The
+  // server reads the export every 10 s, so an event can be that late.
+  bool logging_events = 6;
 }
 
 message InterfaceSample {
@@ -697,7 +792,8 @@ message CgnatTotals {
 }
 
 message Event {
-  // "commit", "confirm-pending", "confirmed", "rolled-back", "saved".
+  // "commit", "confirm-pending", "confirmed", "rolled-back", "saved"; and
+  // the log export's "log-..." kinds (#555, SubscribeRequest.logging_events).
   string kind = 1;
   string account = 2;
   string text = 3;

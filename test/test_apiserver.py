@@ -754,6 +754,11 @@ os.environ["PRISMA_VPPCTL"] = "echo"
 check(A.vpp_runtime().strip() == "show runtime", "vpp_runtime asks vppctl for show runtime")
 os.environ["PRISMA_VPPCTL"] = "/nonexistent/vppctl"
 check(A.vpp_runtime() == "", "a dataplane that does not answer is no reading")
+os.environ["PRISMA_VPPCTL"] = "echo"
+check(A.vpp_logging().strip() == "show bpa logging",
+      "#555: vpp_logging asks vppctl for the screen show cgnat logging prints")
+os.environ["PRISMA_VPPCTL"] = "/nonexistent/vppctl"
+check(A.vpp_logging() == "", "  and a dataplane that does not answer is no screen")
 if _vc is None:
     del os.environ["PRISMA_VPPCTL"]
 else:
@@ -856,6 +861,13 @@ check(A.health_status("", True) == "SERVING"
       and A.health_status("prisma.v1.Nope", True) is None,
       "SERVING; NOT_SERVING for what needs the dataplane when it does not answer; "
       "None for a service not served")
+check(A.health_status(A.LOG_HEALTH, True, "NOT_SERVING") == "NOT_SERVING"
+      and A.health_status(A.LOG_HEALTH, True, "SERVING") == "SERVING"
+      and A.health_status(A.LOG_HEALTH, True) is None
+      and A.health_status("", True, "NOT_SERVING") == "SERVING"
+      and A.health_status("prisma.v1.OperationalService", True, "NOT_SERVING") == "SERVING",
+      "#555: the log export answers under a name of its own, and its stall "
+      "reaches neither the server's \"\" nor OperationalService")
 check(A.stats_ok(lambda: {"/sys/heartbeat": 1}) and not A.stats_ok(lambda: {})
       and not A.stats_ok(lambda: 1 / 0), "the statistics segment answers, or does not")
 
@@ -871,6 +883,41 @@ class PB:
 dg = A._diag_pb(PB, {"severity": "warning", "message": "m", "path": ["a"], "line": ""})
 check(dg.severity == 2 and dg.message == "m" and dg.path == ["a"],
       "_diag_pb maps a diagnostic onto the message")
+
+
+print("=== #555: GetLogging's fields from a reading ===")
+import logstate as LS  # noqa: E402
+_scr = """IPFIX export of block events (RFC 8158)
+  state       enabled
+  exporter    198.51.100.3:4739 src 198.51.100.2 (path mtu 512, template every 20s)
+  records     0 emitted, 0 dropped
+  sender      the log container: 9 records, 3 packets, 2 templates, 0 send failures, 0 dropped
+  exhaustion  one record per subscriber per 10s: 5 repeats not reported
+  queue       1 event(s) dropped with a worker's queue full (8192 each)
+  rings       /dev/shm/prisma-bpa-log, 7604928 bytes, outside the main heap
+  export      2 event(s) dropped with the log container's ring full (65536)
+  transmit    ens20: 4 packet(s) the interface failed to send, from every sender on it
+TCP streams carried by the log container (pid 7)
+TCP transport: disabled
+syslog transport (RFC 5424 over TCP)
+  collector   198.51.100.3:601  connected
+  lines       6 written, 600 bytes sent, 0 pending
+  spill       0 bytes on disk, 0 replayed, 0 dropped
+  file        0 bytes now of 256 MB at most, 0 dropped over it, 0 resynced, 0 stalls
+"""
+_w = LS.LogWatch(stall=60)
+_w.observe(_scr, now=500)
+_f = A.logging_fields(*_w.snapshot()[:4])
+check([x["kind"] for x in _f["streams"]] == ["syslog", "ipfix-tcp", "ipfix-udp"]
+      and set(_f["streams"][0]) == set(A.LOG_STREAM_FIELDS),
+      "three streams, each with exactly LogStream's fields")
+check((_f["carrier"], _f["logger_pid"], _f["export_ring_dropped"], _f["worker_queue_dropped"],
+       _f["exhaustion_repeats_not_reported"], _f["transmit_failed"], _f["transmit_interface"],
+       _f["rings_shared"], _f["at"]) == ("log-container", 7, 2, 1, 5, 4, "ens20", True, 500),
+      f"the box-wide fields, as the screen says them: {_f['carrier']} {_f['logger_pid']}")
+check(_f["streams"][0]["bytes_sent"] == 600 and _f["streams"][0]["delivering"]
+      and _f["streams"][2]["packets_sent"] == 3 and _f["text"] == _scr,
+      "a stream's counters and verdict, and the screen itself, verbatim")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

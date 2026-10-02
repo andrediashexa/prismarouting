@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The CGNAT log export in the management API.**
+  ([#555](https://github.com/andrediashexa/hexarouting/issues/555))
+  `OperationalService.GetLogging` answers each export - syslog and IPFIX
+  over TCP, IPFIX over UDP - with its collector, who carries it (the log
+  container or the dataplane, #550), its connection, its counters and spill,
+  and whether it is delivering, plus the box-wide drop counters; it is read
+  from the `show cgnat logging` screen itself, so the API and the prompt
+  cannot disagree. A configured stream with something to send and nothing
+  out for 60 s is not delivering: the health service answers `NOT_SERVING`
+  for `prisma.v1.LogExport` (not for the server or OperationalService), and
+  `SubscribeRequest.logging_events` streams `log-connected`,
+  `log-disconnected`, `log-carrier`, `log-spill`, `log-spill-full`,
+  `log-stalled` and `log-delivering`. lab/api-grpc.sh holds every field to
+  the screen, kills the collector while lines come and starts it again.
+
 ### Fixed
 
 ## 0.149.14 - the UDP IPFIX export leaves from the log container too

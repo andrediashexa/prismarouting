@@ -20,13 +20,40 @@ minute (74 s measured on 0.149.4, from the upgrade command to the service
 answering) and every open stream and session ends. Upgrades are announced here
 and to the prisma-web session before they run.
 
-## Coming: #550 - the logging counters in the API
+## 0.149.15 - the CGNAT log export in the API
 
-Not released. Since 0.149.14 every log export runs in the log container when
-it is up; the logging counters (`show cgnat logging`) are not in the API yet.
-When they reach an API client - drop counters in `SystemInfo` or the
-telemetry stream, a health status for the export - it is announced here
-before the release that carries it.
+* **Contract:** additions only. `prisma.proto` sha256 `b08a5a089ff29ecc6c4d44f4cad3f51864d225d3ed210726953eee7a480c3e7a`
+  (was `269fb5c9...106f`).
+* **New rpc `OperationalService.GetLogging`** -> `LoggingState`:
+  * `streams` - always three, in this order: `syslog`, `ipfix-tcp`,
+    `ipfix-udp`. Each a `LogStream`: `configured`; `collector`
+    ("address:port"); `source` (UDP only); `carrier` ("log-container" or
+    "dataplane", empty when not configured) and `carrier_reason`;
+    `connection` (TCP: "connected" / "connecting" / "disconnected"; empty for
+    UDP); counters `records`, `bytes_sent` (TCP), `packets_sent` (UDP from
+    the log container; 0 when the dataplane sends), `dropped_over_cap`,
+    `send_failures`, `dropped`; gauges `pending_bytes`, `spill_bytes`, and
+    `spill_cap_bytes` (256 MiB); the verdict `delivering`, `stalled_reason`
+    and `last_progress`.
+  * box-wide: `carrier` and `logger_pid` (who carries the TCP streams),
+    counters `export_ring_dropped`, `worker_queue_dropped`,
+    `exhaustion_repeats_not_reported` (expected under exhaustion, not a
+    loss), `transmit_failed` (every sender on that interface) with
+    `transmit_interface`; `rings_shared`; and `text`, the `show cgnat
+    logging` screen as read.
+  * Counters count from the dataplane's start and are the CURRENT carrier's:
+    a stream moving between the container and the dataplane can make one
+    jump or restart - take a decrease as a reset. Not configured: every
+    field empty or 0.
+* **Health:** `Check(service="prisma.v1.LogExport")` is `NOT_SERVING` while
+  any configured stream has had something to send and got nothing out for
+  60 s, or the dataplane does not answer; `SERVING` otherwise (also with
+  nothing configured). `""` and `OperationalService` are not affected by it.
+* **Events:** `SubscribeRequest.logging_events = 6` adds `Event`s of kinds
+  `log-connected`, `log-disconnected`, `log-carrier`, `log-spill`,
+  `log-spill-full`, `log-stalled`, `log-delivering`, `text` naming the
+  stream. Up to 10 s late (the server reads every 10 s).
+* **Lab box:** .166 is on 0.149.13.
 
 ## 0.149.14 - UDP IPFIX sent by the log container too
 
