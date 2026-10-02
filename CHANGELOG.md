@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.13 - PRISMA-ROUTING-MIB under the product's own IANA PEN, 67033
+
+### Added
+
 * **PRISMA-ROUTING-MIB under the product's own IANA number, 67033.**
   ([#554](https://github.com/andrediashexa/hexarouting/issues/554))
   IANA assigned the product its Private Enterprise Number on 2026-10-02. A
@@ -90,8 +96,6 @@ version has a chance of seeing it.
   never written into a saved configuration, so no file pins 32473; a box
   that named its own number keeps it. lab/snmp.sh walks 67033 with no number
   named and finds nothing under 32473.
-
-### Fixed
 
 ## 0.149.12 - the TCP log streams in a log container of their own
 
