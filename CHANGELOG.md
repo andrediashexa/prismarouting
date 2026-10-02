@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.8 - disabling a syslog never enabled no longer stops the dataplane
+
+### Fixed
+
 * **Disabling a syslog that was never enabled stopped the dataplane at the
   next vppctl.** ([#551](https://github.com/andrediashexa/hexarouting/issues/551))
   The two TCP log streams began with descriptor 0 - stdin - so `logging syslog
