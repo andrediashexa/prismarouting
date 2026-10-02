@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.16 - monitor cgnat logging: the exported block events, live and readable
+
+### Added
+
 * **`monitor cgnat logging`: the CGNAT log records, live, in words.**
   ([#556](https://github.com/andrediashexa/hexarouting/issues/556))
   One line per exported block event - `ALLOC`, `RELEASE`, `EXHAUSTED` and the
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   worker rings were the first source, and lab/monitor-cgnat-logging.sh
   showed they miss every block released by expiry. `show bpa pool index`
   (new) maps the pool number a record carries to its name.
-
-### Fixed
 
 ## 0.149.15 - the CGNAT log export's state in the API
 
