@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.12 - the TCP log streams in a log container of their own
+
+### Added
+
 * **The TCP log streams run in a log container of their own: replaying a
   spill or a stalled collector no longer costs the dataplane a packet - #550's
   second step.** ([#550](https://github.com/andrediashexa/hexarouting/issues/550))
@@ -97,8 +103,6 @@ version has a chance of seeing it.
   240 MB spills were replayed (one with a 3 s monitoring poll), with a
   collector that never reads and with none; off (no container) loses 72% and
   60% during the same replays. UDP IPFIX stays in the dataplane.
-
-### Fixed
 
 ## 0.149.11 - the CGNAT log's event rings in a segment of their own
 
