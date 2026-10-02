@@ -1,6 +1,8 @@
 # The management API (prisma.v1)
 
 
+Which VTY command the API reaches, and how (typed, text, or not yet), is
+[docs/api-coverage.md](api-coverage.md), generated from the VTY's grammar.
 What each release changed for an API client - fields, limits, sentinels,
 known bugs and the lab box's upgrades - is in [docs/clients.md](clients.md),
 newest first.

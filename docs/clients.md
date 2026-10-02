@@ -20,6 +20,13 @@ minute (74 s measured on 0.149.4, from the upgrade command to the service
 answering) and every open stream and session ends. Upgrades are announced here
 and to the prisma-web session before they run.
 
+
+The contract before 0.149.2 - ConfigService, OperationalService's reads,
+TelemetryService.Subscribe and Show - has no entry here: it is described rpc by
+rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
+commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
+generated from the VTY's grammar.
+
 ## 0.149.16 - monitor cgnat logging
 
 * **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
