@@ -26,6 +26,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_workers \
       $(BUILD)/test_bpa_local \
       $(BUILD)/test_bpa_frame $(BUILD)/test_bpa_exhaust \
+      $(BUILD)/test_bpa_log_ring \
       $(BUILD)/test_bpa_sock
 	@sh tools/run-tests.sh
 
@@ -86,6 +87,13 @@ $(BUILD)/test_bpa_local: test/test_bpa_local.c \
                    src/plugins/bpa/bpa_local.h test/bpa_shim.h test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_local.c
+
+# The block-event rings' shared segment (#550): layout, drop, wrap, two
+# threads, and a reader in another process through /dev/shm.
+$(BUILD)/test_bpa_log_ring: test/test_bpa_log_ring.c \
+                   src/plugins/bpa/bpa_log_ring.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_log_ring.c -lpthread -lrt
 
 # One exhaustion record per subscriber per interval (#549).
 $(BUILD)/test_bpa_exhaust: test/test_bpa_exhaust.c \

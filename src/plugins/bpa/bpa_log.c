@@ -19,6 +19,80 @@
 #include "bpa_radius.h"
 
 bpa_log_main_t bpa_log_main;
+bpa_log_seg_t bpa_log_seg;
+
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <time.h>
+#include <unistd.h>
+
+/* not a unit: it makes a POSIX shared-memory segment and maps it into VPP,
+ * which a unit cannot stand in for; the layout it writes is
+ * bpa_log_seg_init(), which test/test_bpa_log_ring.c drives with a real
+ * /dev/shm segment and a reader in another process.
+ *
+ * The block-event rings, one per vlib main, in /dev/shm/prisma-bpa-log
+ * (#550). A fresh segment at every start: the previous one is unlinked first,
+ * so a reader still mapping it keeps its own copy and sees the new one by
+ * its generation. Pages are touched here, on the main thread at start, so
+ * that no worker takes a page fault on its first event. If the segment
+ * cannot be had, the rings go to the main heap as they were in 0.149.7 -
+ * logging still works through VPP, and `show cgnat logging` says why
+ * nothing outside it can read them. */
+clib_error_t *
+bpa_log_seg_create (u32 n_rings)
+{
+  bpa_log_seg_t *g = &bpa_log_seg;
+  u64 bytes = bpa_log_seg_bytes (n_rings, BPA_LOG_QUEUE_MAX,
+				 sizeof (bpa_log_event_t));
+  struct timespec ts;
+  int fd;
+  u8 *base = 0;
+
+  clock_gettime (CLOCK_REALTIME, &ts);
+  g->bytes = bytes;
+  g->shared = 0;
+  shm_unlink (BPA_LOG_SEG_NAME);
+  fd = shm_open (BPA_LOG_SEG_NAME, O_CREAT | O_EXCL | O_RDWR, 0640);
+  if (fd < 0)
+    {
+      g->err = errno;
+      g->failed = "shm_open";
+    }
+  else if (ftruncate (fd, bytes) < 0)
+    {
+      g->err = errno;
+      g->failed = "ftruncate";
+    }
+  else
+    {
+      base = mmap (0, bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
+		   fd, 0);
+      if (base == MAP_FAILED)
+	{
+	  base = 0;
+	  g->err = errno;
+	  g->failed = "mmap";
+	}
+      else
+	g->shared = 1;
+    }
+  if (fd >= 0)
+    close (fd);
+  if (!base)
+    {
+      shm_unlink (BPA_LOG_SEG_NAME);
+      base = clib_mem_alloc_aligned (bytes, CLIB_CACHE_LINE_BYTES);
+    }
+  /* init() zeroes every byte, which also touches every page. */
+  if (bpa_log_seg_init (base, n_rings, BPA_LOG_QUEUE_MAX,
+			sizeof (bpa_log_event_t),
+			(u64) ts.tv_sec * 1000000000ULL + ts.tv_nsec))
+    return clib_error_return (0, "bpa: the log ring size is not a power of two");
+  g->base = base;
+  return 0;
+}
 
 /*
  * RFC 8158 Table 21 template.
@@ -174,13 +248,13 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 		     && !bpa_log_syslog.enabled))
     return;
 
-  if (PREDICT_FALSE (pt->log_head - pt->log_tail >= BPA_LOG_QUEUE_MAX))
-    {
-      pt->log_dropped++;
-      return;
-    }
-
-  e = &pt->log_ring[pt->log_head & (BPA_LOG_QUEUE_MAX - 1)];
+  if (PREDICT_FALSE (!pt->log_q))
+    return;
+  /* Full: refused and counted in the ring, never waited for (#547). */
+  e = bpa_log_ring_reserve (pt->log_q, BPA_LOG_QUEUE_MAX,
+			    sizeof (bpa_log_event_t));
+  if (PREDICT_FALSE (!e))
+    return;
   /* THE IDENTITY IS TAKEN HERE, at the instant of the allocation, for the
    * reason the field's own comment gives: a lookup at drain time would name
    * whoever holds the address by then (#21). */
@@ -216,9 +290,8 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
   e->port_lo = port_lo;
   e->port_hi = port_hi;
   e->pool_id = pool_id;
-  /* The event whole before the reader can see it. */
-  CLIB_MEMORY_STORE_BARRIER ();
-  pt->log_head++;
+  /* The event whole before the reader can see it: publish is a release. */
+  bpa_log_ring_publish (pt->log_q);
 }
 
 /*
@@ -451,21 +524,21 @@ bpa_log_drain (vlib_main_t *vm)
     {
       bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
 
-      u32 head = pt->log_head, tail = pt->log_tail;
+      u32 tail, n;
 
-      if (!pt->log_ring)
+      if (!pt->log_q)
 	continue;
-      /* Read the events the head covers only after reading the head. */
-      CLIB_MEMORY_BARRIER ();
-      for (j = tail; j != head; j++)
+      /* ready() is an acquire: the events it counts are whole. */
+      n = bpa_log_ring_ready (pt->log_q, &tail);
+      for (j = 0; j < n; j++)
 	{
-	  bpa_log_event_t *e = &pt->log_ring[j & (BPA_LOG_QUEUE_MAX - 1)];
+	  bpa_log_event_t *e = bpa_log_ring_slot (
+	    pt->log_q, BPA_LOG_QUEUE_MAX, sizeof (bpa_log_event_t), tail + j);
 
 	  bpa_log_emit (vm, e->event, e->ip_priv, e->ip_pub, e->port_lo,
 			e->port_hi, e->pool_id, e->identity);
 	}
-      CLIB_MEMORY_BARRIER ();
-      pt->log_tail = head;
+      bpa_log_ring_consume (pt->log_q, n);
     }
 
   bpa_log_flush (vm);

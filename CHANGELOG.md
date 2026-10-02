@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The block-event rings are in a shared segment of their own, outside
+  VPP's main heap - #550's first step.**
+  ([#550](https://github.com/andrediashexa/hexarouting/issues/550))
+  Each worker's ring of 8192 events (#547) is now a slot of
+  `/dev/shm/prisma-bpa-log`, which the plugin creates at start with a
+  versioned header (magic, layout version, ring and event sizes, the start's
+  generation, and which consumer drains it), so that a process outside VPP -
+  the log container #550 brings next - can read the events without touching
+  the dataplane's heap. VPP still drains the rings itself in this release. A
+  worker still never allocates or waits: a full ring drops the event and
+  counts it in the ring. `show cgnat logging` has a `rings` line saying where
+  they are; if `/dev/shm` cannot be had the rings go to the main heap as
+  before and the line says which step failed. lab/ipfix.sh reads the segment
+  from outside VPP and requires its header to check and every event this run
+  made to be in it; test/test_bpa_log_ring.c drives the layout, the drop, the
+  wrap of the indexes, two threads, and a reader in another process.
+
 ### Fixed
 
 ## 0.149.10 - an identity path is refused at 256 characters, where it always failed

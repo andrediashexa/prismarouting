@@ -19,6 +19,7 @@
 .build/test_bpa_local
 .build/test_bpa_frame
 .build/test_bpa_exhaust
+.build/test_bpa_log_ring
 .build/test_bpa_sock
 .build/test_bpa_ports
 .build/test_bpa_rtsp

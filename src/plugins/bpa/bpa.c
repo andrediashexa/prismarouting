@@ -2452,6 +2452,10 @@ bpa_init (vlib_main_t *vm)
 
   /* One session table per vlib main, worker or not: index by thread. */
   vec_validate (bm->per_thread, tm->n_vlib_mains - 1);
+  /* And one block-event ring each, in a segment of their own (#550). */
+  e = bpa_log_seg_create (tm->n_vlib_mains);
+  if (e)
+    return e;
   for (i = 0; i < vec_len (bm->per_thread); i++)
     {
       e = bpa_per_thread_init (vec_elt_at_index (bm->per_thread, i), i);

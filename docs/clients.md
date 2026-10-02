@@ -28,6 +28,16 @@ an API client sees - a health status for the export, its drop counters in
 `SystemInfo` or the telemetry stream, events - it is announced in this section
 before the release that carries it.
 
+## 0.149.11 - the log rings in a segment of their own (#550, step 1)
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Behaviour:** none an API client sees. Each worker's queue of CGNAT block
+  events moves out of the dataplane's heap into a shared-memory segment of
+  its own (`/dev/shm/prisma-bpa-log`); the dataplane still sends the log
+  itself. `show cgnat logging` gains a `rings` line (where the segment is, or
+  why the box fell back to the heap). The counters stay on the VTY only.
+* **Lab box:** .166 is on 0.149.4.
+
 ## 0.149.10 - an identity path is refused at 256, where it always failed
 
 * **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
