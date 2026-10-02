@@ -101,6 +101,20 @@ echo
 echo "=== the statement, refused without an enterprise number ==="
 # The refusal an operator meets first, and it is at the prompt rather than in
 # a year of lines a collector misparsed.
+echo
+echo "=== a syslog never enabled, disabled: the dataplane stays up (#551) ==="
+# Through 0.149.7 the stream's descriptor began as 0 - stdin - and this closed
+# it: the next vppctl session was handed descriptor 0, and when it ended VPP
+# took it for its console closing and exited with status 0, which Docker does
+# not restart. Measured on the legacy bench: fd 0 /dev/null before, gone after,
+# VPP exited on the next `vppctl show version`.
+vppctl bpa logging syslog disable >/dev/null 2>&1
+vppctl show version >/dev/null 2>&1
+vppctl show version >/dev/null 2>&1
+sleep 1
+if vppctl show version >/dev/null 2>&1; then NEVER_ON=up; else NEVER_ON=gone; fi
+echo "  the dataplane after it: $NEVER_ON"
+
 NO_PEN=$($HX -c "configure" \
     -c "nat" -c "cgnat" -c "logging syslog 10.0.0.2" \
     -c "commit" 2>&1)
@@ -402,6 +416,8 @@ MARK=$(count_of BOOT-MARKER);  MARK=${MARK:-0}
 BAD=$(count_of malformed);     BAD=${BAD:-0}
 
 printf '%s\n' "$NO_PEN" > /tmp/syslog-no-pen.txt
+expect "disabling a syslog that was never enabled leaves the dataplane running (#551)" \
+  test "$NEVER_ON" = up
 expect "the refusal without an enterprise number names what is missing" \
   grep -q "enterprise number is required" /tmp/syslog-no-pen.txt
 expect "3 allocations reached the collector as BLOCK-ALLOC lines (got $ALLOC)" \

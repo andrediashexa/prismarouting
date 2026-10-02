@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Disabling a syslog that was never enabled stopped the dataplane at the
+  next vppctl.** ([#551](https://github.com/andrediashexa/hexarouting/issues/551))
+  The two TCP log streams began with descriptor 0 - stdin - so `logging syslog
+  disable` on a box whose syslog had never been on closed VPP's stdin; the
+  next vppctl session was handed descriptor 0, and when it ended VPP exited
+  with status 0, which Docker does not restart. Found on the legacy bench
+  running the #547 acceptance table on 0.149.7 (the code is older). Both
+  streams start closed now, beside the RADIUS listener that had the same
+  defect in #21; lab/syslog.sh disables a never-enabled syslog and requires
+  the dataplane still running.
+
 ## 0.149.7 - CGNAT log export no longer takes the dataplane with it
 
 ### Fixed

@@ -2348,6 +2348,8 @@ bpa_init (vlib_main_t *vm)
    * it is stdin - so a struct that begins as zeros would have this box
    * reading the console for RADIUS packets on the first service pass (#21). */
   bpa_radius.fd = -1;
+  /* The two TCP log streams, for the same reason (#551). */
+  bpa_log_streams_init ();
 
   bpa_main_t *bm = &bpa_main;
   vlib_thread_main_t *tm = vlib_get_thread_main ();
