@@ -882,6 +882,58 @@ congestion, and a collector outage no longer costs records — but it is not
 absolute. `show bpa logging` exposes the counters so the difference is visible
 rather than assumed.
 
+### The TCP streams run in the log container, not in the dataplane (#550)
+
+**Log export MUST NOT cost the box a forwarded or translated packet** - the
+maintainer's rule of 2026-10-01. Measured on the legacy bench before it held:
+with the streams in VPP, a stalled syslog collector cost 78% of a 30k pps
+burst at rx (0.149.5); after #547 bounded the memory, replaying a 573 MB spill
+on VPP's main thread still cost 11.7%, and 27% with a monitoring poll running.
+
+So the slow half of the TCP streams - syslog over TCP and IPFIX over TCP:
+formatting, the sockets, the spill file, its replay, reconnection - runs in
+**prisma-logd**, in a container of its own (`logger` in compose.yaml):
+
+* Workers write each block event into their ring in `/dev/shm/prisma-bpa-log`
+  (#550's first step). VPP's drain copies it into the segment's **export
+  ring**, stamped with the wall clock it drained it at, and does nothing else
+  for these streams. A full export ring drops the event and counts it
+  (`export` line).
+* prisma-logd reads the export ring and writes the records with the same code
+  VPP used (`bpa_log_tcp.c`, compiled standalone), so the wire formats are the
+  ones collectors already read. Its sockets are kernel sockets in the host's
+  network namespace, as VPP's were: the same route, source and VRF.
+* **Who carries the streams is decided from a heartbeat.** While prisma-logd's
+  heartbeat in the segment is younger than 3 s, VPP has spilled what it held,
+  closed its connections and handed the streams over; the container touches
+  the spill files and collectors only then. When it stops (SIGTERM: it spills
+  what it holds and clears the heartbeat) or stalls, VPP carries the streams
+  again within a second and replays the spill as before. A box with no log
+  container - before the patch that brings it, or with it stopped - logs
+  exactly as it did.
+* The container stays in `system.slice`, which the tuner fences to the
+  control-plane CPUs (#466), and has a memory limit of its own (256 MB): a
+  collector can make it run out, never the dataplane.
+* UDP IPFIX stays in the dataplane: it is fire-and-forget, keeps nothing and
+  was measured costing no packet.
+
+`show cgnat logging` says who carries them and reads the container's counters
+when it does:
+
+```
+TCP streams carried by the log container (pid 5178)
+  export      0 event(s) dropped with the log container's ring full (65536)
+```
+
+or `TCP streams carried by the dataplane: no log container is running`.
+Measured in `lab/log-container.sh`, with 20k pps of subscriber traffic into an
+af_packet interface polled by VPP's main thread (the lab's VPP has no workers,
+the worst case): no packet lost while two 240 MB spills were replayed - one
+with a monitoring poll every 3 s - with a collector that never reads, or with
+none at all; the main heap flat; and with the container stopped, the streams
+back in the dataplane. Its off mode runs no container, and the replays lose
+packets.
+
 ## Three pitfalls found while implementing
 
 All three fail silently. The first two cost precisely the earliest records —

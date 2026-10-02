@@ -91,7 +91,160 @@ bpa_log_seg_create (u32 n_rings)
 			(u64) ts.tv_sec * 1000000000ULL + ts.tv_nsec))
     return clib_error_return (0, "bpa: the log ring size is not a power of two");
   g->base = base;
+  ((bpa_log_seg_hdr_t *) base)->boot_wall = bpa_main.boot_wall;
+  bpa_log_seg_publish (&bpa_log_tcp);
+  bpa_log_seg_publish (&bpa_log_syslog);
   return 0;
+}
+
+/* not a unit: one clock_gettime(CLOCK_MONOTONIC); what is compared against
+ * it is bpa_log_seg_logger_alive(), which test/test_bpa_log_ring.c drives. */
+static u64
+bpa_log_mono_ns (void)
+{
+  struct timespec t;
+
+  clock_gettime (CLOCK_MONOTONIC, &t);
+  return (u64) t.tv_sec * 1000000000ULL + (u64) t.tv_nsec;
+}
+
+/* not a unit: it reads the live segment's owner field; the field's meaning is
+ * bpa_log_ring.h's, which test/test_bpa_log_ring.c drives. */
+int
+bpa_log_logger_owns (void)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+
+  return bpa_log_seg.shared && h
+	 && __atomic_load_n (&h->tcp_owner, __ATOMIC_ACQUIRE)
+	      == BPA_LOG_OWNER_LOGGER;
+}
+
+/* not a unit: it writes VPP's stream state into the live segment, through
+ * bpa_log_seg_cfg_write(), which test/test_bpa_log_ring.c drives; the log
+ * container reading it back is lab/log-container.sh. */
+void
+bpa_log_seg_publish (bpa_log_stream_t *s)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+  u32 i = s == &bpa_log_syslog ? BPA_LOG_STREAM_SYSLOG : BPA_LOG_STREAM_IPFIX;
+
+  if (!h)
+    return;
+  bpa_log_seg_cfg_write (&h->cfg[i], s->enabled, s->wire, s->port,
+			 s->collector.as_u32, s->pen, s->pri,
+			 s->hostname ? (char *) s->hostname : 0);
+}
+
+/*
+ * not a unit: the handover between the two processes that can carry the TCP
+ * streams, decided by the log container's heartbeat in the live segment;
+ * lab/log-container.sh starts and kills the container under traffic.
+ *
+ * Who writes the spill files and holds the collectors' connections is ONE
+ * process at a time, and VPP decides which: the log container when its
+ * heartbeat is fresh, VPP otherwise. Handing over is: everything VPP holds in
+ * memory to the spill file, its connections closed, and only then the owner
+ * flipped - the log container touches nothing until it reads the flip, and
+ * reads the backlog from the file and its offset. Taking back is the flip the
+ * other way when the heartbeat goes stale (3 s) or to 0 (the container
+ * stopping, after spilling what it held); VPP's streams then reconnect and
+ * replay the file as they did before #550.
+ */
+void
+bpa_log_handover (void)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+  int alive;
+
+  if (!bpa_log_seg.shared || !h)
+    return;
+  alive = bpa_log_seg_logger_alive (h, bpa_log_mono_ns ());
+  if (alive && h->tcp_owner == BPA_LOG_OWNER_VPP)
+    {
+      bpa_log_stream_release (&bpa_log_tcp);
+      bpa_log_stream_release (&bpa_log_syslog);
+      bpa_log_seg_publish (&bpa_log_tcp);
+      bpa_log_seg_publish (&bpa_log_syslog);
+      __atomic_store_n (&h->tcp_owner, BPA_LOG_OWNER_LOGGER, __ATOMIC_RELEASE);
+    }
+  else if (!alive && h->tcp_owner == BPA_LOG_OWNER_LOGGER)
+    {
+      bpa_log_ring_t *x = bpa_log_seg_xring (bpa_log_seg.base);
+      u32 tail, lost;
+
+      __atomic_store_n (&h->tcp_owner, BPA_LOG_OWNER_VPP, __ATOMIC_RELEASE);
+      /* What the container had not taken is lost with it, and counted where
+       * the ring's other losses are: nobody is reading it any more, so VPP
+       * may move its tail. */
+      lost = bpa_log_ring_ready (x, &tail);
+      x->dropped += lost;
+      bpa_log_ring_consume (x, lost);
+    }
+}
+
+/* not a unit: it writes into the live segment's export ring; the reserve and
+ * publish it is made of are test/test_bpa_log_ring.c's, and test_prisma_logd.c
+ * fills slots the same way and reads what prisma-logd makes of them.
+ *
+ * An event or the marker into the export ring: a full ring drops and counts
+ * in the ring, the same rule as a worker's (#547). */
+static void
+bpa_log_xpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
+	       u16 port_lo, u16 port_hi, u32 pool_id, const char *identity)
+{
+  bpa_log_ring_t *x = bpa_log_seg_xring (bpa_log_seg.base);
+  bpa_log_xev_t *v =
+    bpa_log_ring_reserve (x, BPA_LOG_XRING_SLOTS, BPA_LOG_XEV_BYTES);
+
+  if (!v)
+    return;
+  memset (v, 0, sizeof (*v));
+  v->kind = kind;
+  v->wall = wall;
+  v->ev.event = event;
+  v->ev.ip_priv = ip_priv;
+  v->ev.ip_pub = ip_pub;
+  v->ev.port_lo = port_lo;
+  v->ev.port_hi = port_hi;
+  v->ev.pool_id = pool_id;
+  if (identity)
+    strncpy (v->ev.identity, identity, sizeof (v->ev.identity) - 1);
+  bpa_log_ring_publish (x);
+}
+
+/* not a unit: it copies the log container's counters from the live segment
+ * for the screen; lab/log-container.sh reads the screen.
+ *
+ * What `show cgnat logging` prints of a TCP stream, whoever carries it: when
+ * the log container does, its counters are copied into s - which VPP is not
+ * using while it does not carry the stream - and the bytes it has pending are
+ * returned; otherwise s is left as it is and its own buffer's length is. */
+u64
+bpa_log_stream_shown (bpa_log_stream_t *s)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+  bpa_log_seg_stats_t *t;
+
+  if (!bpa_log_logger_owns ())
+    return vec_len (s->outbuf);
+  t = &h->stats[s == &bpa_log_syslog ? BPA_LOG_STREAM_SYSLOG
+				     : BPA_LOG_STREAM_IPFIX];
+  s->n_records = t->n_records;
+  s->n_sent = t->n_sent;
+  s->n_spilled = t->n_spilled;
+  s->n_replayed = t->n_replayed;
+  s->n_dropped = t->n_dropped;
+  s->n_connects = t->n_connects;
+  s->n_service = t->n_service;
+  s->n_send_calls = t->n_send_calls;
+  s->n_resynced = t->n_resynced;
+  s->n_stalls = t->n_stalls;
+  s->n_capped = t->n_capped;
+  s->connected = t->connected;
+  s->pending_connect = t->pending_connect;
+  s->last_errno = t->last_errno;
+  return t->pending;
 }
 
 /*
@@ -365,6 +518,16 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 
   bpa_log_block_event (vm, vm->thread_index, wall, event, ip_priv, ip_pub,
 		       port_lo, port_hi, pool_id);
+  /* The TCP streams, carried by the log container when there is one: VPP
+   * only copies the event into the export ring, and the container formats,
+   * sends and spills it (#550). */
+  if (bpa_log_logger_owns ())
+    {
+      if (bpa_log_tcp.enabled || bpa_log_syslog.enabled)
+	bpa_log_xpush (BPA_LOG_XEV_RECORD, wall, event, ip_priv, ip_pub,
+		       port_lo, port_hi, pool_id, identity);
+      return;
+    }
   bpa_log_tcp_record (wall, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
   /* The third transport, and the last line of the fan-out this function's
    * own comment exists for: a caller that reaches one exporter directly will
@@ -398,11 +561,19 @@ bpa_log_marker_emit (vlib_main_t *vm)
   u16 offset;
   u8 *d;
 
-  bpa_log_tcp_marker (wall, bm->boot_wall);
-  /* Every enabled stream gets the marker, for the reason there is one: a
-   * collector cannot read an allocation with no release until it knows which
-   * incarnation of the box wrote it (#20). */
-  bpa_log_stream_marker (&bpa_log_syslog, wall, bm->boot_wall);
+  if (bpa_log_logger_owns ())
+    {
+      if (bpa_log_tcp.enabled || bpa_log_syslog.enabled)
+	bpa_log_xpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0);
+    }
+  else
+    {
+      bpa_log_tcp_marker (wall, bm->boot_wall);
+      /* Every enabled stream gets the marker, for the reason there is one: a
+       * collector cannot read an allocation with no release until it knows
+       * which incarnation of the box wrote it (#20). */
+      bpa_log_stream_marker (&bpa_log_syslog, wall, bm->boot_wall);
+    }
 
   if (!lm->enabled)
     return;
@@ -543,8 +714,11 @@ bpa_log_drain (vlib_main_t *vm)
 
   bpa_log_flush (vm);
 
-  bpa_log_tcp_service (vlib_time_now (vm));
-  bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
+  if (!bpa_log_logger_owns ())
+    {
+      bpa_log_tcp_service (vlib_time_now (vm));
+      bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
+    }
   /* And the accounting the BNG is sending, read from the same process for
    * the same reason: it is a socket, it is a few packets a second, and the
    * dataplane has no business parsing somebody else's protocol (#21). */

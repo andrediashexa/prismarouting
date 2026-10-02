@@ -20,13 +20,32 @@ minute (74 s measured on 0.149.4, from the upgrade command to the service
 answering) and every open stream and session ends. Upgrades are announced here
 and to the prisma-web session before they run.
 
-## Coming: #550 - log export in its own container
+## Coming: #550 - the rest of log export out of the dataplane
 
-Not released. CGNAT log export (syslog, IPFIX, the spill) moves out of the
-dataplane into a container of its own, in patch releases. If it adds anything
-an API client sees - a health status for the export, its drop counters in
-`SystemInfo` or the telemetry stream, events - it is announced in this section
-before the release that carries it.
+Not released. UDP IPFIX still leaves from the dataplane, and the logging
+counters (`show cgnat logging`) are not in the API yet. If either reaches an
+API client - drop counters in `SystemInfo` or the telemetry stream, a health
+status for the export - it is announced here before the release that carries
+it.
+
+## 0.149.12 - the TCP log streams in a log container of their own
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Behaviour:** syslog over TCP and IPFIX over TCP are carried by a new
+  `logger` container (prisma-logd) instead of the dataplane, so replaying a
+  large spill or a stalled collector no longer costs forwarding (measured: 0
+  packets lost in the lab, against 60-72% with the old path). Nothing an API
+  client calls changes. What `OperationalService.Show` returns for `show cgnat
+  logging` gains two lines - `TCP streams carried by the log container (pid
+  N)` or `... by the dataplane: no log container is running`, and `export
+  N event(s) dropped with the log container's ring full (65536)` - and its
+  stream counters are the container's while it carries the streams. A client
+  parsing that text should not assume the old line count.
+* **Health:** unchanged. The log container is not a gRPC service and its
+  state is not in Health yet.
+* **Lab box:** the log container arrives with this patch: an upgrade brings
+  it up with the VTY's container (about a minute without the API, as every
+  upgrade).
 
 ## 0.149.11 - the log rings in a segment of their own (#550, step 1)
 

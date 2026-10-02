@@ -16,7 +16,7 @@ import sys
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else "/dev/shm/prisma-bpa-log"
 HDR = struct.Struct("<8sIIIIIIQI")  # magic version hdr_bytes n_rings slots ev ring gen consumer
-HDR_BYTES = 256
+HDR_BYTES = 1024
 RING_HDR = 192
 EVENT_BYTES = 52
 
@@ -35,7 +35,7 @@ def main():
            "hdr_bytes": hb, "n_rings": n, "ring_slots": slots,
            "event_bytes": ev, "ring_bytes": rb, "generation": gen,
            "consumer": consumer, "bytes": len(data), "rings": []}
-    ok = (magic == b"PRBALOG1" and ver == 1 and hb == HDR_BYTES
+    ok = (magic == b"PRBALOG1" and ver == 2 and hb == HDR_BYTES
           and ev == EVENT_BYTES and slots and not slots & (slots - 1)
           and rb == RING_HDR + slots * ev and HDR_BYTES + n * rb <= len(data))
     out["readable"] = bool(ok)

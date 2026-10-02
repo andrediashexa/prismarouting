@@ -3008,9 +3008,16 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
     /* Where the rings are (#550): a box that could not have the shared
      * segment says so, because then nothing outside VPP can drain them. */
     if (bpa_log_seg.shared)
-      vlib_cli_output (vm, "  rings       /dev/shm%s, %Lu bytes, outside the "
-			   "main heap",
-		       BPA_LOG_SEG_NAME, bpa_log_seg.bytes);
+      {
+	vlib_cli_output (vm, "  rings       /dev/shm%s, %Lu bytes, outside the "
+			     "main heap",
+			 BPA_LOG_SEG_NAME, bpa_log_seg.bytes);
+	/* The log container's ring (#550): VPP never waits for it either. */
+	vlib_cli_output (vm, "  export      %Lu event(s) dropped with the log "
+			     "container's ring full (%u)",
+			 bpa_log_seg_xring (bpa_log_seg.base)->dropped,
+			 BPA_LOG_XRING_SLOTS);
+      }
     else
       vlib_cli_output (vm, "  rings       in the main heap: %s failed (%s)",
 		       bpa_log_seg.failed ? bpa_log_seg.failed : "?",
@@ -3038,8 +3045,21 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
   vlib_cli_output (vm, "  flushes     %Lu with data, %Lu empty, %Lu without buffer",
 		   lm->n_flush_sent, lm->n_flush_empty, lm->n_getbuf_fail);
 
+  /* Who carries the TCP streams (#550): the log container, or VPP itself. */
+  {
+    bpa_log_seg_hdr_t *lh = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+
+    if (bpa_log_logger_owns ())
+      vlib_cli_output (vm, "TCP streams carried by the log container (pid %u)",
+		       lh->logger_pid);
+    else
+      vlib_cli_output (vm, "TCP streams carried by the dataplane: no log "
+			   "container is running");
+  }
   if (bpa_log_tcp.enabled)
     {
+      u64 tcp_pending = bpa_log_stream_shown (&bpa_log_tcp);
+
       vlib_cli_output (vm, "TCP transport (survives collector outage)");
       vlib_cli_output (vm, "  collector   %U:%u  %s", format_ip4_address,
 		       &bpa_log_tcp.collector, bpa_log_tcp.port,
@@ -3049,8 +3069,7 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
       vlib_cli_output (vm,
 		       "  records     %Lu emitted, %Lu bytes sent, "
 		       "%Lu pending",
-		       bpa_log_tcp.n_records, bpa_log_tcp.n_sent,
-		       (u64) vec_len (bpa_log_tcp.outbuf));
+		       bpa_log_tcp.n_records, bpa_log_tcp.n_sent, tcp_pending);
       vlib_cli_output (vm,
 		       "  spill       %Lu bytes on disk, %Lu replayed, "
 		       "%Lu dropped",
@@ -3070,6 +3089,8 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
    * is one they diagnose by guessing (#20). */
   if (bpa_log_syslog.enabled)
     {
+      u64 sys_pending = bpa_log_stream_shown (&bpa_log_syslog);
+
       vlib_cli_output (vm, "syslog transport (RFC 5424 over TCP)");
       vlib_cli_output (vm, "  collector   %U:%u  %s", format_ip4_address,
 		       &bpa_log_syslog.collector, bpa_log_syslog.port,
@@ -3083,7 +3104,7 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       "  lines       %Lu written, %Lu bytes sent, "
 		       "%Lu pending",
 		       bpa_log_syslog.n_records, bpa_log_syslog.n_sent,
-		       (u64) vec_len (bpa_log_syslog.outbuf));
+		       sys_pending);
       vlib_cli_output (vm,
 		       "  spill       %Lu bytes on disk, %Lu replayed, "
 		       "%Lu dropped",

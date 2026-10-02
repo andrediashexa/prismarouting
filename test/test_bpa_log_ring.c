@@ -101,20 +101,32 @@ main (void)
 
   printf ("=== the segment and its header ===\n");
   CHECK (sizeof (ev_t) == 52, "the test's event is the plugin's 52 bytes");
+  CHECK (bpa_log_seg_xring_offset (3, 64, 52) == 1024 + 3 * (192 + 64 * 52),
+	 "the export ring starts where the worker rings end");
   CHECK (bpa_log_ring_bytes (64, 52) == 192 + 64 * 52,
 	 "one ring is its 192-byte header and its slots");
-  CHECK (size == 256 + 3 * (192 + 64 * 52),
-	 "a segment is its header plus each ring's header and slots: %llu",
+  CHECK (size == 1024 + 3 * (192 + 64 * 52) + (192 + 65536 * 64),
+	 "a segment is its header, each worker ring's header and slots, and "
+	 "the export ring: %llu",
 	 (unsigned long long) size);
+  CHECK (sizeof (bpa_log_seg_hdr_t) <= 1024,
+	 "the version 2 header fits its 1024 bytes: %zu",
+	 sizeof (bpa_log_seg_hdr_t));
   CHECK (bpa_log_seg_init (seg, N_RINGS, 63, sizeof (ev_t), 1) == -1,
 	 "a ring that is not a power of two is refused (the mask needs it)");
   CHECK (bpa_log_seg_init (seg, N_RINGS, SLOTS, sizeof (ev_t), 77) == 0,
 	 "a power-of-two ring is laid out");
-  CHECK (!memcmp (h->magic, "PRBALOG1", 8) && h->version == 1
+  CHECK (!memcmp (h->magic, "PRBALOG1", 8) && h->version == 2
 	   && h->n_rings == N_RINGS && h->generation == 77
 	   && h->consumer == BPA_LOG_CONSUMER_VPP,
 	 "the header carries the magic, version, sizes and generation, and "
 	 "VPP is the consumer until the log container takes over");
+  CHECK (h->tcp_owner == BPA_LOG_OWNER_VPP && h->xring_slots == 65536
+	   && h->xev_bytes == 64
+	   && (u8 *) bpa_log_seg_xring (seg)
+		== seg + 1024 + 3 * (192 + 64 * 52),
+	 "VPP carries the TCP streams until a log container says it is alive, "
+	 "and the export ring follows the worker rings");
 
   printf ("=== what a reader checks before trusting an offset ===\n");
   CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == 0,
@@ -125,10 +137,14 @@ main (void)
 	 "a segment cut short of its last ring: refused");
   CHECK (bpa_log_seg_check (seg, size, 60) == -4,
 	 "events of another size (another build's layout): refused");
-  h->version = 2;
-  CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -3,
-	 "a layout version this build does not know: refused");
   h->version = 1;
+  CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -3,
+	 "a layout version this build does not know (step 1's): refused");
+  h->version = 2;
+  h->xring_slots = 1024;
+  CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -7,
+	 "an export ring of another size: refused");
+  h->xring_slots = 65536;
   h->magic[0] = 'X';
   CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -2,
 	 "not the magic: refused");
@@ -141,8 +157,35 @@ main (void)
 		  "events of another size than this build's"),
 	 "each refusal has words");
   CHECK ((u8 *) bpa_log_seg_ring (seg, 2)
-	   == seg + 256 + 2 * (192 + 64 * 52),
+	   == seg + 1024 + 2 * (192 + 64 * 52),
 	 "ring 2 starts after the header and two whole rings");
+
+  printf ("=== the log container's heartbeat and the streams' config ===\n");
+  {
+    bpa_log_seg_cfg_t c;
+
+    CHECK (!bpa_log_seg_logger_alive (h, 5000000000ULL),
+	   "no heartbeat: no log container");
+    h->logger_beat_ns = 4000000000ULL;
+    CHECK (bpa_log_seg_logger_alive (h, 6000000000ULL),
+	   "a heartbeat 2 s old: alive");
+    CHECK (!bpa_log_seg_logger_alive (h, 7500000000ULL),
+	   "a heartbeat 3.5 s old: gone - VPP takes the streams back");
+    h->logger_beat_ns = 0;
+    CHECK (bpa_log_seg_cfg_read (&h->cfg[1], &c) == 0 && c.gen == 0
+	     && !c.enabled,
+	   "a stream nobody configured reads as disabled");
+    bpa_log_seg_cfg_write (&h->cfg[1], 1, 1, 601, 0x0300640a, 32473, 134,
+			   "prisma-bench");
+    CHECK (bpa_log_seg_cfg_read (&h->cfg[1], &c) == 0 && c.gen == 2
+	     && c.enabled && c.port == 601 && c.pen == 32473 && c.pri == 134
+	     && c.collector == 0x0300640a && !strcmp (c.hostname, "prisma-bench"),
+	   "a written config reads back whole, gen even and moved");
+    h->cfg[1].gen = 3;
+    CHECK (bpa_log_seg_cfg_read (&h->cfg[1], &c) == -1,
+	   "a config being written (gen odd) is not read");
+    h->cfg[1].gen = 2;
+  }
 
   printf ("=== one ring: fill, drop, drain, wrap ===\n");
   r = bpa_log_seg_ring (seg, 1);
