@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`monitor cgnat logging`: the CGNAT log records, live, in words.**
+  ([#556](https://github.com/andrediashexa/hexarouting/issues/556))
+  One line per exported block event - `ALLOC`, `RELEASE`, `EXHAUSTED` and the
+  `BOOT` marker - with the subscriber, the public address, the port range,
+  the pool by name and the identity, at the time the record carries, until
+  Ctrl-C or `seconds <n>`; filters by subscriber, public address and port,
+  event and pool; `raw` prints the IPFIX record by IE number and the syslog
+  line. Every 10 s a `--` line per stream says what was sent, what waits and
+  what was lost - delivery is counted per stream, not per record, and the
+  screen says so. The events come from a new watch ring in the shared
+  segment, written by `bpa_log_emit()` and the marker, with no consumer: the
+  monitor reads it without writing anything and costs the dataplane
+  nothing; a reader that falls behind says how many lines it missed. The
+  worker rings were the first source, and lab/monitor-cgnat-logging.sh
+  showed they miss every block released by expiry. `show bpa pool index`
+  (new) maps the pool number a record carries to its name.
+
 ### Fixed
 
 ## 0.149.15 - the CGNAT log export's state in the API

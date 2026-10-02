@@ -1069,6 +1069,33 @@ VLIB_CLI_COMMAND (bpa_show_pool_command, static) = {
   .function = bpa_show_pool_command_fn,
 };
 
+/* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header.
+ *
+ * Each pool's index beside its name, one "<index> <name>" row a pool (#556).
+ * The index is what a block event carries - natPoolId in IPFIX, pool= in
+ * syslog, pool_id in the event rings - and nothing else printed it: `show bpa
+ * pool` lists pools in index order but skips the holes a deleted pool
+ * leaves, so the n-th row is pool n only until the first delete. `monitor
+ * cgnat logging` names an event's pool from this, and says "#<n>" where a
+ * dataplane does not answer it. */
+static clib_error_t *
+bpa_show_pool_index_command_fn (vlib_main_t *vm, unformat_input_t *input,
+				vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+
+  pool_foreach (p, bm->pools)
+    vlib_cli_output (vm, "%u %v", (u32) (p - bm->pools), p->name);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_pool_index_command, static) = {
+  .path = "show bpa pool index",
+  .short_help = "show bpa pool index",
+  .function = bpa_show_pool_index_command_fn,
+};
+
 /* not a unit: a VLIB_CLI_COMMAND body, driven by the labs - see the header */
 static clib_error_t *
 bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,

@@ -20,6 +20,21 @@ minute (74 s measured on 0.149.4, from the upgrade command to the service
 answering) and every open stream and session ends. Upgrades are announced here
 and to the prisma-web session before they run.
 
+## 0.149.16 - monitor cgnat logging
+
+* **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
+* **New, VTY only (#556):** `monitor cgnat logging` prints the block events
+  the box exports, live. It is not reachable through the API: `Show` takes
+  `show`, `ping`, `traceroute` and `mtr` only, and refuses `monitor` as it
+  always has - GetLogging (0.149.15) remains the API's view of the export,
+  and a client that wants the records themselves reads them at its collector.
+* **New dataplane command:** `show bpa pool index` (`<index> <name>` per
+  pool), which maps the `natPoolId` / `pool=` a record carries to the pool's
+  name; the monitor uses it. Not an API addition.
+* **Segment:** the shared segment gains a watch ring after the export ring;
+  its layout version stays 3.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.15 - the CGNAT log export in the API
 
 * **Contract:** additions only. `prisma.proto` sha256 `b08a5a089ff29ecc6c4d44f4cad3f51864d225d3ed210726953eee7a480c3e7a`
