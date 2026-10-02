@@ -84,6 +84,7 @@ main (void)
   struct stat st;
 
   bpa_log_tcp.fd = bpa_log_syslog.fd = -1;
+  l.udp.fd = -1;
   signal (SIGPIPE, SIG_IGN);
   snprintf (seg, sizeof (seg), "/prisma-logd-test-%d", (int) getpid ());
   mkdtemp (dir);
@@ -109,10 +110,10 @@ main (void)
 	   "a segment with no header yet is refused (VPP still laying it out)");
     bpa_log_seg_init (base, 2, 64, sizeof (bpa_log_event_t), 9);
     h->boot_wall = 1789999000.0;
-    h->version = 1;
+    h->version = 2;
     CHECK (logd_attach (&l, p) == -1,
 	   "a layout version this build does not read is refused");
-    h->version = 2;
+    h->version = 3;
     CHECK (logd_attach (&l, p) == 0 && l.generation == 9,
 	   "VPP's segment is attached, its generation remembered");
     logd_detach (&l);
@@ -224,6 +225,119 @@ main (void)
   CHECK (logd_apply_cfg (&l, BPA_LOG_STREAM_SYSLOG) == 1
 	   && !bpa_log_syslog.enabled,
 	 "a configuration that turns the stream off turns it off");
+
+  printf ("=== the UDP export (#550 step 3) ===\n");
+  {
+    int r = socket (AF_INET, SOCK_DGRAM, 0), got, nrec = 0, ntpl = 0, nmark = 0;
+    struct sockaddr_in ra = { .sin_family = AF_INET }, from;
+    socklen_t fl;
+    bpa_log_seg_udp_cfg_t u = { 0 };
+    u8 m[2048];
+    struct timeval tv = { 0, 200000 };
+    u32 seen_lo = 0, maxlen = 0;
+
+    ra.sin_addr.s_addr = htonl (INADDR_LOOPBACK);
+    bind (r, (struct sockaddr *) &ra, sizeof (ra));
+    al = sizeof (ra);
+    getsockname (r, (struct sockaddr *) &ra, &al);
+    setsockopt (r, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+
+    u.enabled = 1;
+    u.collector = htonl (INADDR_LOOPBACK);
+    u.src = htonl (0x7f000002); /* 127.0.0.2: a source the box picks */
+    u.port = ntohs (ra.sin_port);
+    u.path_mtu = 512;
+    u.block_template_id = 256;
+    u.marker_template_id = 257;
+    u.template_interval = 20;
+    u.domain_id = 1;
+    u.seq = 7;
+    CHECK (logd_udp_takes (&u), "an enabled default-table exporter is ours");
+    u.fib_index = 3;
+    CHECK (!logd_udp_takes (&u), "an exporter in a VRF stays in VPP");
+    u.fib_index = 0;
+    u.src = 0;
+    CHECK (!logd_udp_takes (&u), "and one with no source is not taken");
+    u.src = htonl (0x7f000002);
+    bpa_log_seg_udp_cfg_write (&h->udp_cfg, &u);
+
+    h->tcp_owner = BPA_LOG_OWNER_LOGGER;
+    for (i = 0; i < 40; i++)
+      push (base, BPA_LOG_XEV_RECORD, BPA_NAT_EVENT_BLOCK_ALLOC,
+	    0x64400000 + i, 0);
+    push (base, BPA_LOG_XEV_MARKER, 0, 0, 0);
+    logd_pass (&l, 9000000000ULL);
+    CHECK (l.udp_on && l.udp.st.bound,
+	   "the container binds the source and takes the export");
+    for (;;)
+      {
+	fl = sizeof (from);
+	got = recvfrom (r, m, sizeof (m), 0, (struct sockaddr *) &from, &fl);
+	if (got <= 0)
+	  break;
+	if (from.sin_addr.s_addr != htonl (0x7f000002)
+	    || from.sin_port != htons (4739))
+	  {
+	    CHECK (0, "a datagram from %08x:%u, not the source and 4739",
+		   ntohl (from.sin_addr.s_addr), ntohs (from.sin_port));
+	    continue;
+	  }
+	if ((u32) got + 28 > maxlen)
+	  maxlen = got + 28;
+	CHECK (m[0] == 0 && m[1] == 10 && ((m[2] << 8) | m[3]) == got
+		 && ntohl (*(u32 *) (m + 8)) == 7 && ntohl (*(u32 *) (m + 12)) == 1,
+	       "every message: version 10, its own length, VPP's sequence "
+	       "number and domain");
+	switch ((m[16] << 8) | m[17])
+	  {
+	  case 2:
+	    ntpl++;
+	    if (((m[20] << 8) | m[21]) == 256)
+	      CHECK (((m[22] << 8) | m[23]) == 7 && ((m[24] << 8) | m[25]) == 323
+		       && ((m[28] << 8) | m[29]) == 230
+		       && ((m[48] << 8) | m[49]) == 283,
+		     "the block template is RFC 8158 Table 21's seven fields");
+	    else
+	      CHECK (((m[20] << 8) | m[21]) == 257 && ((m[22] << 8) | m[23]) == 2
+		       && ((m[28] << 8) | m[29]) == 160,
+		     "and the marker's: observation time, system init time");
+	    break;
+	  case 256:
+	    CHECK ((got - 20) % 25 == 0, "data records of 25 bytes");
+	    if (!nrec)
+	      seen_lo = ntohl (*(u32 *) (m + 20 + 9));
+	    CHECK (ntohs (*(u16 *) (m + 20 + 17)) == 1024
+		     && ntohs (*(u16 *) (m + 20 + 19)) == 3071 && m[20 + 8] == 16,
+		   "a record carries the event and the block's ports");
+	    nrec += (got - 20) / 25;
+	    break;
+	  case 257:
+	    nmark++;
+	    CHECK (got == 36, "the marker in a message of its own");
+	    break;
+	  }
+      }
+    CHECK (ntpl == 2, "both templates went out before the data: %d", ntpl);
+    CHECK (nrec == 40 && seen_lo == 0x64400000,
+	   "all 40 records arrived, the first subscriber first: %d", nrec);
+    CHECK (nmark == 1, "and one marker: %d", nmark);
+    CHECK (maxlen <= 512, "no datagram exceeds the path MTU: %u", maxlen);
+    CHECK (h->udp_stats.n_records == 40 && h->udp_stats.n_packets >= 4,
+	   "the counters VPP's screen reads: %llu records, %llu packets",
+	   (unsigned long long) h->udp_stats.n_records,
+	   (unsigned long long) h->udp_stats.n_packets);
+
+    /* Given back: what is open is dropped and counted, nothing is sent. */
+    push (base, BPA_LOG_XEV_RECORD, BPA_NAT_EVENT_BLOCK_ALLOC, 1, 0);
+    logd_drain (&l, 0);
+    h->tcp_owner = BPA_LOG_OWNER_VPP;
+    logd_pass (&l, 9100000000ULL);
+    CHECK (!l.udp_on && l.udp.fd < 0, "VPP takes the export back: socket closed");
+    fl = sizeof (from);
+    CHECK (recvfrom (r, m, sizeof (m), 0, (struct sockaddr *) &from, &fl) <= 0,
+	   "and the container sends nothing after it");
+    close (r);
+  }
 
   munmap (base, bytes);
   shm_unlink (seg);

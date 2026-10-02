@@ -2974,6 +2974,36 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		   lm->template_id, BPA_LOG_RECORD_SIZE);
   vlib_cli_output (vm, "  records     %Lu emitted, %Lu dropped",
 		   lm->n_records, lm->n_dropped);
+  /* Who sends it (#550 step 3): the line above counts VPP's own, this one the
+   * log container's, which carries it while it is up. */
+  {
+    bpa_log_seg_hdr_t *uh = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+
+    if (bpa_log_udp_by_logger ())
+      vlib_cli_output (vm, "  sender      the log container: %Lu records, "
+			   "%Lu packets, %Lu templates, %Lu send failures, "
+			   "%Lu dropped",
+		       uh->udp_stats.n_records, uh->udp_stats.n_packets,
+		       uh->udp_stats.n_templates, uh->udp_stats.n_send_fail,
+		       uh->udp_stats.n_dropped);
+    else if (bpa_log_logger_owns () && lm->enabled)
+      {
+	bpa_log_seg_udp_cfg_t uc;
+
+	/* The container is up and still does not send it: say why, since the
+	 * operator expects otherwise. */
+	if (bpa_log_seg_udp_cfg_read (&uh->udp_cfg, &uc) == 0
+	    && uc.fib_index != 0)
+	  vlib_cli_output (vm, "  sender      the dataplane: the exporter is "
+			       "in a VRF, which the log container does not take");
+	else
+	  vlib_cli_output (vm, "  sender      the dataplane: the log container "
+			       "could not bind the source (%s)",
+			   strerror (uh->udp_stats.last_errno));
+      }
+    else
+      vlib_cli_output (vm, "  sender      the dataplane");
+  }
   vlib_cli_output (vm, "  natEvent    16 allocation, 17 de-allocation, 12 exhaustion");
   /* What the once-per-interval rule held back (#549): the operator reads here
    * that 772 subscribers ran out, not 1.6 million packets. */

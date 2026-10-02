@@ -37,7 +37,7 @@
 #include <string.h>
 
 #define BPA_LOG_SEG_MAGIC	 "PRBALOG1"
-#define BPA_LOG_SEG_VERSION	 2
+#define BPA_LOG_SEG_VERSION	 3
 #define BPA_LOG_SEG_NAME	 "/prisma-bpa-log"
 #define BPA_LOG_SEG_HDR_BYTES	 1024
 #define BPA_LOG_RING_HDR_BYTES	 192
@@ -75,6 +75,40 @@ typedef struct
   u8 pad[12];
 } bpa_log_seg_cfg_t;
 
+/* The UDP IPFIX export's configuration, as VPP's exporter holds it (#550
+ * step 3): written by VPP only, gen odd while written, the same as a TCP
+ * stream's. Addresses in network order. The template ids are the ones VPP's
+ * flow report gave the block and marker reports, so the container's records
+ * carry the ids a collector already learnt; seq is the stream's sequence
+ * number as VPP last had it. */
+typedef struct
+{
+  volatile u32 gen;
+  u8 enabled;		/* `cgnat logging enable` */
+  u8 pad0;
+  u16 port;		/* the collector's */
+  u32 collector;
+  u32 src;		/* `logging udp ... src` */
+  u16 path_mtu;
+  u16 block_template_id;
+  u16 marker_template_id;
+  u16 pad1;
+  u32 template_interval; /* seconds */
+  u32 fib_index;	/* 0: the default table, the only one the container takes */
+  u32 domain_id;
+  u32 seq;
+  u8 pad[24];
+} bpa_log_seg_udp_cfg_t;
+
+/* What the container's UDP export did, for `show cgnat logging`. */
+typedef struct
+{
+  u64 n_records, n_markers, n_packets, n_templates, n_send_fail, n_dropped;
+  u32 bound;		/* the socket is bound to the source address */
+  i32 last_errno;
+  u8 pad[16];
+} bpa_log_seg_udp_stats_t;
+
 /* What a TCP stream did, as the log container counts it: written by the
  * logger only, read by VPP for `show cgnat logging`. */
 typedef struct
@@ -108,6 +142,8 @@ typedef struct
   volatile u32 tcp_owner;      /* BPA_LOG_OWNER_*, by VPP only */
   bpa_log_seg_cfg_t cfg[2];    /* by VPP: what each stream is configured to */
   bpa_log_seg_stats_t stats[2]; /* by the logger: what each stream did */
+  bpa_log_seg_udp_cfg_t udp_cfg;	   /* version 3, by VPP */
+  bpa_log_seg_udp_stats_t udp_stats; /* version 3, by the logger */
 } bpa_log_seg_hdr_t;
 
 /* head and tail on cache lines of their own: the worker writes one, the
@@ -130,6 +166,8 @@ _Static_assert (sizeof (bpa_log_ring_t) == BPA_LOG_RING_HDR_BYTES,
 		"the ring header is part of the segment's contract");
 _Static_assert (sizeof (bpa_log_seg_cfg_t) == 96, "stream cfg: 96 bytes");
 _Static_assert (sizeof (bpa_log_seg_stats_t) == 112, "stream stats: 112 bytes");
+_Static_assert (sizeof (bpa_log_seg_udp_cfg_t) == 64, "udp cfg: 64 bytes");
+_Static_assert (sizeof (bpa_log_seg_udp_stats_t) == 72, "udp stats: 72 bytes");
 
 /* Bytes one ring takes, header and slots. */
 static inline u32
@@ -275,6 +313,48 @@ bpa_log_seg_cfg_write (bpa_log_seg_cfg_t *c, u8 enabled, u8 wire, u16 port,
   if (hostname)
     strncpy (c->hostname, hostname, sizeof (c->hostname) - 1);
   __atomic_store_n (&c->gen, (c->gen | 1) + 1, __ATOMIC_RELEASE);
+}
+
+/* The UDP export's configuration, VPP's side: gen odd while written. */
+static inline void
+bpa_log_seg_udp_cfg_write (bpa_log_seg_udp_cfg_t *c,
+			   const bpa_log_seg_udp_cfg_t *v)
+{
+  u32 g = c->gen;
+
+  __atomic_store_n (&c->gen, g | 1, __ATOMIC_RELEASE);
+  __atomic_thread_fence (__ATOMIC_SEQ_CST);
+  memcpy ((u8 *) c + sizeof (c->gen), (const u8 *) v + sizeof (v->gen),
+	  sizeof (*c) - sizeof (c->gen));
+  __atomic_store_n (&c->gen, (g | 1) + 1, __ATOMIC_RELEASE);
+}
+
+/* Is this UDP export one the log container carries? Enabled, with a
+ * collector and a source, in the default table - a VRF exporter stays in VPP
+ * - and a path MTU a record fits in. VPP and the container ask the same
+ * question with this one function. */
+static inline int
+bpa_log_seg_udp_takes (const bpa_log_seg_udp_cfg_t *c)
+{
+  return c->enabled && c->collector && c->src && c->fib_index == 0
+	 && c->path_mtu >= 28 + 16 + 4 + 25;
+}
+
+/* The logger's side: a consistent copy, or -1 while VPP is writing. */
+static inline int
+bpa_log_seg_udp_cfg_read (const bpa_log_seg_udp_cfg_t *c,
+			  bpa_log_seg_udp_cfg_t *out)
+{
+  u32 g0 = __atomic_load_n (&c->gen, __ATOMIC_ACQUIRE);
+
+  if (g0 & 1)
+    return -1;
+  memcpy (out, (const void *) c, sizeof (*out));
+  __atomic_thread_fence (__ATOMIC_ACQUIRE);
+  if (__atomic_load_n (&c->gen, __ATOMIC_ACQUIRE) != g0)
+    return -1;
+  out->gen = g0;
+  return 0;
 }
 
 /* The logger's side: a consistent copy, or -1 while VPP is writing. */

@@ -151,6 +151,75 @@ bpa_log_seg_publish (bpa_log_stream_t *s)
  * stopping, after spilling what it held); VPP's streams then reconnect and
  * replay the file as they did before #550.
  */
+/* not a unit: it reads VPP's IPFIX exporter 0 and writes it into the live
+ * segment through bpa_log_seg_udp_cfg_write(), which test_bpa_log_ring.c and
+ * test_prisma_logd.c drive; lab/log-container.sh measures the container
+ * sending what it says.
+ *
+ * The UDP export's configuration, for the log container (#550 step 3): the
+ * exporter is VPP's (`set_ipfix_exporter`, which the VTY sends), so it is
+ * read from VPP on every pass of the log process and published only when it
+ * moved. */
+static void
+bpa_log_udp_publish (void)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+  bpa_log_main_t *lm = &bpa_log_main;
+  flow_report_main_t *frm = &flow_report_main;
+  ipfix_exporter_t *exp;
+  bpa_log_seg_udp_cfg_t c, now;
+
+  if (!h || !frm->exporters || pool_is_free_index (frm->exporters, 0))
+    return;
+  exp = pool_elt_at_index (frm->exporters, 0);
+  clib_memset (&c, 0, sizeof (c));
+  c.enabled = lm->enabled;
+  c.collector = exp->ipfix_collector.ip.ip4.as_u32;
+  c.src = exp->src_address.ip.ip4.as_u32;
+  c.port = exp->collector_port;
+  c.path_mtu = exp->path_mtu;
+  c.block_template_id = lm->template_id;
+  c.marker_template_id = lm->marker_template_id;
+  c.template_interval = exp->template_interval;
+  /* ~0 is VPP's "no table given": the default table, as 0 is. Measured in
+   * lab/log-container.sh: an exporter set with no vrf holds ~0, and the
+   * container refused it as a VRF until this said so. */
+  c.fib_index = exp->fib_index == ~0 ? 0 : exp->fib_index;
+  c.domain_id = 1;
+  if (lm->enabled && exp->streams
+      && lm->stream_index < vec_len (exp->streams))
+    c.seq = exp->streams[lm->stream_index].sequence_number;
+  if (!bpa_log_seg_udp_cfg_read (&h->udp_cfg, &now))
+    {
+      c.gen = now.gen;
+      if (!memcmp (&c, &now, sizeof (c)))
+	return;
+    }
+  bpa_log_seg_udp_cfg_write (&h->udp_cfg, &c);
+}
+
+/* not a unit: it reads the live segment; the rule is
+ * bpa_log_seg_udp_takes(), which test_prisma_logd.c drives.
+ *
+ * Does the log container carry the UDP export right now (#550 step 3)? It
+ * carries the streams, the export is one it takes, and its socket is bound
+ * to the source - so a container that cannot bind leaves UDP in VPP. */
+int
+bpa_log_udp_by_logger (void)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) bpa_log_seg.base;
+  bpa_log_seg_udp_cfg_t c;
+
+  if (!bpa_log_logger_owns ())
+    return 0;
+  if (bpa_log_seg_udp_cfg_read (&h->udp_cfg, &c) || !bpa_log_seg_udp_takes (&c))
+    return 0;
+  return h->udp_stats.bound != 0;
+}
+
+/* not a unit: the handover described above bpa_log_udp_publish(), decided
+ * by the live segment's heartbeat; lab/log-container.sh starts and stops the
+ * container under traffic and reads both senders. */
 void
 bpa_log_handover (void)
 {
@@ -159,9 +228,14 @@ bpa_log_handover (void)
 
   if (!bpa_log_seg.shared || !h)
     return;
+  bpa_log_udp_publish ();
   alive = bpa_log_seg_logger_alive (h, bpa_log_mono_ns ());
   if (alive && h->tcp_owner == BPA_LOG_OWNER_VPP)
     {
+      /* What VPP's own UDP buffer holds goes out first: from here on the
+       * container may send, and a record never goes from both (#550). */
+      if (bpa_log_main.enabled)
+	bpa_log_flush (vlib_get_main ());
       bpa_log_stream_release (&bpa_log_tcp);
       bpa_log_stream_release (&bpa_log_syslog);
       bpa_log_seg_publish (&bpa_log_tcp);
@@ -457,7 +531,7 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 /* not a unit: it walks VPP's per-thread flow-report buffers and sends
  * what is in them. lab/ipfix-outbuf.sh is where a buffer that filled mid
  * record is read off a collector. */
-static void
+void
 bpa_log_flush (vlib_main_t *vm)
 {
   bpa_log_main_t *lm = &bpa_log_main;
@@ -515,15 +589,20 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 	      u16 port_hi, u32 pool_id, const char *identity)
 {
   f64 wall = unix_time_now ();
+  int owns = bpa_log_logger_owns ();
+  int udp_l = owns && bpa_log_main.enabled && bpa_log_udp_by_logger ();
 
-  bpa_log_block_event (vm, vm->thread_index, wall, event, ip_priv, ip_pub,
-		       port_lo, port_hi, pool_id);
+  /* Each event goes to exactly ONE UDP sender, decided here: VPP's exporter,
+   * or the container through the export ring (#550 step 3). */
+  if (!udp_l)
+    bpa_log_block_event (vm, vm->thread_index, wall, event, ip_priv, ip_pub,
+			 port_lo, port_hi, pool_id);
   /* The TCP streams, carried by the log container when there is one: VPP
    * only copies the event into the export ring, and the container formats,
    * sends and spills it (#550). */
-  if (bpa_log_logger_owns ())
+  if (owns)
     {
-      if (bpa_log_tcp.enabled || bpa_log_syslog.enabled)
+      if (bpa_log_tcp.enabled || bpa_log_syslog.enabled || udp_l)
 	bpa_log_xpush (BPA_LOG_XEV_RECORD, wall, event, ip_priv, ip_pub,
 		       port_lo, port_hi, pool_id, identity);
       return;
@@ -560,10 +639,11 @@ bpa_log_marker_emit (vlib_main_t *vm)
   f64 wall = unix_time_now ();
   u16 offset;
   u8 *d;
+  int udp_l = bpa_log_main.enabled && bpa_log_udp_by_logger ();
 
   if (bpa_log_logger_owns ())
     {
-      if (bpa_log_tcp.enabled || bpa_log_syslog.enabled)
+      if (bpa_log_tcp.enabled || bpa_log_syslog.enabled || udp_l)
 	bpa_log_xpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0);
     }
   else
@@ -575,7 +655,8 @@ bpa_log_marker_emit (vlib_main_t *vm)
       bpa_log_stream_marker (&bpa_log_syslog, wall, bm->boot_wall);
     }
 
-  if (!lm->enabled)
+  /* The container sends the UDP marker when it carries the export. */
+  if (!lm->enabled || udp_l)
     return;
 
   exp = pool_elt_at_index (frm->exporters, 0);

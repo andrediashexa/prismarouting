@@ -35,7 +35,7 @@ def main():
            "hdr_bytes": hb, "n_rings": n, "ring_slots": slots,
            "event_bytes": ev, "ring_bytes": rb, "generation": gen,
            "consumer": consumer, "bytes": len(data), "rings": []}
-    ok = (magic == b"PRBALOG1" and ver == 2 and hb == HDR_BYTES
+    ok = (magic == b"PRBALOG1" and ver == 3 and hb == HDR_BYTES
           and ev == EVENT_BYTES and slots and not slots & (slots - 1)
           and rb == RING_HDR + slots * ev and HDR_BYTES + n * rb <= len(data))
     out["readable"] = bool(ok)

@@ -95,7 +95,7 @@ cp "$REPO/tools/gen-api.sh" "$CTX/tools/"
 # compiled from, the way test/test_prisma_logd.c compiles it.
 mkdir -p "$CTX/logd-src/src/logger" "$CTX/logd-src/src/plugins/bpa" \
          "$CTX/logd-src/test"
-cp "$REPO/src/logger/prisma_logd.c" "$CTX/logd-src/src/logger/"
+cp "$REPO"/src/logger/*.c "$CTX/logd-src/src/logger/"
 cp "$REPO"/src/plugins/bpa/bpa_log*.c "$REPO"/src/plugins/bpa/bpa_log*.h \
    "$REPO"/src/plugins/bpa/bpa_identity.[ch] "$REPO"/src/plugins/bpa/bpa_frame.h \
    "$REPO"/src/plugins/bpa/bpa_sock.h "$REPO"/src/plugins/bpa/bpa_seq.h \

@@ -28,6 +28,21 @@ API client - drop counters in `SystemInfo` or the telemetry stream, a health
 status for the export - it is announced here before the release that carries
 it.
 
+## 0.149.14 - UDP IPFIX sent by the log container too
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Behaviour:** the RFC 8158 export over UDP is sent by the log container
+  when it runs, from the same source address and port, with the same
+  templates and fields; nothing an API client calls changes. What
+  `OperationalService.Show` returns for `show cgnat logging` gains one line
+  under the IPFIX section: `sender      the log container: N records, N
+  packets, N templates, N send failures, N dropped`, or `sender      the
+  dataplane`, with a reason after a colon when the container is up and does
+  not send it. A client parsing that text should not assume the old line
+  count.
+* **Not yet:** the logging counters are still not in the API (they are only
+  in `show cgnat logging`).
+
 ## 0.149.13 - the SNMP MIB under the product's own number, 67033
 
 * **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
