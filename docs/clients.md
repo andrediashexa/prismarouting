@@ -28,6 +28,20 @@ an API client sees - a health status for the export, its drop counters in
 `SystemInfo` or the telemetry stream, events - it is announced in this section
 before the release that carries it.
 
+## 0.149.9 - a clean exit nobody asked for is started again
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Behaviour (#552):** a dataplane that exits with status 0 while nothing on
+  the box stopped it is started again and its configuration put back, like a
+  crash since 0.149.5 - within about 10 s plus the time the dataplane takes to
+  start. Before, the box stayed without a dataplane until a reboot. An API
+  client sees the same window as for a crash: Health `NOT_SERVING` for
+  `OperationalService` and `TelemetryService` while the statistics segment
+  does not answer, and the dataplane's counters starting again from zero.
+  Five such restarts a boot; after that the box gives the card back and
+  stays down, as before.
+* **Lab box:** .166 is on 0.149.4.
+
 ## 0.149.8 - disabling a syslog never enabled no longer stops the dataplane
 
 * **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).

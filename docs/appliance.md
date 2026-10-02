@@ -3338,6 +3338,38 @@ command that puts the saved file back by hand. FRR's container is watched
 the same way: it starts from `/etc/frr/frr.conf`, which is not the routing
 the box was running.
 
+### When the dataplane exits cleanly and nobody asked
+
+Docker's `on-failure` policy restarts a dataplane that failed and leaves one
+that exited with status 0 alone, because to Docker status 0 means somebody
+wanted it stopped. On the legacy bench at 0.149.7 nobody did: `logging
+syslog disable` had closed VPP's stdin
+([#551](https://github.com/andrediashexa/hexarouting/issues/551)), VPP
+exited 0 at the next vppctl, and the watcher read the exited container as
+Docker giving up and handed the card back - no dataplane until a reboot
+([#552](https://github.com/andrediashexa/hexarouting/issues/552)). So a
+clean exit nobody asked for is started again, and the next tick puts the
+configuration back on it as above. It counts as nobody asked when all of
+these hold:
+
+* the container exited with status 0 and was not OOM-killed;
+* the box is not shutting down (`systemctl is-system-running` is not
+  `stopping`);
+* `prisma-routing-containers.service` is active - `system dataplane
+  restart` and an upgrade stop that unit before they touch the dataplane;
+* Docker logged no `kill` for the container in the 30 seconds before it
+  died. `docker stop`, `docker kill`, compose's stop and down, and the daemon
+  stopping its containers all send one; a process that exits by itself sends
+  none. Measured on the build host's Docker (27.1) with two containers that
+  both exit 0: the one that ended by itself has no `kill` event, the one
+  `docker stop` ended has one. If Docker cannot be asked, the exit is not
+  taken as unasked and the card goes back as before.
+
+Five such restarts a boot (`/run/prisma-routing/clean-exit-restarts`) - the
+budget the compose file gives Docker for failures - and after that the card
+goes back as before. Each one is in `why-the-dataplane-stopped` and in the
+journal at warning level.
+
 **Before it undoes the bind it writes down why**, into
 `/var/log/prisma-routing/why-the-dataplane-stopped`: the container's state,
 its exit code, and the last eighty lines the dataplane printed. That file is

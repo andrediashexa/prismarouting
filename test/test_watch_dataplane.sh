@@ -358,5 +358,117 @@ runr "$B" >/dev/null
   || bad "a later restart was not put back after an earlier one gave up"
 rm -rf "$B"
 
+echo
+echo "=== a clean exit nobody asked for is started again (#552) ==="
+# The legacy bench, 0.149.7: `logging syslog disable` closed VPP's stdin
+# (#551), VPP exited 0 at the next vppctl, Docker's on-failure policy left a
+# status-0 exit alone, and this script gave the card back - no dataplane
+# until a reboot. Each condition of "nothing stopped it" is a box here.
+mkcbox() { # <exit> <oom> [kill-event-text] - an exited dataplane
+  B=$(mktemp -d)
+  mkdir -p "$B/bin" "$B/run/prisma-routing" "$B/state"
+  : > "$B/state/active-prisma-routing-containers.service"
+  : > "$B/state/active-prisma-routing.service"
+  echo "$1 $2 2026-10-01T23:59:07.417013606Z" > "$B/state/exit"
+  printf '%s' "${3:-}" > "$B/state/events"
+  cat > "$B/bin/systemctl" <<SC
+#!/bin/sh
+echo "\$@" >> "$B/systemctl.calls"
+case "\$1" in is-system-running) cat "$B/state/system" 2>/dev/null; exit 0 ;; esac
+for u in "\$@"; do :; done
+[ -e "$B/state/active-\$u" ]
+SC
+  cat > "$B/bin/docker" <<DC
+#!/bin/sh
+echo "\$@" >> "$B/docker.calls"
+case "\$1" in
+  inspect)
+    case "\$3" in
+      *ExitCode*OOMKilled*FinishedAt*) cat "$B/state/exit" ;;
+      *State.Status*) echo exited ;;
+      *) echo "exit=0 oom=false error=" ;;
+    esac ;;
+  events) [ -e "$B/state/events-fail" ] && exit 1; cat "$B/state/events" ;;
+  logs) echo "vpp[960]: tap: tap4097: VHOST_SET_FORK_FROM_OWNER failed" ;;
+  start) echo "\$2" >> "$B/started" ;;
+esac
+DC
+  printf '#!/bin/sh\necho called >> "%s/giveback.calls"\n' "$B" > "$B/bin/giveback"
+  printf '#!/bin/sh\nexit 0\n' > "$B/bin/ifup"
+  chmod +x "$B/bin/"*
+  echo "$B"
+}
+runc() { # <box>
+  PRISMA_ROOT=$1 PRISMA_SYSTEMCTL=$1/bin/systemctl PRISMA_DOCKER=$1/bin/docker \
+  PRISMA_GIVEBACK=$1/bin/giveback PRISMA_IFUP=$1/bin/ifup \
+  PRISMA_CARD_STAMP=$1/run/prisma-routing/card-given-back \
+  sh "$BIN" 2>&1
+}
+started() { [ -s "$1/started" ]; }
+
+B=$(mkcbox 0 false)
+OUT=$(runc "$B")
+started "$B" && ok "status 0, not OOM-killed, no kill from Docker: the dataplane is started again" \
+  || bad "an unasked clean exit was not restarted: $OUT"
+gave_back "$B" && bad "and the card was given back anyway" \
+  || ok "and the card stays bound: the dataplane is coming back"
+grep -q -- "--filter container=prisma-routing_vpp_1 --filter event=kill" "$B/docker.calls" \
+  && grep -q -- "--since 1790899117 --until 1790899148" "$B/docker.calls" \
+  && ok "the kill it looks for is the dataplane's, in the 30 s before it died" \
+  || bad "the events query: $(grep events "$B/docker.calls")"
+R=$B/var/log/prisma-routing/why-the-dataplane-stopped
+grep -q "exited 0 and nothing on the box stopped it" "$R" 2>/dev/null \
+  && ok "and the report says why, with what it printed last" || bad "no report: $(cat "$R" 2>&1)"
+case "$OUT" in *"#552"*"1 of 5"*) ok "and the journal says it, with the count" ;;
+  *) bad "the journal: $OUT" ;; esac
+rm -rf "$B"
+
+B=$(mkcbox 0 false "kill")
+runc "$B" >/dev/null
+started "$B" && bad "a container somebody stopped (a kill from Docker) was started again" \
+  || ok "a stop somebody asked for - docker stop, compose, the daemon - is not undone"
+gave_back "$B" && ok "and the card goes back, as before" || bad "and the card was not given back"
+rm -rf "$B"
+
+B=$(mkcbox 139 false)
+runc "$B" >/dev/null
+started "$B" && bad "a failed exit (139) was started a sixth time over Docker's policy" \
+  || ok "a non-zero exit is Docker's policy giving up: not started again here"
+rm -rf "$B"
+
+B=$(mkcbox 0 true)
+runc "$B" >/dev/null
+started "$B" && bad "an OOM-killed dataplane was started again" || ok "nor one the kernel OOM-killed"
+rm -rf "$B"
+
+B=$(mkcbox 0 false)
+echo stopping > "$B/state/system"
+runc "$B" >/dev/null
+started "$B" && bad "a dataplane was started while the box shuts down" \
+  || ok "nor while the box is shutting down"
+rm -rf "$B"
+
+B=$(mkcbox 0 false)
+: > "$B/state/events-fail"
+runc "$B" >/dev/null
+started "$B" && bad "Docker could not be asked and the dataplane was restarted anyway" \
+  || ok "when Docker cannot say whether it was stopped, it is not restarted"
+rm -rf "$B"
+
+B=$(mkcbox 0 false)
+echo 5 > "$B/run/prisma-routing/clean-exit-restarts"
+OUT=$(runc "$B")
+started "$B" && bad "a sixth clean-exit restart in one boot" \
+  || ok "five clean-exit restarts a boot, then the card goes back"
+case "$OUT" in *budget*) ok "and it says the budget is spent" ;; *) bad "the budget not said: $OUT" ;; esac
+rm -rf "$B"
+
+B=$(mkcbox 0 false)
+rm -f "$B/state/active-prisma-routing-containers.service"
+runc "$B" >/dev/null
+started "$B" && bad "started a dataplane while prisma-routing-containers.service is stopped - 'system dataplane restart' stops it first" \
+  || ok "nothing while the containers unit is not active: a deliberate restart stops it first"
+rm -rf "$B"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
