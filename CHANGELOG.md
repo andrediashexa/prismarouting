@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.15 - the CGNAT log export's state in the API
+
+### Added
+
 * **The CGNAT log export in the management API.**
   ([#555](https://github.com/andrediashexa/hexarouting/issues/555))
   `OperationalService.GetLogging` answers each export - syslog and IPFIX
@@ -91,8 +97,6 @@ version has a chance of seeing it.
   `log-disconnected`, `log-carrier`, `log-spill`, `log-spill-full`,
   `log-stalled` and `log-delivering`. lab/api-grpc.sh holds every field to
   the screen, kills the collector while lines come and starts it again.
-
-### Fixed
 
 ## 0.149.14 - the UDP IPFIX export leaves from the log container too
 
