@@ -1855,13 +1855,13 @@ with open(_API) as _f:
 # may type. The SECRET was asked too, and with a packet (#425): a secret
 # cannot be read back, so lab/syslog.sh configures one and has a NAS sign
 # with it - the box answers a signature made with the first 127 of a
-# 128-character secret and not one made with all 128. `path[256]` is the row
-# that still keeps its width, because it has not been asked:
-# lowering them on the grounds that C strings have terminators would be
-# lowering a limit an operator reads on a guess.
+# 128-character secret and not one made with all 128. `path[256]` was asked
+# last (#553): vpp_papi refuses 256 and the dataplane copies into char[256],
+# so it holds 255 like the others hold their width less one - measured, not
+# lowered on the grounds that C strings have terminators.
 _FROM_API = {
     "cgnat pool": ("name", 64, 63),
-    "cgnat identity file": ("path", 256, 256),
+    "cgnat identity file": ("path", 256, 255),
     "cgnat identity radius secret": ("secret", 128, 127),
 }
 for _what, (_field, _width, _usable) in _FROM_API.items():
@@ -1871,7 +1871,7 @@ for _what, (_field, _width, _usable) in _FROM_API.items():
     check(config.TEXT_LIMITS[_what][0] == _usable,
           f"{_what}: the table says {config.TEXT_LIMITS[_what][0]}, and the "
           f"field is {_width} with {_usable} usable")
-check(config.TEXT_LIMITS["cgnat identity dhcp-leases"][0] == 256,
+check(config.TEXT_LIMITS["cgnat identity dhcp-leases"][0] == 255,
       "both identity paths travel in the same field and take the same limit")
 check(config.TEXT_LIMITS["description"] == (
           63, "VPP's vnet/interface.api, sw_interface_tag_add_del tag[64], "
