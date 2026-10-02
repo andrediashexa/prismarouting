@@ -28,6 +28,16 @@ API client - drop counters in `SystemInfo` or the telemetry stream, a health
 status for the export - it is announced here before the release that carries
 it.
 
+## 0.149.13 - the SNMP MIB under the product's own number, 67033
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **SNMP, for a client that also polls it:** with no `snmp enterprise-number`
+  configured, PRISMA-ROUTING-MIB and its notifications are rooted at
+  `.1.3.6.1.4.1.67033` (the product's IANA Private Enterprise Number) instead
+  of `.1.3.6.1.4.1.32473`. Object numbers below the root are unchanged; only
+  the prefix moves. A box that named its own number keeps it.
+* **Lab box:** .166 is on 0.149.4.
+
 ## 0.149.12 - the TCP log streams in a log container of their own
 
 * **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).

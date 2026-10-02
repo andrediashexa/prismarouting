@@ -990,17 +990,15 @@ SNMP_DEFAULTS = {
     "enabled": "no",          # off until an operator asks for it
     "listen-address": "127.0.0.1",
     "port": "161",
-    "enterprise-number": "32473",  # PRODUCT_PEN; see below
+    "enterprise-number": "67033",  # PRODUCT_PEN; see below
 }
-#: The number PRISMA-ROUTING-MIB is served under when the operator names none
-#: (#508). PROVISIONAL: the product's own IANA number was applied for on
-#: 2026-09-29, and this is IANA's "Example Enterprise Number for
-#: Documentation Use" (RFC 5612) until it arrives - nobody's, so it collides
-#: with no organisation's subtree. The number first proposed, 666, is Oki
-#: Electric Industry's in the registry, and our objects there would read as an
-#: Oki device's in an NMS with their MIBs loaded. When the product's number
-#: arrives it replaces this one line, and every box that did not name its own
-#: moves with it: the default is never written into a saved configuration.
+#: The number PRISMA-ROUTING-MIB is served under when the operator names none:
+#: the product's own IANA Private Enterprise Number, 67033, assigned on
+#: 2026-10-02 (#554). From 0.143.4 (#508) until then it was 32473, IANA's
+#: "Example Enterprise Number for Documentation Use" (RFC 5612), because the
+#: product had none; the number first proposed, 666, is Oki Electric
+#: Industry's. The default is never written into a saved configuration, so
+#: every box that did not name its own moved with this one line.
 PRODUCT_PEN = SNMP_DEFAULTS["enterprise-number"]
 
 

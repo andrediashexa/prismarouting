@@ -338,6 +338,25 @@ REDACTED=$($HX -c "show running-config" 2>&1 | grep -E "snmp community|auth |pri
 printf '%s\n' "$REDACTED" | sed 's/^/  /'
 
 echo
+echo "=========== 3b. the product's own number, 67033 (#554) ==========="
+# Every step above names the operator's 99999. With none named, the box serves
+# PRISMA-ROUTING-MIB under the product's IANA number, 67033 since 0.149.13 -
+# and no longer under 32473, IANA's documentation number it used until then.
+$HX -c "configure" -c "no snmp enterprise-number" -c "commit" 2>&1 | sed 's/^/  /'
+# No systemd here: restart snmpd on the file the commit wrote, as step 1 did.
+pkill snmpd 2>/dev/null; sleep 0.5
+snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf >> /tmp/snmpd.log 2>&1 &
+sleep 2
+PENSUBS=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.67033.1.1.0 2>&1)
+OLDPEN=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.32473.1.1.0 2>&1)
+PENMIB=$(PRISMA_SNMP_MIB=/src/appliance/PRISMA-ROUTING-MIB.in $HX -c "show snmp mib" 2>&1 | grep -m1 "::= { enterprises")
+echo "  under 67033: $PENSUBS | under 32473: $OLDPEN | $PENMIB"
+$HX -c "configure" -c "snmp enterprise-number 99999" -c "commit" >/dev/null 2>&1
+pkill snmpd 2>/dev/null; sleep 0.5
+snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf >> /tmp/snmpd.log 2>&1 &
+sleep 2
+
+echo
 echo "=========== 4. the dataplane goes away ==========="
 # Not "the numbers freeze" - the numbers must DISAPPEAR.
 pkill -f "vpp -c" 2>/dev/null; sleep 3
@@ -349,6 +368,11 @@ echo "=========== VERDICT ==========="
 expect_in "the VTY generated an snmpd configuration" "pass_persist" "$CONF"
 expect_in "with the standard NAT-MIB subtree" "1.3.6.1.2.1.123" "$CONF"
 expect_in "and the operator's own enterprise subtree" "1.3.6.1.4.1.99999" "$CONF"
+expect "with no number named, the product's 67033 answers ($PENSUBS)" \
+  test "$PENSUBS" = "$SUBS"
+expect "and 32473, the documentation number it used before, does not ($OLDPEN)" \
+  sh -c 'case "$1" in *"No Such"*|*"no such"*|*imeout*) exit 0 ;; *) exit 1 ;; esac' _ "$OLDPEN"
+expect_in "show snmp mib roots the module at 67033" "enterprises 67033" "$PENMIB"
 # The daemon half of read-only. There must never be an rwcommunity line.
 expect_not_in "and NO writable community" "rwcommunity" "$CONF"
 # Two halves, because either alone passes for the wrong reason. The first

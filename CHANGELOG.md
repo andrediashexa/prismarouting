@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PRISMA-ROUTING-MIB under the product's own IANA number, 67033.**
+  ([#554](https://github.com/andrediashexa/hexarouting/issues/554))
+  IANA assigned the product its Private Enterprise Number on 2026-10-02. A
+  box that does not name its own `snmp enterprise-number` now serves the MIB
+  and its notifications under `.1.3.6.1.4.1.67033` instead of
+  `.1.3.6.1.4.1.32473` - IANA's documentation number (RFC 5612), used since
+  0.143.4 because the product had none. **A poller walking 32473 must walk
+  67033**: the objects keep their numbers below the root, so only the prefix
+  changes; reload the module `show snmp mib` prints (`::= { enterprises
+  67033 }`, ORGANIZATION "NetConfig" as the registry has it). The default was
+  never written into a saved configuration, so no file pins 32473; a box
+  that named its own number keeps it. lab/snmp.sh walks 67033 with no number
+  named and finds nothing under 32473.
+
 ### Fixed
 
 ## 0.149.12 - the TCP log streams in a log container of their own
