@@ -36,7 +36,8 @@ it.
   `.1.3.6.1.4.1.67033` (the product's IANA Private Enterprise Number) instead
   of `.1.3.6.1.4.1.32473`. Object numbers below the root are unchanged; only
   the prefix moves. A box that named its own number keeps it.
-* **Lab box:** .166 is on 0.149.4.
+* **Lab box:** .166 is on 0.149.12 since 2026-10-02 (upgraded from 0.149.4,
+  a reboot; the API was away a few minutes).
 
 ## 0.149.12 - the TCP log streams in a log container of their own
 
