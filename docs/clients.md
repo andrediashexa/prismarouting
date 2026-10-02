@@ -53,7 +53,8 @@ and to the prisma-web session before they run.
   `log-connected`, `log-disconnected`, `log-carrier`, `log-spill`,
   `log-spill-full`, `log-stalled`, `log-delivering`, `text` naming the
   stream. Up to 10 s late (the server reads every 10 s).
-* **Lab box:** .166 is on 0.149.13.
+* **Lab box:** .166 is on 0.149.14 (upgraded and rebooted on 2026-10-02; it has
+  no log export configured, so its GetLogging shows three unconfigured streams).
 
 ## 0.149.14 - UDP IPFIX sent by the log container too
 
