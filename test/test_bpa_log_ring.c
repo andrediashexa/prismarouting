@@ -116,7 +116,7 @@ main (void)
 	 "a ring that is not a power of two is refused (the mask needs it)");
   CHECK (bpa_log_seg_init (seg, N_RINGS, SLOTS, sizeof (ev_t), 77) == 0,
 	 "a power-of-two ring is laid out");
-  CHECK (!memcmp (h->magic, "PRBALOG1", 8) && h->version == 2
+  CHECK (!memcmp (h->magic, "PRBALOG1", 8) && h->version == 3
 	   && h->n_rings == N_RINGS && h->generation == 77
 	   && h->consumer == BPA_LOG_CONSUMER_VPP,
 	 "the header carries the magic, version, sizes and generation, and "
@@ -137,10 +137,10 @@ main (void)
 	 "a segment cut short of its last ring: refused");
   CHECK (bpa_log_seg_check (seg, size, 60) == -4,
 	 "events of another size (another build's layout): refused");
-  h->version = 1;
-  CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -3,
-	 "a layout version this build does not know (step 1's): refused");
   h->version = 2;
+  CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -3,
+	 "a layout version this build does not know (step 2's): refused");
+  h->version = 3;
   h->xring_slots = 1024;
   CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -7,
 	 "an export ring of another size: refused");
@@ -185,6 +185,33 @@ main (void)
     CHECK (bpa_log_seg_cfg_read (&h->cfg[1], &c) == -1,
 	   "a config being written (gen odd) is not read");
     h->cfg[1].gen = 2;
+  }
+  {
+    bpa_log_seg_udp_cfg_t u = { 0 }, r;
+
+    CHECK (bpa_log_seg_udp_cfg_read (&h->udp_cfg, &r) == 0 && !r.enabled
+	     && !bpa_log_seg_udp_takes (&r),
+	   "an unconfigured UDP export reads as off, and is not the logger's");
+    u.enabled = 1;
+    u.collector = 0x0300640a;
+    u.src = 0x0200640a;
+    u.path_mtu = 512;
+    u.block_template_id = 256;
+    bpa_log_seg_udp_cfg_write (&h->udp_cfg, &u);
+    CHECK (bpa_log_seg_udp_cfg_read (&h->udp_cfg, &r) == 0 && r.gen == 2
+	     && r.src == 0x0200640a && r.block_template_id == 256
+	     && bpa_log_seg_udp_takes (&r),
+	   "a UDP export written by VPP reads back whole, and is the logger's");
+    u.path_mtu = 60;
+    CHECK (!bpa_log_seg_udp_takes (&u),
+	   "a path MTU no record fits in is not taken");
+    u.path_mtu = 512;
+    u.fib_index = 2;
+    CHECK (!bpa_log_seg_udp_takes (&u), "nor an exporter in a VRF");
+    h->udp_cfg.gen = 3;
+    CHECK (bpa_log_seg_udp_cfg_read (&h->udp_cfg, &r) == -1,
+	   "a UDP config being written is not read");
+    h->udp_cfg.gen = 2;
   }
 
   printf ("=== one ring: fill, drop, drain, wrap ===\n");

@@ -51,6 +51,7 @@
 #include "bpa_log_shim.h"
 #include "../plugins/bpa/bpa_log_tcp.c"
 #include "bpa_log_ring.h"
+#include "logd_ipfix_udp.c"
 
 /* What this process holds of the segment. */
 typedef struct
@@ -63,6 +64,8 @@ typedef struct
   char spill_dir[256];
   u64 lost_owner;		/* times VPP took the streams back from us */
   u64 xdrained;
+  logd_udp_t udp;		/* the RFC 8158 export over UDP (#550 step 3) */
+  u8 udp_on;			/* we carry it right now */
 } logd_t;
 
 /* The stream behind index i of the segment's cfg and stats. */
@@ -173,6 +176,16 @@ logd_drain (logd_t *l, u32 max)
       bpa_log_xev_t *v =
 	bpa_log_ring_slot (x, BPA_LOG_XRING_SLOTS, BPA_LOG_XEV_BYTES, tail + k);
 
+      if (l->udp_on)
+	{
+	  if (v->kind == BPA_LOG_XEV_MARKER)
+	    logd_udp_marker (&l->udp, v->wall, v->wall, h->boot_wall);
+	  else
+	    logd_udp_record (&l->udp, v->wall, v->wall, v->ev.event,
+			     v->ev.ip_priv, v->ev.ip_pub, v->ev.port_lo,
+			     v->ev.port_hi, v->ev.pool_id);
+	}
+
       for (i = 0; i < 2; i++)
 	{
 	  bpa_log_stream_t *s = logd_stream (i);
@@ -192,6 +205,9 @@ logd_drain (logd_t *l, u32 max)
     }
   bpa_log_ring_consume (x, n);
   l->xdrained += n;
+  /* A drain's records go out together, as VPP's bpa_log_flush() sends them. */
+  if (l->udp_on && n)
+    logd_udp_flush (&l->udp, (u32) time (0));
   return n;
 }
 
@@ -223,6 +239,34 @@ logd_publish_stats (logd_t *l)
       t->pending_connect = s->pending_connect;
       t->last_errno = s->last_errno;
     }
+  h->udp_stats = l->udp.st;
+}
+
+/* Takes up, keeps, or lets go of the UDP export, from VPP's configuration:
+ * the socket is made when the export is ours to carry, its templates go out
+ * when due, and a configuration that is no longer ours closes it. */
+void
+logd_udp_update (logd_t *l, f64 now)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) l->base;
+  bpa_log_seg_udp_cfg_t c;
+
+  if (bpa_log_seg_udp_cfg_read (&h->udp_cfg, &c))
+    return;
+  if (!logd_udp_takes (&c))
+    {
+      if (l->udp_on || l->udp.fd >= 0)
+	logd_udp_close (&l->udp);
+      l->udp_on = 0;
+      return;
+    }
+  if (logd_udp_open (&l->udp, &c))
+    {
+      l->udp_on = 0;
+      return;
+    }
+  l->udp_on = 1;
+  logd_udp_templates (&l->udp, now);
 }
 
 /* Gives both streams back: memory to the spill, sockets closed. */
@@ -234,6 +278,10 @@ logd_release_all (logd_t *l)
   for (i = 0; i < 2; i++)
     if (logd_stream (i)->enabled)
       bpa_log_stream_release (logd_stream (i));
+  if (l->udp_on)
+    logd_udp_flush (&l->udp, (u32) time (0));
+  logd_udp_close (&l->udp);
+  l->udp_on = 0;
   l->owned = 0;
 }
 
@@ -274,11 +322,16 @@ logd_pass (logd_t *l, u64 now_ns)
 	      s->connected = 0;
 	      s->backlog = 0;
 	    }
+	  /* And what the UDP export held open: dropped, counted. */
+	  logd_udp_close (&l->udp);
+	  l->udp_on = 0;
 	  l->owned = 0;
 	}
+      h->udp_stats = l->udp.st;
       return 0;
     }
   l->owned = 1;
+  logd_udp_update (l, unix_time_now ());
   if (logd_drain (l, 4096) == 4096)
     busy = 1;
   for (i = 0; i < 2; i++)
@@ -335,6 +388,7 @@ main (int argc, char **argv)
   snprintf (l.spill_dir, sizeof (l.spill_dir), "%s",
 	    dir ? dir : "/var/log/prisma-routing");
   bpa_log_tcp.fd = bpa_log_syslog.fd = -1;
+  l.udp.fd = -1;
   sa.sa_handler = logd_on_term;
   sigaction (SIGTERM, &sa, 0);
   sigaction (SIGINT, &sa, 0);

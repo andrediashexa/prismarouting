@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **UDP IPFIX leaves the dataplane too: the log container sends the RFC 8158
+  export - #550's third step.** ([#550](https://github.com/andrediashexa/hexarouting/issues/550))
+  While the log container carries the streams and its socket is bound to the
+  exporter's source, VPP writes no UDP record: each event goes to exactly one
+  sender, decided when it is emitted, and VPP sends what its own buffer held
+  before handing over. prisma-logd writes the messages VPP's flow report
+  wrote - template ids 256 and 257 read from VPP, the same fields, domain and
+  sequence number, records packed to the path MTU, the marker in a message of
+  its own every 30 s, both templates before the first record and every
+  template interval - from a socket bound to the configured `logging udp ...
+  src` and port 4739. An exporter in a VRF, or a source the container cannot
+  bind, stays in VPP, and `show cgnat logging`'s new `sender` line says which
+  sender is sending and why. Measured in lab/log-container.sh: 150
+  allocations across VPP -> container -> VPP all reached the collector once
+  each, none twice, every datagram from 10.0.0.1:4739, and still 0 packets
+  lost during the spill replays.
+
 ### Fixed
 
 ## 0.149.13 - PRISMA-ROUTING-MIB under the product's own IANA PEN, 67033

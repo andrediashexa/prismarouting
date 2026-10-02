@@ -20,13 +20,28 @@ minute (74 s measured on 0.149.4, from the upgrade command to the service
 answering) and every open stream and session ends. Upgrades are announced here
 and to the prisma-web session before they run.
 
-## Coming: #550 - the rest of log export out of the dataplane
+## Coming: #550 - the logging counters in the API
 
-Not released. UDP IPFIX still leaves from the dataplane, and the logging
-counters (`show cgnat logging`) are not in the API yet. If either reaches an
-API client - drop counters in `SystemInfo` or the telemetry stream, a health
-status for the export - it is announced here before the release that carries
-it.
+Not released. Since 0.149.14 every log export runs in the log container when
+it is up; the logging counters (`show cgnat logging`) are not in the API yet.
+When they reach an API client - drop counters in `SystemInfo` or the
+telemetry stream, a health status for the export - it is announced here
+before the release that carries it.
+
+## 0.149.14 - UDP IPFIX sent by the log container too
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Behaviour:** the RFC 8158 export over UDP is sent by the log container
+  when it runs, from the same source address and port, with the same
+  templates and fields; nothing an API client calls changes. What
+  `OperationalService.Show` returns for `show cgnat logging` gains one line
+  under the IPFIX section: `sender      the log container: N records, N
+  packets, N templates, N send failures, N dropped`, or `sender      the
+  dataplane`, with a reason after a colon when the container is up and does
+  not send it. A client parsing that text should not assume the old line
+  count.
+* **Not yet:** the logging counters are still not in the API (they are only
+  in `show cgnat logging`).
 
 ## 0.149.13 - the SNMP MIB under the product's own number, 67033
 

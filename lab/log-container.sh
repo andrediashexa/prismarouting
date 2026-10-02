@@ -5,7 +5,7 @@
 #   sh tools/lab.sh log-container        -> LAB PASSED
 #   sh tools/lab.sh log-container off    -> LAB FAILED (VPP carries them)
 #
-# OFF-RED-AT-LEAST: 5
+# OFF-RED-AT-LEAST: 6
 #
 # THE CASE THAT STILL FAILED after #547, measured on the legacy bench on
 # 0.149.8: a 30k pps burst through the box lost 11.7% at rx while a 573 MB
@@ -63,6 +63,9 @@ ip netns exec subs ip link set veth-sub up
 ip netns exec subs ip addr add 100.64.3.1/22 dev veth-sub
 i=10; while [ $i -lt 30 ]; do
   ip netns exec subs ip addr add 100.64.0.$i/22 dev veth-sub; i=$((i+1)); done
+# And 150 more, fifty for each of the UDP export's three phases (#550 step 3).
+i=1; while [ $i -le 150 ]; do
+  ip netns exec subs ip addr add 100.64.1.$i/22 dev veth-sub; i=$((i+1)); done
 ip netns exec subs ip route add default via 100.64.3.254
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
@@ -96,6 +99,12 @@ heap_mb() {
             if (u=="G") n*=1024; else if (u=="K") n/=1024; printf "%d\n", n}'
 }
 carrier() { vppctl show bpa logging | tr -d '\r' | grep -m1 "TCP streams carried by"; }
+udp_sender() { vppctl show bpa logging | tr -d '\r' | grep -m1 "  sender "; }
+allocs() {  # allocs <first host of 100.64.1.x> <count>: one block each
+  ip netns exec subs python3 /src/lab/log_sender.py 8.8.8.8 $(( $2 * 64 )) 1 \
+    100.64.1.$1 $2 /tmp/sent.allocs >/dev/null
+  sleep 2
+}
 POLL=
 poll_start() {  # the monitoring poll the bench ran: vppctl and prismash every 3 s
   ( while :; do vppctl show interface >/dev/null 2>&1
@@ -123,6 +132,18 @@ vppctl show bpa session 2>&1 | tr -d '\r' | tail -1 | sed 's/^/  /'
 echo "=== baseline: no logging at all ==="
 window base
 H0=$(heap_mb)
+
+echo "=== the UDP export, and a collector that records who sent each record ==="
+rm -f /tmp/udp.stop
+ip netns exec peer python3 /src/lab/log_udp_sink.py 10.0.0.2 1200 /tmp/udp.json /tmp/udp.stop &
+UDPSINK=$!
+sleep 1
+$HX -c "configure" -c "nat" -c "cgnat" -c "logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
+    -c "logging enable" -c "commit" 2>&1 | tail -1 | sed 's/^/  /'
+sleep 2
+echo "  phase A, before any log container: 50 allocations"
+allocs 1 50
+SENDER_A=$(udp_sender); echo "  $SENDER_A"
 
 SPILL=/var/log/prisma-routing/syslog-spill.bin
 plant() {  # 240 MB of whole lines: under the spill's 256 MB ceiling, so a
@@ -161,6 +182,9 @@ else
 fi
 echo "  $(carrier)"
 CARRIER_UP=$(carrier)
+echo "  phase B, the log container up: 50 allocations"
+allocs 51 50
+SENDER_B=$(udp_sender); echo "  $SENDER_B"
 
 # A collector that reads everything and keeps nothing, counting whole frames.
 sink() {  # sink <seconds> <out>
@@ -244,6 +268,27 @@ if [ -n "$LOGD" ]; then
   echo "  $TAKEN_BACK"
   tail -2 /tmp/logd.log | sed 's/^/  logd: /'
 fi
+echo "  phase C, after it: 50 allocations"
+allocs 101 50
+SENDER_C=$(udp_sender); echo "  $SENDER_C"
+sleep 2
+touch /tmp/udp.stop; wait $UDPSINK 2>/dev/null
+UDP=$(python3 -c '
+import json, collections
+d = json.load(open("/tmp/udp.json"))
+recs = [tuple(r) for r in d["records"]]
+c = collections.Counter(recs)
+phase = [r for r in recs if r[0] == 16 and r[1].startswith("100.64.1.")]
+subs = collections.Counter(r[1] for r in phase)
+print("senders=%s" % ",".join(sorted(d["senders"])))
+print("allocs=%d" % len(set(subs)))
+print("dups=%d" % sum(n - 1 for n in c.values() if n > 1))
+print("missing=%d" % (150 - len(set(subs))))
+print("templates=%s" % ",".join(map(str, d["templates"])))
+print("markers=%d" % d["markers"])
+')
+printf '%s\n' "$UDP" | sed 's/^/  udp: /'
+udpv() { printf '%s\n' "$UDP" | sed -n "s/^$1=//p"; }
 
 loss() { awk -v w="$1" '$1 == w { print $4 }' /tmp/windows; }
 sent_of() { awk -v w="$1" '$1 == w { print $2 }' /tmp/windows; }
@@ -274,4 +319,18 @@ expect "the dataplane's heap stayed flat: $H0 -> $HM1 -> $HM2 -> $HM3 MB" \
   test $(( HM3 - H0 )) -lt 16 -a $(( HM1 - H0 )) -lt 16
 expect_in "stopped, the log container gave the streams back to the dataplane" \
   "carried by the dataplane" "${TAKEN_BACK:-<no container ran>}"
+expect_in "UDP: before the container, the dataplane sent the export" \
+  "sender      the dataplane" "$SENDER_A"
+expect_in "UDP: with it up, the container sent it (#550 step 3)" \
+  "sender      the log container" "$SENDER_B"
+expect_in "UDP: and after it stopped, the dataplane again" \
+  "sender      the dataplane" "$SENDER_C"
+expect "UDP: every datagram came from the configured source 10.0.0.1:4739 (got $(udpv senders))" \
+  test "$(udpv senders)" = "10.0.0.1:4739"
+expect "UDP: all 150 allocations of the three phases arrived (missing $(udpv missing))" \
+  test "$(udpv missing)" = 0
+expect "UDP: none twice across the two handovers (duplicates $(udpv dups))" \
+  test "$(udpv dups)" = 0
+expect "UDP: both templates, 256 and 257, reached the collector (got $(udpv templates))" \
+  test "$(udpv templates)" = "256,257"
 verdict

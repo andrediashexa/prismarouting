@@ -914,8 +914,25 @@ formatting, the sockets, the spill file, its replay, reconnection - runs in
 * The container stays in `system.slice`, which the tuner fences to the
   control-plane CPUs (#466), and has a memory limit of its own (256 MB): a
   collector can make it run out, never the dataplane.
-* UDP IPFIX stays in the dataplane: it is fire-and-forget, keeps nothing and
-  was measured costing no packet.
+* **UDP IPFIX too, since #550's third step.** While the container carries
+  the streams and its socket is bound, VPP does not write a UDP record: each
+  event goes to exactly one sender, decided when it is emitted, and VPP sends
+  what its own buffer held before it hands over. The container writes the
+  messages VPP's flow report wrote - the same template ids (256 and 257, read
+  from VPP), the same fields, the same observation domain and sequence number,
+  records packed to the exporter's path MTU, a marker in a message of its
+  own, both templates before the first record and every template interval -
+  from a socket bound to the exporter's source address and port 4739, so the
+  collector sees the same sender (measured with the collector's own
+  `recvfrom`: every datagram from the configured source). The marker keeps
+  VPP's cadence of one every 30 s on UDP, where a datagram can be lost. An
+  exporter in a VRF stays in VPP, and so does one whose source the container
+  cannot bind; `show cgnat logging` says which:
+
+  ```
+    sender      the dataplane: the log container could not bind the source (Cannot assign requested address)
+    sender      the dataplane: the exporter is in a VRF, which the log container does not take
+  ```
 
 `show cgnat logging` says who carries them and reads the container's counters
 when it does:
@@ -923,6 +940,7 @@ when it does:
 ```
 TCP streams carried by the log container (pid 5178)
   export      0 event(s) dropped with the log container's ring full (65536)
+  sender      the log container: 150 records, 9 packets, 4 templates, 0 send failures, 0 dropped
 ```
 
 or `TCP streams carried by the dataplane: no log container is running`.

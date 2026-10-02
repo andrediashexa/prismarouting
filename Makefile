@@ -98,7 +98,7 @@ $(BUILD)/test_bpa_log_ring: test/test_bpa_log_ring.c \
 # The log container's process (#550): it includes bpa_log_tcp.c as the TCP
 # exporter's own harness does, and is driven here against a segment, a
 # collector on 127.0.0.1 and a spill directory of its own.
-$(BUILD)/test_prisma_logd: test/test_prisma_logd.c src/logger/prisma_logd.c \
+$(BUILD)/test_prisma_logd: test/test_prisma_logd.c src/logger/prisma_logd.c src/logger/logd_ipfix_udp.c \
                    src/plugins/bpa/bpa_log_tcp.c src/plugins/bpa/bpa_log_ring.h \
                    src/plugins/bpa/bpa_log_syslog.c src/plugins/bpa/bpa_identity.c \
                    src/plugins/bpa/bpa_log.h test/bpa_log_shim.h

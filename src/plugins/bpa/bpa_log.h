@@ -180,6 +180,10 @@ extern bpa_log_seg_t bpa_log_seg;
 clib_error_t *bpa_log_seg_create (u32 n_rings);
 /* The log container carries the TCP streams (#550 step 2). */
 int bpa_log_logger_owns (void);
+/* The container carries the UDP export too (#550 step 3). */
+int bpa_log_udp_by_logger (void);
+/* Sends the current thread's partial UDP buffer. */
+void bpa_log_flush (vlib_main_t *vm);
 /* Called from the log process every pass: hands the TCP streams to a log
  * container that has come up, takes them back from one that has gone. */
 void bpa_log_handover (void);
