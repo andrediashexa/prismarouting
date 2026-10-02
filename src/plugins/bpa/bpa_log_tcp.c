@@ -84,6 +84,24 @@ bpa_log_stream_t bpa_log_tcp;
 bpa_log_stream_t bpa_log_syslog;
 
 /*
+ * Both streams start closed (#551). A file-scope struct begins as zeros, and
+ * zero is a VALID descriptor - stdin. `logging syslog disable` on a box whose
+ * syslog had never been enabled went through bpa_tcp_disconnect(), which
+ * closed descriptor 0: VPP's stdin. The next vppctl session was handed
+ * descriptor 0, and when it ended VPP took it for its console closing and
+ * exited with status 0 - which Docker does not restart. Measured on the
+ * legacy bench at 0.149.7: fd 0 /dev/null before the commit, gone after it,
+ * VPP exited on the next `vppctl show version`. bpa_init() calls this, beside
+ * the RADIUS listener that learnt the same thing in #21.
+ */
+void
+bpa_log_streams_init (void)
+{
+  bpa_log_tcp.fd = -1;
+  bpa_log_syslog.fd = -1;
+}
+
+/*
  * RFC 8158 Table 21 elements, in the same order as the record, and since #21
  * one more: 371 userName, the subscriber this box knew at the instant of the
  * allocation.

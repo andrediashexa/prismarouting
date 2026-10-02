@@ -1061,6 +1061,29 @@ main (void)
     vec_free (sys.outbuf);
   }
 
+  /* #551: a stream that was never enabled must not close descriptor 0.
+   * The globals start as zeros, as they do in the plugin; without
+   * bpa_log_streams_init() their fd is 0 and the disconnect below closes
+   * stdin, which is what took VPP down on the bench. */
+  {
+    int keep = dup (0);
+    memset (&bpa_log_tcp, 0, sizeof (bpa_log_tcp));
+    memset (&bpa_log_syslog, 0, sizeof (bpa_log_syslog));
+    bpa_log_streams_init ();
+    bpa_tcp_disconnect (&bpa_log_syslog);
+    bpa_tcp_disconnect (&bpa_log_tcp);
+    CHECK (fcntl (0, F_GETFD) != -1,
+	   "disabling a log stream never enabled leaves descriptor 0 open "
+	   "(#551): it closed stdin, and VPP exited on the next vppctl");
+    CHECK (bpa_log_tcp.fd == -1 && bpa_log_syslog.fd == -1,
+	   "both streams start closed: tcp fd %d, syslog fd %d",
+	   bpa_log_tcp.fd, bpa_log_syslog.fd);
+    if (fcntl (0, F_GETFD) == -1 && keep >= 0)
+      dup2 (keep, 0);
+    if (keep >= 0)
+      close (keep);
+  }
+
   unlink (spill_file);
   rmdir (spill_dir);
   return bpa_test_verdict (checks, failures);

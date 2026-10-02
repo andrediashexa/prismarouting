@@ -28,6 +28,19 @@ an API client sees - a health status for the export, its drop counters in
 `SystemInfo` or the telemetry stream, events - it is announced in this section
 before the release that carries it.
 
+## 0.149.8 - disabling a syslog never enabled no longer stops the dataplane
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Fixed (#551):** on 0.149.7 and before, `logging syslog disable` on a box
+  whose syslog had never been enabled closed the dataplane's stdin, and the
+  next operation stopped the dataplane (clean exit, not restarted). An API
+  client saw it as Health `NOT_SERVING` for `OperationalService` and
+  `TelemetryService`, `UNAVAILABLE` on reads that need the dataplane, and no
+  recovery until the box was rebooted. **Client workaround before 0.149.8:**
+  none on the client side; a commit that disables syslog should not be sent
+  to a box whose syslog was never enabled.
+* **Lab box:** .166 is on 0.149.4.
+
 ## 0.149.7 - CGNAT log export stops endangering the dataplane
 
 Fixes #547 and #549.

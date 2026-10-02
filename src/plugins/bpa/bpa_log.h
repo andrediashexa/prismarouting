@@ -267,6 +267,8 @@ typedef struct
 
 extern bpa_log_stream_t bpa_log_tcp;
 extern bpa_log_stream_t bpa_log_syslog;
+/* Both streams closed (fd -1) before anything can disable them (#551). */
+void bpa_log_streams_init (void);
 
 /*
  * One stream, whichever wire it speaks. The five below take it explicitly;
