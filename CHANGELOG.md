@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.10 - an identity path is refused at 256 characters, where it always failed
+
+### Fixed
+
 * **A 256-character identity path passed the VTY and failed at the send.**
   ([#553](https://github.com/andrediashexa/hexarouting/issues/553))
   `cgnat identity file|dhcp-leases <path>` travels in `string path[256]`.
