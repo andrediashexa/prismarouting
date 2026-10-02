@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.11 - the CGNAT log's event rings in a segment of their own
+
+### Added
+
 * **The block-event rings are in a shared segment of their own, outside
   VPP's main heap - #550's first step.**
   ([#550](https://github.com/andrediashexa/hexarouting/issues/550))
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   from outside VPP and requires its header to check and every event this run
   made to be in it; test/test_bpa_log_ring.c drives the layout, the drop, the
   wrap of the indexes, two threads, and a reader in another process.
-
-### Fixed
 
 ## 0.149.10 - an identity path is refused at 256 characters, where it always failed
 
