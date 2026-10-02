@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A 256-character identity path passed the VTY and failed at the send.**
+  ([#553](https://github.com/andrediashexa/hexarouting/issues/553))
+  `cgnat identity file|dhcp-leases <path>` travels in `string path[256]`.
+  The VTY's limit was 256, from #424's measurement over vat2, which carried
+  more than the field declares. Since #527 the VTY sends over vpp_papi, which
+  refuses a string longer than its field less one, so a path of 256 passed
+  the prompt and was refused with "cannot be sent over the binary API"; the
+  dataplane's handler copies the field into char[256] and keeps 255 as well.
+  The limit is 255 now and the refusal is at the prompt, naming it;
+  lab/syslog.sh measures 254, 255, 256 and 1000.
+
 ## 0.149.9 - a dataplane that exits cleanly when nothing stopped it is started again
 
 ### Fixed

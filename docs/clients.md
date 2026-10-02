@@ -28,6 +28,17 @@ an API client sees - a health status for the export, its drop counters in
 `SystemInfo` or the telemetry stream, events - it is announced in this section
 before the release that carries it.
 
+## 0.149.10 - an identity path is refused at 256, where it always failed
+
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
+* **Behaviour (#553):** a candidate line `cgnat identity file <path>` or
+  `cgnat identity dhcp-leases <path>` with a path of 256 characters or more is
+  refused by the commit before anything is sent, naming the limit of 255 (a
+  `FAILED_PRECONDITION` with that text over the API). Before, the commit of a
+  256-character path failed later with "cannot be sent over the binary API".
+  A client that bounds the field in a form should use 255.
+* **Lab box:** .166 is on 0.149.4.
+
 ## 0.149.9 - a clean exit nobody asked for is started again
 
 * **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).

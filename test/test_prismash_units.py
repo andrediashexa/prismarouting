@@ -7531,10 +7531,12 @@ print("\n=== and the two identity statements, against their own fields ===")
 # Mutation shown red: the text_error call dropped from apply_identity - a
 # 1000-byte path then reaches a 256-byte field.
 for _w, _needle in (
+        # 255, not the field's 256: vpp_papi refuses the 256th character and
+        # the dataplane copies into char[256] (#553).
         (["cgnat", "identity", "file", "/" + "d" * 1000],
-         "and the limit is 256"),
+         "and the limit is 255"),
         (["cgnat", "identity", "dhcp-leases", "/" + "d" * 1000],
-         "and the limit is 256"),
+         "and the limit is 255"),
         (["cgnat", "identity", "radius", "secret", "s" * 500],
          # 127, not the field's 128: a 128-character secret arrives at the box as
         # 127 through both doors, and the box then verifies nothing (#425).

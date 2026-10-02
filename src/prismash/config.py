@@ -1701,22 +1701,26 @@ TEXT_LIMITS = {
     "description": (63, "VPP's vnet/interface.api, "
                         "sw_interface_tag_add_del tag[64], which keeps 63 "
                         "characters and truncates the rest"),
-    #: 256, and this is the one bound that is NOT what the box enforces
-    #: (#424, measured). Handed a 257-character path directly through the
-    #: API, the dataplane opens the file and reads its entry: `string
-    #: path[256]` is what bpa.api DECLARES, and VPP's encoding carries more
-    #: than that without promising to. So the limit is the declared field,
-    #: the refusal arrives at the prompt where an operator can act on it,
-    #: and neither claims the box would fail - going past a declared width
-    #: is relying on behaviour nothing documents.
+    #: 255, measured twice. #424 measured 257 with vat2, which carried a
+    #: longer path than `string path[256]` declares, and set this to 256. The
+    #: VTY has sent over vpp_papi since #527, and papi refuses a string of
+    #: more than its field less one - room for the NUL - so 256 was refused
+    #: at send with "cannot be sent over the binary API" (#553, lab/syslog.sh
+    #: on 0.149.7: 255 taken, 256 refused that way). The dataplane's handler
+    #: copies the field with snprintf into char[256], which keeps 255 as
+    #: well. So 255 is what both ends hold, and the refusal says so at the
+    #: prompt, before the send.
     #: A static route's description is not held by FRR at all - `ip route
     #: ... description x` is `% Unknown command` on 10.7.1 - so it lives in
     #: this box's own file and the bound is this box's choice (#436). The same
     #: 63 an interface description has, so one habit fits both.
     "static route description": (63, "this box's own file; kept to what an "
                                      "interface description holds"),
-    "cgnat identity file": (256, "bpa.api, bpa_identity_set path[256]"),
-    "cgnat identity dhcp-leases": (256, "bpa.api, bpa_identity_set path[256]"),
+    "cgnat identity file": (255, "bpa.api, bpa_identity_source_set path[256], "
+                                     "which holds 255 characters and a NUL"),
+    "cgnat identity dhcp-leases": (255, "bpa.api, bpa_identity_source_set "
+                                            "path[256], which holds 255 "
+                                            "characters and a NUL"),
     #: 127, measured with a packet (#425). A secret cannot be read back -
     #: the box does not print one, correctly - so it was asked the only way
     #: it can be: RFC 2866 signs the Accounting-Request with the secret, so

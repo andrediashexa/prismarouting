@@ -341,12 +341,13 @@ grep -q "accounting-response" /tmp/api127.txt \
   && echo "  API, configured 128, signed with its first 127: ANSWERED" \
   || echo "  API, configured 128, signed with its first 127: silence"
 
-# AND HOW LONG A PATH THIS BOX OPENS (#424's last unmeasured row). The other
-# two entries of config.TEXT_LIMITS that come from a field have been asked
-# with a packet or a refusal; this one is the odd case - the box was already
-# seen using a 257-character path and finding the file, so its declared
-# `string path[256]` is not a limit and the VTY refusing 257 refuses
-# something the box can do.
+# AND HOW LONG A PATH THIS BOX OPENS (#424, then #553). #424 saw the box take
+# 257 when the VTY sent over vat2, which carried more than the declared
+# `string path[256]`. Since #527 the VTY sends over vpp_papi, which refuses a
+# string longer than its field less one, and the dataplane copies the field
+# into char[256]: 255 is what both ends hold. On 0.149.7 this measured 255
+# taken and 256 refused at SEND ("cannot be sent over the binary API") while
+# the VTY's own limit still said 256 - the refusal at the wrong place.
 #
 # Built out of nested directories, because a single component is capped at
 # 255 bytes by the filesystem and that cap is not the one being measured.
@@ -356,7 +357,7 @@ while [ ${#_dir} -lt 1100 ]; do
   _dir="$_dir/dddddddddddddddddddddddddddddddddddddddddddddddddd"
   mkdir -p "$_dir" 2>/dev/null || break
 done
-for _want in 255 256 257 1000; do
+for _want in 254 255 256 1000; do
   # A path of about _want characters, ending in a file that exists and holds
   # one mapping: a path cut short names a file that is not there, and the
   # load then brings in no entries - which is the reading, not the retval.
@@ -495,16 +496,14 @@ if [ "$MODE" != no-syslog ]; then
     grep -q "accounting-response" /tmp/sec-109.txt
   expect "and one of 127, which is what a 128-byte field holds" \
     grep -q "accounting-response" /tmp/sec-127.txt
-  # THE LAST ROW OF config.TEXT_LIMITS (#424). A path of 256 is taken and one
-  # of 257 is refused at the prompt, which is where a refusal can be acted
-  # on. What the DATAPLANE does with 257 is a different answer - handed one
-  # directly through the API it opens the file and reads it - so the bound is
-  # the declared field and not a limit the box enforces, and the refusal says
-  # so rather than implying the box would fail.
-  expect "an identity path of 256 characters is taken" \
-    sh -c "! grep -qi error /tmp/path-256.txt"
-  expect "and one of 257 is refused at the prompt, naming the limit" \
-    grep -q "and the limit is 256" /tmp/path-257.txt
+  # THE LAST ROW OF config.TEXT_LIMITS (#424, #553). A path of 255 is taken
+  # and the box reads its entry; one of 256 is refused AT THE PROMPT, naming
+  # the limit - not at the send, where it was refused on 0.149.7 by vpp_papi
+  # with a sentence about the binary API.
+  expect "an identity path of 255 characters is taken" \
+    sh -c "! grep -qi error /tmp/path-255.txt"
+  expect "and one of 256 is refused at the prompt, naming the limit" \
+    grep -q "and the limit is 255" /tmp/path-256.txt
   expect "'show bpa identity' counts the entries and prints none of them" \
     sh -c "grep -q '3 entry(s)' /tmp/identity-show.txt && ! grep -q '@isp' /tmp/identity-show.txt"
 else
