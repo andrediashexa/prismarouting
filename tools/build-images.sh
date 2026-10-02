@@ -91,6 +91,17 @@ mkdir -p "$CTX/api" "$CTX/tools"
 # it, and 0.149.2's first gate failed here when api/health arrived (#533).
 cp -r "$REPO"/api/* "$CTX/api/"
 cp "$REPO/tools/gen-api.sh" "$CTX/tools/"
+# The log container's process (#550): its source and the exporter it is
+# compiled from, the way test/test_prisma_logd.c compiles it.
+mkdir -p "$CTX/logd-src/src/logger" "$CTX/logd-src/src/plugins/bpa" \
+         "$CTX/logd-src/test"
+cp "$REPO/src/logger/prisma_logd.c" "$CTX/logd-src/src/logger/"
+cp "$REPO"/src/plugins/bpa/bpa_log*.c "$REPO"/src/plugins/bpa/bpa_log*.h \
+   "$REPO"/src/plugins/bpa/bpa_identity.[ch] "$REPO"/src/plugins/bpa/bpa_frame.h \
+   "$REPO"/src/plugins/bpa/bpa_sock.h "$REPO"/src/plugins/bpa/bpa_seq.h \
+   "$CTX/logd-src/src/plugins/bpa/"
+cp "$REPO"/test/bpa_shim.h "$REPO"/test/bpa_vec_shim.h "$REPO"/test/bpa_tcp_shim.h \
+   "$REPO"/test/bpa_log_shim.h "$CTX/logd-src/test/"
 
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
 docker build -q -f "$REPO/build/Dockerfile.vpp" \
@@ -109,6 +120,11 @@ docker build -q -f "$REPO/build/Dockerfile.mgmt" \
   --build-arg "VPP_VERSION=$VPP_VERSION" \
   -t "prisma-mgmt:$VERSION" "$CTX" > /dev/null
 
+echo "==> log image, the TCP log streams out of the dataplane (#550)"
+docker build -q -f "$REPO/build/Dockerfile.log" \
+  --build-arg "BASE=prisma-vpp:$VERSION" \
+  -t "prisma-log:$VERSION" "$CTX" > /dev/null
+
 # BYTES, and the megabyte is left to the one place that prints it. A size()
 # that formatted its own answer would give docs/appliance.md's measured table
 # a second opinion about what a megabyte is.
@@ -118,6 +134,7 @@ size() {
 printf '    prisma-vpp:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-vpp:$VERSION") / 1048576 ))"
 printf '    prisma-frr:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-frr:$VERSION") / 1048576 ))"
 printf '    prisma-mgmt:%s %s MB\n' "$VERSION" "$(( $(size "prisma-mgmt:$VERSION") / 1048576 ))"
+printf '    prisma-log:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-log:$VERSION") / 1048576 ))"
 
 if [ "$TARGET" = check ]; then
   # WHAT THE IMAGE HOLDS, asked of the image rather than of the Dockerfile.
@@ -215,6 +232,21 @@ CONF
     ok "and the drain it reads is in the image"
   else
     bad "the image carries no vpp-stop-drain.conf, so the wrapper would start VPP and drain nothing on the way down"
+  fi
+
+  echo "==> the log image (#550), started"
+  # The same rule as the dataplane's: it is the dataplane's layers and ONE
+  # binary, compiled in a stage that does not ship.
+  for tool in gcc cc; do
+    if docker run --rm --entrypoint sh "prisma-log:$VERSION" -c "command -v $tool" >/dev/null 2>&1; then
+      bad "the log image carries $tool: its compiler stage leaked into it"
+    fi
+  done
+  if docker run --rm --entrypoint sh "prisma-log:$VERSION" -c \
+       'test -x /usr/bin/prisma-logd' >/dev/null 2>&1; then
+    ok "the log image carries prisma-logd and no compiler"
+  else
+    bad "the log image has no /usr/bin/prisma-logd"
   fi
 
   echo "==> the control-plane image, asked its version"
@@ -584,7 +616,9 @@ if [ "$TARGET" = save ]; then
   # ONE save for the two images: they share the debian:12 base, and saving
   # them separately writes it twice. Measured: 84 MB for the dataplane alone
   # and 118 MB for both, not 84 + 90.
+  # The log image (#550) is the dataplane's layers and one binary: in the
+  # same save it costs that binary and nothing more.
   docker save "prisma-vpp:$VERSION" "prisma-frr:$VERSION" "prisma-mgmt:$VERSION" \
-    | gzip -1 > "$OUT"
+    "prisma-log:$VERSION" | gzip -1 > "$OUT"
   printf '    %s  %s MB\n' "$OUT" "$(( $(wc -c < "$OUT") / 1048576 ))"
 fi

@@ -145,6 +145,20 @@ _Static_assert (sizeof (bpa_log_event_t) == 52,
 _Static_assert (offsetof (bpa_log_event_t, identity) == 17,
 		"bpa_log_event_t's identity starts at byte 17");
 
+/* A slot of the export ring (#550 step 2): an event for the TCP streams, or
+ * the boot marker, with the wall clock VPP read when it drained it - the time
+ * the record carries, the same instant the UDP record of the event carries. */
+typedef struct
+{
+  bpa_log_event_t ev;
+  u8 kind;		/* BPA_LOG_XEV_RECORD or BPA_LOG_XEV_MARKER */
+  u8 pad[3];
+  f64 wall;
+} bpa_log_xev_t;
+
+_Static_assert (sizeof (bpa_log_xev_t) == BPA_LOG_XEV_BYTES,
+		"bpa_log_xev_t is the export ring's slot: 64 bytes");
+
 /* Per-thread queue ceiling: if the process falls behind, the excess is lost
  * in an accounted way, rather than growing without bound. */
 #define BPA_LOG_QUEUE_MAX 8192
@@ -164,6 +178,11 @@ typedef struct
 
 extern bpa_log_seg_t bpa_log_seg;
 clib_error_t *bpa_log_seg_create (u32 n_rings);
+/* The log container carries the TCP streams (#550 step 2). */
+int bpa_log_logger_owns (void);
+/* Called from the log process every pass: hands the TCP streams to a log
+ * container that has come up, takes them back from one that has gone. */
+void bpa_log_handover (void);
 #endif
 
 /* A TCP stream's spill file's ceiling on disk: past it a record is dropped
@@ -309,6 +328,15 @@ void bpa_log_stream_marker (bpa_log_stream_t *s, f64 wall, f64 init);
 void bpa_log_stream_service (bpa_log_stream_t *s, f64 now);
 int bpa_log_stream_pending (bpa_log_stream_t *s);
 u32 bpa_log_stream_flush_exit (bpa_log_stream_t *s);
+/* Hands the stream to another process: memory to the spill, socket closed,
+ * backlog forgotten (#550). */
+void bpa_log_stream_release (bpa_log_stream_t *s);
+#ifndef BPA_STANDALONE
+/* Publishes a stream's configuration for the log container. */
+void bpa_log_seg_publish (bpa_log_stream_t *s);
+/* `show cgnat logging`: the log container's counters into s, when it owns. */
+u64 bpa_log_stream_shown (bpa_log_stream_t *s);
+#endif
 clib_error_t *bpa_log_stream_enable (bpa_log_stream_t *s,
 				     ip4_address_t *collector, u16 port,
 				     int enable);

@@ -26,7 +26,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_workers \
       $(BUILD)/test_bpa_local \
       $(BUILD)/test_bpa_frame $(BUILD)/test_bpa_exhaust \
-      $(BUILD)/test_bpa_log_ring \
+      $(BUILD)/test_bpa_log_ring $(BUILD)/test_prisma_logd \
       $(BUILD)/test_bpa_sock
 	@sh tools/run-tests.sh
 
@@ -94,6 +94,17 @@ $(BUILD)/test_bpa_log_ring: test/test_bpa_log_ring.c \
                    src/plugins/bpa/bpa_log_ring.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_log_ring.c -lpthread -lrt
+
+# The log container's process (#550): it includes bpa_log_tcp.c as the TCP
+# exporter's own harness does, and is driven here against a segment, a
+# collector on 127.0.0.1 and a spill directory of its own.
+$(BUILD)/test_prisma_logd: test/test_prisma_logd.c src/logger/prisma_logd.c \
+                   src/plugins/bpa/bpa_log_tcp.c src/plugins/bpa/bpa_log_ring.h \
+                   src/plugins/bpa/bpa_log_syslog.c src/plugins/bpa/bpa_identity.c \
+                   src/plugins/bpa/bpa_log.h test/bpa_log_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_prisma_logd.c \
+	    src/plugins/bpa/bpa_log_syslog.c src/plugins/bpa/bpa_identity.c -lrt
 
 # One exhaustion record per subscriber per interval (#549).
 $(BUILD)/test_bpa_exhaust: test/test_bpa_exhaust.c \

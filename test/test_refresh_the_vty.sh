@@ -78,9 +78,9 @@ CP
   run "$B" > "$B/two.out" & P2=$!
   wait $P1; wait $P2
   unset PRISMA_REFRESH_LOCK
-  N=$(grep -c "up -d" "$B/compose.argv" 2>/dev/null)
-  [ "$N" = 1 ] && ok "compose ran once for the two of them" \
-    || bad "compose ran $N times: two refreshes raced on one container"
+  N=$(grep -c "up -d --no-deps mgmt" "$B/compose.argv" 2>/dev/null)
+  [ "$N" = 1 ] && ok "compose recreated the VTY's container once for the two of them" \
+    || bad "compose recreated mgmt $N times: two refreshes raced on one container"
   cat "$B/one.out" "$B/two.out" | grep -q "already runs prisma-mgmt:0.149.0" \
     && ok "and the second said there was nothing left to do" \
     || bad "the second did not find the image current: $(cat "$B/one.out" "$B/two.out")"
@@ -92,8 +92,14 @@ fi
 echo "=== an upgraded box: the VTY moves, nothing else does ==="
 B=$(mkbox "prisma-mgmt:0.147.3" "0.147.4" "0.147.4")
 OUT=$(run "$B"); RC=$?
-ARGV=$(cat "$B/compose.argv" 2>/dev/null)
+ARGV=$(head -1 "$B/compose.argv" 2>/dev/null)
+LOGGER=$(sed -n 2p "$B/compose.argv" 2>/dev/null)
 [ "$RC" = 0 ] && ok "it exits 0" || bad "it exited $RC: $OUT"
+case "$LOGGER" in
+  *"--env-file $B/run/compose.env "*"up -d --no-deps logger")
+    ok "and then brings the log container up on the same images (#550)" ;;
+  *) bad "the log container was not brought up after the VTY's: '$LOGGER'" ;;
+esac
 case "$ARGV" in
   *"--env-file $B/run/compose.env "*"up -d --no-deps mgmt")
     ok "compose recreates the mgmt service alone, with the unit's environment"
@@ -141,9 +147,12 @@ echo
 echo "=== already on this release: nothing to do ==="
 B=$(mkbox "prisma-mgmt:0.147.4" "0.147.4" "0.147.4")
 OUT=$(run "$B"); RC=$?
-[ "$RC" = 0 ] && [ ! -f "$B/compose.argv" ] \
+[ "$RC" = 0 ] && ! grep -q "no-deps mgmt" "$B/compose.argv" 2>/dev/null \
   && ok "the container is left, and every session in it: $OUT" \
   || bad "a VTY already on 0.147.4 was recreated: rc=$RC"
+grep -q "up -d --no-deps logger" "$B/compose.argv" 2>/dev/null \
+  && ok "but the log container is brought up: a patch is how it first arrives (#550)" \
+  || bad "a box already on this release never got its log container"
 rm -rf "$B"
 
 echo

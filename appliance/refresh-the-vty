@@ -11,7 +11,8 @@
 # the VTY was prisma-mgmt:0.147.3, the new image had not been loaded, and a
 # `save` from it reproduced the very bug the release fixed (#525).
 #
-# WHAT IT TOUCHES: the management container only. `up -d --no-deps mgmt`
+# WHAT IT TOUCHES: the management container, and since #550 the log
+# container, which carries no traffic either. `up -d --no-deps mgmt`
 # recreates that one service; the dataplane and the control plane keep
 # running on the images they started with - measured on the same bench, vpp
 # and frr up 49 minutes across it - because a dataplane restarted is traffic
@@ -73,14 +74,25 @@ if [ -z "$want" ] || [ "$got" != "$want" ]; then
   say "load-the-images chooses then"
   exit 1
 fi
+set -- -f "$YAML"
+[ -f "$DEVICES" ] && set -- "$@" -f "$DEVICES"
+
+# THE LOG CONTAINER (#550), on the same images, whether or not the VTY's
+# needs recreating: a patch upgrade is how it first arrives on a box, and
+# compose changes nothing when it already runs this release. Like the VTY's
+# it touches no traffic - VPP carries the TCP log streams while it is gone,
+# and gives them back when it is up.
+logger() {
+  "$COMPOSE" --env-file "$ENVFILE" "$@" up -d --no-deps logger \
+    || say "the log container did not start; VPP keeps carrying the TCP log streams"
+}
+
 case "$before" in
   *":$want")
+    logger "$@"
     say "$MGMT already runs $before: nothing to do"
     exit 0 ;;
 esac
-
-set -- -f "$YAML"
-[ -f "$DEVICES" ] && set -- "$@" -f "$DEVICES"
 "$COMPOSE" --env-file "$ENVFILE" "$@" up -d --no-deps mgmt || {
   say "compose could not recreate $MGMT; it was on $before"
   exit 1
@@ -95,6 +107,7 @@ set -- -f "$YAML"
 # the API off is left off.
 "$SYSTEMCTL" try-restart prisma-routing-api.service 2>/dev/null \
   || say "the management API did not restart; 'systemctl restart prisma-routing-api'"
+logger "$@"
 after=$("$DOCKER" inspect -f '{{.Config.Image}}' "$MGMT" 2>/dev/null)
 say "$MGMT: $before -> ${after:-<unknown>}; the dataplane and the control"
 say "plane were not touched and change images at the next reboot"

@@ -1125,6 +1125,29 @@ bpa_log_stream_service (bpa_log_stream_t *s, f64 now)
  * and gets the whole message from the spill. A fragment nobody could decode
  * is not a record.
  */
+/*
+ * Gives the stream up to another process (#550): everything in memory goes to
+ * the spill file, the connection closes, and what was known about the backlog
+ * is forgotten, because the next owner reads the file and its saved offset
+ * itself - bpa_tcp_backlog_open() at its first connect. VPP does this when the
+ * log container says it is alive; the log container does it when it stops.
+ * The counters stay: they are this process's own.
+ */
+void
+bpa_log_stream_release (bpa_log_stream_t *s)
+{
+  if (vec_len (s->outbuf))
+    bpa_tcp_spill_now (s, 1);
+  bpa_tcp_disconnect (s);
+  vec_reset_length (s->outbuf);
+  s->backlog = 0;
+  s->spill_off = 0;
+  s->replay_len = 0;
+  s->front_extra = 0;
+  s->head_sent = 0;
+  s->pending_connect = 0;
+}
+
 u32
 bpa_log_stream_flush_exit (bpa_log_stream_t *s)
 {
@@ -1155,6 +1178,7 @@ bpa_log_stream_enable (bpa_log_stream_t *s, ip4_address_t *collector, u16 port, 
     {
       bpa_tcp_disconnect (s);
       s->enabled = 0;
+      bpa_log_seg_publish (s);
       return 0;
     }
 
@@ -1191,6 +1215,10 @@ bpa_log_stream_enable (bpa_log_stream_t *s, ip4_address_t *collector, u16 port, 
 	hn[sizeof (hn) - 1] = 0;
 	s->hostname = format (0, "%s%c", hn[0] ? hn : "-", 0);
       }
+    /* The log container reads the stream's configuration from the segment
+     * (#550), published on every change - and BEFORE the pins below, which
+     * reach it through the export ring and would find the stream still off. */
+    bpa_log_seg_publish (s);
     if (!was)
       {
 	/* The marker before anything else, for the reason bpa_log_enable()

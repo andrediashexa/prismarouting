@@ -309,3 +309,36 @@ services:
       # dataplane, the ssh host keys' origin, the driver DPDK would get.
       - PRISMA_IN_MGMT=1
     restart: unless-stopped
+
+  # THE LOG CONTAINER (#550): prisma-logd carries the CGNAT's TCP log streams -
+  # syslog and IPFIX over TCP, their spill files, the replay of those files
+  # and reconnection - so that none of it runs in the dataplane. VPP copies
+  # each event into the export ring of /dev/shm/prisma-bpa-log and does
+  # nothing else for these streams while this container's heartbeat is fresh;
+  # when it stops, VPP carries them again within a second.
+  #
+  # WHAT IT SHARES, each for one reason:
+  #   network_mode: host    its sockets are the ones VPP's were: the host's
+  #                         namespace, the same route, source and VRF to the
+  #                         collector
+  #   ipc: host             /dev/shm/prisma-bpa-log, the segment VPP creates
+  #   /var/log/prisma-routing  the spill files, which VPP replays when it
+  #                         carries the streams again
+  # NO cgroup_parent: like FRR and the VTY it stays in system.slice, which the
+  # tuner fences to the control-plane CPUs (#466) - never a worker's.
+  # And A MEMORY LIMIT of its own: whatever a collector does, this container
+  # is what runs out, never the dataplane.
+  logger:
+    image: prisma-log:${PRISMA_VERSION:-latest}
+    network_mode: host
+    ipc: host
+    init: true
+    depends_on:
+      - vpp
+    volumes:
+      - /var/log/prisma-routing:/var/log/prisma-routing
+      - /etc/localtime:/etc/localtime:ro
+    mem_limit: 256m
+    # It spills what it holds and gives the streams back on SIGTERM.
+    stop_grace_period: 20s
+    restart: unless-stopped

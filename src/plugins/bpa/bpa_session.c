@@ -1672,11 +1672,17 @@ bpa_log_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 {
   while (1)
     {
-      int busy = bpa_log_stream_pending (&bpa_log_tcp)
-		 || bpa_log_stream_pending (&bpa_log_syslog);
+      int owns = bpa_log_logger_owns ();
+      int busy = !owns && (bpa_log_stream_pending (&bpa_log_tcp)
+			   || bpa_log_stream_pending (&bpa_log_syslog));
 
-      vlib_process_wait_for_event_or_clock (vm, busy ? 0.001 : 1.0);
+      vlib_process_wait_for_event_or_clock (vm, busy ? 0.001 : 0.25);
       vlib_process_get_events (vm, 0);
+      /* Who carries the TCP streams, decided again every pass (#550): the
+       * log container while its heartbeat is fresh, VPP otherwise. */
+      bpa_log_handover ();
+      if (bpa_log_logger_owns ())
+	continue;
       bpa_log_tcp_service (vlib_time_now (vm));
       bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
     }

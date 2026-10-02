@@ -1,0 +1,34 @@
+# The log container (#550): prisma-logd, which carries the CGNAT's TCP log
+# streams - syslog over TCP and IPFIX over TCP, their spill files, their
+# replay and reconnection - out of the dataplane.
+#
+# WHY A CONTAINER OF ITS OWN: log export must never cost the box a forwarded
+# or translated packet (the maintainer's rule of 2026-10-01). With the streams
+# in VPP, a stalled collector cost 78% of a 30k pps burst at rx on the legacy
+# bench, and the replay of a 573 MB spill still cost 11.7% after #547. Here
+# the work runs in its own process, under its own memory limit (compose.yaml),
+# on the control-plane CPUs - system.slice, which the tuner fences off the
+# workers (#466) - and a log fix is a recreated container, not a restarted
+# dataplane.
+#
+# BUILT FROM THE DATAPLANE'S OWN IMAGE, in two stages: the first compiles
+# prisma-logd with the same Debian's compiler, the second is that image with
+# the one binary added - its layers are the dataplane's, so the upgrade
+# artifact carries a few hundred kilobytes for it, and no compiler ships
+# (tools/build-images.sh's check asks the started image).
+ARG BASE
+FROM ${BASE} AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY logd-src/ /src/
+RUN cc -O2 -Wall -Wextra -Werror -DBPA_STANDALONE \
+       -I /src/test -I /src/src/plugins/bpa \
+       -o /prisma-logd /src/src/logger/prisma_logd.c \
+       /src/src/plugins/bpa/bpa_log_syslog.c /src/src/plugins/bpa/bpa_identity.c \
+       -lrt
+
+FROM ${BASE}
+COPY --from=build /prisma-logd /usr/bin/prisma-logd
+ENTRYPOINT ["/usr/bin/prisma-logd"]
