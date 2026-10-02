@@ -952,6 +952,63 @@ none at all; the main heap flat; and with the container stopped, the streams
 back in the dataplane. Its off mode runs no container, and the replays lose
 packets.
 
+### Watching the export live: `monitor cgnat logging` (#556)
+
+`show cgnat logging` counts; `monitor cgnat logging` shows the records
+themselves, one line an event, until Ctrl-C or `seconds <n>`:
+
+```
+monitor cgnat logging   Ctrl-C to stop
+  each block event as the dataplane exports it, at the time its record carries.
+  Whether an event reached a collector is not known one by one: the '--' lines
+  say what each stream sent.
+21:26:05 BOOT      this dataplane has been up since 2026-10-02 21:26:01
+21:26:10 ALLOC     100.64.0.5      > 200.150.0.16    1024-17407  pool din
+21:26:10 ALLOC     100.64.0.6      > 200.150.0.16    17408-33791  pool din
+21:26:10 EXHAUSTED 100.64.0.12     no free block in pool din
+21:26:12 RELEASE   100.64.0.5      > 200.150.0.16    1024-17407  pool din
+21:26:15 -- ipfix-udp 10.0.0.2:4739  by the dataplane:  +7 sent
+21:26:15 -- +30 exhaustion repeats held back
+```
+
+Filters: `subscriber <ip>`, `public <ip>[:<port>]` (the port inside the
+block), `event alloc|release|exhausted|boot`, `pool <name>`. `raw` prints the
+wire forms instead - the IPFIX record by IE number (323 time, 230 natEvent,
+8 subscriber, 225 public, 361/362 the ports, 283 the pool, 371 the identity)
+and, when syslog is configured, the RFC 5424 line with the stream's PRI,
+hostname and enterprise number.
+
+**Where the lines come from.** A WATCH RING in the shared segment, after the
+export ring: `bpa_log_emit()`, which every exported event passes whoever
+carries it, and the boot marker write each event there with the wall clock
+the record carries. It has no consumer - the main thread writes over its
+oldest slot, never waits, never drops - and the monitor's reader never
+writes the segment (it is mapped read-only): a cursor of its own follows the
+ring's head. A reader that falls behind loses lines and says how many; the
+dataplane neither waits for it nor knows it is there. The worker rings were
+the first source and lab/monitor-cgnat-logging.sh refuted them: a block
+released by expiry is emitted by the main thread directly and never crosses
+a worker ring, so that monitor missed every release. They remain the
+fallback on a dataplane that predates the watch ring, and the screen says so.
+
+**Compatibility.** The watch ring is appended after the base layout, so the
+segment's version stays 3 and a log container built before it still passes
+`bpa_log_seg_check()`; its offset is in header bytes that were unused, and is
+0 on an older dataplane.
+
+**What it cannot tell** is whether a given event reached a collector: the
+export counts per stream, not per record. The `--` lines, every 10 s and only
+when something moved, say per configured stream what went out, what waits and
+what was lost, from `show bpa logging` - the same screen as `show cgnat
+logging` and the API's GetLogging (#555). Exhaustion repeats held back (#549)
+are not exported, so they are never a line; the `--` line counts them.
+
+**Pool names.** An event carries its pool's index. `show bpa pool index`
+(new) prints `<index> <name>` per pool - `show bpa pool` lists pools in index
+order but skips the hole a deleted pool leaves, so its n-th row is pool n
+only until the first delete; the lab deletes a pool first to prove the name
+comes from the index. A dataplane without the command shows `pool #<n>`.
+
 ## Three pitfalls found while implementing
 
 All three fail silently. The first two cost precisely the earliest records —

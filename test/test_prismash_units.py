@@ -5257,7 +5257,7 @@ check(_sh.monitor_names(_cnt, []) == ["pg0"]
 with spoken() as o:
     _sh.do_monitor(["routes"])
 check(rows_of(o.getvalue())
-      == ["error: monitor what? 'monitor interface' is the one there is"],
+      == ["error: monitor what? 'monitor interface' or 'monitor cgnat logging'"],
       f"a thing it does not monitor: {o.getvalue()!r}")
 for _args, _said in (
         (["interval"], "error: interval needs a number of seconds after it"),
@@ -5273,6 +5273,94 @@ check(o.getvalue().startswith("error: monitor interface needs a terminal")
       and "show interface utilization" in " ".join(o.getvalue().split())
       and "\x1b" not in o.getvalue(),
       f"a pipe is told what serves it, and gets no escapes: {o.getvalue()!r}")
+
+
+# --- monitor cgnat logging (#556): the loop, through its seams ---
+import logmon as _LM  # noqa: E402
+import struct  # noqa: E402
+
+
+def _seg(slots=8):
+    """A one-ring segment as bpa_log_seg_init() lays it out."""
+    rb = _LM.RING_HDR_BYTES + slots * _LM.EVENT_BYTES
+    b = bytearray(_LM.HDR_BYTES + rb)
+    b[0:8] = _LM.MAGIC
+    struct.pack_into("<IIIIII", b, 8, _LM.VERSION, _LM.HDR_BYTES, 1, slots,
+                     _LM.EVENT_BYTES, rb)
+    struct.pack_into("<d", b, _LM.OFF["boot_wall"], 1_790_000_000.0)
+    return b
+
+
+def _push(b, ev, priv, lo, hi, who=b""):
+    head = struct.unpack_from("<I", b, _LM.HDR_BYTES)[0]
+    off = _LM.HDR_BYTES + _LM.RING_HDR_BYTES + (head & 7) * _LM.EVENT_BYTES
+    a, c, d, e = (int(x) for x in priv.split("."))
+    struct.pack_into("<IIIHHB", b, off, a << 24 | c << 16 | d << 8 | e,
+                     200 << 24 | 150 << 16 | 16, 0, lo, hi, ev)
+    b[off + 17:off + 17 + len(who)] = who
+    struct.pack_into("<I", b, _LM.HDR_BYTES, head + 1)
+
+
+class _Clock:
+    """Time that moves only when the loop sleeps; events land on a sleep."""
+
+    def __init__(self, seg, script):
+        self.t, self.seg, self.script = 1_790_000_100.0, seg, list(script)
+
+    def now(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+        if self.script:
+            self.script.pop(0)(self.seg)
+
+
+_seg1 = _seg()
+_clk = _Clock(_seg1, [lambda b: _push(b, 16, "100.64.0.5", 1024, 17407, b"cli-5"),
+                      lambda b: _push(b, 12, "100.64.0.12", 0, 0),
+                      lambda b: _push(b, 17, "100.64.0.5", 1024, 17407)])
+_sh = shell(dp=Dp({"show bpa pool index": "0 din\n",
+                   "show bpa logging": "TCP transport: disabled\n"}))
+with spoken() as o:
+    _sh.monitor_cgnat_logging(["seconds", "2"], segment=(_seg1, None),
+                              now=_clk.now, sleep=_clk.sleep)
+_rows = rows_of(o.getvalue())
+check(any("ALLOC" in r and "100.64.0.5" in r and "200.150.0.16" in r
+          and "1024-17407" in r and "pool din" in r for r in _rows)
+      and any("subscriber cli-5" in r for r in _rows)
+      and any("EXHAUSTED" in r and "no free block in pool din" in r for r in _rows)
+      and any("RELEASE" in r for r in _rows) and any("BOOT" in r for r in _rows)
+      and _rows[-1].endswith("stopped") and all(len(r) <= 79 for r in _rows),
+      f"monitor cgnat logging prints each event in words: {_rows}")
+_seg2 = _seg()
+_clk = _Clock(_seg2, [lambda b: _push(b, 16, "100.64.0.5", 1024, 17407),
+                      lambda b: _push(b, 16, "100.64.0.6", 17408, 33791)])
+_sh = shell(dp=Dp({"show bpa pool index": (1, "unknown input"),
+                   "show bpa logging": (1, "")}))
+with spoken() as o:
+    _sh.monitor_cgnat_logging(["subscriber", "100.64.0.6", "event", "alloc",
+                               "seconds", "1"], segment=(_seg2, None),
+                              now=_clk.now, sleep=_clk.sleep)
+_rows = rows_of(o.getvalue())
+check([r for r in _rows if "ALLOC" in r] and all("100.64.0.5" not in r for r in _rows)
+      and any("pool #0" in r for r in _rows)
+      and any("pools are shown by number" in r for r in _rows)
+      and not any("BOOT" in r for r in _rows),
+      f"filters, and a dataplane without pool names: {_rows}")
+for _args, _seam, _said in (
+        (["sideways"], None, "error: monitor cgnat logging does not take 'sideways'"),
+        ([], (None, ("no event segment at /x", "the reason")),
+         "error: no event segment at /x the reason"),
+        ([], (bytearray(2048), None), "error: the event segment is not one this "
+         "VTY reads its layout version or its event size is another build's")):
+    with spoken() as o:
+        _sh.monitor_cgnat_logging(_args, segment=_seam)
+    check(" ".join(o.getvalue().split()) == _said, f"{_args}: {o.getvalue()!r}")
+with spoken() as o:
+    _sh.do_monitor(["cgnat", "logging", "sideways"])
+check("does not take 'sideways'" in o.getvalue(),
+      "do_monitor hands 'cgnat logging' to it")
 
 
 class _Tty(io.StringIO):

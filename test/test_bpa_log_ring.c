@@ -350,6 +350,45 @@ main (void)
     shm_unlink (name);
   }
 
+  /* The watch ring (#556): after the export ring, recorded in the header,
+   * and written over in a circle - no tail, no reservation, no drop. */
+  {
+    u64 base_bytes = bpa_log_seg_bytes (2, 64, 52);
+    u64 watched = bpa_log_seg_bytes_watched (2, 64, 52);
+    u8 *w = calloc (1, watched);
+    bpa_log_ring_t *m;
+    u32 k, seen_wrong = 0;
+
+    CHECK (watched == base_bytes + 192 + 4096 * 64,
+	   "the watch ring is 4096 slots of 64 bytes after the export ring");
+    CHECK (bpa_log_seg_init (w, 2, 64, 52, 9) == 0, "a watched segment lays out");
+    CHECK (bpa_log_seg_mring (w) == 0,
+	   "before bpa_log_seg_watch() the segment has no watch ring");
+    CHECK (bpa_log_seg_check (w, watched, 52) == 0,
+	   "and the base layout checks as before (a log container from before "
+	   "#556 still attaches)");
+    bpa_log_seg_watch (w);
+    m = bpa_log_seg_mring (w);
+    CHECK (m && (u8 *) m == w + base_bytes
+	     && ((bpa_log_seg_hdr_t *) w)->mring_slots == 4096,
+	   "bpa_log_seg_watch() records it, at the end of the base layout");
+    CHECK (bpa_log_seg_check (w, watched, 52) == 0, "still the same check");
+    for (k = 0; k < 4096 + 10; k++)
+      {
+	u32 *slot = bpa_log_mring_slot (m);
+	*slot = k;
+	bpa_log_mring_publish (m);
+      }
+    CHECK (m->head == 4106 && m->written == 4106 && m->tail == 0,
+	   "4106 written into 4096 slots: head moved, nobody's tail did");
+    for (k = 4106 - 4096; k < 4106; k++)
+      if (*(u32 *) ((u8 *) m + 192 + (k & 4095) * 64) != k)
+	seen_wrong++;
+    CHECK (seen_wrong == 0,
+	   "the last 4096 are there, the oldest 10 written over, nothing refused");
+    free (w);
+  }
+
   free (seg);
   printf ("\n%u checks, %d failures\n", checks, failures);
   if (failures)

@@ -47,6 +47,10 @@
 #define BPA_LOG_XEV_BYTES	 64
 #define BPA_LOG_XEV_RECORD	 1
 #define BPA_LOG_XEV_MARKER	 2
+/* The watch ring (#556): every event bpa_log_emit() exports and every boot
+ * marker, written by the main thread for a READER THAT IS NOT A CONSUMER -
+ * `monitor cgnat logging`. 4096 slots of bpa_log_xev_t, 256 KB. */
+#define BPA_LOG_MRING_SLOTS	 4096
 /* Who carries the TCP streams (syslog, IPFIX over TCP). */
 #define BPA_LOG_OWNER_VPP	 0
 #define BPA_LOG_OWNER_LOGGER	 1
@@ -144,6 +148,14 @@ typedef struct
   bpa_log_seg_stats_t stats[2]; /* by the logger: what each stream did */
   bpa_log_seg_udp_cfg_t udp_cfg;	   /* version 3, by VPP */
   bpa_log_seg_udp_stats_t udp_stats; /* version 3, by the logger */
+  /* #556, still version 3: the watch ring, appended AFTER the export ring
+   * so the base layout - and bpa_log_seg_check() of a log container built
+   * before it - is unchanged. 0 when the writer predates it: the monitor
+   * then reads the worker rings, which miss what the main thread emits
+   * itself (a release by expiry). */
+  u64 mring_offset;
+  u32 mring_slots;
+  u32 mring_pad;
 } bpa_log_seg_hdr_t;
 
 /* head and tail on cache lines of their own: the worker writes one, the
@@ -191,6 +203,58 @@ bpa_log_seg_bytes (u32 n_rings, u32 slots, u32 event_bytes)
 {
   return bpa_log_seg_xring_offset (n_rings, slots, event_bytes)
 	 + bpa_log_ring_bytes (BPA_LOG_XRING_SLOTS, BPA_LOG_XEV_BYTES);
+}
+
+/* Bytes the segment takes with the watch ring after the export ring
+ * (#556): what a writer that has one allocates. */
+static inline u64
+bpa_log_seg_bytes_watched (u32 n_rings, u32 slots, u32 event_bytes)
+{
+  return bpa_log_seg_bytes (n_rings, slots, event_bytes)
+	 + bpa_log_ring_bytes (BPA_LOG_MRING_SLOTS, BPA_LOG_XEV_BYTES);
+}
+
+/* Records the watch ring in a segment bpa_log_seg_init() laid out at base,
+ * of bpa_log_seg_bytes_watched() bytes; its slots are zero already. */
+static inline void
+bpa_log_seg_watch (void *base)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) base;
+
+  h->mring_slots = BPA_LOG_MRING_SLOTS;
+  __atomic_store_n (&h->mring_offset,
+		    bpa_log_seg_bytes (h->n_rings, h->ring_slots,
+				       h->event_bytes),
+		    __ATOMIC_RELEASE);
+}
+
+/* The watch ring's header, or 0 when the segment has none. */
+static inline bpa_log_ring_t *
+bpa_log_seg_mring (void *base)
+{
+  bpa_log_seg_hdr_t *h = (bpa_log_seg_hdr_t *) base;
+  u64 off = __atomic_load_n (&h->mring_offset, __ATOMIC_ACQUIRE);
+
+  return off ? (bpa_log_ring_t *) ((u8 *) base + off) : 0;
+}
+
+/* The watch ring's next slot. NO TAIL: nobody consumes it, the writer never
+ * waits and never drops, and the oldest slot is simply written over. A
+ * reader follows head with a cursor of its own and treats a slot as whole
+ * only while head - its index < slots, the slot under the pen included. */
+static inline void *
+bpa_log_mring_slot (bpa_log_ring_t *r)
+{
+  return (u8 *) r + BPA_LOG_RING_HDR_BYTES
+	 + (u64) (r->head & (BPA_LOG_MRING_SLOTS - 1)) * BPA_LOG_XEV_BYTES;
+}
+
+/* Publishes the slot bpa_log_mring_slot() gave. */
+static inline void
+bpa_log_mring_publish (bpa_log_ring_t *r)
+{
+  r->written++;
+  __atomic_store_n (&r->head, r->head + 1, __ATOMIC_RELEASE);
 }
 
 /* Lays out a zeroed segment of bpa_log_seg_bytes() at base. Returns 0, or -1

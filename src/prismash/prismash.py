@@ -74,6 +74,8 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
                     ROLE_ADMIN, ROLE_CGNAT)
 import routes
+import logmon
+import logstate
 import vppapi
 import policy as policy_mod
 
@@ -3699,6 +3701,26 @@ TREE = {
                 "interval": ("seconds between samples (default 1)",
                              "<seconds>"),
                 ARG_INTERFACE: ("only this interface", None),
+            }),
+            # The block events the CGNAT exports, as they happen (#556): read
+            # from the shared segment, a line each, until Ctrl-C.
+            "cgnat": ("the CGNAT, live", {
+                "logging": ("each block event as it is exported, until "
+                            "Ctrl-C", {
+                    "raw": ("the wire forms too: IPFIX fields, syslog line",
+                            None),
+                    "subscriber": ("only this subscriber", "<A.B.C.D>"),
+                    "public": ("only this public address [and port]",
+                               "<A.B.C.D>[:<port>]"),
+                    "event": ("only one kind", {
+                        "alloc": ("a block given to a subscriber", None),
+                        "release": ("a block given back", None),
+                        "exhausted": ("a subscriber refused a block", None),
+                        "boot": ("the dataplane's start", None),
+                    }),
+                    "pool": ("only this pool", "<name>"),
+                    "seconds": ("stop after this long", "<1-86400>"),
+                }),
             }),
         }),
         "show": ("display information", SHOW),
@@ -18485,11 +18507,95 @@ class Shell:
             routes.parse_interface_counters(out)
 
     def do_monitor(self, args):
-        """monitor interface [<name>...] [interval <s>]"""
+        """monitor interface ... | monitor cgnat logging ..."""
         if args[:1] == ["interface"]:
             self.monitor_interface(args[1:])
             return
-        self.err("monitor what? 'monitor interface' is the one there is")
+        if args[:2] == ["cgnat", "logging"]:
+            self.monitor_cgnat_logging(args[2:])
+            return
+        self.err("monitor what? 'monitor interface' or 'monitor cgnat "
+                 "logging'")
+
+    def monitor_cgnat_logging(self, args, segment=None, now=None,
+                              sleep=None):
+        """
+        The CGNAT's block events, one line each as the dataplane queues them
+        for export, until Ctrl-C or `seconds` (#556); logmon.py says where
+        they are read from and what that can and cannot tell. Every 10 s, a
+        line per configured stream says what the export sent, from the same
+        screen as `show cgnat logging`. `segment`, `now` and `sleep` are the
+        seams test_prismash_complete drives it through.
+        """
+        opts, why = logmon.parse_args(args)
+        if why:
+            self.err(why)
+            return
+        buf, why = segment if segment is not None else logmon.open_segment()
+        if why:
+            self.err_prose(*why)
+            return
+        h = logmon.header(buf)
+        if h is None:
+            self.err_prose("the event segment is not one this VTY reads",
+                           "its layout version or its event size is another "
+                           "build's")
+            return
+        now = now or time.time
+        sleep = sleep or time.sleep
+        rc, out = self.dp.run("show bpa pool index")
+        pools = logmon.parse_pool_index(out) if rc == 0 else {}
+        print("monitor cgnat logging   Ctrl-C to stop")
+        if h["mring"]:
+            print_prose("each block event as the dataplane exports it, at the "
+                        "time its record carries. Whether an event reached a "
+                        "collector is not known one by one: the '--' lines "
+                        "say what each stream sent.", indent="  ")
+        else:
+            print_prose("this dataplane predates the watch ring: events are "
+                        "read off its worker queues, at the time this monitor "
+                        "read them, and a block released by expiry is not "
+                        "shown. The '--' lines say what each stream sent.",
+                        indent="  ")
+        if not pools:
+            print_prose("pools are shown by number: this dataplane does "
+                        "not say which name each number is (it predates "
+                        "0.149.16)", indent="  ")
+        if opts["event"] in (None, "boot"):
+            print(logmon.boot_line(h["boot_wall"]))
+        reader = logmon.reader(buf, h)
+        rc, out = self.dp.run("show bpa logging")
+        before = logstate.parse_logging(out) if rc == 0 else None
+        started, next_delivery = now(), now() + logmon.DELIVERY_EVERY
+        try:
+            while opts["seconds"] is None or now() - started < opts["seconds"]:
+                fresh = logmon.header(buf)
+                if fresh and fresh["generation"] != h["generation"]:
+                    # The dataplane restarted: its rings are new.
+                    h = fresh
+                    reader = logmon.reader(buf, h)
+                    if opts["event"] in (None, "boot"):
+                        print(logmon.boot_line(h["boot_wall"]))
+                events, lost = reader.poll(buf)
+                seen = now()
+                if lost:
+                    print(logmon.lost_line(seen, lost))
+                for ev in events:
+                    for line in logmon.lines_for(ev, seen, h, pools, opts):
+                        print(line)
+                if now() >= next_delivery:
+                    next_delivery = now() + logmon.DELIVERY_EVERY
+                    rc, out = self.dp.run("show bpa logging")
+                    if rc == 0:
+                        cur = logstate.parse_logging(out)
+                        for line in logmon.delivery_lines(before, cur, now()):
+                            print(line)
+                        before = cur
+                sys.stdout.flush()
+                sleep(logmon.POLL)
+        except KeyboardInterrupt:
+            print()
+        print(logmon.stopped_line(now()))
 
     def monitor_interface(self, args):
         """

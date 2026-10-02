@@ -150,6 +150,46 @@ show cgnat blocks        blocos atualmente alocados (e quantos estão presos)
 
 Os blocos em uso agora; os registros já exportados estão no coletor.
 
+### Vendo os registros ao vivo
+
+`show cgnat logging` mostra contadores. Para ver os próprios registros que a caixa está exportando, um por linha, enquanto acontecem:
+
+```
+monitor cgnat logging
+```
+
+```
+monitor cgnat logging   Ctrl-C to stop
+  each block event as the dataplane exports it, at the time its record carries.
+  Whether an event reached a collector is not known one by one: the '--' lines
+  say what each stream sent.
+21:26:05 BOOT      this dataplane has been up since 2026-10-02 21:26:01
+21:26:10 ALLOC     100.64.0.5      > 200.150.0.16    1024-17407  pool din
+21:26:10 EXHAUSTED 100.64.0.12     no free block in pool din
+21:26:12 RELEASE   100.64.0.5      > 200.150.0.16    1024-17407  pool din
+21:26:15 -- ipfix-udp 10.0.0.2:4739  by the dataplane:  +7 sent
+21:26:15 -- +30 exhaustion repeats held back
+```
+
+Cada linha é um evento de bloco: `ALLOC` (o assinante recebeu o bloco), `RELEASE` (devolveu), `EXHAUSTED` (pediu e não havia bloco livre), com o IP do assinante, o IP público, a faixa de portas e o pool pelo nome. A hora é a mesma que vai no registro. Quando a caixa conhece a identidade do assinante (login PPPoE ou DHCP), ela aparece logo abaixo.
+
+As linhas `--` saem a cada 10 segundos, só quando algo mudou, e dizem por transporte quanto foi enviado, quanto está esperando e quanto se perdeu. A tela não sabe se **um** registro específico chegou ao coletor — a exportação conta por transporte, não por registro — e diz isso no cabeçalho.
+
+Filtros, que podem ser combinados:
+
+```
+monitor cgnat logging subscriber 100.64.0.5      só esse assinante
+monitor cgnat logging public 200.150.0.16:2000   só quem usa essa porta pública
+monitor cgnat logging event release              só um tipo de evento
+monitor cgnat logging pool din                   só esse pool
+monitor cgnat logging seconds 60                 para sozinho depois de 60 s
+monitor cgnat logging raw                        a forma de fio
+```
+
+Com `raw`, cada evento sai como o registro IPFIX campo a campo (323 hora, 230 tipo do evento, 8 assinante, 225 IP público, 361/362 portas, 283 pool, 371 identidade) e, se o syslog estiver configurado, a linha RFC 5424 exatamente como o coletor a recebe.
+
+O monitor só lê: não para, não atrasa e não tira nada da exportação. Se ele ficar para trás (um terminal lento, por exemplo), diz quantas linhas não mostrou.
+
 ## Bloco preso por encaminhamento de porta também é evento
 
 Um [encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) num pool dinâmico prende o bloco do assinante enquanto o forward existir. Prender gera uma **alocação** e soltar gera uma **liberação**, como qualquer outro bloco: em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado sem registro é um mapeamento que ninguém consegue atribuir depois.

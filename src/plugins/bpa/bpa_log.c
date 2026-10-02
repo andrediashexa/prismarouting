@@ -44,8 +44,10 @@ clib_error_t *
 bpa_log_seg_create (u32 n_rings)
 {
   bpa_log_seg_t *g = &bpa_log_seg;
-  u64 bytes = bpa_log_seg_bytes (n_rings, BPA_LOG_QUEUE_MAX,
-				 sizeof (bpa_log_event_t));
+  /* With the watch ring (#556) after the export ring: a log container built
+   * before it checks the base layout only, which this leaves as it was. */
+  u64 bytes = bpa_log_seg_bytes_watched (n_rings, BPA_LOG_QUEUE_MAX,
+					 sizeof (bpa_log_event_t));
   struct timespec ts;
   int fd;
   u8 *base = 0;
@@ -90,6 +92,7 @@ bpa_log_seg_create (u32 n_rings)
 			sizeof (bpa_log_event_t),
 			(u64) ts.tv_sec * 1000000000ULL + ts.tv_nsec))
     return clib_error_return (0, "bpa: the log ring size is not a power of two");
+  bpa_log_seg_watch (base);
   g->base = base;
   ((bpa_log_seg_hdr_t *) base)->boot_wall = bpa_main.boot_wall;
   bpa_log_seg_publish (&bpa_log_tcp);
@@ -581,6 +584,39 @@ bpa_log_flush (vlib_main_t *vm)
  * or neither corroborates the other. See
  * https://github.com/andrediashexa/hexarouting/issues/117.
  */
+/* not a unit: it writes into the live segment's watch ring; the slot and
+ * publish it is made of are test/test_bpa_log_ring.c's, and lab/monitor-
+ * cgnat-logging.sh reads what it wrote against a collector.
+ *
+ * An exported event or the boot marker into the watch ring (#556), for
+ * `monitor cgnat logging`: on the main thread only (bpa_log_emit and the
+ * marker run there), so there is one writer, and with no consumer there is
+ * no reservation to fail - the oldest slot is written over. */
+static void
+bpa_log_mpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
+	       u16 port_lo, u16 port_hi, u32 pool_id, const char *identity)
+{
+  bpa_log_ring_t *m = bpa_log_seg.base ? bpa_log_seg_mring (bpa_log_seg.base)
+					: 0;
+  bpa_log_xev_t *v;
+
+  if (!m)
+    return;
+  v = bpa_log_mring_slot (m);
+  memset (v, 0, sizeof (*v));
+  v->kind = kind;
+  v->wall = wall;
+  v->ev.event = event;
+  v->ev.ip_priv = ip_priv;
+  v->ev.ip_pub = ip_pub;
+  v->ev.port_lo = port_lo;
+  v->ev.port_hi = port_hi;
+  v->ev.pool_id = pool_id;
+  if (identity)
+    strncpy (v->ev.identity, identity, sizeof (v->ev.identity) - 1);
+  bpa_log_mring_publish (m);
+}
+
 /* not a unit: it writes one record into the exporter's current buffer
  * through VPP's flow-report API. What a record CONTAINS is held by
  * test/test_ipfix_record.py and read off a collector by lab/ipfix.sh. */
@@ -591,6 +627,11 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
   f64 wall = unix_time_now ();
   int owns = bpa_log_logger_owns ();
   int udp_l = owns && bpa_log_main.enabled && bpa_log_udp_by_logger ();
+
+  /* What is exported, for whoever watches it (#556) - with the wall clock
+   * the records carry. */
+  bpa_log_mpush (BPA_LOG_XEV_RECORD, wall, event, ip_priv, ip_pub, port_lo,
+		 port_hi, pool_id, identity);
 
   /* Each event goes to exactly ONE UDP sender, decided here: VPP's exporter,
    * or the container through the export ring (#550 step 3). */
@@ -641,6 +682,7 @@ bpa_log_marker_emit (vlib_main_t *vm)
   u8 *d;
   int udp_l = bpa_log_main.enabled && bpa_log_udp_by_logger ();
 
+  bpa_log_mpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0);
   if (bpa_log_logger_owns ())
     {
       if (bpa_log_tcp.enabled || bpa_log_syslog.enabled || udp_l)
