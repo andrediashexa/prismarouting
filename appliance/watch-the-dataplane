@@ -39,6 +39,30 @@
 # since gets the configuration in effect put back (`prismash --reapply`),
 # and what the dead one printed last is kept, like a container that gave up.
 # This restarts nothing either; it puts back what a restart took away.
+#
+# WITH ONE EXCEPTION: A CLEAN EXIT NOBODY ASKED FOR (#552). Docker's
+# `on-failure` policy restarts a dataplane that failed and leaves alone one
+# that exited with status 0, because to Docker status 0 means somebody wanted
+# it stopped. On the legacy bench at 0.149.7 nobody did: `logging syslog
+# disable` had closed VPP's stdin (#551) and VPP exited 0 at the next vppctl.
+# This script then read the exited container as "Docker has stopped
+# restarting it" and gave the card back, and the box had no dataplane until
+# a reboot. A clean exit counts as unasked when ALL of these hold, and only
+# then is the container started again (the #548 path above then puts the
+# configuration back on the next tick):
+#   * the container exited with status 0 and was not OOM-killed;
+#   * the box is not shutting down (`systemctl is-system-running` is not
+#     `stopping`);
+#   * prisma-routing-containers.service is active - checked below for every
+#     branch; `system dataplane restart` and an upgrade stop that unit first;
+#   * Docker logged no `kill` for the container in the 30 seconds before it
+#     died. `docker stop`, `docker kill`, compose's stop and down, and the
+#     daemon stopping its containers all send one; a process that exits by
+#     itself does not. If Docker cannot be asked, it is NOT unasked: the card
+#     goes back as before, rather than restarting something an operator
+#     stopped.
+# Bounded per boot (PRISMA_CLEAN_EXIT_RESTARTS, 5 - the same budget the
+# compose file gives Docker), after which the card goes back as before.
 set -u
 
 ROOT=${PRISMA_ROOT:-}
@@ -75,6 +99,8 @@ WAITVPP=${PRISMA_WAIT_FOR_VPP:-$ROOT/usr/lib/prisma-routing/wait-for-vpp}
 # trying and says so: a configuration the new dataplane refuses would be
 # refused again every tick otherwise.
 REAPPLY_TRIES=${PRISMA_REAPPLY_TRIES:-3}
+CLEAN_EXIT_RESTARTS=${PRISMA_CLEAN_EXIT_RESTARTS:-5}
+CLEAN_EXITS=${PRISMA_CLEAN_EXIT_STAMP:-$ROOT/run/prisma-routing/clean-exit-restarts}
 say() { echo "watch-dataplane: $*" >&2; }
 
 record_why() { # <state> [<until>] - keep what the dataplane said before it died
@@ -164,6 +190,44 @@ reapply_if_restarted() {
   return 0
 }
 
+# The dataplane exited with status 0 and nothing on the box stopped it (#552):
+# see the header for each condition. 0 when that is so.
+unasked_clean_exit() {
+  _st=$("$DOCKER" inspect -f '{{.State.ExitCode}} {{.State.OOMKilled}} {{.State.FinishedAt}}' \
+    "$CONTAINER" 2>/dev/null) || return 1
+  set -- $_st
+  [ "${1:-}" = 0 ] && [ "${2:-}" = false ] && [ -n "${3:-}" ] || return 1
+  [ "$("$SYSTEMCTL" is-system-running 2>/dev/null)" = stopping ] && return 1
+  _end=$(date -d "$3" +%s 2>/dev/null) || return 1
+  _kills=$("$DOCKER" events --since "$((_end - 30))" --until "$((_end + 1))" \
+    --filter "container=$CONTAINER" --filter event=kill \
+    --format '{{.Action}}' 2>/dev/null) || return 1
+  [ -z "$_kills" ]
+}
+
+# Start the dataplane again after an unasked clean exit, within the budget.
+# 0 when it was started; the next tick's reapply_if_restarted() puts the
+# configuration back on it.
+restart_clean_exit() {
+  unasked_clean_exit || return 1
+  _n=$(cat "$CLEAN_EXITS" 2>/dev/null || echo 0)
+  if [ "${_n:-0}" -ge "$CLEAN_EXIT_RESTARTS" ]; then
+    say "the dataplane exited cleanly with nothing stopping it, again: it was"
+    say "started $_n times this boot already, which is the budget (#552)."
+    return 1
+  fi
+  record_why "exited 0 and nothing on the box stopped it"
+  mkdir -p "$(dirname "$CLEAN_EXITS")" 2>/dev/null || true
+  echo $((${_n:-0} + 1)) > "$CLEAN_EXITS"
+  say "the dataplane container exited with status 0 and nothing on the box"
+  say "stopped it, which Docker does not restart: starting it again (#552,"
+  say "$((${_n:-0} + 1)) of $CLEAN_EXIT_RESTARTS this boot). The configuration"
+  say "goes back on it next. what it printed last is kept in $REPORT"
+  "$DOCKER" start "$CONTAINER" >/dev/null 2>&1 && return 0
+  say "docker start failed; the card goes back instead."
+  return 1
+}
+
 # What the boot's apply runs when it is done (#548).
 if [ "${1:-}" = "--applied" ]; then
   write_applied
@@ -195,6 +259,9 @@ case "$state" in
     # all - which is `up -d` having failed rather than a dataplane that died,
     # and the card was bound by the tuner before either happened.
     say "the stack is up and there is no $CONTAINER container at all." ;;
+  exited)
+    restart_clean_exit && exit 0
+    say "the dataplane container is '$state': Docker has stopped restarting" ;;
   *)
     say "the dataplane container is '$state': Docker has stopped restarting" ;;
 esac

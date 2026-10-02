@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane that exited cleanly with nothing stopping it stayed down.**
+  ([#552](https://github.com/andrediashexa/hexarouting/issues/552))
+  Docker's `on-failure` policy does not restart a status-0 exit, and
+  watch-the-dataplane read the exited container as Docker giving up and
+  handed the card back - the legacy bench stayed without a dataplane until a
+  reboot after #551 made VPP exit 0. Such an exit is now started again and
+  the configuration put back (#548's path), when nothing on the box stopped
+  it: status 0, not OOM-killed, the box not shutting down, the containers
+  unit active, and no `kill` from Docker in the 30 seconds before - which
+  `docker stop`, compose and the daemon always send and a process exiting by
+  itself never does. Five a boot; then the card goes back as before.
+
 ## 0.149.8 - disabling a syslog never enabled no longer stops the dataplane
 
 ### Fixed
