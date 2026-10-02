@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.9 - a dataplane that exits cleanly when nothing stopped it is started again
+
+### Fixed
+
 * **A dataplane that exited cleanly with nothing stopping it stayed down.**
   ([#552](https://github.com/andrediashexa/hexarouting/issues/552))
   Docker's `on-failure` policy does not restart a status-0 exit, and
