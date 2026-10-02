@@ -800,9 +800,9 @@ body = system._snmpd_body({}, ["public"], {}, release="")
 check("agentAddress udp:127.0.0.1:161" in body
       and [l for l in body.splitlines() if ".1.3.6.1.4.1." in l]
       == ["view hexa included .1.3.6.1.4.1.2021",
-          "view hexa included .1.3.6.1.4.1.32473",
-          f"pass_persist .1.3.6.1.4.1.32473 {system.SNMP_AGENT} "
-          f"--enterprise 32473"]
+          "view hexa included .1.3.6.1.4.1.67033",
+          f"pass_persist .1.3.6.1.4.1.67033 {system.SNMP_AGENT} "
+          f"--enterprise 67033"]
       and "sysdescr Prisma Routing\n" in body
       and f"pass_persist .1.3.6.1.2.1.123 {system.SNMP_AGENT}" in body,
       f"defaults: loopback 161, the product's subtree, UCD's own, a sysDescr "
@@ -826,7 +826,7 @@ with _tf.TemporaryDirectory() as _d:
         _f.write(system._snmpd_body({}, ["p"], {}, release="x"))
     _settings = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
                                   root="", conf=_conf).read()[0]
-    check(_settings.get("enterprise-number", "") == "32473",
+    check(_settings.get("enterprise-number", "") == "67033",
           f"and the product's where the operator set none (#508): {_settings}")
 print("  the view answers the box's identity, CPU, memory and disks")
 print("--- _release: the release sysDescr names")
@@ -1337,11 +1337,11 @@ check(_rd[3] == [("10.0.0.9", "t1", "trap"), ("2001:db8::9", "t2", "inform")]
 print("  [ ok ] destinations, monitors and read-back")
 
 print("\n=== the product's number by default, not written, read as served (#508) ===")
-check(system.PRODUCT_PEN == "32473",
+check(system.PRODUCT_PEN == "67033",
       f"the provisional number is IANA's documentation one: {system.PRODUCT_PEN}")
 from config import Config as _C
 _cfg = _C.parse("snmp enabled yes\nsnmp community c\n")
-check(_cfg.snmp["enterprise-number"] == "32473"
+check(_cfg.snmp["enterprise-number"] == "67033"
       and "enterprise-number" not in _cfg.text(),
       "a configuration naming no number takes the product's, and does not "
       "write it - or every box would pin it the day it changes")
@@ -1349,7 +1349,7 @@ check("snmp enterprise-number 70000" in
       _C.parse("snmp enterprise-number 70000\n").text(),
       "an operator's own number is written")
 _b = system._snmpd_body(_cfg.snmp, ["c"], {}, agent="/x/agent", release="0.1")
-check("pass_persist .1.3.6.1.4.1.32473 /x/agent --enterprise 32473" in _b,
+check("pass_persist .1.3.6.1.4.1.67033 /x/agent --enterprise 67033" in _b,
       f"and snmpd serves the product's MIB under it: {_b}")
 _root = tempfile.mkdtemp()
 os.makedirs(_root + "/etc/snmp")
@@ -1362,10 +1362,10 @@ check(_rd[0]["enterprise-number"] == "",
       f"next load has a change to write: {_rd[0]}")
 _b = system._snmpd_body(dict(_cfg.snmp, **{"enterprise-number": ""}), ["c"],
                         {}, agent="/x/agent", release="0.1")
-check("pass_persist .1.3.6.1.4.1.32473 /x/agent --enterprise 32473" in _b,
+check("pass_persist .1.3.6.1.4.1.67033 /x/agent --enterprise 67033" in _b,
       "a candidate copied from a file with no number - Debian's, or one from "
       "before #508 - still writes the product's")
-print("  [ ok ] 32473 by default, unwritten, and an old file read as it is")
+print("  [ ok ] 67033 by default, unwritten, and an old file read as it is")
 
 print("\n=== v2c and v3 only: a community is not granted to v1 (#511) ===")
 _b = system._snmpd_body({"enabled": "yes"}, ["c1", "c2"], {}, agent="/x/a",

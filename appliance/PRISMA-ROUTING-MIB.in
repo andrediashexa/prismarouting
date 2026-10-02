@@ -5,9 +5,9 @@ PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
 -- transports and the release the box runs (#504).
 --
 -- ROOTED AT THE NUMBER THE BOX THAT PRINTED IT SERVES (`show snmp mib`):
--- the product's own, provisionally 32473 - IANA's number for documentation
--- use (RFC 5612) until the product's registration arrives - or the one the
--- operator named with `snmp enterprise-number`. A file printed by another box,
+-- the product's own IANA Private Enterprise Number, 67033 (32473, IANA's
+-- number for documentation use, until 0.149.13) - or the one the operator
+-- named with `snmp enterprise-number`. A file printed by another box,
 -- or kept from before the number changed, names a subtree that box does not
 -- serve. Nothing under the root moves when the number does.
 --
@@ -27,13 +27,18 @@ IMPORTS
         FROM SNMPv2-CONF;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202609300600Z"
-    ORGANIZATION "Prisma Routing"
+    LAST-UPDATED "202610020000Z"
+    ORGANIZATION "NetConfig"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202610020000Z"
+    DESCRIPTION
+        "Rooted at the product's own IANA Private Enterprise Number, 67033,
+        instead of 32473, IANA's number for documentation use (#554).
+        Nothing under the root moved."
     REVISION "202609300600Z"
     DESCRIPTION
         "The box's own state: the tuning in effect, the boot self-test, the

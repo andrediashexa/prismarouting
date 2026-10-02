@@ -19,17 +19,16 @@ Save it as `PRISMA-ROUTING-MIB.txt` and load it in the NMS beside the standard
 modules it imports (SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF), which every NMS
 already has.
 
-**The root is the product's number, provisionally 32473** (#508). The
-product's own IANA Private Enterprise Number was applied for on 2026-09-29;
-until it arrives the MIB is served under IANA's "Example Enterprise Number for
-Documentation Use" (RFC 5612), which belongs to nobody. The number first
-proposed, 666, belongs to Oki Electric Industry: an object in another
-organisation's subtree is read by an NMS with that organisation's MIBs loaded
-as that organisation's device's. When the product's number arrives it
-replaces 32473 in one place, and every box moves with it - the default is not
-written into a saved configuration, so no box pins the old one. The objects
-are numbered from the root, so nothing under it moves either; an NMS reloads
-the file `show snmp mib` then prints.
+**The root is the product's own IANA Private Enterprise Number, 67033**
+(#554), assigned on 2026-10-02. From 0.143.4 (#508) to 0.149.12 the MIB was
+served under 32473, IANA's "Example Enterprise Number for Documentation Use"
+(RFC 5612), because the product had no number yet; the number first proposed,
+666, belongs to Oki Electric Industry. The default is not written into a saved
+configuration, so every box that did not name its own number moved to 67033
+with the upgrade. The objects are numbered from the root, so nothing under it
+moved: **a poller walking `.1.3.6.1.4.1.32473` walks `.1.3.6.1.4.1.67033`
+instead**, with the same object numbers below it, and an NMS reloads the file
+`show snmp mib` now prints (its `::= { enterprises 67033 }`).
 
 An operator may still name a number of its own with
 `snmp enterprise-number <number>`, and `no snmp enterprise-number` goes back

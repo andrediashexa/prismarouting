@@ -165,8 +165,8 @@ show snmp mib
 Salve a saída como `PRISMA-ROUTING-MIB.txt` e carregue na NMS: a partir daí, em vez de números, a NMS mostra os nomes — `prPoolUtilisation`, `prLogTransportConnected` e assim por diante.
 
 
-:::warning
-**O número é provisório: 32473.** O Prisma pediu o número dele à IANA, e enquanto ele não chega a MIB fica sob o 32473, que a IANA reserva para uso em documentação e exemplos (RFC 5612) — não é de ninguém, então não se confunde com equipamento de outro fabricante na NMS. Quando o número do produto chegar, a caixa passa a usá-lo depois da atualização, sem nada a configurar, e nada abaixo dele muda de lugar: basta carregar de novo na NMS o arquivo que `show snmp mib` imprimir. Quem preferir pode usar o número da própria organização com `snmp enterprise-number <número>`; `no snmp enterprise-number` volta para o do produto.
+:::info
+**O número é o do Prisma na IANA: 67033.** Até a 0.149.12 a MIB ficava sob o 32473, que a IANA reserva para documentação e exemplos (RFC 5612), porque o produto ainda não tinha número próprio. Desde a 0.149.13 ela fica sob o 67033, sem nada a configurar, e nada abaixo dele mudou de lugar: quem consulta `.1.3.6.1.4.1.32473` passa a consultar `.1.3.6.1.4.1.67033`, com os mesmos números abaixo, e basta carregar de novo na NMS o arquivo que `show snmp mib` imprimir. Quem preferir pode usar o número da própria organização com `snmp enterprise-number <número>`; `no snmp enterprise-number` volta para o do produto.
 
 :::
 
@@ -364,7 +364,7 @@ snmpget -v3 -l authPriv -u nms -a SHA -A <passphrase> -x AES -X <passphrase> <en
 
 
 :::success
-O agente respondendo os timeouts da RFC 4008 confirma que ele está de pé; os contadores da MIB do Prisma, sob `.1.3.6.1.4.1.32473.1`, mostram o CGNAT de onde alguém olha.
+O agente respondendo os timeouts da RFC 4008 confirma que ele está de pé; os contadores da MIB do Prisma, sob `.1.3.6.1.4.1.67033.1`, mostram o CGNAT de onde alguém olha.
 
 :::
 

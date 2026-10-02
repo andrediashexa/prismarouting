@@ -6194,7 +6194,7 @@ for _stmt in ("no snmp enterprise-number", "no snmp port",
         sh.do_config(_stmt)
     check("error" not in o.getvalue(),
           f"{_stmt!r} was refused: {o.getvalue()!r}")
-check(sh.candidate.snmp.get("enterprise-number") == "32473"
+check(sh.candidate.snmp.get("enterprise-number") == "67033"
       and "enterprise-number" not in sh.candidate.text(),
       f"back to the product's number, and not written: {sh.candidate.snmp}")
 check(sh.candidate.snmp.get("enabled") == "no"
@@ -8622,7 +8622,7 @@ check("::= { enterprises 70000 }" in _out and "@PEN@" not in _out
       f"the MIB is printed whole, rooted at 70000: {_out[:200]!r}")
 _sh = _mib_shell("")
 _, _out = driven(_sh.show_snmp_mib)
-check("::= { enterprises 32473 }" in _out,
+check("::= { enterprises 67033 }" in _out,
       f"with no number named, the product's (#508): {_out[:120]!r}")
 # A box whose snmpd.conf predates #508 serves no enterprise subtree until SNMP
 # is written again; its running configuration says "", and there is no MIB to
@@ -8653,7 +8653,7 @@ check([m["value"] for m in _tpl["macros"] if m["macro"] == "{$PRISMA.PEN}"] == [
       and "@PEN@" not in _out,
       "the template is printed whole, {$PRISMA.PEN} defaulting to 70000")
 _, _out = driven(_mib_shell("").show_snmp_zabbix_template)
-check('"value": "32473"' in _out, "and to the product's with no number named (#508)")
+check('"value": "67033"' in _out, "and to the product's with no number named (#508)")
 with contextlib.redirect_stdout(io.StringIO()) as _buf:
     _mib_shell("").show_snmp_zabbix_template()
 check(json.loads(_buf.getvalue())["zabbix_export"]["version"] == "7.0",
