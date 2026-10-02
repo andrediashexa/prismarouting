@@ -775,6 +775,7 @@ bending the UDP exporter around.
   ```
     exhaustion  one record per subscriber per 10s: 1620428 repeats not reported
     queue       0 event(s) dropped with a worker's queue full (8192 each)
+    rings       /dev/shm/prisma-bpa-log, 3409664 bytes, outside the main heap
     transmit    ens20: 71107 packet(s) the interface failed to send, from every sender on it
     ...
     spill       ... bytes on disk, ... replayed, ... dropped
@@ -783,6 +784,12 @@ bending the UDP exporter around.
 
   `queue`: a worker never waits for the log - its queue is a ring of 8192
   events made at start, and a full one drops the event and counts it here.
+  `rings`: where those rings are (#550) - a shared-memory segment of their
+  own, `/dev/shm/prisma-bpa-log`, outside VPP's main heap, so that a process
+  outside VPP (the log container #550 brings) can drain them. When the
+  segment cannot be had the rings go to the main heap as before, logging
+  still works through VPP, and the line says which step failed:
+  `rings       in the main heap: shm_open failed (Permission denied)`.
   `transmit`: the exporter cannot see a packet the NIC did not send; the
   egress interface's transmit node can, so its failures since the counters
   were cleared are shown - for every sender on that interface, which is why

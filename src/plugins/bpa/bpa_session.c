@@ -49,11 +49,12 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
 			 bm->hash_memory);
 
   pt->sub_by_idx = hash_create (0, sizeof (uword));
-  /* Made here, on the main thread at start, so that logging never allocates
-   * on a worker (#547, #549). */
-  pt->log_ring = clib_mem_alloc_aligned (
-    BPA_LOG_QUEUE_MAX * sizeof (bpa_log_event_t), CLIB_CACHE_LINE_BYTES);
-  pt->log_head = pt->log_tail = 0;
+  /* This thread's ring, in the segment bpa_init() made before any thread was
+   * set up: logging never allocates on a worker (#547), and the rings are
+   * outside the main heap so another process can drain them (#550). */
+  pt->log_q = bpa_log_seg.base ? bpa_log_seg_ring (bpa_log_seg.base,
+						    thread_index)
+			       : 0;
   pt->exhaust = clib_mem_alloc_aligned (sizeof (bpa_exhaust_t),
 					CLIB_CACHE_LINE_BYTES);
   clib_memset (pt->exhaust, 0, sizeof (bpa_exhaust_t));

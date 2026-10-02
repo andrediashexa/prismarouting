@@ -27,6 +27,7 @@ typedef struct vlib_main_t vlib_main_t;
 #endif
 
 #include "bpa_identity.h"
+#include "bpa_log_ring.h"
 
 /* RFC 8158, natEvent record */
 #define BPA_NAT_EVENT_PORTS_EXHAUSTED 12
@@ -135,9 +136,35 @@ typedef struct
   char identity[BPA_IDENTITY_MAX];
 } bpa_log_event_t;
 
+/* The event is a record in a segment another program reads (#550): its size
+ * and offsets are that program's contract, checked by bpa_log_seg_check()
+ * against event_bytes in the header. A change here is a new
+ * BPA_LOG_SEG_VERSION, never a silent one. */
+_Static_assert (sizeof (bpa_log_event_t) == 52,
+		"bpa_log_event_t is the shared segment's record: 52 bytes");
+_Static_assert (offsetof (bpa_log_event_t, identity) == 17,
+		"bpa_log_event_t's identity starts at byte 17");
+
 /* Per-thread queue ceiling: if the process falls behind, the excess is lost
  * in an accounted way, rather than growing without bound. */
 #define BPA_LOG_QUEUE_MAX 8192
+
+#ifndef BPA_STANDALONE
+/* The rings' segment (#550): its base, its size, and where it is - the
+ * shared segment, or the main heap when /dev/shm could not be had (then
+ * nothing outside VPP can read it, and `show cgnat logging` says why). */
+typedef struct
+{
+  u8 *base;
+  u64 bytes;
+  u8 shared;		/* 1: /dev/shm/prisma-bpa-log; 0: the main heap */
+  int err;		/* errno of the step that failed, when not shared */
+  const char *failed;	/* that step */
+} bpa_log_seg_t;
+
+extern bpa_log_seg_t bpa_log_seg;
+clib_error_t *bpa_log_seg_create (u32 n_rings);
+#endif
 
 /* A TCP stream's spill file's ceiling on disk: past it a record is dropped
  * and counted (#547). A collector away for days must not fill the box's

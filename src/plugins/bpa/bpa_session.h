@@ -291,12 +291,11 @@ typedef struct
    * synchronisation between them, and every growth took the main heap's lock
    * while the main thread was copying megabytes of spill under it: 78% of a
    * 30k pps burst was lost at rx on the #475 bench. Full, an event is dropped
-   * and counted in log_dropped; the worker never allocates and never waits.
+   * and counted in the ring's `dropped`; the worker never allocates and
+   * never waits. Since #550 the ring lives in a shared segment of its own,
+   * outside the main heap, so the log container can drain it.
    */
-  bpa_log_event_t *log_ring;
-  volatile u32 log_head; /* written by this thread */
-  volatile u32 log_tail; /* written by the draining process */
-  u64 log_dropped;
+  bpa_log_ring_t *log_q; /* this thread's ring in bpa_log_seg (#550) */
   /* One exhaustion record per subscriber per interval (#549), made on first
    * use: a worker that never refuses a subscriber carries no table. */
   struct bpa_exhaust_t_ *exhaust;

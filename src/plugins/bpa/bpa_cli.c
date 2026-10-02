@@ -2995,12 +2995,26 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		     BPA_EXHAUST_IVL, held);
     held = 0;
     for (ti = 0; ti < vec_len (bm->per_thread); ti++)
-      held += vec_elt_at_index (bm->per_thread, ti)->log_dropped;
+      {
+	bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, ti);
+	if (pt->log_q)
+	  held += pt->log_q->dropped;
+      }
     /* A worker never waits for the log (#547): a full queue drops, here. */
     vlib_cli_output (vm,
 		     "  queue       %Lu event(s) dropped with a worker's queue "
 		     "full (%u each)",
 		     held, BPA_LOG_QUEUE_MAX);
+    /* Where the rings are (#550): a box that could not have the shared
+     * segment says so, because then nothing outside VPP can drain them. */
+    if (bpa_log_seg.shared)
+      vlib_cli_output (vm, "  rings       /dev/shm%s, %Lu bytes, outside the "
+			   "main heap",
+		       BPA_LOG_SEG_NAME, bpa_log_seg.bytes);
+    else
+      vlib_cli_output (vm, "  rings       in the main heap: %s failed (%s)",
+		       bpa_log_seg.failed ? bpa_log_seg.failed : "?",
+		       strerror (bpa_log_seg.err));
   }
   bpa_show_egress_tx_lost (vm, &exp->ipfix_collector.ip.ip4);
   /*

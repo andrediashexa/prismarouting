@@ -305,9 +305,31 @@ LOG_BACK=$(vppctl show bpa logging)
 printf '%s\n' "$LOG_BACK" | sed 's/^/    /'
 
 echo
+echo "=== the rings, read from outside VPP (#550) ==="
+# What the log container will read: the segment by name, its header checked,
+# each worker's ring. VPP still drains them here, so everything written has
+# been consumed: head == tail on every ring, nothing dropped.
+RINGS=$(python3 /src/lab/log_rings.py)
+printf '%s\n' "$RINGS" | sed 's/^/  /'
+RING_OK=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if d.get("readable") else "no")')
+RING_WRITTEN=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("written", 0))')
+RING_PENDING=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pending", -1))')
+RING_DROPPED=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("dropped", -1))')
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 C=$(cat /tmp/collector.out)
+
+# --- the rings are outside the main heap, and another process can read them ---
+expect "another process reads the rings' segment and its header checks (#550)" \
+  test "$RING_OK" = yes
+expect_in "show bpa logging says the rings are in /dev/shm, outside the main heap" \
+  "rings       /dev/shm/prisma-bpa-log" "$LOG_BACK"
+expect "the events this run made are in the rings: ${RING_WRITTEN} written (at least 8)" \
+  test "$RING_WRITTEN" -ge 8
+expect "and VPP drained them all, none dropped (pending ${RING_PENDING}, dropped ${RING_DROPPED})" \
+  test "$RING_PENDING" = 0 -a "$RING_DROPPED" = 0
 
 # --- the product configures the exporter, and refuses to pretend otherwise ---
 expect_in "commit check refuses 'logging enable' with no exporter" \
