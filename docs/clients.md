@@ -27,6 +27,18 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.17 - what the API reaches, command by command
+
+* **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
+* **New:** [docs/api-coverage.md](api-coverage.md), generated from the VTY's
+  own grammar: every command (672 paths) classified as typed, text (the
+  screen through `Show`, or a configuration line through `Edit`), none, or
+  not applicable, with the rpc that serves it. A test keeps it current. The
+  17 paths with no API yet (`monitor cgnat logging`, `clear bgp/ospf/isis`,
+  `system reboot/shutdown/upgrade/dataplane restart`) and the phases that
+  will type the rest, in prisma-web's priority order, are listed there (#558).
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.16 - monitor cgnat logging
 
 * **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
