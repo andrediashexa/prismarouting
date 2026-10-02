@@ -85,12 +85,13 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `GetPolicyCounters` | `show policy <name>`'s hits (#538): per route-map a policy is in - its `attach_point` as `test policy ... at` says it, every place applying it (`applied_at`), the daemon that runs it - how many routes each term matched; `counted` false when the daemon reported no such map, `compiled` false for a term with no clause at that use. An empty `policy` is every policy, each map once; a policy that does not exist is `NOT_FOUND` |
 | | `TestPolicy` | `test policy <p> route\|rib <prefix> ... at <use>` (#538): `attributes` describe the route, as the words `route` takes; `rib` reads it off the box instead, with `vrf` and `neighbor`. Answers the verdict, the deciding policy and term, every step, the route before and after the sets, what was assumed and what is refused there. A use or an attribute it does not take is `INVALID_ARGUMENT`, a policy that does not exist `NOT_FOUND` |
 | | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
-| TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) |
+| | `GetLogging` | `show cgnat logging` (#555): each log export - syslog and IPFIX over TCP, IPFIX over UDP - its collector, who carries it (the log container or the dataplane), its connection, its counters, its spill and whether it is delivering; the box-wide drop counters; the screen itself in `text`. See [The log export](#the-log-export) |
+| TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) - and, with `logging_events`, the log export's `log-...` events (#555) |
 | | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
 | RouteService | `ListRoutes` | FRR's RIB as `show ip route` reads it (#533): every VRF and both families, a page at a time from one snapshot, filtered by VRF, family, prefix (and what is inside it), protocol and selected |
 | | `GetRouteSummary` | `show ip route vrf all summary`: per VRF, family and protocol, the routes in the RIB and in the FIB |
 | SessionService | `WhoAmI` | the account the client certificate names, and the role the VTY login gives it (#533) |
-| grpc.health.v1.Health | `Check`, `Watch` | `SERVING` for `""` and each prisma.v1 service; `NOT_SERVING` for `OperationalService` and `TelemetryService` while the dataplane's statistics segment does not answer; `NOT_FOUND` for a service not served |
+| grpc.health.v1.Health | `Check`, `Watch` | `SERVING` for `""` and each prisma.v1 service; `NOT_SERVING` for `OperationalService` and `TelemetryService` while the dataplane's statistics segment does not answer; `prisma.v1.LogExport`, the log export (#555): `NOT_SERVING` while a configured stream is stalled (see [The log export](#the-log-export)); `NOT_FOUND` for a service not served |
 
 `GetSystem` also carries, since #533, the host's RAM as numbers
 (`memory_total_bytes`, `memory_used_bytes` - MemTotal less MemAvailable, so the
@@ -168,6 +169,49 @@ It is written every five samples, and when the server stops, to
 management container shares - so a restart of the server or of its container
 (an upgrade does both) reads it back, and a client's graphs go on. A reboot
 empties it, as it zeroes the dataplane's counters.
+
+### The log export
+
+`GetLogging` (#555) is read from `show bpa logging` - the screen the VTY
+prints as `show cgnat logging` - and from nothing else, so the API and the
+prompt can never disagree; the screen is in `LoggingState.text` as read. The
+server reads it on every call and every 10 seconds on its own, which is what
+the health service and the events need.
+
+**Delivering.** A stream is `delivering` unless it is configured, has had
+something to send, and has got nothing out for **60 seconds**:
+
+* a TCP stream (syslog, IPFIX over TCP) has something to send while bytes are
+  pending in memory or its spill file is not empty, and gets something out
+  when its `bytes_sent` grows;
+* the UDP export has something it failed to send when its `send_failures` or
+  `dropped` grow, and gets something out when its packets (the log container)
+  or records (the dataplane) grow.
+
+A stream with nothing to send is delivering whatever its connection: a
+syslog collector that is down is reported the moment a line has to go there.
+`stalled_reason` says what is wrong; `last_progress` when the stream last got
+something out, or last had nothing to send. The health service answers
+`NOT_SERVING` for **`prisma.v1.LogExport`** while any configured stream is
+not delivering, and when the dataplane does not answer the screen - under a
+name of its own and not `OperationalService`'s or `""`: a stalled collector
+is not a box whose reads fail, and a client that stops calling an
+OperationalService marked `NOT_SERVING` would stop reading the state that
+says what is wrong.
+
+**Counters and gauges.** Each field's comment in the contract says which. A
+counter counts from the dataplane's start and is the stream's **current
+carrier's**: when a stream moves between the log container and the
+dataplane (#550) it may jump or start again, and a client takes a decrease as
+a reset. `exhaustion_repeats_not_reported` is expected under exhaustion (one
+record a subscriber per 10 s, #549), not a loss; `transmit_failed` counts
+every sender on the collector's interface, forwarded traffic included.
+
+**Events**, with `SubscribeRequest.logging_events` - as `Event`s whose `kind`
+starts `log-` and whose `text` names the stream: `log-connected`,
+`log-disconnected`, `log-carrier`, `log-spill` (the spill file started),
+`log-spill-full` (bytes dropped over the cap), `log-stalled`,
+`log-delivering`. A reading every 10 s makes an event up to that late.
 
 ## Limits a client meets
 

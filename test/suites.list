@@ -151,6 +151,7 @@ sh test/test_set_hostname.sh
 python3 test/test_zabbix_template.py
 python3 test/test_api_contract.py
 python3 test/test_apiserver.py
+python3 test/test_logstate.py
 sh test/test_api_configure.sh
 sh test/test_kernel_current.sh
 python3 test/test_pager.py

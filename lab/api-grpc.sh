@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 48
+# OFF-RED-AT-LEAST: 56
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -148,6 +148,9 @@ echo "=========== the server ==========="
 # The history sampled once a second rather than a minute, into a file the
 # second server below reads back (#533).
 export PRISMA_API_HISTORY=/tmp/api-history.json PRISMA_API_HISTORY_INTERVAL=1
+# The log export read every second, a stall after 4 s rather than a minute
+# (#555), so the lab sees the rule turn both ways in seconds.
+export PRISMA_API_LOG_INTERVAL=1 PRISMA_API_LOG_STALL=4
 export PRISMA_STARTUP_CONF=$SC
 rm -f $PRISMA_API_HISTORY
 sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50551 --dir $C/box \
@@ -164,6 +167,84 @@ PGNEW=$(vppctl packet-generator new "name t limit 2000 node ip4-input interface 
 echo "=========== the client ==========="
 OUT=$(python3 lab/api_grpc_check.py /tmp/apistubs $C 127.0.0.1:50551 "$LAB_ROUTES" 2>&1)
 printf '%s\n' "$OUT" | sed 's/^/  /'
+echo "=========== the CGNAT log export over the API (#555) ==========="
+# A syslog collector in a namespace of its own, the box's syslog to it, and
+# subscribers allocating blocks - each allocation is a line. 192.168.209/24
+# and not 10.9.0/24: the RIB above is 10.0.0.0-13.x.x.0/24 via d0, and the
+# first run sent the collector's lines into that dummy. Then the
+# collector is killed while lines keep coming, and started again: GetLogging,
+# the health service's prisma.v1.LogExport and the event stream must each
+# say so, and GetLogging's fields must be the VTY's own screen.
+LC="python3 lab/api_logging_check.py /tmp/apistubs $C 127.0.0.1:50551"
+ip netns add logc 2>/dev/null
+ip link add vlog type veth peer name vlogc 2>/dev/null
+ip link set vlogc netns logc
+ip addr add 192.168.209.1/24 dev vlog 2>/dev/null; ip link set vlog up
+ip netns exec logc ip addr add 192.168.209.2/24 dev vlogc
+ip netns exec logc ip link set vlogc up
+ip netns exec logc ip link set lo up
+collector_up() {
+  ip netns exec logc python3 -c '
+import socket, threading
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("192.168.209.2", 601)); s.listen(8)
+def rd(c):
+    while c.recv(65536):
+        pass
+while True:
+    c, _ = s.accept(); threading.Thread(target=rd, args=(c,), daemon=True).start()
+' > /tmp/logc.log 2>&1 &
+  echo $! > /tmp/logc.pid
+  sleep 1
+}
+allocate() {  # allocate <third octet>: subscribers 100.64.<o>.1-20 of pool lg, a block and a line each
+  for h in $(seq 1 20); do
+    vppctl packet-generator new "name a$1x$h limit 1 node ip4-input interface pg0 size 60-60 \
+        data { UDP: 100.64.$1.$h -> 8.8.8.8 UDP: 40000 -> 53 incrementing 8 }" >/dev/null 2>&1
+  done
+  vppctl packet-generator enable >/dev/null 2>&1; sleep 1
+  for h in $(seq 1 20); do vppctl packet-generator delete a$1x$h >/dev/null 2>&1; done
+}
+collector_up
+# The way out lab/syslog.sh gives its subscribers: pg1 outside, 8.8.8.8 behind it.
+vppctl create packet-generator interface pg1 >/dev/null 2>&1
+vppctl set interface state pg1 up
+vppctl set interface ip address pg1 200.150.0.1/24
+vppctl set ip neighbor pg1 200.150.0.2 02:00:00:00:00:02
+vppctl ip route add 8.8.8.8/32 via 200.150.0.2 pg1
+vppctl set interface bpa in2out pg0 >/dev/null 2>&1
+vppctl set interface bpa out2in pg1 >/dev/null 2>&1
+# A DYNAMIC pool for the lines: `nb` is deterministic, which allocates
+# nothing on demand and so writes no line (the second run of this section
+# had one, the boot marker, and nothing to wait for).
+$HX -c configure -c nat -c cgnat -c "pool lg" -c "prefix-inside 100.64.8.0/22" \
+    -c "prefix-outside 200.150.0.32/30" -c "mode dynamic" -c top -c commit 2>&1 \
+    | tail -1 | sed 's/^/  pool: /'
+$HX -c configure -c nat -c cgnat -c "logging syslog 192.168.209.2 port 601 enterprise 32473" \
+    -c top -c commit 2>&1 | tail -1 | sed 's/^/  /'
+vppctl show bpa pool 2>&1 | grep '^pool ' | sed 's/^/  /'
+allocate 8
+sleep 4
+LOG1=$($LC state 2>&1); H1=$($LC health 2>&1)
+printf '%s\n%s\n' "$LOG1" "$H1" | sed 's/^/  up:      /'
+$LC events 40 > /tmp/logevents.txt 2>&1 &
+EVPID=$!
+sleep 2
+kill "$(cat /tmp/logc.pid)" 2>/dev/null
+sleep 1
+allocate 9
+sleep 9
+LOG2=$($LC state 2>&1); H2=$($LC health 2>&1)
+printf '%s\n%s\n' "$LOG2" "$H2" | sed 's/^/  down:    /'
+collector_up
+sleep 12
+LOG3=$($LC state 2>&1); H3=$($LC health 2>&1)
+printf '%s\n%s\n' "$LOG3" "$H3" | sed 's/^/  back:    /'
+wait $EVPID 2>/dev/null
+EVENTS=$(cat /tmp/logevents.txt)
+printf '%s\n' "$EVENTS" | sed 's/^/  stream:  /'
+kill "$(cat /tmp/logc.pid)" 2>/dev/null
+
 echo "=========== the VTY's own statement ==========="
 APINO=$($HX -c configure -c "api enabled yes" -c "commit check" 2>&1)
 printf '%s\n' "$APINO" | tail -2 | sed 's/^/  /'
@@ -265,6 +346,24 @@ expect "  and refuses an unknown token, protocol or VRF, each with its status" r
 expect_in "the history outlives the server: a new one reads it back" \
   "from before this server started" "$HAFTER"
 expect "  with samples in it" test "$(printf '%s' "$HAFTER" | sed -n 's/.*samples, \([0-9]*\) from before.*/\1/p')" -gt 10 2>/dev/null
+expect_in "GetLogging's stream fields are the screen's, field for field (#555)" \
+  "RESULT logging-fields ok" "$LOG1"
+expect_in "  and that screen is the VTY's show cgnat logging" "RESULT logging-is-vty ok" "$LOG1"
+expect_in "  syslog to a reading collector: connected, carried by the dataplane, delivering" \
+  "configured=True connection=connected carrier=dataplane" "$LOG1"
+expect "  with lines sent and the health service SERVING" sh -c \
+  'printf "%s" "$1" | grep -q "delivering=True" && printf "%s" "$2" | grep -q "HEALTH SERVING"' \
+  _ "$LOG1" "$H1"
+expect "the collector killed while lines come: not delivering, said why, NOT_SERVING" sh -c \
+  'printf "%s" "$1" | grep -q "delivering=False reason=.nothing delivered" && printf "%s" "$2" | grep -q "HEALTH NOT_SERVING"' \
+  _ "$LOG2" "$H2"
+expect "  and back: delivering again, SERVING" sh -c \
+  'printf "%s" "$1" | grep -q "connection=connected.*delivering=True" && printf "%s" "$2" | grep -q "HEALTH SERVING"' \
+  _ "$LOG3" "$H3"
+expect "the event stream told each turn: lost, stalled, connected, delivering" sh -c \
+  'for k in log-disconnected log-stalled log-connected log-delivering; do printf "%s" "$1" | grep -q "EVENT $k syslog" || exit 1; done' \
+  _ "$EVENTS"
+expect_in "  and the fields of a stall are still the screen's" "RESULT logging-fields ok" "$LOG2"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

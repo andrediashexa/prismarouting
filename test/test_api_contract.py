@@ -78,7 +78,9 @@ want = {
                            "ListIsisAdjacencies", "ListVrrp", "ListBundles",
                            "ListPolicies", "GetPolicyCounters",
                            "TestPolicy",
-                           "Show"],
+                           "Show",
+                           # #555: the CGNAT log export's state.
+                           "GetLogging"],
     "TelemetryService": ["Subscribe", "GetHistory"],
     # #533: new subjects, new services; their rpcs are the subject's.
     "RouteService": ["ListRoutes", "GetRouteSummary"],

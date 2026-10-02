@@ -51,6 +51,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import logstate  # noqa: E402 - the CGNAT log export's state (#555)
+
 #: Where the server listens inside the management container: the backplane
 #: address the host forwards the management address to (#448's bp0).
 DEFAULT_LISTEN = "128.0.0.2:50051"
@@ -1433,6 +1435,46 @@ def vpp_runtime():
         return ""
 
 
+def vpp_logging():
+    """`show bpa logging` - the screen `show cgnat logging` prints - as vppctl
+    prints it; "" when the dataplane does not answer (#555)."""
+    try:
+        p = subprocess.run([os.environ.get("PRISMA_VPPCTL", "vppctl"), "show", "bpa",
+                            "logging"], capture_output=True, text=True, timeout=10)
+        return p.stdout if p.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+#: LogStream's fields, in its message's order: what logging_fields() keeps
+#: of a watcher's row (the rest - delivered, waiting, failing - is the rule's
+#: own bookkeeping, not the contract).
+LOG_STREAM_FIELDS = ("kind", "configured", "collector", "source", "carrier",
+                     "carrier_reason", "connection", "records", "bytes_sent",
+                     "packets_sent", "pending_bytes", "spill_bytes", "spill_cap_bytes",
+                     "dropped_over_cap", "send_failures", "dropped", "delivering",
+                     "stalled_reason", "last_progress")
+
+
+def logging_fields(parsed, rows, text, at):
+    """
+    LoggingState's fields from a LogWatch snapshot (#555), timestamps as
+    epoch seconds for the servicer to wrap. The streams always all three, in
+    logstate.STREAMS' order.
+    """
+    by = {r["kind"]: r for r in rows}
+    streams = [{f: by[k][f] for f in LOG_STREAM_FIELDS} for k in logstate.STREAMS
+               if k in by]
+    return {"at": at, "streams": streams, "carrier": parsed["carrier"],
+            "logger_pid": parsed["logger_pid"],
+            "export_ring_dropped": parsed["export_dropped"],
+            "worker_queue_dropped": parsed["queue_dropped"],
+            "exhaustion_repeats_not_reported": parsed["exhaustion_repeats"],
+            "transmit_failed": parsed["transmit_failed"],
+            "transmit_interface": parsed["transmit_interface"],
+            "rings_shared": parsed["rings_shared"], "text": text}
+
+
 class BusyMeter:
     """
     The workers' busy ratios over a window: `show runtime`'s clocks read now
@@ -1662,11 +1704,24 @@ def take_sample(history, stats, worker_cpus="", meminfo=None, now=None, meter=No
     history.add(now or time.time(), ifs, cg, wk, mem)
 
 
-def health_status(service, stats_ok):
+#: The health service's name for the CGNAT log export (#555). A name of its
+#: own and not OperationalService's: a stalled syslog collector is not a box
+#: whose reads fail, and a client that reads NOT_SERVING on
+#: OperationalService as "do not call it" would stop reading the very state
+#: that says what is wrong. "" - the server as a whole - does not include it
+#: either, for the same reason.
+LOG_HEALTH = "prisma.v1.LogExport"
+
+
+def health_status(service, stats_ok, log_status=None):
     """
     grpc.health.v1's answer for `service`: "SERVING", "NOT_SERVING", or None
-    for a service this server does not serve.
+    for a service this server does not serve. `log_status` is the log
+    export's own answer (LogWatch.health()'s first half) for LOG_HEALTH;
+    without one that name is not served.
     """
+    if service == LOG_HEALTH:
+        return log_status
     served = ("", "prisma.v1.ConfigService", "prisma.v1.OperationalService",
               "prisma.v1.TelemetryService", "prisma.v1.RouteService",
               "prisma.v1.SessionService")
@@ -1696,7 +1751,7 @@ def _diag_pb(pb, d):
 # not a unit: builds the gRPC servicers around the core above; it needs grpc
 # and the generated stubs, and lab/api-grpc.sh drives every rpc through it.
 def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
-          meter=None):
+          meter=None, logwatch=None):
     """
     The servicers, bound to `sessions`, a statistics reader factory and the
     counter history: prisma.v1's five, and grpc.health.v1's when its
@@ -2052,6 +2107,25 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             except WorkerError as e:
                 context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
 
+        # not a unit: an rpc, driven by lab/api-grpc.sh; logging_fields() and
+        # logstate are what it does, and are tested.
+        def GetLogging(self, req, context):
+            account(context)
+            if logwatch is None:
+                context.abort(grpc.StatusCode.UNAVAILABLE, "the log export is not watched")
+            logwatch.observe(vpp_logging())
+            parsed, rows, text, at, error = logwatch.snapshot()
+            if error or parsed is None:
+                context.abort(grpc.StatusCode.UNAVAILABLE, error or "no reading")
+            f = logging_fields(parsed, rows, text, at)
+            out = pb.LoggingState(**{k: v for k, v in f.items()
+                                     if k not in ("at", "streams")})
+            out.at.CopyFrom(ts(f["at"]))
+            for r in f["streams"]:
+                lp = r.pop("last_progress")
+                out.streams.add(**r).last_progress.CopyFrom(ts(lp))
+            return out
+
     class Telemetry(rpc.TelemetryServiceServicer):
         # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
         def Subscribe(self, req, context):
@@ -2059,6 +2133,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             interval = max(500, req.interval_ms or 1000) / 1000.0
             stats = stats_factory()
             state = read_state()
+            # #555: from the newest log event the watcher has, onwards.
+            log_seq = logwatch.last_seq() if logwatch is not None else 0
             while context.is_active():
                 now = time.time()
                 if req.interface_counters:
@@ -2080,6 +2156,9 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                             pass
                         yield pb.TelemetryUpdate(at=ts(now), event=pb.Event(**e))
                     state = after
+                if req.logging_events and logwatch is not None:
+                    for log_seq, e in logwatch.events_after(log_seq):
+                        yield pb.TelemetryUpdate(at=ts(now), event=pb.Event(**e))
                 time.sleep(interval)
 
         # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
@@ -2149,15 +2228,20 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
 
     servicers = [Config(), Operational(), Telemetry(), Routes(), Session()]
     if health is not None:
-        servicers.append(health_servicer(stats_factory, health[0], health[1], grpc))
+        servicers.append(health_servicer(stats_factory, health[0], health[1], grpc,
+                                         logwatch))
     return servicers
 
 
 # not a unit: grpc.health.v1's servicer, a class over health_status() and
 # stats_ok(), which the unit tests drive; lab/api-grpc.sh asks it.
-def health_servicer(stats_factory, hpb, hrpc, grpc):
+def health_servicer(stats_factory, hpb, hrpc, grpc, logwatch=None):
     """grpc.health.v1.Health: health_status() for each service asked."""
     seen = {"at": 0.0, "ok": False}
+
+    # not a unit: a closure over LogWatch.health(), which is tested.
+    def log_status():
+        return logwatch.health()[0] if logwatch is not None else None
 
     # not a unit: a closure; stats_ok() below is the reading it caches.
     def ok():
@@ -2169,7 +2253,7 @@ def health_servicer(stats_factory, hpb, hrpc, grpc):
     class Health(hrpc.HealthServicer):
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def Check(self, req, context):
-            st = health_status(req.service, ok())
+            st = health_status(req.service, ok(), log_status())
             if st is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"no service {req.service!r}")
             return hpb.HealthCheckResponse(status=getattr(hpb.HealthCheckResponse, st))
@@ -2178,7 +2262,7 @@ def health_servicer(stats_factory, hpb, hrpc, grpc):
         def Watch(self, req, context):
             last = None
             while context.is_active():
-                st = health_status(req.service, ok()) or "SERVICE_UNKNOWN"
+                st = health_status(req.service, ok(), log_status()) or "SERVICE_UNKNOWN"
                 if st != last:
                     last = st
                     yield hpb.HealthCheckResponse(status=getattr(hpb.HealthCheckResponse, st))
@@ -2213,6 +2297,18 @@ def sampler(history, stats_factory, stop, meter, path=HISTORY_PATH,
         n += 1
         if n % HISTORY_SAVE_EVERY == 0:
             history.save(path)
+
+
+# not a unit: the watcher's thread body - LogWatch.observe() is what it does
+# each time and is tested; lab/api-grpc.sh runs it with a one-second interval.
+def log_watcher(watch, stop, interval=None, read=vpp_logging):
+    """Read the log export's screen every `interval` seconds until `stop`, so
+    the health service and the event stream have readings over time (#555)."""
+    interval = logstate.LOG_INTERVAL if interval is None else interval
+    while True:
+        watch.observe(read())
+        if stop.wait(interval):
+            return
 
 
 # not a unit: the program's entry - reads the certificates, binds the
@@ -2260,8 +2356,11 @@ def main(argv):
     meter = BusyMeter()
     threading.Thread(target=sampler, args=(history, stats_factory, stop, meter),
                      daemon=True).start()
+    logwatch = logstate.LogWatch()
+    threading.Thread(target=log_watcher, args=(logwatch, stop), daemon=True).start()
     cfg, ops, tel, routes, session, health = build(sessions, stats_factory, pb, rpc,
-                                                   grpc, history, (hpb, hrpc), meter)
+                                                   grpc, history, (hpb, hrpc), meter,
+                                                   logwatch)
     # NO SO_REUSEPORT, which gRPC turns on by default: with it a second server
     # binds the same port beside the first, and the X520 bench (0.148.4) was
     # found with two listeners on 128.0.0.2:50051 after restarts. Without it
