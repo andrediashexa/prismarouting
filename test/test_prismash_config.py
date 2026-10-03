@@ -2201,5 +2201,14 @@ check(_c.interfaces.get("pg0") == "inside" and not _c.unknown,
       f"the interface role keeps its own words: {_c.interfaces} {_c.unknown}")
 
 
+
+# The box's default MTU, which `no mtu` goes back to (#560).
+check(config.startup_default_mtu("ethernet {\n  default-mtu 1500\n}\n") == 1500,
+      "startup_default_mtu reads the tuner's ethernet default-mtu")
+check(config.startup_default_mtu("unix {\n nodaemon\n}\n") == config.VPP_DEFAULT_MTU == 9000,
+      "and VPP's own 9000 when startup.conf sets none")
+check(config.startup_default_mtu("ethernet { default-mtu 99 }") == 9000,
+      "a value outside the MTU range is not believed")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

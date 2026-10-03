@@ -27,6 +27,24 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.21 - `no mtu` goes back to the default, and read-only reads are fast
+
+* **Contract:** unchanged (`prisma.proto` sha256 `4cdfee65edf97ae1239d5c4a18648250b04a0d08ff4d4b6106b117e47ea86c09`).
+* **Fixed (#561):** an account with no configuration role waited about 90 s
+  for any read of the running configuration - `GetRunning`, `GetConfig` and
+  `Show running-config` alike. It is as fast as an administrator's now: 0.42 s
+  against 0.39 s in the lab, from 90.6 s, with the same content. **Client
+  workaround before 0.149.22:** a deadline of at least 120 s on those calls
+  for such an account.
+* **Fixed (#560):** removing an interface's MTU (`SetConfig` clearing `mtu`,
+  or the line `no mtu`) now sets the interface back to the box's default MTU;
+  before, the dataplane kept the old value and `GetConfig` went on reporting
+  it. The running configuration still names an MTU for every interface - the
+  device's, which after the removal is the default (9000 unless the tuner set
+  `ethernet { default-mtu }`). A client that wants "no explicit MTU" compares
+  against that default; it is not a separate field.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.20 - the configuration as fields (#558, phase 2)
 
 prisma-web's items 4 and 5: interfaces, CGNAT pools and the CGNAT log export

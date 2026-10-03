@@ -79,6 +79,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`no mtu` left the dataplane at the last committed MTU.**
+  ([#560](https://github.com/andrediashexa/hexarouting/issues/560)) It
+  printed "the driver default applies after the interface is recreated" and
+  changed nothing, and the running configuration - which reads the device -
+  went on listing the MTU the operator had just removed. `no mtu` now sets
+  the interface back to the box's default, the tuner's `ethernet {
+  default-mtu }` in startup.conf (VPP's 9000 when there is none), on the
+  dataplane and its Linux end, held to the same read-back as `mtu <n>`. An
+  interface already at the default is not touched, so a saved file with no
+  mtu line, loaded at boot, changes nothing. The other interface statements
+  that set a dataplane value were swept: uRPF, linux-name, shutdown, the
+  addresses and the VRF already went back; `no mac-address` keeps the
+  current MAC by design (#224). lab/mtu-and-readonly.sh: 1400 back to 9000.
+* **An account with no role took 90 s to read the running configuration.**
+  ([#561](https://github.com/andrediashexa/hexarouting/issues/561)) vat2,
+  run as an account that cannot map the dataplane's API segment, does not
+  fail: it waits out its connect, and every dump a running-config read makes
+  waited its turn. The VTY now asks the segment once and answers such a dump
+  at once, with the same refusal. Measured in lab/mtu-and-readonly.sh: 90.6 s
+  to 0.42 s for the same 14 lines (root 0.39 s).
+
 ## 0.149.20 - the configuration as fields, and its whole grammar as a schema
 
 ### Added
