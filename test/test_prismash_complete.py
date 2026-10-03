@@ -104,7 +104,8 @@ check({"nat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
 # #446), and `nat` is a word that is entered and takes nothing after it.
 check("cgnat" not in o, f"the old top-level spelling is not offered: {o}")
 o, _, _ = opts("config", "nat ")
-check(o == set(), f"nothing follows 'nat' on its line: it is entered: {o}")
+check(o == {prismash.ENTER},
+      f"nothing follows 'nat' on its line, and the line says so (#557): {o}")
 o, _, _ = opts("config", "", nat=("nat",))
 check("cgnat" in o and "pool" not in o and "exit" in o,
       f"standing in nat, cgnat is what is offered: {o}")
@@ -437,8 +438,9 @@ check(o == {"system"} and prefix == "syst",
 o, _, _ = opts("operational", "system re")
 check(o == {"reboot"}, f"'system re' completes to reboot alone: {sorted(o)}")
 o, hint, _ = opts("operational", "system reboot ")
-check(not o and hint is None,
-      f"and nothing follows the verb: options={sorted(o)} hint={hint!r}")
+check(o == {prismash.ENTER} and hint is None,
+      f"and nothing follows the verb - Enter runs it, said as such (#557): "
+      f"options={sorted(o)} hint={hint!r}")
 # The help beside each verb has to say what it costs, because `?` is where
 # an operator reads that before typing it. Read through _options, which is
 # what `?` renders, and not off TREE.
@@ -3657,7 +3659,9 @@ check(offered("clear ")[0] == {"bgp", "ospf", "isis"},
 check(offered("clear ospf ")[0] == {"process", "neighbor"},
       f"clear ospf offers: {sorted(offered('clear ospf ')[0])}")
 o, hint = offered("clear isis adjacency ")
-check(not o and hint == "[<system-id>]", f"a system id is typed: {o} {hint!r}")
+check(o == {prismash.ENTER} and hint == "<system-id>",
+      f"a system id may be typed, and the command is complete without one "
+      f"(#557): {o} {hint!r}")
 
 
 
@@ -7897,3 +7901,153 @@ print("  a bundle as a member, and an unknown lacp mode: refused at the prompt")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
+
+
+print("\n=== #557: what `no` names is what is configured, and the end of a statement ===")
+# The gaps the maintainer reported, reproduced before the change: `no user
+# <TAB>` offered nothing, `no ipv4 address <TAB>` only the IPv4 shape, `no
+# neighbor <TAB>` nothing, a pool's `no prefix-outside <TAB>` nothing; the
+# static route's next hop and its optional words were a hint and never a
+# list; `ipv6 address` showed the IPv4 shape; and a complete statement showed
+# an empty list or "(no known options here)", read as "not known".
+NB = """Time                       IP                    Flags      Ethernet              Interface
+     1.2345            10.0.0.7                   D    02:00:00:00:00:07 host-veth-vpp
+"""
+def box557():
+    sh = shell_with_box()
+    run0 = sh.dp.run
+    asked = []
+    def run(_s, cmd):
+        asked.append(cmd)
+        if cmd == "show ip neighbors":
+            return 0, NB
+        return run0(_s, cmd)
+    sh.dp = type("D", (), {"TRACE": False, "run": run,
+                           "reachable": lambda _s: True})()
+    with contextlib.redirect_stdout(io.StringIO()):
+        for line in ["configure", "interface host-veth-vpp",
+                     "ipv4 address 10.0.0.1/24", "ipv6 address 2001:db8::1/64",
+                     "exit", "router static", "0.0.0.0/0 next-hop 10.0.0.2",
+                     "exit", "user alice", "exit", "nat", "cgnat", "pool din",
+                     "prefix-inside 100.64.0.0/22",
+                     "prefix-outside 203.0.113.0/29", "exit", "top",
+                     "router bgp 65000", "neighbor 10.0.0.2 remote-as 65001",
+                     "exit"]:
+            sh.feed(line)
+    return sh, asked
+
+def at557(sh, *ctx):
+    with contextlib.redirect_stdout(io.StringIO()):
+        sh.feed("top")
+        for c in ctx:
+            sh.feed(c)
+
+def o557(sh, line):
+    o, h, _ = sh._options(line, bool(line) and not line.endswith(" "))
+    return o, h
+
+sh, asked = box557()
+at557(sh)
+o, _ = o557(sh, "no ")
+check({"user", "router", "hostname"} <= set(o),
+      f"no at the top offers what is configured there: {sorted(o)}")
+o, _ = o557(sh, "no user ")
+check(set(o) == {"alice"}, f"no user offers the account, never root: {o}")
+o, _ = o557(sh, "no interface ")
+check("host-veth-vpp" not in o,
+      f"a physical port is not offered for removal: {sorted(o)}")
+at557(sh, "interface host-veth-vpp")
+o, _ = o557(sh, "no ")
+check({"ipv4", "ipv6", "shutdown"} <= set(o),
+      f"in an interface, the configured AND the grammar's: {sorted(o)}")
+o, _ = o557(sh, "no ipv4 address ")
+check("10.0.0.1/24" in o, f"the configured address completes whole: {o}")
+o, _ = o557(sh, "no ipv6 address ")
+check("2001:db8::1/64" in o, f"and the IPv6 one: {o}")
+o, h = o557(sh, "ipv6 address ")
+check(h == prismash.ARG_PREFIX6, f"ipv6 address shows the IPv6 shape: {h}")
+o, _ = o557(sh, "no ipv4 address 10.0.0.1/24 ")
+check(prismash.ENTER in o, f"a full `no` of what is there is complete: {o}")
+at557(sh, "router bgp 65000")
+o, _ = o557(sh, "no neighbor ")
+check("10.0.0.2" in o, f"no neighbor offers the session: {o}")
+at557(sh, "nat", "cgnat", "pool din")
+o, _ = o557(sh, "no ")
+check("prefix-outside" in o and "block-size" not in o,
+      f"a pool offers what its `no` takes, not its shown defaults: {sorted(o)}")
+o, _ = o557(sh, "no prefix-outside ")
+check("203.0.113.0/29" in o, f"and the prefix completes whole: {o}")
+
+print("  the optional words after a positional argument")
+at557(sh, "router static")
+o, h = o557(sh, "10.77.0.0/16 next-hop ")
+check({"10.0.0.2", "10.0.0.7", "blackhole"} <= set(o),
+      f"the next hop completes from routes, neighbours and keywords: {sorted(o)}")
+check("show ip neighbors" in asked, "the dataplane's neighbour table was read")
+n_asked = asked.count("show ip neighbors")
+o557(sh, "10.77.0.0/16 next-hop ")
+check(asked.count("show ip neighbors") == n_asked,
+      "and a second TAB within seconds does not ask again (_cached)")
+o, h = o557(sh, "10.77.0.0/16 next-hop 10.0.0.2 ")
+check(set(o) == {"distance", "tag", "description", prismash.ENTER},
+      f"after the next hop: the optional words and <Enter>: {sorted(o)}")
+o, h = o557(sh, "10.77.0.0/16 next-hop 10.0.0.2 d")
+check(set(o) == {"distance", "description"}, f"d<TAB>: {sorted(o)}")
+o, h = o557(sh, "10.77.0.0/16 next-hop 10.0.0.2 distance ")
+check(not o and h == "<1-255>", f"after distance, its own value hint: {o} {h}")
+o, h = o557(sh, "10.77.0.0/16 next-hop 10.0.0.2 distance 200 ")
+check(set(o) == {"tag", "description", prismash.ENTER},
+      f"distance is not offered twice: {sorted(o)}")
+o, h = o557(sh, "10.77.0.0/16 next-hop 10.0.0.2 distance 200 description a b ")
+check(set(o) == {prismash.ENTER}, f"a <text> takes the rest: {sorted(o)}")
+at557(sh, "router bgp 65000", "address-family ipv4 unicast")
+o, _ = o557(sh, "aggregate-address 10.0.0.0/8 summary-only ")
+check(set(o) == {"policy", "suppress-policy", prismash.ENTER},
+      f"BGP aggregate-address, the same way: {sorted(o)}")
+at557(sh, "nat", "cgnat")
+o, _ = o557(sh, "logging syslog 10.0.0.9 enterprise 67033 ")
+check(set(o) == {"port", "facility", "severity", prismash.ENTER},
+      f"the syslog export's options are spelled and offered: {sorted(o)}")
+at557(sh)
+o, h = o557(sh, "ssh listen-address ")
+check(set(o) == {"10.0.0.1", "2001:db8::1"} and h == prismash.ARG_LOCAL_ADDRESS,
+      f"listen-address completes the box's own addresses: {o} {h}")
+o, _ = o557(sh, "some words this tree never heard ")
+check(prismash.ENTER not in o, "a path the tree does not know is not 'complete'")
+
+print("  the pieces, one by one")
+check(prismash._is_address("10.0.0.1") and prismash._is_address("2001:db8::1")
+      and not prismash._is_address("10.0.0.0/8"), "_is_address")
+els = prismash._hint_elements("<n> [distance <1-255>] [a|b <x>]")
+check(els[0] == ("req", [["<n>"]]) and els[1] == ("opt", [["distance", "<1-255>"]]),
+      f"_hint_elements: {els}")
+check(prismash._token_takes("<x>", "anything") and prismash._token_takes("a|b", "b")
+      and not prismash._token_takes("a|b", "c"), "_token_takes")
+check(prismash._token_offer("a|b") == ({"a": "", "b": ""}, None)
+      and prismash._token_offer("<n>") == ({}, "<n>"), "_token_offer")
+check(prismash.hint_progress("[<policy> | route <prefix>]", ["route"])
+      == ({}, "<prefix>", False), "hint_progress, alternatives inside a group")
+check(prismash._hint_follow(prismash._hint_elements("<a> [b <c>]"), ["x", "z"])
+      is None, "_hint_follow: words that do not fit give up")
+state = prismash.walk_end(prismash.TREE["config"], ["nat"])[0]
+check(state == "leaf", f"walk_end: nat ends on a leaf: {state}")
+state = prismash.walk_end(prismash.TREE["config"], ["nosuchword"])[0]
+check(state == "unknown", f"walk_end: an unknown word is said so: {state}")
+at557(sh, "interface host-veth-vpp")
+check(["ipv4", "address", "10.0.0.1/24"] in sh._here_statements(),
+      "_here_statements reads the interface's own lines")
+check(sh.no_options(["ipv4", "address"], "") == {
+      "10.0.0.1/24": "configured: ipv4 address 10.0.0.1/24"}, "no_options")
+root, walk, _ = sh._grammar_root(["show", "this"])
+check(walk == ["this"], f"_grammar_root: show inside a block walks SHOW: {walk}")
+check(sh.statement_end(["shutdown"])[0], "statement_end: shutdown is complete")
+check(sh._grammar_options("ipv4 address ", False)[1] == prismash.ARG_PREFIX,
+      "_grammar_options is the grammar alone")
+at557(sh)
+check(sh.dyn_local_addresses().get("10.0.0.1") == "on host-veth-vpp",
+      "dyn_local_addresses")
+check(sh._dataplane_neighbours().get("10.0.0.7") == "host-veth-vpp",
+      "_dataplane_neighbours")
+check("10.0.0.7" in sh.dyn_next_hops(), "dyn_next_hops")
+check(sh._cached("k", lambda: 1) == 1 and sh._cached("k", lambda: 2) == 1,
+      "_cached reuses an answer")

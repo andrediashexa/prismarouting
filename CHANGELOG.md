@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **TAB completion that helps remove, finish and address.**
+  ([#557](https://github.com/andrediashexa/hexarouting/issues/557))
+  Reported by the maintainer: removing configuration completed nothing, and
+  addresses never completed. After `no`, what is configured at that level
+  completes word by word, a value whole (`no ipv4 address <TAB>` inserts the
+  interface's address, `no neighbor <TAB>` the session), beside what the
+  level's `no` grammar takes; what the box refuses to remove is not offered.
+  A hint's optional words are now grammar, followed as the line grows: after
+  a static route's next hop `distance`, `tag` and `description` complete,
+  one used is not offered again, a keyword's value hint follows it - and the
+  same for every hint with optional words (BGP, OSPF, IS-IS, route-maps,
+  RPKI, the CGNAT `logging` exports, whose syslog options are spelled out). A
+  statement complete as typed prints an `<Enter>` line on `?` and a double
+  TAB, never the "(no known options here)" that read as unknown. A static
+  route's next hop completes from the dataplane's neighbours, the BGP
+  neighbours and the next hops in use; `listen-address` from the box's own
+  addresses; `ipv6 address` shows the IPv6 shape. lab/complete.sh drives the
+  VTY in a pty on a box: 19 of 19, and 13 red against 0.149.16.
+
 ### Fixed
 
 ## 0.149.18 - why a commit was refused, the confirm window and the candidates, typed

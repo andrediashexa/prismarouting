@@ -226,7 +226,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `hostname <name>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `dns server <address>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ssh port <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ssh listen-address <word>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ssh listen-address <A.B.C.D\|X:X::X:X>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ssh permit-root-login yes` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ssh permit-root-login no` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ssh permit-root-login prohibit-password` | text | ConfigService.Edit (lines) / GetRunning |  |
@@ -236,7 +236,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `user <user>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `snmp enabled yes` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `snmp enabled no` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `snmp listen-address <word>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `snmp listen-address <A.B.C.D\|X:X::X:X>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `snmp port <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `snmp enterprise-number <1-4294967295>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `snmp community <word>` | text | ConfigService.Edit (lines) / GetRunning |  |
@@ -244,7 +244,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `snmp-user <snmp-user>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `api enabled yes` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `api enabled no` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `api listen-address <word>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `api listen-address <A.B.C.D\|X:X::X:X>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `api port <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `commit check` | typed | ConfigService.Check |  |
 | `commit remap` | typed | ConfigService.Commit (acknowledge_remap) |  |
@@ -283,7 +283,7 @@ Entered with `nat > cgnat`; `EditRequest.path` = `["nat","cgnat"]`; changed by: 
 | `logging disable` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `logging udp <collector> src <source> [port <n>] \| disable` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `logging tcp <collector> [port <n>] \| disable` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `logging syslog <collector> enterprise <n> [options] \| disable` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `logging syslog <collector> enterprise <n> [port <n>] [facility <0-23>] [severity <0-7>] \| disable` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `identity file <path> \| dhcp-leases <path> \| radius secret <s> [port <n>] \| none` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `session-table buckets <n> memory <MB>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `memory <GB>` | text | ConfigService.Edit (lines) / GetRunning |  |
@@ -578,7 +578,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `isis hello-multiplier <2-100>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `isis password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `isis bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 address <A.B.C.D/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ipv6 address <X:X::X:X/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ipv6 nd suppress-ra` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ipv6 ospf6 area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ipv6 ospf6 cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
@@ -627,7 +627,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no isis hello-multiplier <2-100>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no isis password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no isis bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 address <A.B.C.D/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `no ipv6 address <X:X::X:X/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no ipv6 nd suppress-ra` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no ipv6 ospf6 area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no ipv6 ospf6 cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
@@ -693,7 +693,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `isis hello-multiplier <2-100>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `isis password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `isis bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 address <A.B.C.D/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ipv6 address <X:X::X:X/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ipv6 nd suppress-ra` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ipv6 ospf6 area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `ipv6 ospf6 cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
@@ -750,7 +750,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `no isis hello-multiplier <2-100>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no isis password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no isis bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 address <A.B.C.D/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `no ipv6 address <X:X::X:X/M>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no ipv6 nd suppress-ra` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no ipv6 ospf6 area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `no ipv6 ospf6 cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |

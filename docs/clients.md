@@ -27,6 +27,17 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.19 - TAB completion that helps remove, finish and address (#557)
+
+* **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
+* **Behaviour:** the VTY only. Completion after `no` offers what is
+  configured; optional words after a positional argument complete; `?` on a
+  complete statement prints an `<Enter>` line; next hops and listen addresses
+  complete from the box. A client that runs `?`-style help through `Show` has
+  none - `?` is a terminal key, not a command - so nothing an API client reads
+  changes. The `logging syslog` hint now spells its options, which a client
+  that shows the VTY's own help text would see.
+
 ## 0.149.18 - why a change was refused, the confirm window, the candidates (#558, phase 1)
 
 Phase 1 of #558, ordered by prisma-web's own list (items 1-3).
