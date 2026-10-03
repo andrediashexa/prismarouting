@@ -4149,6 +4149,14 @@ LSP, and asserts that taking it off reaches the neighbour too.
 per-session reset: tearing the process down takes every adjacency with it, which
 is why the word is `process`.
 
+Two more since 0.149.25 (#558, phase 5), added for the API and the prompt at
+once: `clear interface counters [<interface>]` puts one interface's counters,
+or every interface's, back to zero in the dataplane (administrators only), and
+`clear cgnat subscriber <A.B.C.D>` ends every session of one subscriber on
+every worker - a CGNAT operator may - leaving its port block to the path an
+idle one takes: held down, then released with its natEvent 17, so the log says
+what an expiry would. `OperationalService.Clear` runs each of these lines.
+
 They are asserted in the lab **by what they do** - the IS-IS adjacency's flap
 count going up, the OSPF adjacency's uptime going backwards - and never by what
 they print. A `clear` that printed "cleared" and did nothing would satisfy any

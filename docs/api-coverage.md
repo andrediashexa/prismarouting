@@ -21,9 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 611 |
+| typed | 630 |
 | text | 19 |
-| none | 17 |
 | n/a | 27 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -37,25 +36,6 @@ reachable the same way: Edit passes them on as the VTY would.
 
 | Command | Phase |
 |---|---|
-| `monitor cgnat logging raw` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging subscriber` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging public` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event alloc` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event release` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event exhausted` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event boot` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging pool` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging seconds` (operational) | GetLogging gives the streams' state, not the events: phase 4 |
-| `clear bgp` (operational) | phase 3 |
-| `clear ospf process` (operational) | phase 3 |
-| `clear ospf neighbor` (operational) | phase 3 |
-| `clear isis adjacency` (operational) | phase 3 |
-| `system reboot` (operational) | phase 3 |
-| `system shutdown` (operational) | phase 3 |
-| `system upgrade` (operational) | phase 3, with a progress stream |
-| `system dataplane restart` (operational) | phase 3 |
-| clear interface counters (one or all) (not a VTY command either) | phase 3: in the VTY and the API at once |
-| clear a CGNAT subscriber's sessions / its block (not a VTY command either) | phase 3: in the VTY and the API at once |
 
 ## Phases
 
@@ -83,14 +63,17 @@ grouping rule (#533).
    Logging}` that write lines into the candidate (so the text form stays the
    one truth); and `ConfigService.GetSchema` - the grammar `?` answers from,
    for validation and completion in a form.
-3. **Actions** (item 6). `OperationalService.Clear {target: interface
+3. **Actions** (item 6) - *delivered in 0.149.25*, with `clear interface
+   counters` and `clear cgnat subscriber` added to the VTY.
+   `OperationalService.Clear {target: interface
    counters | all counters | cgnat subscriber <ip> | bgp/ospf/isis ...}` -
    the counters and the subscriber clears added to the VTY in the same
    release; `SystemService.Reboot`, `Shutdown`, `RestartDataplane` (an
    administrator, an explicit confirmation field), and
    `SystemService.Upgrade(version) returns (stream UpgradeProgress {phase,
    percent, message, api_gap_expected_s, version})`.
-4. **Monitors as streams** (item 7). `TelemetryService.WatchLogging(filter)
+4. **Monitors as streams** (item 7) - *delivered in 0.149.25*.
+   `TelemetryService.WatchLogging(filter)
    returns (stream LogEvent {time, kind, subscriber, public, port_start,
    port_end, pool_name, subscriber_id, repeats_held})` - the observation
    ring `monitor cgnat logging` reads (#556) - plus the per-stream delivery
@@ -130,15 +113,15 @@ reachable in the phase their note names.
 | `mtr <host>` | text | OperationalService.Show | every account | a typed probe is phase 11 |
 | `monitor interface interval <seconds>` | typed | TelemetryService.Subscribe | every account | interface counters as a stream; GetHistory for the past day |
 | `monitor interface <interface>` | typed | TelemetryService.Subscribe | every account | interface counters as a stream; GetHistory for the past day |
-| `monitor cgnat logging raw` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging subscriber <A.B.C.D>` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging public <A.B.C.D>[:<port>]` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event alloc` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event release` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event exhausted` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging event boot` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging pool <name>` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
-| `monitor cgnat logging seconds <1-86400>` | none | - | every account | GetLogging gives the streams' state, not the events: phase 4 |
+| `monitor cgnat logging raw` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging subscriber <A.B.C.D>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging public <A.B.C.D>[:<port>]` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging event alloc` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging event release` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging event exhausted` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging event boot` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging pool <name>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
+| `monitor cgnat logging seconds <1-86400>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `show cgnat subscriber <inside-address>` | typed | OperationalService.GetSubscriber | every account |  |
 | `show cgnat translation <public-address> <port>` | text | OperationalService.Show | every account |  |
 | `show cgnat top [<n>]` | text | OperationalService.Show | every account |  |
@@ -181,16 +164,18 @@ reachable in the phase their note names.
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times |
 | `show logging` | text | OperationalService.Show | every account |  |
-| `clear bgp <neighbour>` | none | - | administrator | phase 3 |
-| `clear ospf process` | none | - | administrator | phase 3 |
-| `clear ospf neighbor <A.B.C.D>` | none | - | administrator | phase 3 |
-| `clear isis adjacency [<system-id>]` | none | - | administrator | phase 3 |
+| `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear interface counters [<interface>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear cgnat subscriber <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear ospf process` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear ospf neighbor <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear isis adjacency [<system-id>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `rollback <0-19>` | typed | ConfigService.Rollback, then Commit | every account |  |
 | `save` | typed | ConfigService.Save | every account |  |
-| `system reboot` | none | - | administrator | phase 3 |
-| `system shutdown` | none | - | administrator | phase 3 |
-| `system upgrade [<version>]` | none | - | administrator | phase 3, with a progress stream |
-| `system dataplane restart` | none | - | administrator | phase 3 |
+| `system reboot` | typed | SystemService.Reboot | administrator | refused while unsaved or inside a confirm window unless force |
+| `system shutdown` | typed | SystemService.Shutdown | administrator | refused while unsaved or inside a confirm window unless force |
+| `system upgrade [<version>]` | typed | SystemService.Upgrade | administrator | a stream of UpgradeProgress, ending before the API restarts; GetUpgradeStatus after; delivered in 0.149.25 |
+| `system dataplane restart` | typed | SystemService.RestartDataplane | administrator | run on the host, detached; the reply when it finished |
 | `exit` | n/a | - | every account | the session's |
 
 ## Configuration: config

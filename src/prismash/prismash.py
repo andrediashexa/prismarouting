@@ -3774,6 +3774,16 @@ TREE = {
         "show": ("display information", SHOW),
         "clear": ("reset a session, without changing the configuration", {
             "bgp": ("a BGP session", ARG_NEIGHBOUR),
+            # #558 phase 5: the two the API needed and the VTY did not have.
+            "interface": ("an interface's counters, back to zero", {
+                "counters": ("one interface's, or every interface's",
+                             "[<interface>]"),
+            }),
+            "cgnat": ("CGNAT state", {
+                "subscriber": ("end every session of one subscriber; its "
+                               "block goes after the hold-down",
+                               "<A.B.C.D>"),
+            }),
             "ospf": ("OSPF, which has no sessions to reset one at a time", {
                 "process": ("tear the process down and build it again; every "
                             "adjacency goes with it", None),
@@ -21054,10 +21064,18 @@ class Shell:
         if w[1:2] == ["isis"]:
             self.clear_isis(w[2:])
             return
+        if w[1:2] == ["interface"]:
+            self.clear_interface(w[2:])
+            return
+        if w[1:2] == ["cgnat"]:
+            self.clear_cgnat(w[2:])
+            return
         if w[:2] != ["clear", "bgp"] or len(w) < 3:
             self.err("usage: clear bgp <neighbour> [soft [in|out]]")
             print("       clear ospf process | clear ospf neighbor <A.B.C.D>")
             print("       clear isis adjacency [<system-id>]")
+            print("       clear interface counters [<interface>]")
+            print("       clear cgnat subscriber <A.B.C.D>")
             return
         if not self.require(CAP_ALL, "clear bgp"):
             return
@@ -21098,6 +21116,61 @@ class Shell:
             print(out)
         if rc == 0:
             print(f"cleared: {' '.join(w[2:])}")
+
+    def clear_interface(self, rest):
+        """
+        `clear interface counters [<interface>]` (#558, phase 5): one
+        interface's counters, or every interface's, back to zero in the
+        dataplane - over the binary API, sw_interface_clear_stats, whose index
+        ~0 is every interface. Administrator-only like the other clears:
+        every account's graphs and every rate the telemetry reports start
+        again from it.
+        """
+        if rest[:1] != ["counters"] or len(rest) > 2:
+            self.err("usage: clear interface counters [<interface>]")
+            return
+        if not self.require(CAP_ALL, "clear interface counters"):
+            return
+        name = rest[1] if len(rest) == 2 else ""
+        idx = 0xFFFFFFFF
+        if name:
+            idx = self.api.interface_index(name)
+            if idx is None:
+                self.err(f"the dataplane has no interface named {name}")
+                return
+        r = self.api_call("sw_interface_clear_stats", {"sw_if_index": idx})
+        if r.state != vppapi.OK:
+            self.err_prose("the counters could not be cleared",
+                           r.reason or "the dataplane did not answer")
+            return
+        print(f"cleared: counters of {name or 'every interface'}")
+
+    def clear_cgnat(self, rest):
+        """
+        `clear cgnat subscriber <A.B.C.D>` (#558, phase 5): every session of
+        one subscriber ended, on every worker, by the dataplane's `bpa clear
+        subscriber`. Its port block is not taken back here: idle now, it is
+        held down and released by the expiry process with its natEvent 17,
+        so the log says what an expiry would. A CGNAT operator may: it is
+        the CGNAT half's own state.
+        """
+        if rest[:1] != ["subscriber"] or len(rest) != 2:
+            self.err("usage: clear cgnat subscriber <A.B.C.D>")
+            return
+        try:
+            addr = str(ipaddress.IPv4Address(rest[1]))
+        except ValueError:
+            self.err(f"a subscriber is an IPv4 address: {rest[1]}")
+            return
+        if not self.require(CAP_CGNAT, "clear cgnat subscriber"):
+            return
+        rc, out = self.dp.run(f"bpa clear subscriber {addr}")
+        if rc != 0:
+            self.err_prose("the subscriber's sessions could not be cleared",
+                           out.strip() or "the dataplane did not answer")
+            return
+        for line in out.strip().splitlines():
+            print(line)
 
     def clear_ospf(self, rest):
         """

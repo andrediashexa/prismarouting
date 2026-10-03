@@ -97,11 +97,16 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `TestPolicy` | `test policy <p> route\|rib <prefix> ... at <use>` (#538): `attributes` describe the route, as the words `route` takes; `rib` reads it off the box instead, with `vrf` and `neighbor`. Answers the verdict, the deciding policy and term, every step, the route before and after the sets, what was assumed and what is refused there. A use or an attribute it does not take is `INVALID_ARGUMENT`, a policy that does not exist `NOT_FOUND` |
 | | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
 | | `GetLogging` | `show cgnat logging` (#555): each log export - syslog and IPFIX over TCP, IPFIX over UDP - its collector, who carries it (the log container or the dataplane), its connection, its counters, its spill and whether it is delivering; the box-wide drop counters; the screen itself in `text`. See [The log export](#the-log-export) |
+| | `Clear` | `clear ...` (#558, phase 5): interface counters (one or every), a CGNAT subscriber's sessions, a BGP session (hard, soft, soft in or out), OSPF's process or one adjacency, IS-IS adjacencies; the VTY's line run, its output returned. See [Actions and the box](#actions-and-the-box) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) - and, with `logging_events`, the log export's `log-...` events (#555) |
 | | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
+| | `WatchLogging` | `monitor cgnat logging` (#558, phase 5): each block event the box exports, as a stream of `LogEvent`, with the monitor's filters and its delivery lines |
 | RouteService | `ListRoutes` | FRR's RIB as `show ip route` reads it (#533): every VRF and both families, a page at a time from one snapshot, filtered by VRF, family, prefix (and what is inside it), protocol and selected |
 | | `GetRouteSummary` | `show ip route vrf all summary`: per VRF, family and protocol, the routes in the RIB and in the FIB |
 | SessionService | `WhoAmI` | the account the client certificate names, and the role the VTY login gives it (#533) |
+| SystemService | `Reboot`, `Shutdown` | `system reboot`, `system shutdown` (#558, phase 5); refused while unsaved or inside a confirm window unless `force` |
+| | `RestartDataplane` | `system dataplane restart`, run on the host detached; the reply when it finished |
+| | `Upgrade`, `GetUpgradeStatus` | `system upgrade <version>` as a stream of phases, ending before the API restarts; the last run read back after it |
 | grpc.health.v1.Health | `Check`, `Watch` | `SERVING` for `""` and each prisma.v1 service; `NOT_SERVING` for `OperationalService` and `TelemetryService` while the dataplane's statistics segment does not answer; `prisma.v1.LogExport`, the log export (#555): `NOT_SERVING` while a configured stream is stalled (see [The log export](#the-log-export)); `NOT_FOUND` for a service not served |
 
 `GetSystem` also carries, since #533, the host's RAM as numbers
@@ -465,6 +470,68 @@ globals in a candidate and holds GetConfig of that candidate to its own
 text, takes the system settings and a VRF device through SetConfig,
 GetConfig and DeleteConfig, and searches the typed answer for the secrets
 it staged.
+
+### Actions and the box
+
+Since 0.149.25 (#558, phase 5) nothing the VTY does is out of the API's reach:
+[api-coverage.md](api-coverage.md) lists no path as `none`.
+
+**Clears.** `OperationalService.Clear` takes a `target` and, where it needs
+one, a `name` - an interface, an inside address, a neighbour, an OSPF router
+id, an IS-IS system id, always one word - and runs the VTY's own `clear`
+line, which `command` returns. Two of them were added to the VTY in the same
+release: `clear interface counters [<interface>]`, which resets the
+dataplane's counters (every count the telemetry reports starts again from
+there), and `clear cgnat
+subscriber <A.B.C.D>`, which ends every session of one subscriber on every
+worker. Its port block is not taken back by the clear: idle, it is held down
+and released by the expiry process with its natEvent 17, as an expiry would,
+so the log says what an expiry says. The interface counters and the routing
+clears are an administrator's, the subscriber clear a CGNAT operator's too -
+the VTY's roles.
+
+**The log, live.** `TelemetryService.WatchLogging` is `monitor cgnat
+logging`: the first message is `STARTED` (whether the events come off the
+watch ring, and whether pool names are known), then a `BOOT`, then each
+`ALLOC`, `RELEASE` and `EXHAUSTED` as the box exports it - subscriber, public
+address, port range, pool by name, identity - at the time its record
+carries, and every 10 s a `DELIVERY` per stream that moved (what it sent,
+what it lost, what waits) and per box-wide loss that grew. A reader that
+falls behind gets a `LOST` with the count. It reads the observation ring the
+dataplane overwrites and nobody consumes: it takes nothing from the log
+container and the dataplane does not wait for it. The filters are the
+monitor's: `subscriber`, `public_address` with `port`, `event`, `pool`,
+`seconds`, `raw`. Who may watch is who may read the segment
+(`/dev/shm/prisma-bpa-log`, mode 0640): an account that may not gets
+`PERMISSION_DENIED` with the monitor's own words.
+
+**The box.** `SystemService` is the VTY's `system` statements, with the
+VTY's permissions - today root's: the host's door for a reboot, an upgrade
+or a dataplane restart opens to uid 0 only (#212 records why no other
+account is granted it), so an administrator that is not root is refused
+with `REASON_PERMISSION` there as at the prompt.
+
+* `Reboot` and `Shutdown` refuse with `FAILED_PRECONDITION` and
+  `REASON_UNSAVED` while the running configuration differs from what the
+  next boot loads, and `REASON_CONFIRM_PENDING` inside a `commit confirmed`
+  window - what the VTY warns of before either - unless `force`. The reply
+  comes before the box goes down.
+* `RestartDataplane` and `Upgrade` run on the host, detached, as units of
+  their own (`prisma-routing-api-dataplane`, `prisma-routing-api-upgrade`)
+  whose output goes to `/run/prisma-routing/api/<kind>.log`: an upgrade
+  recreates the container the API runs in, so it cannot run inside it. A
+  second one while the first runs is `REASON_BUSY`.
+* `Upgrade(version)` streams `STARTED`, `DOWNLOAD`, `VERIFY`, an `INSTALL`
+  per row the package prints, `INSTALLED`, and last `API_RESTART`, with
+  `api_away_seconds`: the stream ends there, before the management API
+  restarts on the new release. Reconnect after it and read `GetVersion`;
+  `GetUpgradeStatus` reads the run back from the host's log, whatever API
+  started it. A `FAILED` carries the run's output and its reason. An empty
+  `version` installs nothing: one `CHECKED` names the newest release.
+
+Measured in lab/api-grpc.sh with stand-ins for `systemctl` and `systemd-run`
+- a container is no box to restart; the real reboot, shutdown, dataplane
+restart and upgrade are measured on one.
 
 ## Limits a client meets
 

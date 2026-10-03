@@ -27,6 +27,65 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.25 - nothing out of the API's reach: the clears, the log live, the box (#558, phase 5)
+
+* **Contract:** additive. `prisma.proto` sha256 `7c924ccf4d961baaa7cea9f4d9fcf2ccea5b6773fff30a93ce8e698bde8db60f`.
+* **`OperationalService.Clear`** (`ClearRequest` 1 `target`, 2 `name`, 3
+  `bgp`; `ClearResponse` 1 `output`, 2 `command`): the VTY's `clear` lines.
+  Targets `TARGET_INTERFACE_COUNTERS` (`name` one interface, empty every
+  one), `TARGET_CGNAT_SUBSCRIBER` (an inside address), `TARGET_BGP` (a
+  neighbour; `bgp` hard, soft, soft in, soft out), `TARGET_OSPF_PROCESS`,
+  `TARGET_OSPF_NEIGHBOR`, `TARGET_ISIS_ADJACENCY` (a system id, or every
+  adjacency). A name that is not one word is `INVALID_ARGUMENT` with
+  `REASON_USAGE`; the role is the VTY's (`REASON_PERMISSION`); what the
+  dataplane or FRR refuses is `FAILED_PRECONDITION` with its text. A
+  subscriber clear ends sessions only: the block follows after the box's
+  hold-down, as an expiry's would. Clearing interface counters restarts every
+  count the telemetry and the history read for them.
+* **`TelemetryService.WatchLogging`** (`WatchLoggingRequest` 1-8: `subscriber`,
+  `public_address`, `port`, `event`, `pool`, `seconds`, `raw`,
+  `no_deliveries`) streams `LogEvent` (1 `kind`, 2 `at`, 3 `subscriber`, 4
+  `public_address`, 5 `port_first`, 6 `port_last`, 7 `pool`, 8 `pool_id`, 9
+  `identity`, 10 `stream`, 11 `collector`, 12 `carrier`, 13 `connection`, 14
+  `sent`, 15 `lost`, 16 `pending_bytes`, 17 `boot_time`, 18 `exported`, 19
+  `from_watch_ring`, 20 `pools_named`, 21 `text`). Kinds: `STARTED` first,
+  `BOOT`, `ALLOC`, `RELEASE`, `EXHAUSTED`, `DELIVERY` (every 10 s per stream
+  that moved, and per box-wide loss that grew, its `stream` naming
+  exhaustion_repeats / queue_dropped / export_dropped / transmit_failed),
+  `LOST` (events this reader fell behind on; `lost` is how many). `at` is the
+  time the exported record carries. `pool` is the configured name, `#<id>`
+  when the dataplane did not say. A filter the VTY monitor would refuse is
+  `INVALID_ARGUMENT`. `seconds` 0 runs until the client cancels.
+* **`SystemService`** (new): `Reboot`, `Shutdown` and `RestartDataplane`
+  take `SystemActionRequest` (1 `force`) and answer `SystemActionResponse` (1
+  `output`); `Upgrade` takes `UpgradeRequest` (1 `version`) and streams
+  `UpgradeProgress` (1 `phase`, 2 `message`, 3 `version`, 4 `newest`, 5
+  `api_away_seconds`, 6 `started_at`, 7 `output`, 8 `diagnostics`);
+  `GetUpgradeStatus` answers the last run's `UpgradeProgress`.
+  - Reboot/Shutdown: `FAILED_PRECONDITION` with `REASON_UNSAVED` (new, 15)
+    while the running configuration differs from what the next boot loads,
+    `REASON_CONFIRM_PENDING` inside a confirm window - unless `force`. The
+    reply comes before the box goes down.
+  - A second upgrade or dataplane restart while one runs: `REASON_BUSY`
+    (new, 16).
+  - **The maintenance flow:** `Upgrade` streams `STARTED`, `DOWNLOAD`,
+    `VERIFY`, `INSTALL` per row, `INSTALLED`, then `API_RESTART` with
+    `api_away_seconds` (60) - and the stream ENDS there, before the API
+    restarts. Show the box as "in maintenance" from `STARTED`, keep it so
+    for `api_away_seconds` after `API_RESTART`, then reconnect and read
+    `GetVersion`; `GetUpgradeStatus` reads the run back from the host if the
+    client lost the stream. A `FAILED` carries the run's output and its
+    reason. An empty `version` installs nothing: one `CHECKED` with `newest`.
+  - **Who may:** the VTY's rule - the host's doors for these are root's, so
+    an account that is not root (prisma-web's certificate is `prisma-web`)
+    gets `PERMISSION_DENIED`, `REASON_PERMISSION`, as it would at the prompt.
+    Granting it is a decision for the maintainer (#212 recorded why it is
+    not today).
+* **Health:** `prisma.v1.SystemService` answers `SERVING`.
+* **Coverage:** [api-coverage.md](api-coverage.md) lists no path as `none`
+  (630 typed, 19 text: the `show` screens without an rpc and the probes).
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.24 - the rest of the configuration as fields (#558, phase 4)
 
 prisma-web's ask (c) on #558: system, users/SNMP and policies typed, and

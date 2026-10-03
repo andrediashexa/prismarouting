@@ -395,6 +395,72 @@ check("sizeof (bpa_log_event_t) == 52" in ev_h and "identity) == 17" in ev_h
       "pins it")
 check(time.time() > 0 and M.POLL <= 0.5, "polled often enough to say 'within 0.2 s'")
 
+print("=== the API's stream (#558, phase 5) ===")
+rec = M.event_record({"event": 16, "priv": "100.64.0.5", "pub": "200.150.0.16",
+                      "pool": 1, "lo": 1024, "hi": 2047, "identity": "ana"},
+                     1_790_000_050.5, {1: "din"}, M.header(segment()))
+check(rec["kind"] == "alloc" and rec["public"] == "200.150.0.16"
+      and rec["port_first"] == 1024 and rec["pool"] == "din" and rec["identity"] == "ana"
+      and "100.64.0.5" in rec["text"], "event_record: an allocation's fields and its line")
+rec = M.event_record({"event": 12, "priv": "100.64.0.6", "pub": "0.0.0.0", "pool": 9,
+                      "lo": 0, "hi": 0, "identity": "unknown"}, 1.0, {},
+                     M.header(segment()))
+check(rec["kind"] == "exhausted" and rec["public"] == "" and rec["port_first"] == 0
+      and rec["pool"] == "#9" and rec["identity"] == "",
+      "event_record: an exhaustion has no block; an unknown pool is by number")
+dr = M.delivery_records(a, b, t)
+byk = {x["stream"]: x for x in dr}
+check(byk["ipfix-udp"]["sent"] == 3 and byk["syslog"]["sent"] == 3
+      and byk["syslog"]["connection"] == "connected"
+      and byk["exhaustion_repeats"]["lost"] == 5
+      and all(x["kind"] == "delivery" for x in dr)
+      and "+3 sent" in byk["ipfix-udp"]["text"],
+      f"delivery_records: per stream what went out, and the repeats held back: "
+      f"{sorted(byk)}")
+check(M.delivery_records(b, b, t) == [], "delivery_records: a quiet export, nothing")
+
+seg = segment(mslots=16)
+clock = [1_790_000_100.0]
+
+
+def fake_now():
+    return clock[0]
+
+
+def fake_sleep(dt):
+    clock[0] += 1.0
+    if clock[0] == 1_790_000_102.0:
+        wpush(seg, ev=16, priv="100.64.0.7", wall=1_790_000_101.5)
+        wpush(seg, ev=17, priv="100.64.0.8", wall=1_790_000_101.6)
+
+
+opts, _ = M.parse_args(["seconds", "15"])
+reads = iter([a, b])
+got = list(M.watch(opts, seg, {1: "din"}, lambda: next(reads, b), now=fake_now,
+                   sleep=fake_sleep))
+kinds = [g["kind"] for g in got]
+check(kinds[:2] == ["started", "boot"] and kinds.count("alloc") == 1
+      and kinds.count("release") == 1 and "delivery" in kinds,
+      f"watch: started, the boot, each event once, then what was delivered: {kinds}")
+check(got[0]["from_watch_ring"] and got[0]["pools_named"],
+      "watch: says whether it reads the watch ring and knows the pools' names")
+opts, _ = M.parse_args(["subscriber", "100.64.0.8", "seconds", "15"])
+opts["no_deliveries"] = True
+seg = segment(mslots=16)
+clock[0] = 1_790_000_100.0
+got = list(M.watch(opts, seg, {}, lambda: a, now=fake_now, sleep=fake_sleep))
+check([g["kind"] for g in got] == ["started", "boot", "release"],
+      f"watch: the filters drop the rest - the opening BOOT stays, as the VTY's "
+      f"monitor prints it - and no deliveries when asked: "
+      f"{[g['kind'] for g in got]}")
+stop = iter([True, False])
+got = list(M.watch(M.parse_args([])[0], segment(mslots=16), {}, lambda: None,
+                   now=fake_now, sleep=lambda dt: None, active=lambda: next(stop)))
+check([g["kind"] for g in got] == ["started", "boot"],
+      "watch: stops when the client goes")
+check(list(M.watch(M.parse_args([])[0], bytearray(100), {}, lambda: None)) == [],
+      "watch: a segment it cannot read yields nothing")
+
 print()
 print("ALL TESTS PASSED" if not fail else f"{fail} FAILURES")
 sys.exit(1 if fail else 0)

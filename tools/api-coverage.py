@@ -65,15 +65,22 @@ OPERATIONAL_RULES = [
     (["mtr"], "text", "OperationalService.Show", "a typed probe is phase 11"),
     (["monitor", "interface"], "typed", "TelemetryService.Subscribe",
      "interface counters as a stream; GetHistory for the past day"),
-    (["monitor", "cgnat", "logging"], "none", "-",
-     "GetLogging gives the streams' state, not the events: phase 4"),
-    (["clear"], "none", "-", "phase 3"),
+    (["monitor", "cgnat", "logging"], "typed", "TelemetryService.WatchLogging",
+     "the block events as a stream of LogEvent, the same filters; delivered "
+     "in 0.149.25"),
+    (["clear"], "typed", "OperationalService.Clear",
+     "a ClearRequest target per clear; delivered in 0.149.25"),
     (["rollback"], "typed", "ConfigService.Rollback, then Commit", ""),
     (["save"], "typed", "ConfigService.Save", ""),
-    (["system", "upgrade"], "none", "-", "phase 3, with a progress stream"),
-    (["system", "reboot"], "none", "-", "phase 3"),
-    (["system", "shutdown"], "none", "-", "phase 3"),
-    (["system", "dataplane"], "none", "-", "phase 3"),
+    (["system", "upgrade"], "typed", "SystemService.Upgrade",
+     "a stream of UpgradeProgress, ending before the API restarts; "
+     "GetUpgradeStatus after; delivered in 0.149.25"),
+    (["system", "reboot"], "typed", "SystemService.Reboot",
+     "refused while unsaved or inside a confirm window unless force"),
+    (["system", "shutdown"], "typed", "SystemService.Shutdown",
+     "refused while unsaved or inside a confirm window unless force"),
+    (["system", "dataplane"], "typed", "SystemService.RestartDataplane",
+     "run on the host, detached; the reply when it finished"),
     (["exit"], "n/a", "-", "the session's"),
     # The reads with a typed rpc. Everything else under `show` is text.
     (["show", "version"], "typed", "OperationalService.GetVersion", ""),
@@ -396,8 +403,6 @@ def rows():
 #: What prisma-web asked for that is not a VTY command either, so the walk
 #: cannot find it: it is listed by hand, and goes away when a phase ships.
 NOT_IN_THE_VTY = [
-    ("clear interface counters (one or all)", "phase 3: in the VTY and the API at once"),
-    ("clear a CGNAT subscriber's sessions / its block", "phase 3: in the VTY and the API at once"),
 ]
 
 PHASES = """\
@@ -427,14 +432,17 @@ grouping rule (#533).
    Logging}` that write lines into the candidate (so the text form stays the
    one truth); and `ConfigService.GetSchema` - the grammar `?` answers from,
    for validation and completion in a form.
-3. **Actions** (item 6). `OperationalService.Clear {target: interface
+3. **Actions** (item 6) - *delivered in 0.149.25*, with `clear interface
+   counters` and `clear cgnat subscriber` added to the VTY.
+   `OperationalService.Clear {target: interface
    counters | all counters | cgnat subscriber <ip> | bgp/ospf/isis ...}` -
    the counters and the subscriber clears added to the VTY in the same
    release; `SystemService.Reboot`, `Shutdown`, `RestartDataplane` (an
    administrator, an explicit confirmation field), and
    `SystemService.Upgrade(version) returns (stream UpgradeProgress {phase,
    percent, message, api_gap_expected_s, version})`.
-4. **Monitors as streams** (item 7). `TelemetryService.WatchLogging(filter)
+4. **Monitors as streams** (item 7) - *delivered in 0.149.25*.
+   `TelemetryService.WatchLogging(filter)
    returns (stream LogEvent {time, kind, subscriber, public, port_start,
    port_end, pool_name, subscriber_id, repeats_held})` - the observation
    ring `monitor cgnat logging` reads (#556) - plus the per-stream delivery

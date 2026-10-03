@@ -213,6 +213,8 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `clear bgp <vizinho> [soft [in\|out]]` | reinicia uma sessão BGP; `soft` reaplica a política sem derrubar a sessão. Só administradores |
 | `clear ospf process` / `clear ospf neighbor <A.B.C.D>` | refaz o processo OSPF inteiro (toda adjacência cai junto) ou uma adjacência |
 | `clear isis adjacency [<system-id>]` | refaz as adjacências IS-IS, todas ou uma |
+| `clear interface counters [<interface>]` | zera os contadores de uma interface, ou de todas, no plano de dados. Só administradores |
+| `clear cgnat subscriber <A.B.C.D>` | encerra todas as sessões de um assinante. O bloco de portas dele não volta na hora: fica reservado pelo hold-down e é liberado depois, com o registro de liberação no log, como numa expiração. Operadores de CGNAT também podem |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `save`  | grava a configuração em vigor em disco |
 | `system upgrade [<versão>]` | sem versão, diz qual versão a caixa roda e qual é a mais nova publicada, sem mudar nada; com versão, baixa o pacote, recusa se o `sha256` não conferir e roda a atualização mostrando o que ela diz. A versão em uso e as anteriores são recusadas. Na prática, só root, como o `system reboot` |

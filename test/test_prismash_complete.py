@@ -3654,7 +3654,7 @@ check(offered("show isis ")[0] == {"adjacency", "interface"},
       f"show isis offers: {sorted(offered('show isis ')[0])}")
 
 print("\n=== clear reaches the IGPs too ===")
-check(offered("clear ")[0] == {"bgp", "ospf", "isis"},
+check(offered("clear ")[0] == {"bgp", "ospf", "isis", "interface", "cgnat"},
       f"clear offers: {sorted(offered('clear ')[0])}")
 check(offered("clear ospf ")[0] == {"process", "neighbor"},
       f"clear ospf offers: {sorted(offered('clear ospf ')[0])}")

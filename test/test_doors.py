@@ -719,5 +719,36 @@ with _tmpf.TemporaryDirectory() as _w:
     check(doors.accounts_state(os.path.join(_w, "nowhere")) == (None, None, None),
           "no files is no state, not a crash")
 
+print("\n=== the API's detached runs (#558, phase 5) ===")
+_a = doors.api_run_argv("upgrade", "0.149.25")
+check(_a[:3] == ("systemd-run", "--collect", "--unit=prisma-routing-api-upgrade")
+      and f"truncate:{doors.api_run_log('upgrade')}" in _a[3]
+      and _a[-1].startswith("/usr/bin/prismash -c 'system upgrade 0.149.25';")
+      and _a[-1].endswith('echo "prisma-api-exit $?"'),
+      f"an upgrade: a transient unit, its output in a file the API reads, an exit line: {_a}")
+check(doors.verb_of(list(_a)) == "start 'system upgrade' for the API"
+      and doors.verb_of(list(doors.api_run_argv("dataplane")))
+      == "start 'system dataplane restart' for the API"
+      and doors.verb_of(list(doors.api_run_argv("upgrade")))
+      == "start 'system upgrade' for the API",
+      "each shape is a door")
+check(doors.api_run_argv("upgrade", "0.149.25; reboot") is None
+      and doors.api_run_argv("upgrade", "../x") is None
+      and doors.api_run_argv("dataplane", "0.149.25") is None
+      and doors.api_run_argv("shell") is None,
+      "a version that is not a release, an argument a kind does not take, or a kind "
+      "there is not: no shape")
+_b = list(_a)
+_b[-1] = _b[-1].replace("0.149.25'", "0.149.25' ; reboot'")
+check(doors.verb_of(_b) is None, "an argv edited past the shape is no door")
+_b = list(_a)
+_b[2] = "--unit=something-else"
+check(doors.verb_of(_b) is None, "nor one under another unit's name")
+check(doors.api_run_log("dataplane") == "/run/prisma-routing/api/dataplane.log",
+      "the dataplane restart's log, beside the history the API keeps")
+check(doors.answer(json.dumps({"argv": list(_a)}), 1000,
+                   execute=lambda *x: (0, ""))["rc"] == 126,
+      "an account that is not root is refused the door")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

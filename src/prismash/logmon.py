@@ -487,3 +487,116 @@ def open_segment(path=SEGMENT):
         return mmap.mmap(fd, size, prot=mmap.PROT_READ), None
     finally:
         os.close(fd)
+
+
+def event_record(ev, at, pools, h, raw=False):
+    """
+    One block event as the API's LogEvent fields (#558, phase 5): what
+    event_lines() prints, as values - plus `text`, the VTY's own line(s).
+    """
+    kind = {EVENT_ALLOC: "alloc", EVENT_RELEASE: "release",
+            EVENT_EXHAUSTED: "exhausted"}.get(ev["event"], f"event-{ev['event']}")
+    who = ev["identity"] if ev["identity"] != "unknown" else ""
+    lines = raw_lines(ev, at, h) if raw else event_lines(ev, at, pools)
+    return {"kind": kind, "at": at, "subscriber": ev["priv"],
+            "public": "" if ev["event"] == EVENT_EXHAUSTED else ev["pub"],
+            "port_first": 0 if ev["event"] == EVENT_EXHAUSTED else ev["lo"],
+            "port_last": 0 if ev["event"] == EVENT_EXHAUSTED else ev["hi"],
+            "pool": pool_name(ev["pool"], pools), "pool_id": ev["pool"],
+            "identity": who, "text": "\n".join(lines)}
+
+
+def delivery_records(before, now, at):
+    """
+    delivery_lines() as LogEvent fields: one per configured stream that
+    moved, and one per box-wide loss that grew, each with its line as `text`.
+    """
+    from logstate import stream_rows
+    old = {r["kind"]: r for r in stream_rows(before)} if before else {}
+    out = []
+    for r in stream_rows(now):
+        if not r["configured"]:
+            continue
+        o = old.get(r["kind"], {})
+        sent = r["records"] - o.get("records", 0)
+        lost = (r["send_failures"] + r["dropped"] + r["dropped_over_cap"]
+                - o.get("send_failures", 0) - o.get("dropped", 0)
+                - o.get("dropped_over_cap", 0))
+        if before and not sent and not lost and \
+                r["connection"] == o.get("connection") and \
+                r["pending_bytes"] == o.get("pending_bytes"):
+            continue
+        one = {"kind": "delivery", "at": at, "stream": r["kind"],
+               "collector": r["collector"], "carrier": r["carrier"],
+               "connection": r["connection"], "sent": max(sent, 0),
+               "lost": max(lost, 0), "pending_bytes": r["pending_bytes"]}
+        out.append(one)
+    lines = delivery_lines(before, now, at)
+    for one in out:
+        one["text"] = "\n".join(x for x in lines if f" -- {one['stream']} " in x)
+    if before:
+        for k in ("exhaustion_repeats", "queue_dropped", "export_dropped",
+                  "transmit_failed"):
+            if now[k] > before[k]:
+                out.append({"kind": "delivery", "at": at, "stream": k,
+                            "lost": now[k] - before[k],
+                            "text": "\n".join(x for x in lines
+                                              if x.startswith(f"{clock(at)} -- +{now[k] - before[k]} "))})
+    return out
+
+
+def watch(opts, buf, pools, read_logging, now=time.time, sleep=time.sleep,
+          active=lambda: True):
+    """
+    `monitor cgnat logging` as a stream of LogEvent fields (#558, phase 5),
+    for the API's WatchLogging: the same reader the VTY's monitor uses, the
+    same filters, the same delivery lines every DELIVERY_EVERY - yielded as
+    dicts until `active()` says the client went or `opts["seconds"]` ran out.
+    `read_logging()` is `show bpa logging` parsed (logstate.parse_logging),
+    or None. Like the VTY, it starts from now and takes nothing from the
+    dataplane or the log container.
+    """
+    h = header(buf)
+    if h is None:
+        return
+    yield {"kind": "started", "at": now(), "boot_wall": h["boot_wall"],
+           "from_watch_ring": bool(h["mring"]), "pools_named": bool(pools),
+           "text": "monitor cgnat logging"}
+    if opts["event"] in (None, "boot"):
+        yield {"kind": "boot", "at": now(), "boot_wall": h["boot_wall"],
+               "text": boot_line(h["boot_wall"])}
+    rd = reader(buf, h)
+    before = read_logging()
+    started, next_delivery = now(), now() + DELIVERY_EVERY
+    while active() and (opts["seconds"] is None
+                        or now() - started < opts["seconds"]):
+        fresh = header(buf)
+        if fresh and fresh["generation"] != h["generation"]:
+            h = fresh
+            rd = reader(buf, h)
+            if opts["event"] in (None, "boot"):
+                yield {"kind": "boot", "at": now(), "boot_wall": h["boot_wall"],
+                       "text": boot_line(h["boot_wall"])}
+        events, lost = rd.poll(buf)
+        seen = now()
+        if lost:
+            yield {"kind": "lost", "at": seen, "lost": lost,
+                   "text": lost_line(seen, lost)}
+        for ev in events:
+            at = ev.get("wall") or seen
+            if ev.get("kind") == XEV_MARKER:
+                if lines_for(ev, seen, h, pools, opts):
+                    yield {"kind": "boot", "at": at, "boot_wall": h["boot_wall"],
+                           "exported": True,
+                           "text": boot_line(h["boot_wall"], at, exported=True)}
+                continue
+            if matches(ev, opts, pools):
+                yield event_record(ev, at, pools, h, raw=opts["raw"])
+        if not opts.get("no_deliveries") and now() >= next_delivery:
+            next_delivery = now() + DELIVERY_EVERY
+            cur = read_logging()
+            if cur is not None:
+                for d in delivery_records(before, cur, now()):
+                    yield d
+                before = cur
+        sleep(POLL)

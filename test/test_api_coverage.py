@@ -50,8 +50,11 @@ check(by.get(("operational", "show version"), (0, 0, 0, ""))[3] == "typed",
       "show version is typed (GetVersion)")
 check(by.get(("operational", "show cgnat drops"), (0, 0, 0, ""))[3] == "text",
       "show cgnat drops is text (Show) until it has an rpc")
-check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "none",
-      "system reboot is not reachable yet")
+check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "typed",
+      "system reboot is typed (SystemService.Reboot, #558 phase 5)")
+check(not [r for r in rows if r[3] == "none"],
+      "no VTY path is unreachable through the API (#558 phase 5): "
+      f"{[' '.join(r[1]) for r in rows if r[3] == 'none']}")
 check(by.get(("operational", "start shell"), (0, 0, 0, ""))[3] == "n/a",
       "a shell is excluded on purpose")
 check(by.get(("pool", "block-size"), (0, 0, 0, ""))[3] == "typed"
@@ -87,7 +90,7 @@ for r in rows:
     named |= set(re.findall(r"\b([A-Z][A-Za-z]+)\b", r[4].replace(
         "ConfigService", "").replace("OperationalService", "").replace(
         "TelemetryService", "").replace("RouteService", "").replace(
-        "SessionService", "")))
+        "SessionService", "").replace("SystemService", "")))
 unknown = sorted(n for n in named if n not in rpcs and n not in ("Edit",))
 check(not unknown, "every rpc a rule names is in the proto"
       + (f": {unknown}" if unknown else ""))

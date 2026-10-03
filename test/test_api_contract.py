@@ -84,11 +84,18 @@ want = {
                            "TestPolicy",
                            "Show",
                            # #555: the CGNAT log export's state.
-                           "GetLogging"],
-    "TelemetryService": ["Subscribe", "GetHistory"],
+                           "GetLogging",
+                           # #558 phase 5: the VTY's clears.
+                           "Clear"],
+    "TelemetryService": ["Subscribe", "GetHistory",
+                         # #558 phase 5: monitor cgnat logging.
+                         "WatchLogging"],
     # #533: new subjects, new services; their rpcs are the subject's.
     "RouteService": ["ListRoutes", "GetRouteSummary"],
     "SessionService": ["WhoAmI"],
+    # #558 phase 5: the box itself, a subject of its own.
+    "SystemService": ["Reboot", "Shutdown", "RestartDataplane", "Upgrade",
+                      "GetUpgradeStatus"],
 }
 for svc, rpcs in want.items():
     got = re.findall(r"rpc (\w+)\(", services.get(svc, ""))
