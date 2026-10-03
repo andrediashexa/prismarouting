@@ -21,7 +21,14 @@ unit tests drive this module without a box, a dataplane or gRPC.
 """
 import re
 
-AREAS = ("interfaces", "pools", "logging")
+from config import (block_paths, is_number, is_static_route, static_route_key,
+                    static_route_words)
+
+#: The configuration-half areas (#558 phase 2) and the routing-half ones
+#: (phase 3). Empty in a request is all of them.
+CONFIG_AREAS = ("interfaces", "pools", "logging")
+ROUTING_AREAS = ("static", "bgp", "ospf", "ospf6", "isis", "interface_routing")
+AREAS = CONFIG_AREAS + ROUTING_AREAS
 
 #: The CGNAT log streams, as `logging <transport> ...` names them.
 TRANSPORTS = ("udp", "tcp", "syslog")
@@ -187,8 +194,654 @@ def config_typed(cfg, areas=()):
         out["pools"] = pools_typed(cfg)
     if "logging" in want:
         out["logging"] = logging_typed(cfg)
+    if want & set(ROUTING_AREAS):
+        out.update(routing_typed(cfg, want & set(ROUTING_AREAS)))
     # Whatever the areas: the lines a client must show read only.
     out["box_owned"] = box_owned_lines(cfg)
+    return out
+
+
+# ------------------------------------------------------- routing (phase 3)
+#
+# THE ROUTING HALF IS FRR'S OWN TEXT. This VTY does not model routing the way
+# it models a pool: `cfg.routing` is the flat list of FRR statements the
+# candidate holds - typed at the prompt or read back from FRR - and every
+# screen that shows it (`show running-config`, `show this`) prints those
+# statements, grouping the static routes into `router static` on the way.
+# So the typed reads below READ THOSE STATEMENTS, block by block through
+# `block_paths` - the VTY's own answer to "which block is this line in" -
+# and the static routes through the same `static_route_words` the screens
+# use. Nothing is reparsed from a screen.
+#
+# What a reader has no field for is never dropped: every block carries
+# `other`, its statements verbatim, so a client can show the rest read only
+# and a field added later is a field, not a format change.
+
+
+def routing_statements(cfg):
+    """[(path, statement)] of `cfg.routing`, separators and exits left out."""
+    return [(p, line.strip()) for p, line in zip(block_paths(cfg.routing),
+                                                 cfg.routing)
+            if p is not None]
+
+
+def _vrf_of_block(header):
+    """`router bgp 65000 vrf red` / `router ospf vrf red`: "red", else ""."""
+    w = header.split()
+    return w[w.index("vrf") + 1] if "vrf" in w and w.index("vrf") + 1 < len(w) \
+        else ""
+
+
+def static_typed(line, description="", vrf=""):
+    """One FRR static route as fields, through the VTY's own spelling."""
+    words = static_route_words(line).split()
+    out = {"prefix": words[0], "next_hop": words[2], "distance": 0, "tag": 0,
+           "description": description or "", "vrf": vrf,
+           "family": "ipv6" if line.split()[0] == "ipv6" else "ipv4",
+           "extra": [], "line": ""}
+    i = 3
+    while i < len(words):
+        if words[i] in ("distance", "tag") and i + 1 < len(words):
+            out[words[i]] = _int(words[i + 1])
+            i += 2
+            continue
+        out["extra"].append(words[i])
+        i += 1
+    out["line"] = static_route_words(line, description or None)
+    return out
+
+
+def static_routes_typed(cfg):
+    """Every static route: the top-level ones (`router static` on the
+    screens, with the description this box keeps) and each VRF's."""
+    desc = getattr(cfg, "static_descriptions", {}) or {}
+    out = []
+    for path, stmt in routing_statements(cfg):
+        if not is_static_route(stmt):
+            continue
+        if path == []:
+            out.append(static_typed(stmt, desc.get(static_route_key(stmt), "")))
+        elif len(path) == 1 and path[0].startswith("vrf "):
+            out.append(static_typed(stmt, "", path[0].split()[1]))
+    return out
+
+
+def _redistribute(words):
+    """`redistribute <proto> [metric N] [metric-type T] [route-map M]` ..."""
+    out = {"protocol": words[1] if len(words) > 1 else "", "route_map": "",
+           "metric": 0, "metric_type": "", "level": "", "statement":
+           " ".join(words)}
+    rest = words[2:]
+    if out["protocol"] in ("ipv4", "ipv6") and rest:   # IS-IS: family first
+        out["protocol"] = f"{out['protocol']} {rest[0]}"
+        rest = rest[1:]
+    i = 0
+    while i < len(rest):
+        k = rest[i]
+        v = rest[i + 1] if i + 1 < len(rest) else ""
+        if k == "route-map":
+            out["route_map"] = v
+        elif k == "metric":
+            out["metric"] = _int(v)
+        elif k == "metric-type":
+            out["metric_type"] = v
+        elif k in ("level-1", "level-2"):
+            out["level"] = k
+            i += 1
+            continue
+        else:
+            i += 1
+            continue
+        i += 2
+    return out
+
+
+def _neighbor(table, who):
+    if who not in table:
+        table[who] = {"address": who, "remote_as": "", "description": "",
+                      "update_source": "", "keepalive": 0, "holdtime": 0,
+                      "password_set": False, "peer_group": "",
+                      "is_peer_group": False, "ebgp_multihop": 0,
+                      "shutdown": False, "bfd": False, "other": []}
+    return table[who]
+
+
+def _neighbor_af(table, who):
+    if who not in table:
+        table[who] = {"neighbor": who, "activate": False, "route_map_in": "",
+                      "route_map_out": "", "prefix_list_in": "",
+                      "prefix_list_out": "", "maximum_prefix": 0,
+                      "next_hop_self": False, "soft_reconfiguration_inbound":
+                      False, "default_originate": False, "other": []}
+    return table[who]
+
+
+def _bgp_neighbor_statement(nb, w):
+    """`neighbor X <what> ...` at the router level, into `nb` (words after X)."""
+    if not w:
+        return
+    k, v = w[0], w[1:]
+    if k == "remote-as" and v:
+        nb["remote_as"] = v[0]
+    elif k == "description":
+        nb["description"] = " ".join(v)
+    elif k == "update-source" and v:
+        nb["update_source"] = v[0]
+    elif k == "timers" and len(v) >= 2 and is_number(v[0]):
+        nb["keepalive"], nb["holdtime"] = _int(v[0]), _int(v[1])
+    elif k == "password":
+        nb["password_set"] = bool(v)      # the value is a secret: never read
+    elif k == "peer-group" and v:
+        nb["peer_group"] = v[0]
+    elif k == "peer-group":
+        nb["is_peer_group"] = True
+    elif k == "ebgp-multihop":
+        nb["ebgp_multihop"] = _int(v[0]) if v else 255
+    elif k == "shutdown":
+        nb["shutdown"] = True
+    elif k == "bfd":
+        nb["bfd"] = True
+    else:
+        nb["other"].append("neighbor " + nb["address"] + " " + " ".join(w))
+
+
+def _bgp_af_neighbor_statement(af, w):
+    if not w:
+        return
+    k, v = w[0], w[1:]
+    if k == "activate":
+        af["activate"] = True
+    elif k == "route-map" and len(v) >= 2:
+        af["route_map_in" if v[1] == "in" else "route_map_out"] = v[0]
+    elif k == "prefix-list" and len(v) >= 2:
+        af["prefix_list_in" if v[1] == "in" else "prefix_list_out"] = v[0]
+    elif k == "maximum-prefix" and v:
+        af["maximum_prefix"] = _int(v[0])
+    elif k == "next-hop-self":
+        af["next_hop_self"] = True
+    elif k == "soft-reconfiguration" and v[:1] == ["inbound"]:
+        af["soft_reconfiguration_inbound"] = True
+    elif k == "default-originate":
+        af["default_originate"] = True
+    else:
+        af["other"].append("neighbor " + af["neighbor"] + " " + " ".join(w))
+
+
+def bgp_typed(cfg):
+    """Every `router bgp` block: its neighbours, families and the rest."""
+    routers = {}
+    order = []
+    for path, stmt in routing_statements(cfg):
+        w = stmt.split()
+        if not path and w[:2] == ["router", "bgp"]:
+            if stmt not in routers:
+                routers[stmt] = {"asn": w[2] if len(w) > 2 else "",
+                                 "vrf": _vrf_of_block(stmt), "router_id": "",
+                                 "default_ipv4_unicast": True,
+                                 "neighbors": {}, "families": {}, "other": []}
+                order.append(stmt)
+            continue
+        if not path or not path[0].startswith("router bgp"):
+            continue
+        r = routers.setdefault(path[0], {"asn": path[0].split()[2],
+                                         "vrf": _vrf_of_block(path[0]),
+                                         "router_id": "",
+                                         "default_ipv4_unicast": True,
+                                         "neighbors": {}, "families": {},
+                                         "other": []})
+        if path[0] not in order:
+            order.append(path[0])
+        if len(path) == 1:
+            if w[:1] == ["address-family"]:
+                r["families"].setdefault(stmt, {
+                    "afi": w[1] if len(w) > 1 else "",
+                    "safi": w[2] if len(w) > 2 else "",
+                    "networks": [], "aggregates": [], "redistribute": [],
+                    "neighbors": {}, "other": []})
+            elif w[:2] == ["bgp", "router-id"] and len(w) > 2:
+                r["router_id"] = w[2]
+            elif w == ["no", "bgp", "default", "ipv4-unicast"]:
+                # FRR's default is on, and with it a neighbour is active in
+                # ipv4 unicast WITHOUT an `activate` line - measured on 10.7.1:
+                # `neighbor X activate` typed is not printed back. So a
+                # family's `activate` is read as stated, and this says what
+                # the unstated case means.
+                r["default_ipv4_unicast"] = False
+            elif w == ["bgp", "default", "ipv4-unicast"]:
+                r["default_ipv4_unicast"] = True
+            elif w[:1] == ["neighbor"] and len(w) > 2:
+                _bgp_neighbor_statement(_neighbor(r["neighbors"], w[1]), w[2:])
+            elif w[:1] == ["neighbor"] and len(w) == 2:
+                _neighbor(r["neighbors"], w[1])
+            else:
+                r["other"].append(stmt)
+            continue
+        fam = r["families"].setdefault(path[1], {
+            "afi": path[1].split()[1] if len(path[1].split()) > 1 else "",
+            "safi": path[1].split()[2] if len(path[1].split()) > 2 else "",
+            "networks": [], "aggregates": [], "redistribute": [],
+            "neighbors": {}, "other": []})
+        if w[:1] == ["network"] and len(w) > 1:
+            fam["networks"].append(w[1])
+        elif w[:1] == ["aggregate-address"] and len(w) > 1:
+            fam["aggregates"].append({"prefix": w[1],
+                                      "summary_only": "summary-only" in w,
+                                      "as_set": "as-set" in w})
+        elif w[:1] == ["redistribute"]:
+            fam["redistribute"].append(_redistribute(w))
+        elif w[:1] == ["neighbor"] and len(w) > 2:
+            _bgp_af_neighbor_statement(_neighbor_af(fam["neighbors"], w[1]),
+                                       w[2:])
+        else:
+            fam["other"].append(stmt)
+    out = []
+    for key in order:
+        r = routers[key]
+        fams = []
+        for f in r["families"].values():
+            f = dict(f, neighbors=list(f["neighbors"].values()))
+            fams.append(f)
+        out.append(dict(r, neighbors=list(r["neighbors"].values()),
+                        families=fams))
+    return out
+
+
+def _area_entry(areas, area):
+    if area not in areas:
+        areas[area] = {"area": area, "area_type": "normal", "no_summary": False,
+                       "other": []}
+    return areas[area]
+
+
+def is_router(header, proto):
+    """Is block header `header` a `router <proto> ...`? (`router ospf` is not
+    `router ospf6`.)"""
+    return header.split()[:2] == ["router", proto]
+
+
+def ospf_typed(cfg, version=2):
+    """Every `router ospf` (version 2) or `router ospf6` (3) block."""
+    proto = "ospf" if version == 2 else "ospf6"
+    rid = f"{proto} router-id"
+    routers, order = {}, []
+    for path, stmt in routing_statements(cfg):
+        w = stmt.split()
+        if not path and is_router(stmt, proto):
+            key = stmt
+        elif path and is_router(path[0], proto):
+            key = path[0]
+        else:
+            continue
+        if key not in routers:
+            routers[key] = {"version": version, "vrf": _vrf_of_block(key),
+                            "router_id": "", "networks": [], "areas": {},
+                            "passive_default": False, "passive": [],
+                            "not_passive": [], "redistribute": [],
+                            "default_information": "", "other": []}
+            order.append(key)
+        if not path:
+            continue
+        r = routers[key]
+        if stmt.startswith(rid + " ") and len(w) > 2:
+            r["router_id"] = w[2]
+        elif w[:1] == ["network"] and len(w) >= 4 and w[2] == "area":
+            r["networks"].append({"prefix": w[1], "area": w[3]})
+        elif w[:1] == ["area"] and len(w) >= 3 and w[2] in ("stub", "nssa"):
+            a = _area_entry(r["areas"], w[1])
+            a["area_type"] = w[2]
+            a["no_summary"] = "no-summary" in w
+        elif w[:1] == ["area"] and len(w) >= 2:
+            _area_entry(r["areas"], w[1])["other"].append(stmt)
+        elif w == ["passive-interface", "default"]:
+            r["passive_default"] = True
+        elif w[:1] == ["passive-interface"] and len(w) > 1:
+            r["passive"].append(w[1])
+        elif w[:2] == ["no", "passive-interface"] and len(w) > 2:
+            r["not_passive"].append(w[2])
+        elif w[:1] == ["redistribute"]:
+            r["redistribute"].append(_redistribute(w))
+        elif w[:1] == ["default-information"]:
+            r["default_information"] = stmt
+        else:
+            r["other"].append(stmt)
+    return [dict(routers[k], areas=list(routers[k]["areas"].values()))
+            for k in order]
+
+
+def isis_typed(cfg):
+    """Every `router isis <tag>` block."""
+    routers, order = {}, []
+    for path, stmt in routing_statements(cfg):
+        w = stmt.split()
+        if not path and w[:2] == ["router", "isis"]:
+            key = stmt
+        elif path and path[0].split()[:2] == ["router", "isis"]:
+            key = path[0]
+        else:
+            continue
+        if key not in routers:
+            kw = key.split()
+            routers[key] = {"tag": kw[2] if len(kw) > 2 else "",
+                            "vrf": _vrf_of_block(key), "nets": [],
+                            "is_type": "", "metric_style": "",
+                            "redistribute": [], "other": []}
+            order.append(key)
+        if not path:
+            continue
+        r = routers[key]
+        if w[:1] == ["net"] and len(w) > 1:
+            r["nets"].append(w[1])
+        elif w[:1] == ["is-type"] and len(w) > 1:
+            r["is_type"] = w[1]
+        elif w[:1] == ["metric-style"] and len(w) > 1:
+            r["metric_style"] = w[1]
+        elif w[:1] == ["redistribute"]:
+            r["redistribute"].append(_redistribute(w))
+        else:
+            r["other"].append(stmt)
+    return [routers[k] for k in order]
+
+
+def interface_routing_typed(cfg):
+    """What each FRR `interface <name>` block says to OSPF, OSPF6 and IS-IS."""
+    out, order = {}, []
+    for path, stmt in routing_statements(cfg):
+        if len(path) != 1 or not path[0].startswith("interface "):
+            continue
+        name = path[0].split()[1]
+        if name not in out:
+            out[name] = {"name": name, "ospf_area": "", "ospf_cost": 0,
+                         "ospf_passive": False, "ospf_network": "",
+                         "ospf_hello": 0, "ospf_dead": 0, "ospf6_area": "",
+                         "ospf6_cost": 0, "ospf6_passive": False,
+                         "isis_instances": [], "isis_circuit_type": "",
+                         "isis_metric": 0, "isis_passive": False, "other": []}
+            order.append(name)
+        r, w = out[name], stmt.split()
+        v = w[3] if len(w) > 3 else ""
+        if w[:3] == ["ip", "ospf", "area"]:
+            r["ospf_area"] = v
+        elif w[:3] == ["ip", "ospf", "cost"]:
+            r["ospf_cost"] = _int(v)
+        elif w[:3] == ["ip", "ospf", "passive"]:
+            r["ospf_passive"] = True
+        elif w[:3] == ["ip", "ospf", "network"]:
+            r["ospf_network"] = v
+        elif w[:3] == ["ip", "ospf", "hello-interval"]:
+            r["ospf_hello"] = _int(v)
+        elif w[:3] == ["ip", "ospf", "dead-interval"]:
+            r["ospf_dead"] = _int(v)
+        elif w[:3] == ["ipv6", "ospf6", "area"]:
+            r["ospf6_area"] = v
+        elif w[:3] == ["ipv6", "ospf6", "cost"]:
+            r["ospf6_cost"] = _int(v)
+        elif w[:3] == ["ipv6", "ospf6", "passive"]:
+            r["ospf6_passive"] = True
+        elif w[1:3] == ["router", "isis"] and len(w) > 3:
+            if w[3] not in r["isis_instances"]:
+                r["isis_instances"].append(w[3])
+        elif w[:2] == ["isis", "circuit-type"] and len(w) > 2:
+            r["isis_circuit_type"] = w[2]
+        elif w[:2] == ["isis", "metric"] and len(w) > 2:
+            r["isis_metric"] = _int(w[2])
+        elif w[:2] == ["isis", "passive"]:
+            r["isis_passive"] = True
+        else:
+            r["other"].append(stmt)
+    return [out[n] for n in order]
+
+
+# ------------------------------------------------- routing edits (phase 3)
+
+STATIC_FIELDS = ("next_hop", "distance", "tag", "description", "extra")
+STATIC_PATH = ["router static"]
+
+
+def static_line(r):
+    """A route's fields as the one line `router static` takes (#436)."""
+    if not r.get("prefix") or not r.get("next_hop"):
+        raise ValueError("static route: give prefix and next_hop")
+    line = f"{r['prefix']} next-hop {r['next_hop']}"
+    if r.get("extra"):
+        line += " " + " ".join(r["extra"])
+    if r.get("distance"):
+        line += f" distance {int(r['distance'])}"
+    if r.get("tag"):
+        line += f" tag {int(r['tag'])}"
+    if r.get("description"):
+        line += f" description {r['description']}"
+    return line
+
+
+def static_lines(cur, desired, fields=()):
+    """
+    The line that sets one top-level route. A route IS its prefix and next
+    hop, and typing the pair again replaces it whole, description included
+    (#436) - so the line carries every attribute, the ones not named in
+    `fields` kept from the candidate.
+    """
+    _mask(fields, STATIC_FIELDS + ("prefix",))
+    want = dict(cur or {})
+    want.update({k: desired.get(k) for k in ("prefix", "next_hop")})
+    for k in STATIC_FIELDS:
+        if not fields or k in fields:
+            want[k] = desired.get(k) if k != "extra" else \
+                list(desired.get("extra") or [])
+    return [static_line(want)]
+
+
+def find_static(cfg, prefix, next_hop):
+    for r in static_routes_typed(cfg):
+        if r["vrf"] == "" and r["prefix"] == prefix and \
+                r["next_hop"] == next_hop:
+            return r
+    return None
+
+
+NEIGHBOR_FIELDS = ("remote_as", "description", "update_source", "timers",
+                   "password", "peer_group", "ebgp_multihop", "shutdown",
+                   "bfd", "families")
+FAMILY_FIELDS = ("activate", "route_map_in", "route_map_out",
+                 "prefix_list_in", "prefix_list_out", "maximum_prefix",
+                 "next_hop_self", "soft_reconfiguration_inbound",
+                 "default_originate")
+
+
+def bgp_path(asn, vrf=""):
+    if not asn:
+        raise ValueError("bgp: name the router's asn")
+    return [f"router bgp {asn}" + (f" vrf {vrf}" if vrf else "")]
+
+
+def find_bgp(cfg, asn, vrf=""):
+    for r in bgp_typed(cfg):
+        if r["asn"] == str(asn) and r["vrf"] == (vrf or ""):
+            return r
+    return None
+
+
+def _flag(n, word, now, want):
+    if bool(now) == bool(want):
+        return []
+    return [f"{'' if want else 'no '}neighbor {n} {word}"]
+
+
+def _value(n, word, now, want, render=str):
+    if (now or "") == (want or "") or (not now and not want):
+        return []
+    if not want:
+        return [f"no neighbor {n} {word} {render(now)}".rstrip()]
+    return [f"neighbor {n} {word} {render(want)}"]
+
+
+def bgp_neighbor_lines(cur_router, edit, fields=()):
+    """
+    The lines that set one neighbour in a `router bgp` block, at that block:
+    router-level statements first, then each family entered, set and left.
+    `cur_router` is the block as bgp_typed reads it from the candidate (None
+    when the router is new); `edit` is a BgpNeighborEdit as a dict.
+    """
+    _mask(fields, NEIGHBOR_FIELDS)
+    want = edit.get("neighbor") or {}
+    n = want.get("address") or ""
+    if not n:
+        raise ValueError("bgp neighbor: give its address")
+    cur = next((x for x in (cur_router or {}).get("neighbors", [])
+                if x["address"] == n), None) or {}
+    on = (lambda f: not fields or f in fields)
+    lines = []
+    if want.get("is_peer_group") and not cur.get("is_peer_group"):
+        lines.append(f"neighbor {n} peer-group")
+    if on("remote_as") and (want.get("remote_as") or "") != \
+            (cur.get("remote_as") or ""):
+        lines.append(f"neighbor {n} remote-as {want['remote_as']}"
+                     if want.get("remote_as")
+                     else f"no neighbor {n} remote-as {cur['remote_as']}")
+    if on("peer_group"):
+        lines += _value(n, "peer-group", cur.get("peer_group"),
+                        want.get("peer_group"))
+    if on("description"):
+        lines += _value(n, "description", cur.get("description"),
+                        want.get("description"))
+    if on("update_source"):
+        lines += _value(n, "update-source", cur.get("update_source"),
+                        want.get("update_source"))
+    if on("timers"):
+        now = (cur.get("keepalive", 0), cur.get("holdtime", 0))
+        to = (int(want.get("keepalive") or 0), int(want.get("holdtime") or 0))
+        if now != to:
+            lines.append(f"neighbor {n} timers {to[0]} {to[1]}" if any(to)
+                         else f"no neighbor {n} timers")
+    if on("password") and edit.get("password") is not None:
+        pw = edit.get("password")
+        if pw:
+            if any(c.isspace() for c in pw):
+                raise ValueError("bgp neighbor password: no spaces")
+            lines.append(f"neighbor {n} password {pw}")
+        elif cur.get("password_set"):
+            lines.append(f"no neighbor {n} password")
+    if on("ebgp_multihop") and int(want.get("ebgp_multihop") or 0) != \
+            int(cur.get("ebgp_multihop") or 0):
+        hop = int(want.get("ebgp_multihop") or 0)
+        lines.append(f"neighbor {n} ebgp-multihop {hop}" if hop
+                     else f"no neighbor {n} ebgp-multihop")
+    if on("shutdown"):
+        lines += _flag(n, "shutdown", cur.get("shutdown"),
+                       want.get("shutdown"))
+    if on("bfd"):
+        lines += _flag(n, "bfd", cur.get("bfd"), want.get("bfd"))
+    if on("families"):
+        fams = {(f["afi"], f["safi"]): f
+                for f in (cur_router or {}).get("families", [])}
+        for fe in edit.get("families") or []:
+            afi, safi = fe.get("afi") or "ipv4", fe.get("safi") or "unicast"
+            fw = fe.get("settings") or {}
+            fc = next((x for x in fams.get((afi, safi), {}).get("neighbors",
+                                                                 [])
+                       if x["neighbor"] == n), None) or {}
+            fl = _flag(n, "activate", fc.get("activate"), fw.get("activate"))
+            for word, key, d in (("route-map", "route_map", ("in", "out")),
+                                 ("prefix-list", "prefix_list", ("in", "out"))):
+                for direction in d:
+                    k = f"{key}_{direction}"
+                    now, to = fc.get(k) or "", fw.get(k) or ""
+                    if now != to:
+                        fl.append(f"neighbor {n} {word} {to} {direction}"
+                                  if to else
+                                  f"no neighbor {n} {word} {now} {direction}")
+            now, to = int(fc.get("maximum_prefix") or 0), \
+                int(fw.get("maximum_prefix") or 0)
+            if now != to:
+                fl.append(f"neighbor {n} maximum-prefix {to}" if to
+                          else f"no neighbor {n} maximum-prefix")
+            fl += _flag(n, "next-hop-self", fc.get("next_hop_self"),
+                        fw.get("next_hop_self"))
+            fl += _flag(n, "soft-reconfiguration inbound",
+                        fc.get("soft_reconfiguration_inbound"),
+                        fw.get("soft_reconfiguration_inbound"))
+            fl += _flag(n, "default-originate", fc.get("default_originate"),
+                        fw.get("default_originate"))
+            if fl:
+                lines += [f"address-family {afi} {safi}"] + fl + \
+                    ["exit-address-family"]
+    return lines
+
+
+def bgp_neighbor_delete_lines(cfg, asn, vrf, name):
+    """
+    The lines that take neighbour `name` out of a `router bgp` block: every
+    statement the candidate holds for it, each removed as it is written -
+    each family's first, then the router level's, `remote-as` and the
+    peer-group membership last.
+
+    NOT `no neighbor <name>`, which is what an operator would expect to
+    type. Measured on this VTY with FRR 10.7.1 (#558 phase 3): it is staged
+    as a statement of its own rather than as the removal of the lines that
+    are there, so a neighbour with only a description is deleted by FRR and
+    then reported as a statement FRR "did not keep", and one with a family
+    statement fails frr-reload ("% Specify remote-as or peer-group commands
+    first") and the commit rolls back. Statement by statement it goes, and
+    nothing of it is left in FRR or in the configuration.
+    """
+    header = bgp_path(asn, vrf)[0]
+    fams, top, last = {}, [], []
+    for path, stmt in routing_statements(cfg):
+        w = stmt.split()
+        if not path or path[0] != header or w[:2] != ["neighbor", name]:
+            continue
+        if len(path) == 2:
+            fams.setdefault(path[1], []).append("no " + stmt)
+        elif len(w) > 2 and w[2] in ("remote-as", "peer-group"):
+            last.append("no " + stmt)
+        else:
+            top.append("no " + stmt)
+    if not (fams or top or last):
+        raise ValueError(f"bgp: no neighbour {name} in {header}")
+    lines = []
+    for fam, removes in fams.items():
+        lines += [fam] + removes + ["exit-address-family"]
+    return lines + top + last
+
+
+_SECRET = re.compile(r"^(\s*(?:no\s+)?neighbor\s+\S+\s+password)\s+.*$")
+
+
+def shown_lines(lines):
+    """`lines` as a client may see them: a BGP neighbour's password masked,
+    as `show running-config` masks it - only that statement, so a
+    description that says "password" is left alone. The box is given the
+    real lines."""
+    return [_SECRET.sub(r"\1 <set, not shown>", ln) for ln in lines]
+
+
+def delete_for(cfg, area, name="", transport="", prefix="", next_hop="",
+               asn="", vrf=""):
+    """(path, lines) that remove one object from Config `cfg` - the
+    candidate: a BGP neighbour is removed by its own statements, read off
+    `cfg`; everything else as delete_lines says."""
+    if area == "bgp":
+        if not name:
+            raise ValueError("bgp: name the neighbour to remove")
+        return bgp_path(asn, vrf), bgp_neighbor_delete_lines(cfg, asn, vrf,
+                                                             name)
+    return delete_lines(area, name, transport, prefix, next_hop, asn, vrf)
+
+
+def routing_typed(cfg, areas):
+    """The routing areas asked for, of Config `cfg`."""
+    out = {}
+    if "static" in areas:
+        out["static"] = static_routes_typed(cfg)
+    if "bgp" in areas:
+        out["bgp"] = bgp_typed(cfg)
+    if "ospf" in areas:
+        out["ospf"] = ospf_typed(cfg, 2)
+    if "ospf6" in areas:
+        out["ospf6"] = ospf_typed(cfg, 3)
+    if "isis" in areas:
+        out["isis"] = isis_typed(cfg)
+    if "interface_routing" in areas:
+        out["interface_routing"] = interface_routing_typed(cfg)
     return out
 
 
@@ -484,8 +1137,16 @@ def pool_path(name):
 LOGGING_PATH = ["nat", "cgnat"]
 
 
-def delete_lines(area, name="", transport=""):
+def delete_lines(area, name="", transport="", prefix="", next_hop="",
+                 asn="", vrf=""):
     """(path, lines) that remove one object, as the VTY removes it."""
+    if area == "static":
+        if not prefix or not next_hop:
+            raise ValueError("static: give the route's prefix and next_hop")
+        return list(STATIC_PATH), [f"no {prefix} next-hop {next_hop}"]
+    if area == "bgp":
+        raise ValueError("bgp: a neighbour is removed by its statements, "
+                         "read off the candidate: delete_for")
     if area == "interfaces":
         return [], [f"no interface {name}"]
     if area == "pools":
@@ -495,7 +1156,8 @@ def delete_lines(area, name="", transport=""):
             raise ValueError(f"logging: name the transport to remove: "
                              f"{', '.join(TRANSPORTS)}")
         return list(LOGGING_PATH), [f"logging {transport} disable"]
-    raise ValueError(f"unknown area {area!r}: the areas are {', '.join(AREAS)}")
+    raise ValueError(f"unknown area {area!r}: the removable areas are "
+                     f"interfaces, pools, logging, static, bgp")
 
 
 # ------------------------------------------------------------------ schema
@@ -762,7 +1424,17 @@ def edit_for(cfg, area, obj, fields=()):
     if area == "logging":
         return list(LOGGING_PATH), logging_lines(logging_typed(cfg), obj,
                                                  fields)
-    raise ValueError(f"unknown area {area!r}: the areas are {', '.join(AREAS)}")
+    if area == "static":
+        if obj.get("vrf"):
+            raise ValueError("static route: a VRF's routes are edited as "
+                             "lines in its `vrf` block, not here")
+        cur = find_static(cfg, obj.get("prefix"), obj.get("next_hop"))
+        return list(STATIC_PATH), static_lines(cur, obj, fields)
+    if area == "bgp":
+        return bgp_path(obj.get("asn"), obj.get("vrf")), bgp_neighbor_lines(
+            find_bgp(cfg, obj.get("asn"), obj.get("vrf")), obj, fields)
+    raise ValueError(f"unknown area {area!r}: the editable areas are "
+                     f"interfaces, pools, logging, static, bgp")
 
 
 def names_for(cfg, area, known_interfaces=()):

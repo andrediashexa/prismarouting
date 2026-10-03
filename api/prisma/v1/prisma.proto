@@ -392,7 +392,9 @@ message ListCandidatesResponse {
 message GetConfigRequest {
   // Empty reads the running configuration; set, that candidate's.
   string candidate_id = 1;
-  // "interfaces", "pools", "logging"; empty is all three.
+  // "interfaces", "pools", "logging", and the routing half (#558 phase 3):
+  // "static", "bgp", "ospf", "ospf6", "isis", "interface_routing". Empty is
+  // every area.
   repeated string areas = 2;
 }
 
@@ -513,6 +515,211 @@ message TypedConfig {
   // VTY marks them "not checked". Show them read only, on purpose - every
   // read answers them, whatever the areas.
   repeated BoxOwnedLine box_owned = 7;
+  // The routing half (#558, phase 3), read off the FRR statements the
+  // configuration holds - the ones `show running-config` prints - block by
+  // block. A statement no field takes is kept verbatim in its block's
+  // `other`: nothing is dropped.
+  repeated StaticRouteConfig static_routes = 8;
+  repeated BgpConfig bgp = 9;
+  repeated OspfConfig ospf = 10;
+  repeated OspfConfig ospf6 = 11;
+  repeated IsisConfig isis = 12;
+  repeated InterfaceRoutingConfig interface_routing = 13;
+}
+
+// A static route. Top level is `router static` on the VTY's screens, with
+// the description this box keeps for it; `vrf` set is a VRF's own route.
+message StaticRouteConfig {
+  string prefix = 1;
+  // An address, an interface, or blackhole / Null0 / reject.
+  string next_hop = 2;
+  // 0: not stated (FRR's default distance applies).
+  uint32 distance = 3;
+  // 0: no tag.
+  uint32 tag = 4;
+  string description = 5;
+  string vrf = 6;
+  // "ipv4" or "ipv6".
+  string family = 7;
+  // FRR's own words after the next hop (an interface, onlink), as typed.
+  repeated string extra = 8;
+  // The route as `router static` takes it (read only).
+  string line = 9;
+}
+
+// A redistribution into a routing protocol.
+message RedistributeConfig {
+  // "connected", "static", "ospf"...; IS-IS: "ipv4 connected".
+  string protocol = 1;
+  string route_map = 2;
+  // 0: not stated.
+  uint32 metric = 3;
+  string metric_type = 4;
+  // IS-IS: "level-1" / "level-2".
+  string level = 5;
+  // The statement, verbatim.
+  string statement = 6;
+}
+
+// A `router bgp` block.
+message BgpConfig {
+  // The AS number as written (65000, or asdot 1.10).
+  string asn = 1;
+  // "" is the default VRF.
+  string vrf = 2;
+  string router_id = 3;
+  repeated BgpNeighborConfig neighbors = 4;
+  repeated BgpFamilyConfig families = 5;
+  // Router-level statements no field above takes, verbatim.
+  repeated string other = 6;
+  // `bgp default ipv4-unicast`: FRR's default is on, and with it a
+  // neighbour is active in ipv4 unicast with NO `activate` line - FRR does
+  // not print one back. False only when `no bgp default ipv4-unicast` is
+  // stated. A family's `activate` is what is stated; read it with this.
+  bool default_ipv4_unicast = 7;
+}
+
+// A neighbour (or peer-group) at the router level.
+message BgpNeighborConfig {
+  // An address, an interface (unnumbered) or a peer-group name.
+  string address = 1;
+  // A number, or "internal"/"external"; "" when a peer-group gives it.
+  string remote_as = 2;
+  string description = 3;
+  string update_source = 4;
+  // 0 / 0: the defaults.
+  uint32 keepalive = 5;
+  uint32 holdtime = 6;
+  // Whether a password is set. Its value is a secret and is never read.
+  bool password_set = 7;
+  // The peer-group this neighbour belongs to.
+  string peer_group = 8;
+  // This entry IS a peer-group.
+  bool is_peer_group = 9;
+  // 0: not stated.
+  uint32 ebgp_multihop = 10;
+  bool shutdown = 11;
+  bool bfd = 12;
+  repeated string other = 13;
+}
+
+// An `address-family` of a `router bgp` block.
+message BgpFamilyConfig {
+  // "ipv4" / "ipv6" / "l2vpn"...
+  string afi = 1;
+  // "unicast" / "multicast" / "evpn"...
+  string safi = 2;
+  repeated string networks = 3;
+  repeated BgpAggregateConfig aggregates = 4;
+  repeated RedistributeConfig redistribute = 5;
+  repeated BgpNeighborFamilyConfig neighbors = 6;
+  repeated string other = 7;
+}
+
+message BgpAggregateConfig {
+  string prefix = 1;
+  bool summary_only = 2;
+  bool as_set = 3;
+}
+
+// What a family says about one neighbour.
+message BgpNeighborFamilyConfig {
+  string neighbor = 1;
+  bool activate = 2;
+  // Route-maps named PO-... are the routing policy's compiled maps (#458).
+  string route_map_in = 3;
+  string route_map_out = 4;
+  string prefix_list_in = 5;
+  string prefix_list_out = 6;
+  // 0: no limit stated.
+  uint32 maximum_prefix = 7;
+  bool next_hop_self = 8;
+  bool soft_reconfiguration_inbound = 9;
+  bool default_originate = 10;
+  repeated string other = 11;
+}
+
+// A `router ospf` (version 2) or `router ospf6` (version 3) block.
+message OspfConfig {
+  uint32 version = 1;
+  string vrf = 2;
+  string router_id = 3;
+  repeated OspfNetworkConfig networks = 4;
+  repeated OspfAreaConfig areas = 5;
+  // `passive-interface default`.
+  bool passive_default = 6;
+  repeated string passive = 7;
+  // `no passive-interface <name>`: taken back out of the default.
+  repeated string not_passive = 8;
+  repeated RedistributeConfig redistribute = 9;
+  // The `default-information` statement verbatim; "" when absent.
+  string default_information = 10;
+  repeated string other = 11;
+}
+
+message OspfNetworkConfig {
+  string prefix = 1;
+  string area = 2;
+}
+
+message OspfAreaConfig {
+  string area = 1;
+  // "normal", "stub" or "nssa".
+  string area_type = 2;
+  bool no_summary = 3;
+  // The area's other statements (ranges, authentication), verbatim.
+  repeated string other = 4;
+}
+
+// A `router isis <tag>` block.
+message IsisConfig {
+  string tag = 1;
+  string vrf = 2;
+  repeated string nets = 3;
+  // "level-1", "level-2-only", "level-1-2"; "" when not stated.
+  string is_type = 4;
+  string metric_style = 5;
+  repeated RedistributeConfig redistribute = 6;
+  repeated string other = 7;
+}
+
+// What an interface's FRR block says to the IGPs.
+message InterfaceRoutingConfig {
+  string name = 1;
+  string ospf_area = 2;
+  uint32 ospf_cost = 3;
+  bool ospf_passive = 4;
+  // "broadcast", "point-to-point"...; "" when not stated.
+  string ospf_network = 5;
+  uint32 ospf_hello = 6;
+  uint32 ospf_dead = 7;
+  string ospf6_area = 8;
+  uint32 ospf6_cost = 9;
+  bool ospf6_passive = 10;
+  // The IS-IS instances the interface is in (`ip/ipv6 router isis <tag>`).
+  repeated string isis_instances = 11;
+  string isis_circuit_type = 12;
+  uint32 isis_metric = 13;
+  bool isis_passive = 14;
+  repeated string other = 15;
+}
+
+// A BGP neighbour to set (#558 phase 3): its router-level fields and, per
+// family, what the family says about it.
+message BgpNeighborEdit {
+  // The `router bgp` it is in: asn, and vrf ("" the default).
+  string asn = 1;
+  string vrf = 2;
+  BgpNeighborConfig neighbor = 3;
+  // Write only: set to change the password; read back as password_set.
+  string password = 4;
+  repeated BgpNeighborFamilyEdit families = 5;
+}
+
+message BgpNeighborFamilyEdit {
+  string afi = 1;
+  string safi = 2;
+  BgpNeighborFamilyConfig settings = 3;
 }
 
 message BoxOwnedLine {
@@ -527,6 +734,10 @@ message SetConfigRequest {
     InterfaceConfig interface = 2;
     PoolConfig pool = 3;
     LoggingConfig logging = 4;
+    // #558 phase 3: a top-level static route (`router static`), and a BGP
+    // neighbour of a `router bgp` block.
+    StaticRouteConfig static_route = 6;
+    BgpNeighborEdit bgp_neighbor = 7;
   }
   // The fields to change, by their names in the message above ("mtu",
   // "ipv4", "collectors"; "ports" for port_first/port_last, "vlan" for the
@@ -546,12 +757,18 @@ message SetConfigResponse {
 
 message DeleteConfigRequest {
   string candidate_id = 1;
-  // "interfaces", "pools" or "logging".
+  // "interfaces", "pools", "logging", "static" or "bgp".
   string area = 2;
   // The interface or pool.
   string name = 3;
   // logging: "udp", "tcp" or "syslog".
   string transport = 4;
+  // "static": the route, by prefix and next hop (top level only).
+  string prefix = 5;
+  string next_hop = 6;
+  // "bgp": the neighbour is `name`, in the `router bgp` of asn (and vrf).
+  string asn = 7;
+  string vrf = 8;
 }
 
 message GetSchemaRequest {

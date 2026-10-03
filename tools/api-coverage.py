@@ -153,6 +153,37 @@ TYPED_CONFIG = {
 }
 TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"
 
+#: The routing half (#558, phase 3). Static routes and BGP neighbours - what
+#: a family says about one included - are read AND written as fields; the
+#: rest below is read as fields by GetConfig and written as lines through
+#: Edit. A statement of these levels no field takes is still read back, in
+#: its block's `other`, verbatim - so it stays `text` here.
+TYPED_CONFIG.update({"router static": ("<prefix>",)})
+#: `neighbor <address> <word> ...` statements that have a field, by level:
+#: the others (capability, remove-private-AS, advertise) are read back
+#: verbatim in the neighbour's `other` and stay `text`.
+TYPED_NEIGHBOR_WORDS = {
+    "bgp neighbor": ("remote-as", "description", "password", "update-source",
+                     "ebgp-multihop", "timers", "bfd", "shutdown",
+                     "peer-group"),
+    "address-family neighbor": ("activate", "route-map", "prefix-list",
+                                "next-hop-self", "soft-reconfiguration",
+                                "maximum-prefix", "default-originate"),
+}
+TYPED_ROUTING_READS = {
+    "router bgp": ("bgp router-id", "neighbor", "network", "aggregate-address",
+                   "redistribute", "address-family"),
+    "address-family": ("neighbor", "network", "aggregate-address",
+                       "redistribute"),
+    "router ospf": ("ospf router-id", "network", "area", "passive-interface",
+                    "default-information", "redistribute"),
+    "router ospf6": ("ospf6 router-id", "area", "redistribute"),
+    "router isis": ("net", "is-type", "metric-style", "redistribute"),
+    "interface (port)": ("ip ospf", "ipv6 ospf6", "ip router isis",
+                         "ipv6 router isis", "isis"),
+}
+TYPED_ROUTING_API = "ConfigService.GetConfig (fields) / Edit (lines)"
+
 
 def classify_operational(words):
     for prefix, cls, api, note in OPERATIONAL_RULES:
@@ -170,10 +201,30 @@ def classify_config(level, words):
         return "n/a", "-", "the session's"
     stmt = words[1:] if words[0] == "no" else words
     for first in TYPED_CONFIG.get(level, ()):
+        if first.startswith("<") and stmt and stmt[0].startswith("<"):
+            return ("typed", TYPED_CONFIG_API,
+                    "and as lines through Edit; GetSchema/ValidateLines check "
+                    "a line (0.149.22)")
         if stmt[:len(first.split())] == first.split():
             return ("typed", TYPED_CONFIG_API,
                     "and as lines through Edit; GetSchema/ValidateLines check "
+                    "a line (0.149.22)" if level == "router static" else
+                    "and as lines through Edit; GetSchema/ValidateLines check "
                     "a line (0.149.20)")
+    if level in TYPED_NEIGHBOR_WORDS and stmt[:1] == ["neighbor"]:
+        if len(stmt) > 2 and stmt[2] in TYPED_NEIGHBOR_WORDS[level]:
+            return ("typed", TYPED_CONFIG_API,
+                    "and as lines through Edit; GetSchema/ValidateLines check "
+                    "a line (0.149.22)")
+        return ("text", "ConfigService.Edit (lines) / GetRunning",
+                "read back verbatim in the neighbour's `other` (GetConfig)")
+    for first in TYPED_ROUTING_READS.get(level, ()):
+        if stmt[:len(first.split())] == first.split():
+            return ("typed", TYPED_ROUTING_API,
+                    "read as fields since 0.149.22; written as lines")
+    if level in TYPED_ROUTING_READS:
+        return ("text", "ConfigService.Edit (lines) / GetRunning",
+                "read back verbatim in its block's `other` (GetConfig)")
     return ("text", "ConfigService.Edit (lines) / GetRunning",
             TYPED_READS.get(level, ""))
 

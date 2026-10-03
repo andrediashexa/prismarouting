@@ -27,6 +27,57 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.22 - the routing configuration as fields (#558, phase 3)
+
+prisma-web's ask (b) on #558: the BGP and OSPF forms stop parsing running text.
+
+* **Contract:** additive. `prisma.proto` sha256 `11163ea9328b3a12c8cf90d28af4e75ce9972b3c45a9f06842de62544b8a4d01`.
+* **GetConfig's routing areas:** `static`, `bgp`, `ospf`, `ospf6`, `isis`,
+  `interface_routing` - new `TypedConfig` fields 8-13 (`static_routes`,
+  `bgp`, `ospf`, `ospf6`, `isis`, `interface_routing`) with
+  `StaticRouteConfig`, `BgpConfig`, `BgpNeighborConfig`, `BgpFamilyConfig`,
+  `BgpAggregateConfig`, `BgpNeighborFamilyConfig`, `RedistributeConfig`,
+  `OspfConfig`, `OspfNetworkConfig`, `OspfAreaConfig`, `IsisConfig` and
+  `InterfaceRoutingConfig`. **No area named is now every area**, the routing
+  ones included (in 0.149.20 it was the three of phase 2); name the areas you
+  want to keep a read small.
+* **Where it comes from:** the FRR statements the configuration holds - the
+  routing half IS FRR's text on this box - read block by block through the
+  VTY's own block reader, so a field is in the block `show running-config`
+  shows it in. Every block keeps what no field takes in `other`, verbatim:
+  show it read only; nothing is dropped.
+* **Sentinels:** `distance` 0 / `tag` 0 not stated; `remote_as` "" when a
+  peer-group gives it, else a number or `internal`/`external`; `asn` is a
+  string (asdot is legal); `keepalive`/`holdtime` 0/0 the defaults;
+  `ebgp_multihop` 0 not stated; `area_type` "normal" for an area with no type
+  statement; `is_type` "" not stated; `default_information` "" absent. A
+  route-map named `PO-...` is a routing policy's compiled map. **A BGP
+  password is never read**: `password_set` only.
+* **Typed edits:** `SetConfigRequest.static_route` (6) and `.bgp_neighbor`
+  (7, `BgpNeighborEdit`: asn, vrf, neighbor, write-only `password`,
+  `families` of `BgpNeighborFamilyEdit`). A static route is retyped whole
+  (description included), the fields not named kept from the candidate; a
+  VRF's route is refused with `REASON_USAGE` (edit it as a line in its `vrf`
+  block). A BGP neighbour edit writes only what differs; **a family listed is
+  set whole** (a route-map it does not name is removed); `fields` for a
+  neighbour are `remote_as`, `description`, `update_source`, `timers`
+  (keepalive + holdtime), `password`, `peer_group`, `ebgp_multihop`,
+  `shutdown`, `bfd`, `families`; a `password` not given is never cleared.
+  `DeleteConfigRequest` gains `prefix` (5), `next_hop` (6), `asn` (7), `vrf`
+  (8): `area` "static" with prefix and next_hop, or "bgp" with `name` (the
+  neighbour) and asn/vrf. A neighbour is removed **statement by statement**
+  (each family's, then the router level's, `remote-as` last): a bare `no
+  neighbor X` is staged by this VTY as a statement of its own, and with a
+  family statement frr-reload refuses it. **Replies never echo a BGP
+  password**: `lines` and `output` show `password <set, not shown>`, as
+  `show running-config` does.
+* **`BgpConfig.default_ipv4_unicast` (7):** FRR's default is on, and then a
+  neighbour is active in ipv4 unicast with NO `activate` line (FRR does not
+  print one). A family's `activate` is what is stated; read it with this. OSPF, OSPF6 and IS-IS are written as lines through
+  Edit (GetSchema describes them).
+* **Coverage:** docs/api-coverage.md now classes 278 command paths typed (169
+  in 0.149.20); its format is unchanged.
+
 ## 0.149.21 - `no mtu` goes back to the default, and read-only reads are fast
 
 * **Contract:** unchanged (`prisma.proto` sha256 `4cdfee65edf97ae1239d5c4a18648250b04a0d08ff4d4b6106b117e47ea86c09`).
@@ -34,7 +85,7 @@ generated from the VTY's grammar.
   for any read of the running configuration - `GetRunning`, `GetConfig` and
   `Show running-config` alike. It is as fast as an administrator's now: 0.42 s
   against 0.39 s in the lab, from 90.6 s, with the same content. **Client
-  workaround before 0.149.22:** a deadline of at least 120 s on those calls
+  workaround before 0.149.21:** a deadline of at least 120 s on those calls
   for such an account.
 * **Fixed (#560):** removing an interface's MTU (`SetConfig` clearing `mtu`,
   or the line `no mtu`) now sets the interface back to the box's default MTU;

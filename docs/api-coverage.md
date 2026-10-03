@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 169 |
-| text | 460 |
+| typed | 278 |
+| text | 351 |
 | none | 17 |
 | n/a | 26 |
 
@@ -556,47 +556,47 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `cgnat inside` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `cgnat outside` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv4 address <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `ip ospf area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf network point-to-point` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf network broadcast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf hello-interval <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf dead-interval <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf priority <0-255>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf authentication message-digest` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf authentication null` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf authentication-key <key>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf message-digest-key <1-255> md5 <key>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf passive` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip ospf mtu-ignore` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ip router isis <isis-instance>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis circuit-type level-1` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis circuit-type level-2-only` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis circuit-type level-1-2` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis network point-to-point` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis metric <0-16777215> [level-1\|level-2]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis passive` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis hello-interval <1-600>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis hello-multiplier <2-100>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `isis bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ip ospf area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf hello-interval <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf dead-interval <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf priority <0-255>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf authentication message-digest` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf authentication null` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf authentication-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf message-digest-key <1-255> md5 <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis circuit-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis circuit-type level-2-only` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis circuit-type level-1-2` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis metric <0-16777215> [level-1\|level-2]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis hello-interval <1-600>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis hello-multiplier <2-100>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis password [clear\|md5] <password>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `ipv6 ospf6 area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 ospf6 cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 ospf6 network point-to-point` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 ospf6 network broadcast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 ospf6 passive` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 ospf6 bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 ospf6 mtu-ignore` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `ipv6 router isis <isis-instance>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ipv6 ospf6 area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `mtu <576-9216>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf strict` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf loose` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf off` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `vrrp <1-255> address <A.B.C.D> \| priority <1-254> \| track <interface> decrement <1-254>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `vrrp <1-255> address <A.B.C.D> \| priority <1-254> \| track <interface> decrement <1-254>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
 | `exit` | n/a | - | the session's |
 | `no description <text>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no vrf <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -605,47 +605,47 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no cgnat inside` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no cgnat outside` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv4 address <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no ip ospf area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf network point-to-point` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf network broadcast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf hello-interval <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf dead-interval <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf priority <0-255>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf authentication message-digest` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf authentication null` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf authentication-key <key>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf message-digest-key <1-255> md5 <key>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf passive` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip ospf mtu-ignore` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ip router isis <isis-instance>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis circuit-type level-1` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis circuit-type level-2-only` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis circuit-type level-1-2` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis network point-to-point` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis metric <0-16777215> [level-1\|level-2]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis passive` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis hello-interval <1-600>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis hello-multiplier <2-100>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no isis bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `no ip ospf area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf hello-interval <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf dead-interval <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf priority <0-255>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf authentication message-digest` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf authentication null` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf authentication-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf message-digest-key <1-255> md5 <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis circuit-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis circuit-type level-2-only` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis circuit-type level-1-2` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis metric <0-16777215> [level-1\|level-2]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis hello-interval <1-600>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis hello-multiplier <2-100>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis password [clear\|md5] <password>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no ipv6 ospf6 area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 ospf6 cost <1-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 ospf6 network point-to-point` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 ospf6 network broadcast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 ospf6 passive` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 ospf6 bfd` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 ospf6 mtu-ignore` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no ipv6 router isis <isis-instance>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `no ipv6 ospf6 area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no mtu <576-9216>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf strict` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf loose` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf off` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no vrrp <1-255> address <A.B.C.D> \| priority <1-254> \| track <interface> decrement <1-254>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `no vrrp <1-255> address <A.B.C.D> \| priority <1-254> \| track <interface> decrement <1-254>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
 
 ## Configuration: interface (bundle)
 
@@ -776,8 +776,8 @@ Entered with `router static`; `EditRequest.path` = `["router static"]`; changed 
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `<prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [description <text>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `no <prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [description <text>]` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `<prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [description <text>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
+| `no <prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [description <text>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: rpki
@@ -800,22 +800,22 @@ Entered with `router bgp <asn>`; `EditRequest.path` = `["router bgp <asn>"]`; ch
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `bgp router-id <A.B.C.D>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `bgp log-neighbor-changes` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `bgp graceful-shutdown` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `bgp default ipv4-unicast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `bgp bestpath as-path multipath-relax` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `neighbor <neighbour>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `address-family ipv4 unicast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `address-family ipv6 unicast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `network <A.B.C.D/M> [policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `aggregate-address <A.B.C.D/M> [summary-only] [policy <policy>] [suppress-policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `table-policy <policy>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `table-map <route-map>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute connected` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute static` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute ospf` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute isis` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `bgp router-id <A.B.C.D>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `bgp log-neighbor-changes` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `bgp graceful-shutdown` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `bgp default ipv4-unicast` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `bgp bestpath as-path multipath-relax` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `neighbor <neighbour>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `address-family ipv4 unicast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `address-family ipv6 unicast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `network <A.B.C.D/M> [policy <policy>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `aggregate-address <A.B.C.D/M> [summary-only] [policy <policy>] [suppress-policy <policy>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `table-policy <policy>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `table-map <route-map>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `redistribute connected` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute static` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute ospf` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute isis` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: bgp neighbor
@@ -843,18 +843,18 @@ Entered with `router bgp <asn> > address-family <afi> <safi>`; `EditRequest.path
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `neighbor <neighbour>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `network <A.B.C.D/M> [policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `aggregate-address <A.B.C.D/M> [summary-only] [policy <policy>] [suppress-policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `table-policy <policy>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `table-map <route-map>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `vrf-import <vrf>\|default [policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `import vrf <vrf>\|default\|route-map <route-map>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute connected` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute static` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute ospf` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute isis` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `exit-address-family` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `neighbor <neighbour>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `network <A.B.C.D/M> [policy <policy>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `aggregate-address <A.B.C.D/M> [summary-only] [policy <policy>] [suppress-policy <policy>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `table-policy <policy>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `table-map <route-map>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `vrf-import <vrf>\|default [policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `import vrf <vrf>\|default\|route-map <route-map>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `redistribute connected` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute static` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute ospf` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute isis` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `exit-address-family` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: address-family neighbor
@@ -880,22 +880,22 @@ Entered with `router ospf`; `EditRequest.path` = `["router ospf"]`; changed by: 
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `ospf router-id <A.B.C.D>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `network <A.B.C.D/M> area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `passive-interface <interface>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `default-information originate [always] [metric <n>] [metric-type 1\|2] [route-map <name>\|policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `export <policy>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute connected [metric <n>] [metric-type 1\|2] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute static [metric <n>] [metric-type 1\|2] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute bgp [metric <n>] [metric-type 1\|2] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute isis [metric <n>] [metric-type 1\|2] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `auto-cost reference-bandwidth <1-4294967>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `maximum-paths <1-256>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `log-adjacency-changes [detail]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `timers throttle spf <delay> <init> <max>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `distance <1-255>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `neighbor <A.B.C.D> [poll-interval <n>] [priority <n>]` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ospf router-id <A.B.C.D>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `network <A.B.C.D/M> area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `passive-interface <interface>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `default-information originate [always] [metric <n>] [metric-type 1\|2] [route-map <name>\|policy <policy>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `export <policy>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `redistribute connected [metric <n>] [metric-type 1\|2] [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute static [metric <n>] [metric-type 1\|2] [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute bgp [metric <n>] [metric-type 1\|2] [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute isis [metric <n>] [metric-type 1\|2] [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `auto-cost reference-bandwidth <1-4294967>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `maximum-paths <1-256>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `log-adjacency-changes [detail]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `timers throttle spf <delay> <init> <max>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `distance <1-255>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `neighbor <A.B.C.D> [poll-interval <n>] [priority <n>]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: router ospf6
@@ -904,18 +904,18 @@ Entered with `router ospf6`; `EditRequest.path` = `["router ospf6"]`; changed by
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `ospf6 router-id <A.B.C.D>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `area <area>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute connected [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute static [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute bgp [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute isis [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `default-information originate [always] [metric <n>] [metric-type 1\|2] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `auto-cost reference-bandwidth <1-4294967>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `maximum-paths <1-256>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `log-adjacency-changes [detail]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `timers throttle spf <delay> <init> <max>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `distance <1-255>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `ospf6 router-id <A.B.C.D>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute connected [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute static [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute bgp [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute isis [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `default-information originate [always] [metric <n>] [metric-type 1\|2] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `auto-cost reference-bandwidth <1-4294967>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `maximum-paths <1-256>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `log-adjacency-changes [detail]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `timers throttle spf <delay> <init> <max>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `distance <1-255>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: router isis
@@ -924,26 +924,26 @@ Entered with `router isis <tag>`; `EditRequest.path` = `["router isis <tag>"]`; 
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `net <49.xxxx.xxxx.xxxx.xxxx.00>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `is-type level-1` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `is-type level-2-only` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `is-type level-1-2` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `metric-style wide` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `metric-style narrow` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `metric-style transition` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `topology ipv6-unicast` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `set-overload-bit [on-startup <0-86400>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `export <policy>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute ipv4 <proto> level-1\|level-2 [metric <n>] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `redistribute ipv6 <proto> level-1\|level-2 [metric <n>] [route-map <name>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `default-information originate ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] [route-map <name>\|policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `domain-password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `area-password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `log-adjacency-changes` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `lsp-mtu <128-4352>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `lsp-gen-interval <1-120>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `spf-interval <1-120>` | text | ConfigService.Edit (lines) / GetRunning |  |
-| `max-lsp-lifetime <350-65535>` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `net <49.xxxx.xxxx.xxxx.xxxx.00>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `is-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `is-type level-2-only` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `is-type level-1-2` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `metric-style wide` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `metric-style narrow` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `metric-style transition` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `topology ipv6-unicast` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `set-overload-bit [on-startup <0-86400>]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `export <policy>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `redistribute ipv4 <proto> level-1\|level-2 [metric <n>] [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `redistribute ipv6 <proto> level-1\|level-2 [metric <n>] [route-map <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `default-information originate ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] [route-map <name>\|policy <policy>]` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `domain-password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `area-password [clear\|md5] <password>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `log-adjacency-changes` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `lsp-mtu <128-4352>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `lsp-gen-interval <1-120>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `spf-interval <1-120>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
+| `max-lsp-lifetime <350-65535>` | text | ConfigService.Edit (lines) / GetRunning | read back verbatim in its block's `other` (GetConfig) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: route-map

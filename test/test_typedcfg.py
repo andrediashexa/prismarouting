@@ -68,7 +68,7 @@ check(not cfg.unknown, f"the sample parses whole: {cfg.unknown}")
 
 print("=== reads ===")
 d = T.config_typed(cfg)
-check(sorted(d) == ["box_owned", "interfaces", "logging", "pools"], "all three areas by default, and the box's own lines")
+check(sorted(d) == sorted(list(T.AREAS) + ["box_owned"]), "every area by default - the routing half too (#558 phase 3) - and the box's own lines")
 i = {x["name"]: x for x in d["interfaces"]}
 e = i["ens18"]
 check(e["description"] == "up link" and e["mtu"] == 1500 and not e["shutdown"]
