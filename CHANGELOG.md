@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.25 - nothing the VTY does is out of the API's reach
+
+### Added
+
 * **Nothing the VTY does is out of the API's reach** (#558, phase 5): the 17
   command paths docs/api-coverage.md listed as unreachable are typed.
   `OperationalService.Clear` runs the VTY's `clear` for a target - interface
@@ -99,8 +105,6 @@ version has a chance of seeing it.
   subscriber ended, on every worker, by the dataplane's new `bpa clear
   subscriber` - its block left to the hold-down and released with its
   natEvent 17, as an expiry would.
-
-### Fixed
 
 ## 0.149.24 - the rest of the configuration as fields, and the schema fixed
 
