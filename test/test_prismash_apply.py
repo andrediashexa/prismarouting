@@ -2381,5 +2381,66 @@ check(not _ok and "api: 10.9.9.9:50051 could not be listened on" in _buf.getvalu
       f"a listener the host could not open fails the commit, in its words: {_buf.getvalue()!r}")
 
 
+
+print("=== no mtu puts the box's default back (#560) ===")
+# It printed "the driver default applies after the interface is recreated"
+# and left the last value on the device, which the running configuration
+# reads - so the statement the operator had just removed came straight back.
+
+
+class MtuPlane(FakeDataplane):
+    """A dataplane that keeps the MTU it is set to, as the real one does."""
+
+    def __init__(self):
+        super().__init__(existing=("ge0", "tap4096"))
+        self.mtu = {"ge0": 1400, "tap4096": 1400}
+
+    def call(self, message, args):
+        r = super().call(message, args)
+        if message == "sw_interface_set_mtu":
+            name = {i: n for n, i in self.have.items()}[args["sw_if_index"]]
+            self.mtu[name] = args["mtu"][0]
+        return r
+
+
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("unix {\n  nodaemon\n}\nethernet {\n  default-mtu 1500\n}\n")
+    startup = fh.name
+api = MtuPlane()
+sh = shell_with(api, "interface ge0\n mtu 1400\n exit\n")
+sh.device_mtus = lambda: dict(api.mtu)
+sh.set_host_mtu = lambda ifname, mtu: None
+sh.STARTUP_CONF = startup
+check(sh.box_default_mtu() == 1500,
+      f"box_default_mtu reads the tuner's default-mtu: {sh.box_default_mtu()}")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.apply(parse_nested("interface ge0\n exit\n"))
+check(ok is True and api.mtu["ge0"] == 1500,
+      f"no mtu sets ge0 back to the default 1500: {ok} {api.mtu} {buf.getvalue()!r}")
+check(api.mtu["tap4096"] == 1400,
+      f"and leaves a linux_cp TAP to lcp-sync: {api.mtu}")
+
+# A saved file with no mtu line, loaded with the device already at the
+# default, must touch nothing: that is every boot.
+api.calls.clear()
+sh._running_text = "interface ge0\n mtu 1500\n exit\n"
+sh.running_config = lambda: parse_nested(sh._running_text)
+with contextlib.redirect_stdout(io.StringIO()):
+    ok = sh.apply(parse_nested("interface ge0\n exit\n"))
+check(ok is True and not [m for m, _ in api.calls if m == "sw_interface_set_mtu"],
+      f"an interface already at the default is not set again: {api.calls}")
+
+# apply_mtu is the one path both use, held to the read-back.
+api.mtu["ge0"] = 9000
+with contextlib.redirect_stdout(io.StringIO()):
+    check(sh.apply_mtu("ge0", 1400) is True and api.mtu["ge0"] == 1400,
+          f"apply_mtu sets and reads back: {api.mtu}")
+sh.device_mtus = lambda: {"ge0": 9000}
+with contextlib.redirect_stdout(io.StringIO()):
+    check(sh.apply_mtu("ge0", 1400) is False,
+          "apply_mtu fails when the dataplane does not take the value")
+os.unlink(startup)
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

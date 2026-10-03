@@ -969,5 +969,42 @@ check(vppapi._PapiTeardown().filter(_rec("select failed")) is False,
       "_PapiTeardown.filter answers the teardown record")
 
 
+
+print("=== an account that cannot reach the API segment is answered at once (#561) ===")
+# vat2 waited out its connect per dump: 90.6 s for one running-config read as an
+# account with no role, against 0.5 s for root (lab/mtu-and-readonly.sh).
+import tempfile as _tf
+import time as _time
+_seg = _tf.NamedTemporaryFile(delete=False)
+_seg.close()
+os.chmod(_seg.name, 0o000)
+_saved = vppapi.Vat2.API_SEGMENT
+vppapi.Vat2.API_SEGMENT = _seg.name
+try:
+    if os.geteuid() != 0:
+        why = vppapi.Vat2.segment_denied()
+        check(why and "cannot reach the dataplane's API" in why,
+              f"segment_denied names the segment and its group: {why!r}")
+        t0 = _time.monotonic()
+        rc, out, err = vppapi.Vat2._subprocess(["vat2", "sw_interface_dump", "{}"],
+                                               timeout=30)
+        took = _time.monotonic() - t0
+        check(rc == 126 and took < 1,
+              f"_subprocess answers at once instead of running vat2: {rc} {took:.2f}s")
+        r = vppapi.Vat2._client_failure("sw_interface_dump", rc, err)
+        check(r is not None and r.state == vppapi.CANNOT_SEND,
+              f"and the reply says the client could not send it: {r}")
+        rc, _, _ = vppapi.Vat2._subprocess(["vat2", "--dump-apis"], timeout=5)
+        check(rc != 126, "--dump-apis reads files, not the segment, and still runs")
+    os.chmod(_seg.name, 0o600)
+    check(vppapi.Vat2.segment_denied() is None,
+          "an account that can open the segment is not stopped")
+    vppapi.Vat2.API_SEGMENT = _seg.name + ".absent"
+    check(vppapi.Vat2.segment_denied() is None,
+          "no segment (the dataplane down) is left to vat2 to say")
+finally:
+    vppapi.Vat2.API_SEGMENT = _saved
+    os.unlink(_seg.name)
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

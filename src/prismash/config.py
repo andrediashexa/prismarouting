@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import difflib
 import ipaddress
+import re
 import unicodedata
 import hashlib
 
@@ -2173,6 +2174,35 @@ VLAN_RANGE = f"<{VLAN_MIN}-{VLAN_MAX}>"
 #: what this product offers as a jumbo frame.
 MTU_MIN, MTU_MAX = 576, 9216
 MTU_RANGE = f"<{MTU_MIN}-{MTU_MAX}>"
+
+#: What VPP gives an interface when startup.conf sets no `ethernet {
+#: default-mtu }` - appliance/prisma-routing-tune's ETHERNET_DEFAULT_MTU, and
+#: the 9000 lab/mtu-and-readonly.sh reads off a fresh pg0.
+VPP_DEFAULT_MTU = 9000
+
+
+def startup_default_mtu(text):
+    """
+    The MTU an interface with no `mtu` statement has on this box: the
+    tuner's `ethernet { default-mtu <n> }` in startup.conf, or VPP's own
+    default when there is none (#560).
+
+    `no mtu` used to leave the last committed value on the device - the note
+    it printed said "the driver default applies after the interface is
+    recreated", which on a box nobody recreates is never - so the running
+    configuration, read from the device, kept the statement the operator had
+    just removed. This is the value it goes back to. Read from the file the
+    dataplane started with, not guessed: the tuner lowers it on a card whose
+    maximum is below 9000 (#382), and a box set back to 9000 there would be
+    one the card refuses.
+    """
+    m = re.search(r"\bethernet\s*\{[^}]*?\bdefault-mtu\s+(\d+)", text or "",
+                  re.S)
+    if m:
+        n = int(m.group(1))
+        if MTU_MIN <= n <= MTU_MAX:
+            return n
+    return VPP_DEFAULT_MTU
 
 #: An interface's VRF. 0 is not in the range because on an INTERFACE that word
 #: is how the statement is taken back off, which is the split Pool.RANGES'

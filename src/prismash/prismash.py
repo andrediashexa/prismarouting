@@ -33,6 +33,7 @@ import tempfile
 import textwrap
 import time
 
+from config import startup_default_mtu  # noqa: E402  (#560)
 from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRF_RESERVED_PREFIX, vrf_device_error, vrf_table_taken,
                     PROBE_DEADLINE, Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
@@ -12386,33 +12387,8 @@ class Shell:
         # in the log saying why. Setting only the TAP leaves the packet path -
         # the VPP interface - unchanged, which is the half that matters.
         for ifname, mtu in d["mtu_set"].items():
-            # Over the binary API, so that setting an MTU no longer needs the
-            # VPP CLI socket - and an account with that socket can do anything
-            # on this box, including deleting a pool (#76).
-            #
-            # mtu[0] is the L3 MTU, which is what OSPF compares in Database
-            # Description packets. The CLI equivalent was "set interface mtu
-            # PACKET <n>": plain "set interface mtu" changes the hardware max
-            # frame size, which most drivers refuse - and refused while vppctl
-            # still exited 0, so the failure was invisible. The array here says
-            # which one is meant without depending on a keyword.
-            idx = self.api.interface_index(ifname)
-            if idx is None:
-                self.err(f"interface {ifname}: the dataplane does not have it")
+            if not self.apply_mtu(ifname, mtu):
                 return False
-            r = self.api_call("sw_interface_set_mtu",
-                              {"sw_if_index": idx, "mtu": [mtu, 0, 0, 0]})
-            if r.state != vppapi.OK:
-                self.err_dataplane(f"interface {ifname}: mtu {mtu}: {r.reason}")
-                return False
-            # Still read back. retval 0 means the message was accepted, not
-            # that the driver took the value, and this is the assertion that
-            # actually protects the OSPF adjacency.
-            if self.device_mtus().get(ifname) != mtu:
-                self.err(f"interface {ifname}: the dataplane did not take "
-                         f"mtu {mtu}")
-                return False
-            self.set_host_mtu(ifname, mtu)
         # uRPF before the MTU changes and after the CGNAT ones, which is
         # arbitrary except in one respect: it MUST be applied before the box
         # starts carrying the traffic the operator turned it on for, and a
@@ -12555,13 +12531,25 @@ class Shell:
                     and not self.delete_bundle(ifname):
                 return False
 
-        for ifname in d["mtu_del"]:
-            # No stored default to restore: the driver's own value is whatever
-            # the interface reports before we touch it, so removal is reported
-            # rather than guessed at.
-            print(f"note: mtu removed from {ifname}")
-            print_prose("the driver default applies after the interface is "
-                        "recreated")
+        # `no mtu` puts the box's default back (#560). It used to print "the
+        # driver default applies after the interface is recreated" and leave
+        # the last value on the device - which the running configuration reads,
+        # so the statement the operator removed came straight back.
+        if d["mtu_del"]:
+            default = self.box_default_mtu()
+            have = self.device_mtus()
+            for ifname in d["mtu_del"]:
+                # Already there - a saved file with no mtu line, loaded at
+                # boot, names every interface here and must touch none of
+                # them - and a linux_cp TAP, which is lcp-sync's to set.
+                if have.get(ifname) == default or _is_lcp_tap(ifname):
+                    continue
+                # An interface this commit removes has no MTU to put back:
+                # deleted above, it is not there to ask.
+                if self.api.interface_index(ifname) is None:
+                    continue
+                if not self.apply_mtu(ifname, default):
+                    return False
 
         # Ordered, not as they were typed: `cgnat logging enable` is refused
         # by the dataplane until the exporter statement has been applied, and
@@ -12725,6 +12713,42 @@ class Shell:
             if there != here:
                 found.append((ifname, host, here, there))
         return found
+
+    def apply_mtu(self, ifname, mtu):
+        """
+        One interface's MTU on both sides, read back: the dataplane's L3 MTU
+        and the TAP linux_cp pairs with it. Used for `mtu <n>` and, with the
+        box's default, for `no mtu` (#560) - one path, so a removal is held
+        to the same read-back a setting is.
+        """
+        # Over the binary API, so that setting an MTU no longer needs the
+        # VPP CLI socket - and an account with that socket can do anything
+        # on this box, including deleting a pool (#76).
+        #
+        # mtu[0] is the L3 MTU, which is what OSPF compares in Database
+        # Description packets. The CLI equivalent was "set interface mtu
+        # PACKET <n>": plain "set interface mtu" changes the hardware max
+        # frame size, which most drivers refuse - and refused while vppctl
+        # still exited 0, so the failure was invisible. The array here says
+        # which one is meant without depending on a keyword.
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("sw_interface_set_mtu",
+                          {"sw_if_index": idx, "mtu": [mtu, 0, 0, 0]})
+        if r.state != vppapi.OK:
+            self.err_dataplane(f"interface {ifname}: mtu {mtu}: {r.reason}")
+            return False
+        # Still read back. retval 0 means the message was accepted, not
+        # that the driver took the value, and this is the assertion that
+        # actually protects the OSPF adjacency.
+        if self.device_mtus().get(ifname) != mtu:
+            self.err(f"interface {ifname}: the dataplane did not take "
+                     f"mtu {mtu}")
+            return False
+        self.set_host_mtu(ifname, mtu)
+        return True
 
     def set_host_mtu(self, ifname, mtu):
         """
@@ -19043,6 +19067,18 @@ class Shell:
 
     #: Where the tuner writes what it decided, and where it writes it down.
     STARTUP_CONF = os.environ.get("PRISMA_STARTUP_CONF", "/etc/vpp/startup.conf")
+
+    def box_default_mtu(self):
+        """
+        The MTU an interface with no `mtu` statement has here: the tuner's
+        `ethernet { default-mtu }` in the startup.conf the dataplane started
+        with, or VPP's own (#560). config.startup_default_mtu() reads it.
+        """
+        try:
+            with open(self.STARTUP_CONF) as f:
+                return startup_default_mtu(f.read())
+        except OSError:
+            return startup_default_mtu("")
     TUNE_ENV = os.environ.get("PRISMA_TUNE_ENV", "/etc/prisma-routing/tune.env")
 
     def why_no_dataplane_interface(self):

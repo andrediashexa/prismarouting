@@ -5899,11 +5899,8 @@ _drive271(_shell271("! routing\nbgp as-path access-list FOO seq 5 permit "
                     "^65001_\n", frr=_Frr271(daemons=_HEALTHY271)),
           ["check"], "no BGP paths received yet")
 
-# An mtu going away, which is reported rather than guessed at.
-_drive271(_shell271("! interfaces\ninterface GigabitEthernet0/8/0\n",
-                    "! interfaces\ninterface GigabitEthernet0/8/0\n mtu 9000\n",
-                    dp=_Dp271({"show interface": _IF271})), [],
-          "note: mtu removed from GigabitEthernet0/8/0")
+# An mtu going away used to print a 104-column note here; since #560 it is
+# put back to the box's default, through apply_mtu, and prints nothing.
 
 # The QinQ sub-interface, whose warning was the widest line `commit` printed
 # anywhere: 231 columns.

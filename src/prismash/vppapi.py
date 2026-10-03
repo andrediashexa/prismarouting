@@ -261,7 +261,39 @@ class Vat2:
             pass
 
     @classmethod
+    def segment_denied(cls):
+        """
+        Why this account cannot reach the dataplane's API segment, or None.
+
+        An account without the group (#561): vat2 does not fail when it cannot
+        map /dev/shm/global_vm, it waits out its connect, and every dump a
+        running-config read makes waited its 10-15 s in turn - 90.6 s for one
+        `show running-config` in lab/mtu-and-readonly.sh, against 0.5 s for
+        root, for the same 14 lines. Asked of the segment itself rather than of
+        the account's groups: the segment's mode is what vat2 meets, and a box
+        that changed it is answered by what it is, not by what it should be. A
+        segment that is not there (the dataplane down) is left to vat2, which
+        says so itself.
+        """
+        try:
+            if os.path.exists(cls.API_SEGMENT) and \
+                    not os.access(cls.API_SEGMENT, os.R_OK | os.W_OK):
+                return (f"this account cannot reach the dataplane's API: "
+                        f"{cls.API_SEGMENT} is for the {cls.API_GROUP} group")
+        except OSError:
+            return None
+        return None
+
+    @classmethod
     def _subprocess(cls, argv, timeout=10):
+        # The one place every vat2 goes through, so an account that cannot
+        # reach the segment is answered at once instead of after a timeout
+        # per dump (#561). vppctl is not affected: its socket refuses at once.
+        if os.path.basename(argv[0]).startswith("vat2") and \
+                argv[1:2] != ["--dump-apis"]:
+            why = cls.segment_denied()
+            if why:
+                return 126, "", why
         try:
             p = subprocess.run(argv, capture_output=True, text=True,
                                timeout=timeout)
@@ -380,6 +412,9 @@ class Vat2:
             return Reply(CANNOT_SEND, reason=(
                 f"the client crashed (signal {sig}) encoding '{message}'; "
                 "the dataplane never saw it"))
+        if rc == 126 and text.startswith("this account cannot reach"):
+            # segment_denied(), answered before any client ran (#561).
+            return Reply(CANNOT_SEND, reason=text.strip())
         if "Failed converting JSON to API" in text:
             return Reply(CANNOT_SEND, reason=(
                 f"the client cannot express '{message}' as it was asked to; "
