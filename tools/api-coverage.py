@@ -162,15 +162,16 @@ OPERATIONAL_RULES = [
 #: Paths at the top of the configuration with their own rpc.
 CONFIG_RULES = [
     (["commit", "check"], "typed", "ConfigService.Check", ""),
-    (["commit", "confirmed"], "typed", "ConfigService.Commit (confirm) / Confirm",
-     "the pending confirm cannot be read back: phase 1"),
+    (["commit", "confirmed"], "typed",
+     "ConfigService.Commit (confirm) / Confirm / GetPendingConfirm",
+     "the window read back from the box (0.149.18)"),
     (["commit", "comment"], "typed", "ConfigService.Commit (comment)", ""),
     (["commit", "remap"], "typed", "ConfigService.Commit (acknowledge_remap)", ""),
     (["commit", "cutoff"], "typed", "ConfigService.Commit (acknowledge_cutoff)", ""),
     (["commit", "diverge"], "typed",
      "ConfigService.Commit (acknowledge_diverge)", ""),
     (["commit"], "typed", "ConfigService.Commit",
-     "refusal reasons are free text: phase 1"),
+     "refusals carry Diagnostics.reason (0.149.18)"),
     (["rollback"], "typed", "ConfigService.Rollback", ""),
 ]
 
@@ -246,12 +247,6 @@ def rows():
 NOT_IN_THE_VTY = [
     ("clear interface counters (one or all)", "phase 3: in the VTY and the API at once"),
     ("clear a CGNAT subscriber's sessions / its block", "phase 3: in the VTY and the API at once"),
-    ("the pending `commit confirmed` read back (revision, deadline, account, comment)",
-     "phase 1 (in progress, #558 phase 1)"),
-    ("machine-readable refusal reasons on Edit/Commit (stale_base, confirm_pending, "
-     "gate_remap/cutoff/diverge, limit)", "phase 1 (in progress, #558 phase 1)"),
-    ("candidate lifecycle: list candidates, expires_at, last activity",
-     "phase 1 (in progress, #558 phase 1)"),
     ("a schema of the configuration grammar, to validate and complete lines",
      "phase 2"),
 ]
@@ -264,13 +259,13 @@ patch release with its lab coverage in lab/api-grpc.sh and its
 docs/clients.md entry. Proto shapes are proposals; names follow the domain
 grouping rule (#533).
 
-1. **Commit and candidate facts** (prisma-web items 1-3) - *in progress
-   (#558 phase 1)*. `Diagnostics.reason` codes on Edit/Commit/Check
-   (`stale_base` with the running revision it moved to, `confirm_pending`,
-   `gate_remap`, `gate_cutoff`, `gate_diverge`, `limit`);
-   `ConfigService.GetPendingConfirm` -> {revision, deadline, account,
-   comment}; `ConfigService.ListCandidates` and `expires_at`/`last_activity`
-   on the candidate.
+1. **Commit and candidate facts** (prisma-web items 1-3) - *delivered in
+   0.149.18*. `Diagnostics.reason` on every refused ConfigService call and
+   `CheckResponse.reason` (stale base with the running revision it moved to,
+   permission, candidate expired/unknown, limit, the three gates with their
+   items, confirm pending, grammar, validation, apply failed, usage);
+   `ConfigService.GetPendingConfirm`; `ConfigService.ListCandidates`, and
+   `expires_at` / `last_activity` / `idle_seconds` on the candidate replies.
 2. **Typed configuration for what the UI edits** (items 4-5).
    `ConfigService.GetConfig(area, source=running|candidate)` returning
    `InterfaceConfig {name, description, mtu, shutdown, ipv4[], ipv6[],
