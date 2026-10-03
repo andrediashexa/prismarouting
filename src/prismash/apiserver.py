@@ -1081,6 +1081,19 @@ def typed_lines(sh, args):
     return {"path": path, "lines": lines}
 
 
+def typed_delete(sh, args):
+    """(path, lines) that remove one object from this worker's candidate:
+    read off the candidate itself, because a BGP neighbour is removed by the
+    statements it has there (#558 phase 3)."""
+    if sh.candidate is None:
+        raise ValueError("no candidate is open in this session")
+    path, lines = typedcfg.delete_for(
+        sh.candidate, args.get("area", ""), args.get("name", ""),
+        args.get("transport", ""), args.get("prefix", ""),
+        args.get("next_hop", ""), args.get("asn", ""), args.get("vrf", ""))
+    return {"path": path, "lines": lines}
+
+
 def typed_schema(sh, args):
     """
     The configuration grammar of the modes asked for (every one when none
@@ -1128,6 +1141,8 @@ def handle(sh, op, args):
         return typed_config(sh, args or {})
     if op == "typed_lines":
         return typed_lines(sh, args or {})
+    if op == "typed_delete":
+        return typed_delete(sh, args or {})
     if op == "schema":
         return typed_schema(sh, args or {})
     if op in READERS:
@@ -2009,7 +2024,56 @@ def status_message(output, extra=""):
 
 #: The typed areas by the SetConfigRequest field that carries each (#558).
 AREA_OF_FIELD = {"interface": "interfaces", "pool": "pools",
-                 "logging": "logging"}
+                 "logging": "logging", "static_route": "static",
+                 "bgp_neighbor": "bgp"}
+
+#: TypedConfig's repeated routing fields (#558 phase 3), by typedcfg's area.
+ROUTING_FIELDS = {"static": ("static_routes", "StaticRouteConfig"),
+                  "bgp": ("bgp", "BgpConfig"), "ospf": ("ospf", "OspfConfig"),
+                  "ospf6": ("ospf6", "OspfConfig"),
+                  "isis": ("isis", "IsisConfig"),
+                  "interface_routing": ("interface_routing",
+                                        "InterfaceRoutingConfig")}
+
+
+def msg_from_dict(cls, d):
+    """
+    A typedcfg dict as message `cls`, field by field off the descriptor:
+    nested messages and repeated messages recursively, keys the message does
+    not have ignored. The routing messages are shaped after the dicts, so
+    one walker serves them all instead of a function per message.
+    """
+    kw = {}
+    for f in cls.DESCRIPTOR.fields:
+        if f.name not in d or d[f.name] is None:
+            continue
+        v = d[f.name]
+        if f.message_type is not None:
+            sub = getattr(sys.modules[cls.__module__], f.message_type.name)
+            if f.label == f.LABEL_REPEATED:
+                kw[f.name] = [msg_from_dict(sub, x) for x in v]
+            else:
+                kw[f.name] = msg_from_dict(sub, v)
+        else:
+            kw[f.name] = v
+    return cls(**kw)
+
+
+def dict_from_msg(m):
+    """A message as a dict typedcfg reads: every field, defaults included."""
+    out = {}
+    for f in m.DESCRIPTOR.fields:
+        v = getattr(m, f.name)
+        if f.message_type is not None:
+            if f.label == f.LABEL_REPEATED:
+                out[f.name] = [dict_from_msg(x) for x in v]
+            else:
+                out[f.name] = dict_from_msg(v)
+        elif f.label == f.LABEL_REPEATED:
+            out[f.name] = list(v)
+        else:
+            out[f.name] = v
+    return out
 
 INTERFACE_KEYS = ("name", "kind", "description", "mtu", "shutdown", "ipv4",
                   "ipv6", "cgnat_role", "vrf", "linux_name", "vlan_outer",
@@ -2058,6 +2122,15 @@ def _has(msg, field):
         return msg.HasField(field)
     except ValueError:
         return False
+
+
+def bgp_edit_dict(m):
+    """A BgpNeighborEdit as typedcfg reads it. `password` stays None when it
+    was not given, so an edit that does not mean it never clears one."""
+    d = dict_from_msg(m)
+    if not m.password:
+        d["password"] = None
+    return d
 
 
 def interface_dict(m):
@@ -2412,23 +2485,32 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 out.logging.CopyFrom(logging_pb(pb, d["logging"]))
             for b in d.get("box_owned", []):
                 out.box_owned.add(line=b["line"], why=b["why"])
+            for area, (field, msg) in ROUTING_FIELDS.items():
+                getattr(out, field).extend(
+                    msg_from_dict(getattr(pb, msg), x) for x in d.get(area, []))
             return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def _stage(self, context, c, path, lines):
             """Lines at `path`, staged as Edit stages them: the reply."""
-            out = pb.SetConfigResponse(path=path, lines=lines)
+            # The lines a client is shown have a BGP password masked: the
+            # box is given the real ones, the reply never echoes a secret -
+            # a DeleteConfig's would be one the client never sent.
+            out = pb.SetConfigResponse(path=path,
+                                       lines=typedcfg.shown_lines(lines))
             if lines:
                 res = c["worker"].ask("feed", edit_lines(path, lines))
+                said = "\n".join(typedcfg.shown_lines(
+                    res["output"].splitlines()))
                 if res["failed"]:
                     code = (grpc.StatusCode.PERMISSION_DENIED
                             if denied(res["output"])
                             else grpc.StatusCode.INVALID_ARGUMENT)
                     c["worker"].ask("feed", ["top"])
-                    fail(context, code, res["output"], stage="edit")
-                out.output = res["output"]
+                    fail(context, code, said, stage="edit")
+                out.output = said
                 out.diagnostics.extend(_diag_pb(pb, d)
-                                       for d in parse_output(res["output"]))
+                                       for d in parse_output(said))
             t = sessions.timing(c)
             out.last_activity.CopyFrom(ts(t["last_activity"]))
             out.expires_at.CopyFrom(ts(t["expires_at"]))
@@ -2440,10 +2522,12 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             which = req.WhichOneof("object")
             if which is None:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
-                     "error: name the object to set: interface, pool or logging",
+                     "error: name the object to set: interface, pool, logging, "
+                     "static_route or bgp_neighbor",
                      stage="usage")
             obj = {"interface": interface_dict, "pool": pool_dict,
-                   "logging": logging_dict}[which](getattr(req, which))
+                   "logging": logging_dict, "static_route": dict_from_msg,
+                   "bgp_neighbor": bgp_edit_dict}[which](getattr(req, which))
             try:
                 r = c["worker"].ask("typed_lines", {
                     "area": AREA_OF_FIELD[which], "object": obj,
@@ -2457,12 +2541,14 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         def DeleteConfig(self, req, context):
             c = candidate(context, req.candidate_id)
             try:
-                path, lines = typedcfg.delete_lines(req.area, req.name,
-                                                    req.transport)
-            except ValueError as e:
+                r = c["worker"].ask("typed_delete", {
+                    "area": req.area, "name": req.name,
+                    "transport": req.transport, "prefix": req.prefix,
+                    "next_hop": req.next_hop, "asn": req.asn, "vrf": req.vrf})
+            except WorkerError as e:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
-                     f"error: {e}", stage="usage")
-            return self._stage(context, c, path, lines)
+                     f"error: {str(e).split(': ', 1)[-1]}", stage="usage")
+            return self._stage(context, c, r["path"], r["lines"])
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def GetSchema(self, req, context):

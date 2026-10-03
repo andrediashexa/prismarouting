@@ -1082,7 +1082,7 @@ _tsh.candidate.mtus["ens18"] = 9000
 _tr = A.typed_config(_tsh, {"source": "running", "areas": ["interfaces"]})
 _tc = A.typed_config(_tsh, {"source": "candidate"})
 check(_tr["interfaces"][0]["mtu"] == 1500 and _tc["interfaces"][0]["mtu"] == 9000
-      and sorted(_tc) == ["box_owned", "interfaces", "logging", "pools", "revision"]
+      and sorted(_tc) == sorted(list(A.typedcfg.AREAS) + ["box_owned", "revision"])
       and sorted(_tr) == ["box_owned", "interfaces", "revision"]
       and _tr["revision"] == A.revision_of(_tsh.running_config().text())
       and _tc["revision"] == "",
@@ -1101,6 +1101,24 @@ check([m["mode"] for m in _ts["modes"]] == ["pool", "interface (port)"]
       and len(_ts["digest"]) == 64 and _ts["release"] and _ts["values"] == {}
       and len(_ts["box_owned"]) == 4,
       "typed_schema: the modes asked for, versioned by release and digest, no values unasked")
+
+
+# typed_delete (#558 phase 3): read off the candidate - a BGP neighbour by
+# the statements it has there, and refused with no candidate open.
+_dsh = _TSh()
+_dsh.candidate.routing += ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+                           " neighbor 10.0.0.2 description up", "exit"]
+_td = A.typed_delete(_dsh, {"area": "bgp", "name": "10.0.0.2", "asn": "65000"})
+check(_td == {"path": ["router bgp 65000"],
+              "lines": ["no neighbor 10.0.0.2 description up",
+                        "no neighbor 10.0.0.2 remote-as 65001"]},
+      f"typed_delete: a neighbour removed by its own statements, remote-as last: {_td}")
+try:
+    A.typed_delete(_TSh(cand=False), {"area": "static", "prefix": "1.0.0.0/8",
+                                      "next_hop": "10.0.0.1"})
+    check(False, "typed_delete with no candidate refuses")
+except ValueError:
+    check(True, "typed_delete with no candidate refuses")
 
 
 class _DSh(_TSh):

@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The routing configuration as fields in the API (#558, phase 3).**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  `ConfigService.GetConfig` reads static routes, BGP (routers, neighbours
+  and peer-groups, families with networks, aggregates, redistribution and
+  what each says about a neighbour), OSPF, OSPF6, IS-IS and each
+  interface's IGP settings as fields, of the running configuration or a
+  candidate. The routing half is FRR's own text on this box, so it is read
+  block by block through the VTY's block reader - indented as read back or
+  flat as typed, the same fields - and every block keeps what no field takes
+  in `other`, verbatim. A BGP password is never read, only whether one is
+  set. `SetConfig` and `DeleteConfig` take a static route (retyped whole in
+  `router static`, as the prompt does) and a BGP neighbour (only what
+  differs, families entered and left). lab/api-grpc.sh configures each
+  protocol at the prompt and holds the typed read to `show
+  running-config`, and takes a route and a neighbour through the whole
+  road. docs/api-coverage.md: 278 command paths typed, from 169.
+
 ### Fixed
 
 ## 0.149.21 - no mtu goes back to the default, and read-only reads are fast

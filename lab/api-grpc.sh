@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 83
+# OFF-RED-AT-LEAST: 96
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -50,7 +50,8 @@ hostname api-lab
 printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
-pgrep zebra >/dev/null || start_frr bgpd
+# ospfd, ospf6d and isisd too: #558's third phase reads their configuration.
+pgrep zebra >/dev/null || start_frr bgpd ospfd ospf6d isisd
 sleep 2
 HX="python3 /src/src/prismash/prismash.py"
 # A box with an address and a pool before the API touches it.
@@ -65,6 +66,29 @@ $HX -c configure -c policy-options -c "prefix-list C" -c "203.0.113.0/24" \
     -c "router bgp 65000" -c "neighbor 192.0.2.9 remote-as 65009" \
     -c "address-family ipv4 unicast" -c "neighbor 192.0.2.9 import UP" \
     -c "exit-address-family" -c exit -c commit 2>&1 | tail -1 | sed 's/^/  /'
+# THE ROUTING HALF (#558, phase 3): a static route, a BGP router with its
+# router-id, a description, a family's network and a statement no field
+# takes, OSPF with a network and a stub area, OSPF6, IS-IS, and pg0's OSPF
+# settings (staged, below) - what GetConfig's routing areas are held to.
+ROUTE3=$($HX -c configure -c "router static" \
+    -c "10.66.0.0/16 next-hop 100.64.3.1 distance 150 tag 7" -c exit \
+    -c "router bgp 65000" -c "bgp router-id 10.255.0.1" \
+    -c "bgp log-neighbor-changes" \
+    -c "neighbor 192.0.2.9 description upstream" \
+    -c "address-family ipv4 unicast" -c "network 198.18.0.0/24" \
+    -c "exit-address-family" -c exit \
+    -c "router ospf" -c "ospf router-id 10.255.0.1" \
+    -c "network 100.64.0.0/22 area 0" -c "area 1 stub" -c exit \
+    -c "router ospf6" -c "ospf6 router-id 10.255.0.1" -c exit \
+    -c "router isis HEXA" -c "net 49.0001.0000.0000.0001.00" \
+    -c "is-type level-2-only" -c exit \
+    -c commit 2>&1)
+# pg0's OSPF settings are read from a candidate in the check, not committed:
+# pg0 is a packet-generator interface with no Linux end, so FRR has no
+# interface to apply `ip ospf area` to and the reload refuses the commit -
+# measured here (0.149.20), a property of this lab and not of a box, where
+# every dataplane interface has its linux_cp pair.
+printf '%s\n' "$ROUTE3" | tail -3 | sed 's/^/  /'
 # A FULL-TABLE-SIZED RIB (#533): ListRoutes is built for a million routes,
 # and is measured here on LAB_ROUTES of them - kernel routes through a dummy
 # interface, which zebra takes into its RIB as it would any - and on a VRF
@@ -261,6 +285,9 @@ echo "=========== #558, phase 2: the configuration as fields ==========="
 # the typed read is held to GetRunning's text, which is the VTY's.
 T2=$(python3 lab/api_phase2_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
 printf '%s\n' "$T2" | sed 's/^/  /'
+echo "=========== #558, phase 3: the routing configuration as fields ==========="
+T3=$(python3 lab/api_phase3_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
+printf '%s\n' "$T3" | sed 's/^/  /'
 echo "=========== #558, phase 1: why refused, the confirm window, the candidates ==========="
 # Mappings in pool nb for the re-map gate to be about: a few packets from a
 # subscriber, just before.
@@ -401,6 +428,20 @@ expect "  GetSchema: every mode's grammar, ranges, forms, sources, versioned" t2
 expect "  and, asked, what each dynamic source holds on the box now" t2 schema-values
 expect "  ValidateLines: each line accepted or refused with its reason, nothing committed" t2 validate-lines
 expect "  an account without the role reads the configuration typed" t2 readonly-reads-typed
+t3() { printf '%s\n' "$T3" | grep -q "^RESULT $1 ok"; }
+expect "#558 phase 3: GetConfig reads static, BGP, OSPF, OSPF6 and IS-IS, as GetRunning's text says" t3 routing-read
+expect "  and what no field takes is kept, verbatim, in its block's other" t3 routing-read-keeps-rest
+expect "  an interface's IGP settings, staged, read off the candidate" t3 interface-routing-read
+expect "  SetConfig on a static route: router static's line, committed, read back typed and in the VTY's text" t3 set-static-roundtrip
+expect "  one field changed, the rest of the route kept" t3 set-static-one-field
+expect "  DeleteConfig removes it" t3 delete-static
+expect "  a VRF's route is not set here: INVALID_ARGUMENT, USAGE" t3 static-vrf-refused
+expect "  SetConfig on a BGP neighbour, with a family: round trip" t3 set-neighbor-roundtrip
+expect "  its password is set, and its value is read back nowhere" t3 neighbor-password-never-read
+expect "  one field changed, a password not given kept" t3 set-neighbor-one-field
+expect "  DeleteConfig removes the neighbour, statement by statement" t3 delete-neighbor
+expect "  and its reply masks the password it removed" t3 delete-neighbor-masks-password
+expect "  a candidate's routing read typed, apart from the running one" t3 routing-candidate-read
 p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }
 expect "#558: a line the prompt does not take refuses with reason GRAMMAR" p1 reason-grammar
 expect "  a pool without its prefixes: VALIDATION, from the commit and the check" p1 reason-validation

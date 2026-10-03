@@ -87,8 +87,8 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `CloseCandidate`, `GetRunning`, `ListRevisions` | |
 | | `GetPendingConfirm` | the `commit confirmed` window the box holds (#558): its deadline, who committed it and why, the revision it reverts from - from the box's own state, so the same after a restart of the server or the client, and for any account |
 | | `ListCandidates` | the account's open candidates (#558): each one's base, staged lines, creation, last activity and expiry, and the server's idle rule |
-| | `GetConfig` | interfaces, CGNAT pools and the CGNAT log export as fields (#558, phase 2), of the running configuration or of a candidate |
-| | `SetConfig`, `DeleteConfig` | one object of a candidate set to the fields given, or removed: the server writes the VTY lines and stages them as `Edit` does |
+| | `GetConfig` | interfaces, CGNAT pools and the CGNAT log export as fields (#558, phase 2), and the routing half - static routes, BGP, OSPF, OSPF6, IS-IS and each interface's IGP settings (phase 3) - of the running configuration or of a candidate |
+| | `SetConfig`, `DeleteConfig` | one object of a candidate set to the fields given, or removed - an interface, a pool, the log export, a static route or a BGP neighbour: the server writes the VTY lines and stages them as `Edit` does |
 | | `GetSchema` | the whole configuration grammar as the prompt's `?` answers it - every mode, statement, argument, `no` form and value source - versioned by release and digest |
 | | `ValidateLines` | lines checked by the VTY in a throwaway candidate, each accepted or refused with its reason |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show`; `GetSystem` carries `show system uptime`'s clocks (0.148.7, #534): `boot_time`, `dataplane_started`, `control_plane_started`, `vty_started`, `release_installed_at` (unset when not read), `last_boot_reason` (only as recorded: `system reboot by <account>`, or `not recorded`) and `dataplane_restarted` |
@@ -315,6 +315,73 @@ other face, not a second configuration:
 `lab/api-grpc.sh` takes an interface, a pool and the log export each through
 SetConfig, Commit and GetConfig, and holds the typed read to GetRunning's
 text.
+
+### The routing configuration as fields
+
+The routing half (#558, phase 3) is read through the same `GetConfig`, by
+its areas - `static`, `bgp`, `ospf`, `ospf6`, `isis`, `interface_routing` -
+or with every area when none is named:
+
+* **It is FRR's own text, read block by block.** This VTY does not model
+  routing as it models a pool: the configuration holds the FRR statements
+  themselves, typed at the prompt or read back from FRR, and `show
+  running-config` prints them. GetConfig reads those statements through the
+  VTY's own block reader, so a statement is in the block the screen shows it
+  in, whether it was read back indented or typed flat in this session.
+* **A field for what a UI edits; the rest verbatim.** Every block - a
+  `router bgp`, a family, a neighbour, an OSPF area, an interface's IGP
+  settings - has an `other` list: the statements no field takes, exactly as
+  written. Nothing is dropped, and a field added later is a field, not a
+  format change.
+* **Static routes** are the ones `router static` shows (`line` is the route
+  as that block takes it, with the description this box keeps), and each
+  VRF's own, with its `vrf`. `distance` 0 and `tag` 0 are not stated.
+* **BGP:** each `router bgp` (its asn as written, its VRF, router-id), each
+  neighbour or peer-group (remote-as as a number or `internal`/`external`,
+  description, update-source, timers, ebgp-multihop, shutdown, bfd, its
+  peer-group) and each family's networks, aggregates, redistribution and
+  what it says about each neighbour (activate, route-maps and prefix-lists
+  in and out, maximum-prefix, next-hop-self, soft-reconfiguration,
+  default-originate). A route-map named `PO-...` is a routing policy's
+  compiled map (#458). **A password is never read**: `password_set` says
+  whether one is.
+* **OSPF and OSPF6** (`version` 2 and 3): router-id, networks, areas with
+  their type (`area_type`: normal, stub, nssa) and no-summary, the passive
+  posture (`passive_default`, `passive`, `not_passive`), redistribution and
+  the `default-information` statement. **IS-IS:** its tag, NETs, is-type,
+  metric-style and redistribution. **`interface_routing`:** what each FRR
+  `interface` block says to the IGPs - OSPF area, cost, network type, hello
+  and dead, passive; OSPF6 area and cost; IS-IS instances, circuit-type,
+  metric, passive.
+* **Edits: static routes and BGP neighbours.** `SetConfig` with a
+  `static_route` writes the one line `router static` takes - a route IS its
+  prefix and next hop, and typing the pair again replaces it whole,
+  description included, so the line carries every attribute, the ones not
+  in `fields` kept from the candidate. A VRF's route is not set here
+  (`REASON_USAGE`): it is a line in its `vrf` block, through Edit. With a
+  `bgp_neighbor` (`BgpNeighborEdit`: the router's asn and vrf, the
+  neighbour, a write-only `password`, and per family its settings) it
+  writes only what differs from the candidate - router-level statements,
+  then each family entered, set and left. A family listed is set whole: a
+  route-map it does not name is removed. `fields` names what to change
+  (`timers` for keepalive and holdtime, `families` for the families); a
+  `password` not given is never cleared. `DeleteConfig` removes a route
+  (`area` "static", its `prefix` and `next_hop`) or a neighbour (`area`
+  "bgp", `name`, `asn`, `vrf`) - statement by statement, read off the
+  candidate, each family's first and `remote-as` last, because a bare `no
+  neighbor X` is staged by this VTY as a statement of its own and, with a
+  family statement, refused by frr-reload (measured, FRR 10.7.1). The lines
+  a reply shows mask a BGP password, as `show running-config` does: the box
+  is given the real ones. `default_ipv4_unicast` says whether FRR activates
+  a neighbour in ipv4 unicast without an `activate` line (its default; it
+  prints no such line then). The other routing statements are written as
+  lines through Edit, which GetSchema describes.
+
+`lab/api-grpc.sh` configures a static route, BGP, OSPF, OSPF6, IS-IS and an
+interface's OSPF settings at the prompt, holds GetConfig's routing areas to
+GetRunning's text block by block, and takes a static route and a BGP
+neighbour through SetConfig, Commit, GetConfig, the VTY's text and
+DeleteConfig.
 
 ## Limits a client meets
 
