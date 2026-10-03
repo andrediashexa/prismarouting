@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 56
+# OFF-RED-AT-LEAST: 69
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -254,6 +254,15 @@ printf '%s\n' "$APIOK" | tail -2 | sed 's/^/  /'
 APIENV=$(cat /etc/prisma-routing/api.env 2>&1)
 APIRUN=$($HX -c "show running-config" 2>&1 | grep '^api ')
 printf '%s\n' "$APIRUN" | sed 's/^/  /'
+echo "=========== #558, phase 1: why refused, the confirm window, the candidates ==========="
+# Mappings in pool nb for the re-map gate to be about: a few packets from a
+# subscriber, just before.
+vppctl packet-generator new "name p558 limit 20 node ip4-input interface pg0 size 60-60 data { UDP: 100.64.0.7 -> 8.8.8.8 UDP: 4000 -> 53 }" >/dev/null 2>&1
+vppctl packet-generator enable-stream p558 >/dev/null 2>&1
+sleep 1
+P1=$(python3 lab/api_phase1_check.py /tmp/apistubs $C 127.0.0.1:50551 before /tmp/p558.json 2>&1)
+printf '%s\n' "$P1" | sed 's/^/  /'
+
 # A SECOND SERVER ON THE SAME PORT IS REFUSED (#532): gRPC's default
 # SO_REUSEPORT let one bind beside the first, and the X520 bench (0.148.4) was
 # found with two listeners on the backplane port after restarts.
@@ -270,7 +279,9 @@ echo "  after its stdin closed: $STOPPED"
 # graphs go on. Asked of the new server for samples older than it.
 HSAVED=$(python3 -c "import json; print(len(json.load(open('$PRISMA_API_HISTORY'))['times']))" 2>&1)
 H2START=$(date +%s)
-sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50552 --dir $C/box \
+# Its candidates expire after 6 s rather than 30 minutes, so phase 1's
+# client sees one expire (#558).
+sleep 900 | PRISMA_API_CANDIDATE_IDLE=6 python3 src/prismash/apiserver.py --listen 127.0.0.1:50552 --dir $C/box \
   --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver3.log 2>&1 &
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver3.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
 HAFTER=$(python3 - /tmp/apistubs $C 127.0.0.1:50552 "$H2START" <<'PY' 2>&1
@@ -290,6 +301,10 @@ print(f"{len(h)} samples, {len(older)} from before this server started")
 PY
 )
 echo "  a new server on the history file: $HAFTER ($HSAVED saved)"
+# The confirm window phase 1 left open, read by this new server; then a
+# candidate left to expire on its 6 s.
+P2=$(python3 lab/api_phase1_check.py /tmp/apistubs $C 127.0.0.1:50552 after /tmp/p558.json 2>&1)
+printf '%s\n' "$P2" | sed 's/^/  /' 
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -364,6 +379,20 @@ expect "the event stream told each turn: lost, stalled, connected, delivering" s
   'for k in log-disconnected log-stalled log-connected log-delivering; do printf "%s" "$1" | grep -q "EVENT $k syslog" || exit 1; done' \
   _ "$EVENTS"
 expect_in "  and the fields of a stall are still the screen's" "RESULT logging-fields ok" "$LOG2"
+p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }
+expect "#558: a line the prompt does not take refuses with reason GRAMMAR" p1 reason-grammar
+expect "  a pool without its prefixes: VALIDATION, from the commit and the check" p1 reason-validation
+expect "  a 256-character identity path: LIMIT, its field, 255 and 256" p1 reason-limit
+expect "  a base another commit moved: STALE_BASE, with GetRunning's revision" p1 reason-stale-base
+expect "  an account without the role: PERMISSION" p1 reason-permission
+expect "  a candidate never opened: NOT_FOUND, CANDIDATE_UNKNOWN" p1 reason-unknown
+expect "  a pool change that re-maps subscribers: GATE_REMAP, with what it is about" p1 reason-gate-remap
+expect "ListCandidates: the candidate, its staged lines, its expiry; listing does not use it" p1 candidates-listed
+expect "GetPendingConfirm: the window a commit confirmed opened, its deadline, who and why" p1 pending-confirm
+expect "  read by an account without the role as well" p1 pending-confirm-any-account
+expect "  and by a server started afterwards: the box's state, not the server's" p1 pending-confirm-restart
+expect "  Confirm closes it" p1 pending-confirm-closed
+expect "a candidate unused past the idle time: NOT_FOUND, CANDIDATE_EXPIRED, and not listed" p1 candidate-expired
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

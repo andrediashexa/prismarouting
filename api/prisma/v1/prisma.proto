@@ -78,6 +78,63 @@ message Diagnostics {
   repeated Diagnostic items = 1;
   // Everything the VTY printed for the request, verbatim.
   string output = 2;
+
+  // Why the call was refused, as a code a client acts on (#558). The VTY's
+  // words stay in `items` and in the status message for a person; this is
+  // read from them by the server, held to the VTY's own sentences by a test.
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    // The running configuration moved past the candidate's base since it was
+    // opened: `running_revision` is where it is now. Open a new candidate
+    // and apply again; nothing was run.
+    REASON_STALE_BASE = 1;
+    // The account's role does not allow it.
+    REASON_PERMISSION = 2;
+    // The candidate named was closed by the server for idleness
+    // (ListCandidatesResponse.idle_seconds) - status NOT_FOUND.
+    REASON_CANDIDATE_EXPIRED = 3;
+    // The candidate named was never this account's, or was closed by a
+    // CloseCandidate - status NOT_FOUND.
+    REASON_CANDIDATE_UNKNOWN = 4;
+    // A value is longer than the field it travels in: `limit_field`,
+    // `limit` and `limit_size` (bytes).
+    REASON_LIMIT = 5;
+    // The VTY's gates: the change re-maps subscribers that have mappings, maps
+    // pools differently from the HA peer, or stops advertising the prefix
+    // carrying this session. Commit again with the matching acknowledge_*;
+    // `gate_items` lists what the gate is about.
+    REASON_GATE_REMAP = 6;
+    REASON_GATE_DIVERGE = 7;
+    REASON_GATE_CUTOFF = 8;
+    // A `commit confirmed` window is in the way: it could not be confirmed,
+    // or the box is still on an unconfirmed configuration whose revert
+    // failed. GetPendingConfirm says which window.
+    REASON_CONFIRM_PENDING = 9;
+    // A line the VTY's grammar does not take, or a batch with such a line.
+    REASON_GRAMMAR = 10;
+    // The candidate is refused for what it means (a pool without its
+    // prefixes, an overlap): `commit check` names the line.
+    REASON_VALIDATION = 11;
+    // The change was applied and failed (FRR refused a line); the box rolled
+    // back to the previous state.
+    REASON_APPLY_FAILED = 12;
+    // The commit's own words were wrong (`confirmed` outside 1-60 minutes).
+    REASON_USAGE = 13;
+    // A refusal none of the above names; read the message.
+    REASON_OTHER = 14;
+  }
+  Reason reason = 3;
+  // REASON_STALE_BASE: the running revision the configuration moved to, the
+  // one GetRunning answers now.
+  string running_revision = 4;
+  // REASON_LIMIT: the field ("cgnat identity file", "description"), its
+  // limit and the size refused, in bytes.
+  string limit_field = 5;
+  uint32 limit = 6;
+  uint32 limit_size = 7;
+  // REASON_GATE_*: the subscribers, pools or prefixes the gate is about, as
+  // CheckResponse lists them.
+  repeated string gate_items = 8;
 }
 
 // A candidate configuration, as OpenCandidate returned it.
@@ -129,6 +186,12 @@ service ConfigService {
   rpc GetRunning(GetRunningRequest) returns (ConfigText);
   // The committed revisions `rollback` can load, newest first.
   rpc ListRevisions(ListRevisionsRequest) returns (ListRevisionsResponse);
+  // The `commit confirmed` window the box holds, if any (#558), read from the
+  // box's own state - it is the same after the API server or a client
+  // restarts, and for any account.
+  rpc GetPendingConfirm(GetPendingConfirmRequest) returns (PendingConfirm);
+  // This account's open candidates, with when each expires (#558).
+  rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
 }
 
 message OpenCandidateRequest {
@@ -144,6 +207,10 @@ message OpenCandidateResponse {
   string base_revision = 2;
   // The candidate's text as opened.
   string text = 3;
+  // When the server closes it if nobody uses it (#558): every call naming
+  // the candidate moves this to now + idle_seconds.
+  google.protobuf.Timestamp expires_at = 4;
+  uint32 idle_seconds = 5;
 }
 
 message EditRequest {
@@ -160,6 +227,10 @@ message EditResponse {
   // Notes and warnings the VTY printed for the accepted lines.
   repeated Diagnostic diagnostics = 1;
   string output = 2;
+  // The candidate's activity after this call, and when it now expires
+  // (#558).
+  google.protobuf.Timestamp last_activity = 3;
+  google.protobuf.Timestamp expires_at = 4;
 }
 
 message CompareResponse {
@@ -182,6 +253,9 @@ message CheckResponse {
   // a Commit needs `acknowledge_diverge`.
   repeated string diverge = 5;
   string output = 6;
+  // When `passed` is false: what a Commit would be refused for, the code
+  // Diagnostics.reason would carry (#558).
+  Diagnostics.Reason reason = 7;
 }
 
 message CommitRequest {
@@ -240,6 +314,54 @@ message Revision {
 
 message ListRevisionsResponse {
   repeated Revision revisions = 1;
+}
+
+message GetPendingConfirmRequest {}
+
+// A `commit confirmed` window (#558).
+message PendingConfirm {
+  // False: no window; nothing below is set.
+  bool pending = 1;
+  // The running revision the box rolls back FROM - GetRunning's revision
+  // while the window is open.
+  string revision = 2;
+  // When the box rolls back unless a Confirm (or any commit) arrives.
+  google.protobuf.Timestamp deadline = 3;
+  // Who committed it, and the commit's comment.
+  string account = 4;
+  string comment = 5;
+  google.protobuf.Timestamp committed_at = 6;
+  // The window's length as asked; 0 when this account cannot read the
+  // window file (a read-only role), which does not change `deadline`.
+  uint32 minutes = 7;
+  // Reverts the box has tried and failed; non-zero is a box still on the
+  // unconfirmed configuration past its deadline.
+  uint32 revert_attempts = 8;
+  // The deadline has passed and the window is still there.
+  bool overdue = 9;
+}
+
+message ListCandidatesRequest {}
+
+message CandidateInfo {
+  string candidate_id = 1;
+  // The running revision it was opened on.
+  string base_revision = 2;
+  google.protobuf.Timestamp created_at = 3;
+  // The last call that named it; listing does not count.
+  google.protobuf.Timestamp last_activity = 4;
+  // last_activity + idle_seconds: the server closes it then.
+  google.protobuf.Timestamp expires_at = 5;
+  // Lines it adds or removes against its base, as `show configuration
+  // compare` counts them.
+  uint32 staged_lines = 6;
+}
+
+message ListCandidatesResponse {
+  // Oldest first; only the calling account's.
+  repeated CandidateInfo candidates = 1;
+  // The server's idle rule: a candidate unused this long is closed.
+  uint32 idle_seconds = 2;
 }
 
 // ----------------------------------------------------------- operational

@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Why a change was refused, as a code; the confirm window and the
+  candidates through the API.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 1)
+  The first phase of putting the whole VTY in the API, in the order
+  prisma-web asked. Every refused configuration call now carries a reason in
+  its Diagnostics - stale base (with the revision it moved to), permission,
+  candidate expired or unknown, limit (field, limit, size), the re-map /
+  diverge / cut-off gates (with what they are about), confirm pending,
+  grammar, validation, apply failed, usage - read from the VTY's own
+  sentences and held to them by a test; `Check` answers the code a commit
+  would meet. GetPendingConfirm reads the `commit confirmed` window from the
+  box's own state, the same after a restart of the server or a client and
+  for any account. ListCandidates, and `expires_at` / `last_activity` on the
+  candidate replies, say the server's idle rule instead of a client
+  guessing it; a candidate closed for idleness is told from one never opened.
+  lab/api-grpc.sh provokes each refusal against a real server, reads the
+  window across a server restart and lets a candidate expire.
+
 ### Fixed
 
 ## 0.149.17 - what the API reaches, command by command

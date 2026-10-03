@@ -62,6 +62,9 @@ VTY's refusal in the VTY's words and a change made through the API is in
   moved, `PERMISSION_DENIED` for an account without the role, `NOT_FOUND` for
   a candidate that does not exist, `UNAVAILABLE` when the box cannot answer.
   `Check` is not an error when it finds problems: answering that is its job.
+  **Why**, as a code a client acts on, is `Diagnostics.reason` (#558, see
+  [Why a change was refused](#why-a-change-was-refused)); the VTY's words
+  stay the message for a person.
 * **A candidate is a session**, held by a process of its own that has become
   the account (its groups, its uid) before it built the VTY's `Shell`. Its
   commit is refused, with the difference, when the running configuration has
@@ -82,6 +85,8 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `Rollback` | `rollback <n>` into the candidate |
 | | `Save` | `save` |
 | | `CloseCandidate`, `GetRunning`, `ListRevisions` | |
+| | `GetPendingConfirm` | the `commit confirmed` window the box holds (#558): its deadline, who committed it and why, the revision it reverts from - from the box's own state, so the same after a restart of the server or the client, and for any account |
+| | `ListCandidates` | the account's open candidates (#558): each one's base, staged lines, creation, last activity and expiry, and the server's idle rule |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show`; `GetSystem` carries `show system uptime`'s clocks (0.148.7, #534): `boot_time`, `dataplane_started`, `control_plane_started`, `vty_started`, `release_installed_at` (unset when not read), `last_boot_reason` (only as recorded: `system reboot by <account>`, or `not recorded`) and `dataplane_restarted` |
 | | `ListPolicies` | `show policy` (#538): every policy-statement, its terms with their statements and `then`, its `default-action`, its `policy-options` block as typed, and where the running routing applies it |
 | | `GetPolicyCounters` | `show policy <name>`'s hits (#538): per route-map a policy is in - its `attach_point` as `test policy ... at` says it, every place applying it (`applied_at`), the daemon that runs it - how many routes each term matched; `counted` false when the daemon reported no such map, `compiled` false for a term with no clause at that use. An empty `policy` is every policy, each map once; a policy that does not exist is `NOT_FOUND` |
@@ -215,14 +220,46 @@ starts `log-` and whose `text` names the stream: `log-connected`,
 `log-spill-full` (bytes dropped over the cap), `log-stalled`,
 `log-delivering`. A reading every 10 s makes an event up to that late.
 
+### Why a change was refused
+
+Every refused `OpenCandidate`, `Edit`, `Commit`, `Confirm`, `Rollback`,
+`Save` and `CloseCandidate` carries `Diagnostics.reason` in its trailer
+(#558); `Check` answers the same code in `CheckResponse.reason` when it
+does not pass, or when a Commit would meet a gate.
+
+| `reason` | Status | What happened, and what the client does |
+|---|---|---|
+| `REASON_STALE_BASE` | `FAILED_PRECONDITION` | the running configuration moved since the candidate was opened; `running_revision` is where it is now - open a new candidate and apply again |
+| `REASON_PERMISSION` | `PERMISSION_DENIED` | the account's role does not allow it |
+| `REASON_CANDIDATE_EXPIRED` | `NOT_FOUND` | the server closed the candidate, unused for `idle_seconds` |
+| `REASON_CANDIDATE_UNKNOWN` | `NOT_FOUND` | not this account's candidate, or one it closed |
+| `REASON_LIMIT` | `INVALID_ARGUMENT` at entry, `FAILED_PRECONDITION` at a commit | a value longer than its field: `limit_field`, `limit`, `limit_size` (bytes) |
+| `REASON_GATE_REMAP`, `_DIVERGE`, `_CUTOFF` | `FAILED_PRECONDITION` | the VTY's gates; `gate_items` lists what each is about - commit again with the matching `acknowledge_*` |
+| `REASON_CONFIRM_PENDING` | `FAILED_PRECONDITION` | a confirm window could not be confirmed, or a revert failed and the box is still on the unconfirmed configuration - `GetPendingConfirm` |
+| `REASON_GRAMMAR` | `INVALID_ARGUMENT`, `FAILED_PRECONDITION` | a line the VTY's grammar does not take, or a commit of a batch that had one |
+| `REASON_VALIDATION` | `FAILED_PRECONDITION` | the candidate refused for what it means (a pool without its prefixes) |
+| `REASON_APPLY_FAILED` | `FAILED_PRECONDITION` | applied and failed (FRR refused a line); the box rolled back |
+| `REASON_USAGE` | `FAILED_PRECONDITION` | the commit's own words were wrong (`confirmed` outside 1-60) |
+| `REASON_OTHER` | any | none of the above: read the message |
+
+The server reads the code from the VTY's own sentences, and
+`test/test_apiserver.py` holds that table to the VTY's source, so a sentence
+reworded there turns the suite red instead of quietly answering `OTHER`.
+`lab/api-grpc.sh` provokes each of grammar, validation, limit, stale base,
+permission, unknown, the re-map gate and expiry against a real server.
+
 ## Limits a client meets
 
 * **A request a session does not answer in 300 seconds** fails with
   `UNAVAILABLE` ("no answer in 300s"); the session's process is left as it
   is, and the next request reaches it.
 * **A candidate nobody has touched for 30 minutes is closed**, its process
-  ended: the next call naming it is `NOT_FOUND`, and the client opens a new
-  one. An account's process for operational calls is kept 5 minutes between
+  ended: the next call naming it is `NOT_FOUND` with
+  `REASON_CANDIDATE_EXPIRED`, and the client opens a new one. Read the rule
+  rather than assume it (#558): `idle_seconds` and `expires_at` on
+  `OpenCandidateResponse`, `last_activity` and `expires_at` on every
+  `EditResponse`, and `ListCandidates`, whose listing does not count as
+  using a candidate. An account's process for operational calls is kept 5 minutes between
   uses and started again on the next.
 * **One request at a time per process, and an account has three kinds.**
   Each candidate is a process; the account's operational reads
