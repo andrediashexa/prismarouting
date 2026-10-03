@@ -27,7 +27,7 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.149.22 - `no mtu` goes back to the default, and read-only reads are fast
+## 0.149.21 - `no mtu` goes back to the default, and read-only reads are fast
 
 * **Contract:** unchanged (`prisma.proto` sha256 `4cdfee65edf97ae1239d5c4a18648250b04a0d08ff4d4b6106b117e47ea86c09`).
 * **Fixed (#561):** an account with no configuration role waited about 90 s
