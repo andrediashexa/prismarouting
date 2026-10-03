@@ -137,6 +137,10 @@ check(pl == ["no prefix-outside 200.0.0.0/24", "prefix-outside 200.0.0.0/23",
              "no alg ftp", "no forward tcp 8080 to 100.64.0.5 80"],
       f"pool_lines: each statement and its `no`: {pl}")
 check(T.pool_lines(p, p) == [], "an unchanged pool writes nothing")
+check(T.pool_lines(None, dict(T.pool_typed_blank("C"), block_size=0, policy="", mode="",
+                              filter="", prefix_inside=["100.64.0.0/22"]))
+      == ["prefix-inside 100.64.0.0/22"],
+      "a field no pool can be without, sent empty, is left as it is: never `filter` alone")
 blank = T.pool_typed_blank("B")
 check(blank["mode"] == "deterministic" and blank["block_size"] == 512,
       "pool_typed_blank: the VTY's own defaults for a new pool")

@@ -1082,7 +1082,10 @@ _tsh.candidate.mtus["ens18"] = 9000
 _tr = A.typed_config(_tsh, {"source": "running", "areas": ["interfaces"]})
 _tc = A.typed_config(_tsh, {"source": "candidate"})
 check(_tr["interfaces"][0]["mtu"] == 1500 and _tc["interfaces"][0]["mtu"] == 9000
-      and sorted(_tc) == ["interfaces", "logging", "pools"] and list(_tr) == ["interfaces"],
+      and sorted(_tc) == ["interfaces", "logging", "pools", "revision"]
+      and sorted(_tr) == ["interfaces", "revision"]
+      and _tr["revision"] == A.revision_of(_tsh.running_config().text())
+      and _tc["revision"] == "",
       "typed_config: the running or the candidate Config itself, the areas asked for")
 try:
     A.typed_config(_TSh(cand=False), {"source": "candidate"})

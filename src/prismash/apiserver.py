@@ -1061,11 +1061,15 @@ def typed_config(sh, args):
     running configuration - the same Config objects `show running-config`
     and `show this` print, never text parsed again.
     """
-    cfg = sh.candidate if args.get("source") == "candidate" else \
-        sh.running_config()
+    running = args.get("source") != "candidate"
+    cfg = sh.running_config() if running else sh.candidate
     if cfg is None:
         raise ValueError("no candidate is open in this session")
-    return typedcfg.config_typed(cfg, args.get("areas") or ())
+    out = typedcfg.config_typed(cfg, args.get("areas") or ())
+    # The revision of the same read, so GetConfig does not read it twice:
+    # the second read is a second trip to the dataplane per call.
+    out["revision"] = revision_of(cfg.text()) if running else ""
+    return out
 
 
 def typed_lines(sh, args):
@@ -2381,8 +2385,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 else:
                     w = sessions.ops_worker(account(context))
                     d = w.ask("typed", dict(args, source="running"))
-                    out = pb.TypedConfig(source="running",
-                                         revision=revision_of(w.ask("running")))
+                    out = pb.TypedConfig(source="running", revision=d["revision"])
             except WorkerError as e:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
                      f"error: {str(e).split(': ', 1)[-1]}", stage="usage")

@@ -324,6 +324,12 @@ def pool_lines(current, desired, fields=()):
                     if now.get(k) != v]
         elif want == now:
             continue
+        elif f in ("block_size", "policy", "mode", "filter") and not want:
+            # Every pool has one and none can be removed: the empty value a
+            # message carries for a field it does not set leaves it as it is.
+            # Measured: `filter` with no value reached the VTY as a line and
+            # was refused "list index out of range" (lab/api-grpc.sh).
+            continue
         elif f in ("vrf", "outside_vrf"):
             word = f.replace("_", "-")
             out.append(f"no {word}" if want is None else f"{word} {int(want)}")

@@ -117,8 +117,14 @@ def check_interface_roundtrip():
                                          fields=["description", "mtu"]))
     pg0 = [i for i in cfg.GetConfig(pb.GetConfigRequest(areas=["interfaces"]),
                                     timeout=30).interfaces if i.name == "pg0"][0]
+    blk = block(cfg.GetRunning(pb.GetRunningRequest(), timeout=30).text, "interface pg0")
+    # What `no mtu` leaves is the dataplane's, read back: the typed field is
+    # held to the VTY's text, not to a number this check assumes.
+    vty_mtu = [int(x.split()[1]) for x in blk if x.startswith("mtu ")]
     result("set-interface-removes", list(rep2.lines) == ["no description", "no mtu"]
-           and pg0.description == "" and pg0.mtu == 0, f"{list(rep2.lines)}")
+           and pg0.description == "" and not any(x.startswith("description") for x in blk)
+           and pg0.mtu == (vty_mtu[0] if vty_mtu else 0) and pg0.mtu != 1400,
+           f"{list(rep2.lines)} typed mtu {pg0.mtu} vty {vty_mtu} desc {pg0.description!r}")
 
 
 def check_pool_roundtrip():
@@ -261,10 +267,20 @@ def check_validate():
 
 
 def check_readonly():
+    # An account with no role does not reach the dataplane (the lab's
+    # unprivileged-reads): it reads the routing half and no pool, slowly. Its
+    # typed read is held to its own GetRunning, not to root's.
+    import time
     nv = rpc.ConfigServiceStub(channel("netview"))
-    t = nv.GetConfig(pb.GetConfigRequest(areas=["pools"]), timeout=60)
-    result("readonly-reads-typed", any(p.name == "nb" for p in t.pools),
-           f"{[p.name for p in t.pools]}")
+    t0 = time.monotonic()
+    t = nv.GetConfig(pb.GetConfigRequest(areas=["pools", "interfaces"]), timeout=300)
+    took = time.monotonic() - t0
+    text = nv.GetRunning(pb.GetRunningRequest(), timeout=300).text
+    pools = sorted(p.name for p in t.pools)
+    in_text = sorted(ln.strip().split()[1] for ln in text.splitlines()
+                     if ln.strip().startswith("pool ") and len(ln.split()) == 2)
+    result("readonly-reads-typed", t.source == "running" and pools == in_text
+           and t.revision != "", f"pools {pools} text {in_text} in {took:.1f}s")
 
 
 for name, fn in (("config-read-running", check_read),
