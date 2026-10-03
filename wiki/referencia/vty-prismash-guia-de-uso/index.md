@@ -124,7 +124,7 @@ Ambas são contextuais: dentro de um pool, `?` lista os campos do pool, não os 
 Depois do `no`, o TAB completa **o que está configurado ali**, palavra por palavra, e o valor vem inteiro — remover é digitar exatamente o que existe, e é aí que a completação mais ajuda:
 
 * dentro de uma interface, `no ipv4 address <TAB>` insere o endereço que ela tem;
-* em `router bgp`, `no neighbor <TAB>` oferece a sessão configurada;
+* em `router bgp`, `no neighbor <TAB>` oferece a sessão configurada; `no neighbor X` remove o vizinho e todas as linhas dele, inclusive as das address-families (um peer-group que ainda tem membros é recusado, com os membros nomeados);
 * num pool, `no prefix-outside <TAB>` oferece o prefixo dele;
 * `no user <TAB>` lista as contas.
 

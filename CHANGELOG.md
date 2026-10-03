@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`no neighbor X` at the prompt removes a BGP neighbour cleanly.**
+  ([#562](https://github.com/andrediashexa/hexarouting/issues/562))
+  It was staged as a statement of its own: FRR deleted the neighbour and the
+  commit then said FRR "did not keep" the neighbour's own statements, and
+  with an address-family statement for it frr-reload refused the file and
+  the commit rolled back. It now removes every statement of the neighbour -
+  families first, `remote-as` and a peer-group membership last - through the
+  function the API's DeleteConfig stages, so the two cannot disagree. A
+  peer-group a member still names is refused, naming the members. And a
+  `no` takes the statement in the block it is typed in: the same neighbour in
+  the default router and a VRF's is two, and the first match anywhere went
+  before. lab/bgp-no-neighbor.sh: 15 checks, 11 of them red on 0.149.22.
+
 ## 0.149.22 - the routing configuration as fields
 
 ### Added

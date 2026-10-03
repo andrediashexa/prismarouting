@@ -3687,6 +3687,29 @@ router bgp 65000
   exit
 ```
 
+### Removing a neighbour: `no neighbor X`
+
+`no neighbor X` at the `router bgp` level removes the neighbour and every
+statement that names it - its address-family lines first, then the router
+level's, `remote-as` and a peer-group membership last - each removed as it is
+written. It is the same function the API's DeleteConfig uses (#562), so the
+prompt and the API cannot remove a neighbour two ways.
+
+Staged as the bare line, as it was until 0.149.23, FRR deleted the neighbour
+and the commit then reported the neighbour's own statements as ones FRR "did
+not keep"; with a family statement for it, frr-reload refused the file
+("% Specify remote-as or peer-group commands first") and the commit rolled
+back. lab/bgp-no-neighbor.sh removes an IPv4 and an IPv6 neighbour, with and
+without families, a peer-group member, the group itself and a neighbour in a
+VRF's router, each committed clean and read back from FRR.
+
+A peer-group that a member still names is refused, naming the members: FRR
+takes the members with the group, so removing it would take neighbours nobody
+named. And a `no` removes the statement in the block it is typed in: the same
+neighbour in `router bgp 65000` and in `router bgp 65000 vrf red` is two
+neighbours, and before 0.149.23 a `no` typed in the VRF's router took the
+first match anywhere - the default router's.
+
 ### Two grammars, because the same word means two things
 
 `neighbor X route-map RM in` belongs to an address family and does nothing

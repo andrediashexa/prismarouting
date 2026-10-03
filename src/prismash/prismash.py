@@ -75,6 +75,7 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
                     ROLE_ADMIN, ROLE_CGNAT)
 import routes
+import typedcfg
 import logmon
 import logstate
 import vppapi
@@ -8971,6 +8972,58 @@ class Shell:
         cfg.drop_lcp_taps(self.device_lcp_taps())
         return cfg
 
+    def remove_bgp_neighbor(self, line):
+        """
+        `no neighbor X` at a `router bgp` level: the neighbour's own
+        statements removed one by one - its families' first, then the router
+        level's, `remote-as` and the peer-group membership last - through
+        typedcfg.bgp_neighbor_delete_lines, the function the API's
+        DeleteConfig stages (#562). One path for both, so the prompt and the
+        API cannot remove a neighbour two ways.
+
+        Staged as `no neighbor X` itself, FRR deleted the neighbour and the
+        commit then found the neighbour's own lines - still in the candidate -
+        missing from FRR: "did not keep" them; with a family statement for
+        it, frr-reload refused the file ("% Specify remote-as or peer-group
+        commands first") and the commit rolled back. Measured on 0.149.22 by
+        lab/bgp-no-neighbor.sh, every shape in it red.
+
+        A peer-group with members is refused, naming them: FRR takes the
+        members with the group, so removing it would take neighbours nobody
+        named. Returns True when the line was this, None when it was not.
+        Only the bare form is this: every line the removal stages is longer,
+        so feeding them back cannot come here again.
+        """
+        w = line.split()
+        if len(w) != 3 or w[:2] != ["no", "neighbor"] or not self.frr_ctx \
+                or not self.frr_ctx[-1].startswith("router bgp "):
+            return None
+        header, name = self.frr_ctx[-1], w[2]
+        hw = header.split()
+        asn = hw[2]
+        vrf = hw[hw.index("vrf") + 1] if "vrf" in hw[3:-1] else ""
+        members = [st.split()[1] for path, st
+                   in typedcfg.routing_statements(self.candidate)
+                   if path == [header] and st.split()[:1] == ["neighbor"]
+                   and st.split()[2:] == ["peer-group", name]]
+        # The verdict in the VTY's words, each value last on a row of its
+        # own: a long group or neighbour name folds where nothing follows it.
+        if members:
+            self.err_prose("this peer-group still has members; nothing "
+                           "removed", f"peer-group {name}",
+                           "remove them first: " + ", ".join(members))
+            return True
+        try:
+            lines = typedcfg.bgp_neighbor_delete_lines(self.candidate, asn,
+                                                       vrf, name)
+        except ValueError:
+            self.err_prose("no such neighbor in this router; nothing removed",
+                           f"neighbor {name}")
+            return True
+        for ln in lines:
+            self.feed(ln)
+        return True
+
     def remove_static_route(self, key):
         """
         Take the candidate's top-level static route with this key out, and
@@ -16120,10 +16173,21 @@ class Shell:
                 print_prose(note)
         if w[0] == "no" and len(w) > 1:
             negated = " ".join(w[1:])
-            for i, existing in enumerate(self.candidate.routing):
-                if existing.strip() == negated:
-                    del self.candidate.routing[i]
-                    return True
+            # The statement IN THIS BLOCK first (#562): the same neighbour
+            # can be named in `router bgp 65000` and in `router bgp 65000 vrf
+            # red`, and taking the first line that matched anywhere removed
+            # the default router's when the operator stood in the VRF's.
+            # Where no line in this block matches, the first anywhere, as
+            # before - a `no` typed at a level that is not the statement's.
+            here = [b for b in self.frr_ctx if b != STATIC_BLOCK]
+            paths = block_paths(self.candidate.routing)
+            hits = [i for i, existing in enumerate(self.candidate.routing)
+                    if existing.strip() == negated]
+            at = next((i for i in hits if paths[i] == here),
+                      hits[0] if hits else None)
+            if at is not None:
+                del self.candidate.routing[at]
+                return True
         # FRR IS ASKED BEFORE ANYTHING IS STAGED (#431). Until this, every
         # line that reached here went into the candidate unread - `banana
         # split` at [edit], `netwrk 10.0.0.0/8` inside an address-family -
@@ -16206,6 +16270,8 @@ class Shell:
         _got = attach_statement(_w, _where) if _where else None
         if _got is not None:
             return self.attach_policy(_got, _w)
+        if self.remove_bgp_neighbor(line):
+            return True
         verdict, frr_said = self.frr.dryrun(
             [b for b in self.frr_ctx if b != STATIC_BLOCK], line)
         if verdict == Frr.DRYRUN_REFUSED:

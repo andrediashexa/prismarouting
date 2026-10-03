@@ -2469,6 +2469,62 @@ rv, text = driven(lambda: sh.do_config("neighbor 10.0.0.2 import NOPE"))
 check("no policy-statement named NOPE" in text
       and sh.candidate.routing == _before,
       f"an import naming no policy is refused, nothing staged: {text!r}")
+# `no neighbor X` (#562): the neighbour's own statements, removed one by one
+# through typedcfg.bgp_neighbor_delete_lines - families first, remote-as
+# last - and never the bare line, which FRR "did not keep" and frr-reload
+# refused with a family; a peer-group a member still names is refused; and a
+# neighbour named in two routers is removed from the one the operator is in.
+sh.candidate.routing += [
+    "router bgp 65000", "neighbor 10.0.0.9 remote-as 65009",
+    "address-family ipv4 unicast",
+    "neighbor 10.0.0.9 soft-reconfiguration inbound", "exit-address-family",
+    "neighbor PG2 peer-group", "neighbor 10.0.0.8 peer-group PG2", "exit",
+    "router bgp 65000 vrf red", "neighbor 10.0.0.9 remote-as 65009", "exit"]
+import typedcfg as _tc  # noqa: E402
+
+
+def _names(nb, header):
+    return [st for path, st in _tc.routing_statements(sh.candidate)
+            if path[:1] == [header] and st.split()[:2] == ["neighbor", nb]]
+
+
+sh.frr_ctx = ["router bgp 65000"]
+rv, text = driven(lambda: sh.do_config("no neighbor 10.0.0.9"))
+check(not _names("10.0.0.9", "router bgp 65000")
+      and _names("10.0.0.9", "router bgp 65000 vrf red")
+      and "no neighbor 10.0.0.9" not in [l.strip() for l in sh.candidate.routing]
+      and sh.frr_ctx == ["router bgp 65000"],
+      "remove_bgp_neighbor: every statement of it gone from this router - the "
+      "family's too - the VRF's left, no bare line, back at the router level: "
+      f"{text!r} {sh.frr_ctx}")
+_before = list(sh.candidate.routing)
+rv, text = driven(lambda: sh.do_config("no neighbor PG2"))
+check("this peer-group still has members" in text and "10.0.0.8" in text
+      and sh.candidate.routing == _before,
+      f"remove_bgp_neighbor: a group with a member is refused, named: {text!r}")
+rv, text = driven(lambda: sh.remove_bgp_neighbor("no neighbor 10.0.0.77"))
+check(rv is True and "no such neighbor in this router" in text
+      and "10.0.0.77" in text and sh.candidate.routing == _before,
+      f"remove_bgp_neighbor: one that is not there, nothing staged: {text!r}")
+check(sh.remove_bgp_neighbor("no neighbor 10.0.0.9 remote-as 65009") is None
+      and sh.remove_bgp_neighbor("neighbor 10.0.0.9 remote-as 65009") is None,
+      "remove_bgp_neighbor: only the bare `no neighbor X` is this")
+sh.frr_ctx = ["router bgp 65000 vrf red"]
+rv, text = driven(lambda: sh.do_config("no neighbor 10.0.0.9"))
+check(not _names("10.0.0.9", "router bgp 65000 vrf red"),
+      f"and from the VRF's router, standing in it: {text!r}")
+# The same statement in both routers, removed standing in the VRF's: the
+# VRF's goes and the default router's stays. Before #562 the first match
+# anywhere went - the default router's, the one nobody named.
+sh.candidate.routing += ["router bgp 65000", "neighbor 10.0.0.6 remote-as 65006",
+                         "exit", "router bgp 65000 vrf red",
+                         "neighbor 10.0.0.6 remote-as 65006", "exit"]
+sh.frr_ctx = ["router bgp 65000 vrf red"]
+rv, text = driven(lambda: sh.do_config("no neighbor 10.0.0.6 remote-as 65006"))
+check(not _names("10.0.0.6", "router bgp 65000 vrf red")
+      and _names("10.0.0.6", "router bgp 65000"),
+      "a `no` takes the statement in the block it is typed in, not the first "
+      f"anywhere: {text!r}")
 sh.frr_ctx = []
 # `export <policy>` inside an IGP (#458 step 2): the redistribute lines it
 # stands for, staged together; refused for a policy that is not there and for

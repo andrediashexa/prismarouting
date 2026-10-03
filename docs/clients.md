@@ -27,6 +27,18 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.23 - `no neighbor X` removes a BGP neighbour cleanly (#562)
+
+* **Contract:** unchanged (`prisma.proto` sha256 `11163ea9328b3a12c8cf90d28af4e75ce9972b3c45a9f06842de62544b8a4d01`).
+* **Behaviour:** an Edit carrying `no neighbor X` at a `router bgp` path now
+  removes the neighbour and every statement naming it, as DeleteConfig has
+  since 0.149.22, and commits clean. Before, that commit reported statements
+  FRR "did not keep" or rolled back on frr-reload. A peer-group that a member
+  still names is refused (`GRAMMAR`, nothing staged), its message naming the
+  members. A `no <statement>` removes the statement in the block of the path
+  it is sent at - the same neighbour in the default router and a VRF's are two.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.22 - the routing configuration as fields (#558, phase 3)
 
 prisma-web's ask (b) on #558: the BGP and OSPF forms stop parsing running text.
