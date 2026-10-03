@@ -3916,6 +3916,76 @@ check(rows(text) == ["% OSPF is not running"],
       f"FRR's refusal is printed and nothing claims a clear: {text!r}")
 ok("an outage on purpose, so the role is checked and FRR's answer shown")
 
+print("\n=== Shell.clear_interface and clear_cgnat (#558, phase 5) ===")
+
+
+class NamedApi(RecApi):
+    """RecApi that knows one interface by name."""
+
+    def interface_index(self, name):
+        return {"ens19": 5}.get(name)
+
+
+# Mutation shown red: clear every interface when one is named.
+api = NamedApi()
+sh = shell(api=api)
+rv, text = driven(lambda: sh.clear_interface(["counters"]))
+check(api.calls == [("sw_interface_clear_stats", {"sw_if_index": 0xFFFFFFFF})]
+      and rows(text) == ["cleared: counters of every interface"],
+      f"bare: every interface, index ~0: {api.calls} {text!r}")
+rv, text = driven(lambda: sh.clear_interface(["counters", "ens19"]))
+check(api.calls[-1] == ("sw_interface_clear_stats", {"sw_if_index": 5})
+      and rows(text) == ["cleared: counters of ens19"],
+      f"one interface, by its index: {api.calls[-1]} {text!r}")
+n = len(api.calls)
+rv, text = driven(lambda: sh.clear_interface(["counters", "ens9"]))
+check(len(api.calls) == n and rows(text) == [
+      "error: the dataplane has no interface named ens9"],
+      f"an interface the dataplane has not got is said, nothing sent: {text!r}")
+rv, text = driven(lambda: sh.clear_interface(["sideways"]))
+check(len(api.calls) == n and rows(text) == [
+      "error: usage: clear interface counters [<interface>]"],
+      f"a shape it has not got is a usage line: {text!r}")
+rv, text = driven(lambda: shell(api=api, caps={prismash.CAP_CGNAT})
+                  .clear_interface(["counters"]))
+check(len(api.calls) == n and "permission denied" in text,
+      f"a CGNAT account may not reset every graph on the box: {text!r}")
+api = NamedApi(refuse={"sw_interface_clear_stats"})
+rv, text = driven(lambda: shell(api=api).clear_interface(["counters"]))
+check(rows(text)[0] == "error: the counters could not be cleared"
+      and "stub" in text and "cleared:" not in text,
+      f"a refusal is said, and no clear is claimed: {text!r}")
+
+# Mutation shown red: send the address unchecked, or claim a clear on rc 1.
+dp = RecDp({"bpa clear subscriber": (0, "cleared 3 session(s) of 100.64.0.10\n"
+                                     "its block is released after the "
+                                     "hold-down (60s)\n")})
+sh = shell(dp=dp, caps={prismash.CAP_CGNAT})
+rv, text = driven(lambda: sh.clear_cgnat(["subscriber", "100.64.0.10"]))
+check(dp.commands == ["bpa clear subscriber 100.64.0.10"]
+      and rows(text)[0] == "cleared 3 session(s) of 100.64.0.10",
+      f"the dataplane's own clear, its rows printed; a CGNAT operator may: "
+      f"{dp.commands} {text!r}")
+for rest, said in ((["subscriber", "100.64.0.300"],
+                    "error: a subscriber is an IPv4 address: 100.64.0.300"),
+                   (["sessions"], "error: usage: clear cgnat subscriber "
+                                  "<A.B.C.D>")):
+    rv, text = driven(lambda: sh.clear_cgnat(rest))
+    check(dp.commands == ["bpa clear subscriber 100.64.0.10"]
+          and rows(text) == [said], f"{rest}: {text!r}")
+rv, text = driven(lambda: shell(dp=dp, caps=set()).clear_cgnat(
+    ["subscriber", "100.64.0.10"]))
+check(len(dp.commands) == 1 and "permission denied" in text,
+      f"a read-only account is refused before the dataplane is asked: {text!r}")
+dp = RecDp({"bpa clear subscriber": (1, "100.64.9.9 is not inside any "
+                                     "configured pool\n")})
+rv, text = driven(lambda: shell(dp=dp).clear_cgnat(["subscriber", "100.64.9.9"]))
+check(rows(text)[0] == "error: the subscriber's sessions could not be cleared"
+      and "100.64.9.9 is not inside any configured pool" in text,
+      f"the dataplane's refusal, under a verdict of its own: {text!r}")
+ok("interface counters over the binary API; a subscriber's sessions by the "
+   "dataplane's own clear; each role checked first")
+
 print("\n=== Shell.clear_isis: all adjacencies, or one by system-id ===")
 # Mutation shown red: drop the system-id from the command.
 frr = RecFrr({"clear isis": (0, "")})
@@ -3988,8 +4058,9 @@ n = len(frr.asked)
 rv, text = driven(lambda: sh.do_clear("clear bgp"))
 check(len(frr.asked) == n and rows(text)[0]
       == "error: usage: clear bgp <neighbour> [soft [in|out]]"
-      and len(rows(text)) == 3,
-      f"no neighbour is the usage, all three shapes: {text!r}")
+      and len(rows(text)) == 5,
+      f"no neighbour is the usage, all five shapes (#558 phase 5 added "
+      f"interface counters and a CGNAT subscriber): {text!r}")
 sh = shell(frr=frr, running=cfg, caps={prismash.CAP_CGNAT})
 rv, text = driven(lambda: sh.do_clear("clear bgp 10.0.0.2"))
 check(len(frr.asked) == n and "permission denied" in text,

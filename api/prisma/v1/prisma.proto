@@ -122,6 +122,13 @@ message Diagnostics {
     REASON_USAGE = 13;
     // A refusal none of the above names; read the message.
     REASON_OTHER = 14;
+    // A reboot or shutdown asked while the running configuration differs
+    // from what the next boot loads (#558, phase 5): `save` first, or ask
+    // again with `force` (SystemService).
+    REASON_UNSAVED = 15;
+    // A system action already running on the box: an upgrade or a dataplane
+    // restart started earlier and not finished.
+    REASON_BUSY = 16;
   }
   Reason reason = 3;
   // REASON_STALE_BASE: the running revision the configuration moved to, the
@@ -1258,6 +1265,47 @@ service OperationalService {
   // IPFIX over UDP - who carries it, its collector, its counters and whether
   // it is delivering, read from the same screen as `show cgnat logging`.
   rpc GetLogging(GetLoggingRequest) returns (LoggingState);
+  // A session or a counter reset (#558, phase 5), as the VTY's `clear`:
+  // interface counters, a CGNAT subscriber's sessions, a BGP session, OSPF's
+  // process or one adjacency, IS-IS adjacencies. Changes no configuration.
+  rpc Clear(ClearRequest) returns (ClearResponse);
+}
+
+message ClearRequest {
+  enum Target {
+    TARGET_UNSPECIFIED = 0;
+    // `clear interface counters [<name>]`: `name` one interface, empty all.
+    TARGET_INTERFACE_COUNTERS = 1;
+    // `clear cgnat subscriber <name>`: every session of the subscriber at
+    // inside address `name`; its block goes after the hold-down.
+    TARGET_CGNAT_SUBSCRIBER = 2;
+    // `clear bgp <name> [soft [in|out]]`: the neighbour `name`, by `bgp`.
+    TARGET_BGP = 3;
+    // `clear ospf process`.
+    TARGET_OSPF_PROCESS = 4;
+    // `clear ospf neighbor <name>`.
+    TARGET_OSPF_NEIGHBOR = 5;
+    // `clear isis adjacency [<name>]`: one system id, or every adjacency.
+    TARGET_ISIS_ADJACENCY = 6;
+  }
+  Target target = 1;
+  string name = 2;
+  enum BgpMode {
+    // The session is reset.
+    BGP_HARD = 0;
+    // Policy re-applied both ways, without a reset.
+    BGP_SOFT = 1;
+    BGP_SOFT_IN = 2;
+    BGP_SOFT_OUT = 3;
+  }
+  BgpMode bgp = 3;
+}
+
+message ClearResponse {
+  // What the VTY printed for it.
+  string output = 1;
+  // The line run, as the VTY spells it.
+  string command = 2;
 }
 
 message GetVersionRequest {}
@@ -1740,6 +1788,80 @@ service TelemetryService {
   // its graphs from zero. Streamed, one message a sample, because a day of
   // every interface is more than one message should carry.
   rpc GetHistory(GetHistoryRequest) returns (stream HistorySample);
+  // `monitor cgnat logging` as a stream (#558, phase 5): each CGNAT block
+  // event the box exports, as it exports it, from the same observation ring
+  // the VTY's monitor reads - never taken from the log container, never
+  // waited for by the dataplane. Every 10 s, what each stream delivered.
+  // Until the client cancels, or `seconds`.
+  rpc WatchLogging(WatchLoggingRequest) returns (stream LogEvent);
+}
+
+message WatchLoggingRequest {
+  // The VTY monitor's filters: an inside address, a public address and a
+  // port in its block, an event, a pool by name. Empty is no filter.
+  string subscriber = 1;
+  string public_address = 2;
+  uint32 port = 3;
+  // "alloc", "release", "exhausted" or "boot"; empty is every event.
+  string event = 4;
+  string pool = 5;
+  // Stop after this long; 0 runs until the client cancels.
+  uint32 seconds = 6;
+  // Each event's `text` as the wire forms (`monitor cgnat logging raw`)
+  // rather than the line a person reads.
+  bool raw = 7;
+  // No DELIVERY events.
+  bool no_deliveries = 8;
+}
+
+message LogEvent {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // The first message: the stream is open. `boot_time`, and whether the
+    // events come off the watch ring (`from_watch_ring`) or, on a dataplane
+    // before 0.149.16, off the worker queues - which miss a block released
+    // by expiry.
+    STARTED = 1;
+    ALLOC = 2;
+    RELEASE = 3;
+    // A subscriber found no free block (natEvent 12), once per subscriber
+    // per 10 s: the repeats held back are counted in a DELIVERY.
+    EXHAUSTED = 4;
+    // The dataplane's start: said when the stream opens, again when the box
+    // exports its boot marker (`exported`), and after a dataplane restart.
+    BOOT = 5;
+    // What a stream sent since the last one (`stream`, `sent`, `lost`,
+    // `pending_bytes`), or a box-wide loss that grew (`stream` names it:
+    // exhaustion_repeats, queue_dropped, export_dropped, transmit_failed).
+    DELIVERY = 6;
+    // `lost` events this reader fell too far behind to read.
+    LOST = 7;
+  }
+  Kind kind = 1;
+  // The time the exported record carries.
+  google.protobuf.Timestamp at = 2;
+  string subscriber = 3;
+  string public_address = 4;
+  uint32 port_first = 5;
+  uint32 port_last = 6;
+  // The pool's configured name; `#<id>` when the dataplane did not say.
+  string pool = 7;
+  uint32 pool_id = 8;
+  // The subscriber's identity the record carries, when the box knew it.
+  string identity = 9;
+  string stream = 10;
+  string collector = 11;
+  string carrier = 12;
+  string connection = 13;
+  uint64 sent = 14;
+  uint64 lost = 15;
+  uint64 pending_bytes = 16;
+  google.protobuf.Timestamp boot_time = 17;
+  bool exported = 18;
+  bool from_watch_ring = 19;
+  bool pools_named = 20;
+  // The VTY monitor's own line(s) for it.
+  string text = 21;
 }
 
 message SubscribeRequest {
@@ -1921,6 +2043,81 @@ message RouteCount {
 
 message GetRouteSummaryResponse {
   repeated RouteCount counts = 1;
+}
+
+// ---------------------------------------------------------------- system
+
+// The box itself (#558, phase 5): the VTY's `system reboot`, `system
+// shutdown`, `system dataplane restart` and `system upgrade`. The same
+// accounts may as at the VTY - today root's, through the host's doors - and
+// each says what it costs before it acts.
+service SystemService {
+  // Restart the box. Refused with REASON_UNSAVED while the running
+  // configuration differs from what the next boot loads, and with
+  // REASON_CONFIRM_PENDING inside a `commit confirmed` window, unless
+  // `force`. The reply comes before the box goes down.
+  rpc Reboot(SystemActionRequest) returns (SystemActionResponse);
+  // Power the box off; the same refusals.
+  rpc Shutdown(SystemActionRequest) returns (SystemActionResponse);
+  // Stop and start the dataplane: forwarding stops and every subscriber's
+  // block is dropped. Runs on the host, detached; the reply comes when it
+  // finished, with what it printed.
+  rpc RestartDataplane(SystemActionRequest) returns (SystemActionResponse);
+  // Download, verify and install `version`, as `system upgrade <version>`,
+  // streaming each phase. The last message says the management API restarts
+  // in `api_away_seconds` - the stream ends BEFORE it does - and after it a
+  // client reconnects and reads GetVersion. An empty `version` installs
+  // nothing: one message names the newest release.
+  rpc Upgrade(UpgradeRequest) returns (stream UpgradeProgress);
+  // The last upgrade the API started, read back from the host: for a client
+  // that reconnects after the management API restarted.
+  rpc GetUpgradeStatus(GetUpgradeStatusRequest) returns (UpgradeProgress);
+}
+
+message SystemActionRequest {
+  // Act despite REASON_UNSAVED or REASON_CONFIRM_PENDING.
+  bool force = 1;
+}
+
+message SystemActionResponse {
+  // What the VTY printed: the costs it said, and systemd's answer.
+  string output = 1;
+}
+
+message UpgradeRequest {
+  string version = 1;
+}
+
+message GetUpgradeStatusRequest {}
+
+message UpgradeProgress {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    // Nothing installed: `newest` is the newest published release.
+    CHECKED = 1;
+    STARTED = 2;
+    DOWNLOAD = 3;
+    VERIFY = 4;
+    INSTALL = 5;
+    // Installed; the VTY and the API restart on the new release next.
+    INSTALLED = 6;
+    // The last message of a stream that worked: the management API restarts
+    // in `api_away_seconds`. Reconnect after it.
+    API_RESTART = 7;
+    FAILED = 8;
+  }
+  Phase phase = 1;
+  // The line the VTY printed for this step.
+  string message = 2;
+  string version = 3;
+  string newest = 4;
+  uint32 api_away_seconds = 5;
+  // When the run this describes started (GetUpgradeStatus).
+  google.protobuf.Timestamp started_at = 6;
+  // Everything the run printed so far (GetUpgradeStatus, FAILED).
+  string output = 7;
+  // FAILED: why, as a Diagnostics reason.
+  Diagnostics diagnostics = 8;
 }
 
 // --------------------------------------------------------------- session

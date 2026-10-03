@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Nothing the VTY does is out of the API's reach** (#558, phase 5): the 17
+  command paths docs/api-coverage.md listed as unreachable are typed.
+  `OperationalService.Clear` runs the VTY's `clear` for a target - interface
+  counters, a CGNAT subscriber, a BGP session hard or soft, OSPF's process or
+  one adjacency, IS-IS adjacencies. `TelemetryService.WatchLogging` is
+  `monitor cgnat logging` as a stream of `LogEvent`: each block event the box
+  exports, with the monitor's filters and its delivery lines, read off the
+  observation ring the dataplane overwrites and nobody consumes. A new
+  `SystemService` carries `system reboot`, `shutdown`, `dataplane restart` and
+  `upgrade`: a reboot or a shutdown refused while the configuration is
+  unsaved or a `commit confirmed` window is open, unless `force` (new reasons
+  `REASON_UNSAVED` and `REASON_BUSY`); the upgrade and the dataplane restart
+  run on the host as detached units of their own, through a new door, and
+  the upgrade streams its phases and ends before the API restarts, with
+  `GetUpgradeStatus` to read it back afterwards. The same permissions as the
+  VTY - the host's doors are root's.
+* **`clear interface counters [<interface>]` and `clear cgnat subscriber
+  <A.B.C.D>`** in the VTY (#558, phase 5): one interface's counters or every
+  interface's back to zero, over the binary API; every session of one
+  subscriber ended, on every worker, by the dataplane's new `bpa clear
+  subscriber` - its block left to the hold-down and released with its
+  natEvent 17, as an expiry would.
+
 ### Fixed
 
 ## 0.149.24 - the rest of the configuration as fields, and the schema fixed

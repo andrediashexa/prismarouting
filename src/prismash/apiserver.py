@@ -167,7 +167,7 @@ def revision_of(text):
 REASONS = ("stale_base", "permission", "candidate_expired", "candidate_unknown",
            "limit", "gate_remap", "gate_diverge", "gate_cutoff",
            "confirm_pending", "grammar", "validation", "apply_failed",
-           "usage", "other")
+           "usage", "other", "unsaved", "busy")
 #: config.text_error's verdict: "<what>: <size> bytes, and the limit is <n>".
 LIMIT_RE = re.compile(r"^(?:error: )?(.+?): (\d+) bytes, and the limit is (\d+)$",
                       re.M)
@@ -190,6 +190,9 @@ REFUSAL_TEXTS = (
     ("apply_failed", "FRR refused "),
     ("usage", "usage: commit confirmed"),
     ("usage", "expected 1-60"),
+    # #558 phase 5: the actions.
+    ("usage", "usage: clear "),
+    ("usage", "usage: system upgrade [<version>]"),
     ("other", "no candidate configuration"),
 )
 
@@ -236,7 +239,8 @@ def refusal_reason(output, stage="commit", moved_to="", expired=None):
     # commit the candidate by what it means. An answer with no error at all
     # stays "other" - it is not a refusal this table knows.
     if any(d["severity"] == "error" for d in parse_output(text)):
-        out["reason"] = "grammar" if stage == "edit" else "validation"
+        out["reason"] = {"edit": "grammar", "action": "other"}.get(stage,
+                                                                   "validation")
     return out
 
 
@@ -1117,6 +1121,180 @@ def typed_schema(sh, args):
     return out
 
 
+#: An argument a Clear puts on a VTY line (#558, phase 5): one word - an
+#: interface, an address, a system id - never a second statement.
+CLEAR_WORD = re.compile(r"^[A-Za-z0-9_.:/-]{1,64}$")
+#: ClearRequest's targets, as the VTY line each one is.
+CLEAR_LINES = {
+    "interface_counters": "clear interface counters {name}",
+    "cgnat_subscriber": "clear cgnat subscriber {name}",
+    "bgp": "clear bgp {name}{mode}",
+    "ospf_process": "clear ospf process",
+    "ospf_neighbor": "clear ospf neighbor {name}",
+    "isis_adjacency": "clear isis adjacency {name}",
+}
+#: BgpMode, as the words after the neighbour.
+BGP_MODES = {"hard": "", "soft": " soft", "soft_in": " soft in",
+             "soft_out": " soft out"}
+
+
+def clear_line(target, name="", bgp="hard"):
+    """
+    The VTY line a ClearRequest is, or None when its fields cannot make one:
+    an unknown target, a name that is not one word, a name missing where the
+    target needs one (#558, phase 5).
+    """
+    tmpl = CLEAR_LINES.get(target)
+    if tmpl is None or bgp not in BGP_MODES:
+        return None
+    if name and not CLEAR_WORD.match(name):
+        return None
+    if "{name}" in tmpl and not name and target not in (
+            "interface_counters", "isis_adjacency"):
+        return None
+    return " ".join(tmpl.format(name=name, mode=BGP_MODES[bgp]).split())
+
+
+def system_cost(sh):
+    """
+    What a reboot or a shutdown would lose, as the VTY reads it before
+    either (#558, phase 5): {"unsaved", "confirm_pending", "said"} - from
+    say_unsaved() and say_unconfirmed() themselves, so the API refuses on
+    exactly what the VTY warns of.
+    """
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        sh.say_unsaved()
+        sh.say_unconfirmed()
+    said = buf.getvalue()
+    return {"unsaved": "has NOT been saved" in said,
+            "confirm_pending": "has NOT been confirmed" in said, "said": said}
+
+
+#: How long the management API is away after an upgrade recreated its
+#: container: the client's reconnect hint, measured on the X520 bench at
+#: 0.149.4 (74 s from the upgrade command to the API answering, most of it
+#: the upgrade itself) and rounded up for the restart alone.
+API_AWAY_SECONDS = 60
+#: The exit line the API's detached runs end with (doors.api_run_argv).
+RUN_EXIT = re.compile(r"^prisma-api-exit (\d+)$")
+
+
+def upgrade_phases(text):
+    """
+    What `system upgrade <version>` has printed so far, as UpgradeProgress
+    steps (#558, phase 5): a list of {"phase", "message", "version",
+    "newest"}, in order - read off the VTY's own lines, which
+    test/test_apiserver.py holds to prismash.py's source.
+    """
+    steps, installing = [], False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        m = RUN_EXIT.match(line.strip())
+        if m:
+            if m.group(1) != "0" and not any(x["phase"] == "failed" for x in steps):
+                steps.append({"phase": "failed", "message":
+                              f"the upgrade exited {m.group(1)}"})
+            continue
+        if line.startswith("newest published: "):
+            steps.append({"phase": "checked", "message": line,
+                          "newest": line.split(": ", 1)[1].strip()})
+        elif line.startswith("downloading "):
+            steps.append({"phase": "download", "message": line})
+        elif line.startswith("the package matches its published sha256"):
+            steps.append({"phase": "verify", "message": line})
+            installing = True
+        elif line.startswith("upgraded to "):
+            installing = False
+            steps.append({"phase": "installed", "message": line,
+                          "version": line.split()[-1]})
+        elif line.strip().startswith("the VTY restarts on") and \
+                any(x["phase"] == "installed" for x in steps) and \
+                not any(x["phase"] == "api_restart" for x in steps):
+            # The VTY's own sentence after `upgraded to`, once. The package's
+            # script says "the VTY restarts on the new release" too, during
+            # the install: ending the stream there would lose INSTALLED.
+            steps.append({"phase": "api_restart", "message": line.strip()})
+        elif line.startswith("error:"):
+            installing = False
+            steps.append({"phase": "failed", "message": line})
+        elif installing and not line.startswith("    "):
+            steps.append({"phase": "install", "message": line.strip()})
+    return steps
+
+
+def run_log(path):
+    """
+    A detached run's log (doors.api_run_argv) as {"text", "done", "status",
+    "started"}: done once its exit line is there; None when there is none.
+    """
+    try:
+        with open(path) as f:
+            text = f.read()
+        started = os.stat(path).st_mtime
+    except OSError:
+        return None
+    status = None
+    for line in text.splitlines():
+        m = RUN_EXIT.match(line.strip())
+        if m:
+            status = int(m.group(1))
+    return {"text": text, "done": status is not None, "status": status,
+            "started": started}
+
+
+def run_busy(path, now=None, stale=1800):
+    """Is a detached run at `path` still going: a log with no exit line,
+    written in the last `stale` seconds (a run that died says nothing)."""
+    got = run_log(path)
+    if got is None or got["done"]:
+        return False
+    try:
+        age = (now or time.time()) - os.stat(path).st_mtime
+    except OSError:
+        return False
+    return age < stale
+
+
+def hostrun(sh, kind, version=""):
+    """
+    Start `kind` (doors.API_RUNS) on the host, detached, through the doors,
+    as the account `sh` is: the VTY's permission first - `system upgrade`
+    and `system dataplane restart` need the whole configuration - then the
+    host's, which today is root's. {"ok", "output"}.
+    """
+    import doors
+    import prismash as P
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        allowed = sh.require(P.CAP_ALL, doors.API_RUNS[kind])
+    if not allowed:
+        return {"ok": False, "output": buf.getvalue()}
+    argv = doors.api_run_argv(kind, version)
+    if argv is None:
+        return {"ok": False, "output": "usage: system upgrade [<version>], "
+                                       "as in 0.149.25"}
+    rc, out = sh.sys._run(list(argv))
+    if rc != 0:
+        return {"ok": False, "output": f"error: the host would not start it\n{out}"}
+    return {"ok": True, "output": out}
+
+
+def segment_readable(path=None):
+    """Can this account read the log's event segment, as the VTY monitor
+    would (#558, phase 5)? (ok, why)."""
+    import logmon
+    p = path or logmon.SEGMENT
+    if os.access(p, os.R_OK):
+        return True, ""
+    if not os.path.exists(p):
+        return False, (f"no event segment at {p}: this dataplane keeps its "
+                       "events in its own heap, or it is not running")
+    return False, f"this account may not read {p}"
+
+
 def handle(sh, op, args):
     """One request to a worker's Shell `sh`; what goes back over the pipe."""
     if op == "feed":
@@ -1145,6 +1323,12 @@ def handle(sh, op, args):
         return typed_delete(sh, args or {})
     if op == "schema":
         return typed_schema(sh, args or {})
+    if op == "system_cost":
+        return system_cost(sh)
+    if op == "hostrun":
+        return hostrun(sh, args["kind"], args.get("version", ""))
+    if op == "segment_readable":
+        return segment_readable(args)
     if op in READERS:
         return READERS[op](sh, args)
     raise ValueError(f"unknown worker operation {op!r}")
@@ -1992,7 +2176,7 @@ def health_status(service, stats_ok, log_status=None):
         return log_status
     served = ("", "prisma.v1.ConfigService", "prisma.v1.OperationalService",
               "prisma.v1.TelemetryService", "prisma.v1.RouteService",
-              "prisma.v1.SessionService")
+              "prisma.v1.SessionService", "prisma.v1.SystemService")
     if service not in served:
         return None
     if service in ("prisma.v1.OperationalService", "prisma.v1.TelemetryService") \
@@ -2255,6 +2439,106 @@ def _diag_pb(pb, d):
                          line=d["line"])
 
 
+#: How long RestartDataplane waits for the host's run to finish, and an
+#: Upgrade stream for its last line (#558, phase 5).
+RUN_WAIT = 300
+UPGRADE_WAIT = 1800
+
+
+def action_reason(output):
+    """
+    Why an action was refused (#558, phase 5): refusal_reason() at the
+    "action" stage, and the host's door refusing an account that is not
+    root - which the VTY prints under its own verdict - as a permission.
+    """
+    if "only root may" in (output or ""):
+        return "permission"
+    return refusal_reason(output, stage="action")["reason"]
+
+
+def action_code(grpc, reason):
+    """The status a refused action answers with, by its reason (#558)."""
+    return {"permission": grpc.StatusCode.PERMISSION_DENIED,
+            "usage": grpc.StatusCode.INVALID_ARGUMENT}.get(
+                reason, grpc.StatusCode.FAILED_PRECONDITION)
+
+
+def watch_words(req):
+    """A WatchLoggingRequest as the words after `monitor cgnat logging`, so
+    logmon.parse_args() validates the API's filters exactly as the VTY's."""
+    words = []
+    if req.raw:
+        words.append("raw")
+    if req.subscriber:
+        words += ["subscriber", req.subscriber]
+    if req.public_address:
+        words += ["public", req.public_address
+                  + (f":{req.port}" if req.port else "")]
+    if req.event:
+        words += ["event", req.event]
+    if req.pool:
+        words += ["pool", req.pool]
+    if req.seconds:
+        words += ["seconds", str(req.seconds)]
+    return words
+
+
+def vpp_show(*words):
+    """`show <words>` as vppctl prints it; "" when the dataplane does not
+    answer."""
+    try:
+        p = subprocess.run([os.environ.get("PRISMA_VPPCTL", "vppctl"), "show", *words],
+                           capture_output=True, text=True, timeout=10)
+        return p.stdout if p.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _stamp(pb_ts, epoch):
+    """A Timestamp set from seconds since the epoch, to the nanosecond."""
+    pb_ts.FromNanoseconds(int(epoch * 1e9))
+
+
+def log_event_pb(pb, e):
+    """One logmon.watch() dict as prisma.v1's LogEvent (#558, phase 5)."""
+    kind = {"started": "STARTED", "alloc": "ALLOC", "release": "RELEASE",
+            "exhausted": "EXHAUSTED", "boot": "BOOT", "delivery": "DELIVERY",
+            "lost": "LOST"}.get(e["kind"], "KIND_UNSPECIFIED")
+    out = pb.LogEvent(kind=pb.LogEvent.Kind.Value(kind), text=e.get("text", ""))
+    _stamp(out.at, e["at"])
+    for k, f in (("subscriber", "subscriber"), ("public", "public_address"),
+                 ("port_first", "port_first"), ("port_last", "port_last"),
+                 ("pool", "pool"), ("pool_id", "pool_id"), ("identity", "identity"),
+                 ("stream", "stream"), ("collector", "collector"),
+                 ("carrier", "carrier"), ("connection", "connection"),
+                 ("sent", "sent"), ("lost", "lost"),
+                 ("pending_bytes", "pending_bytes"), ("exported", "exported"),
+                 ("from_watch_ring", "from_watch_ring"),
+                 ("pools_named", "pools_named")):
+        v = e.get(k)
+        if v not in (None, ""):
+            setattr(out, f, v)
+    if e.get("boot_wall"):
+        _stamp(out.boot_time, e["boot_wall"])
+    return out
+
+
+def progress_pb(pb, st, started=None, output=""):
+    """One upgrade_phases() step as prisma.v1's UpgradeProgress."""
+    out = pb.UpgradeProgress(
+        phase=pb.UpgradeProgress.Phase.Value(st["phase"].upper()),
+        message=st.get("message", ""), version=st.get("version", ""),
+        newest=st.get("newest", ""),
+        api_away_seconds=st.get("api_away_seconds", 0), output=output)
+    if started:
+        _stamp(out.started_at, started)
+    if st["phase"] == "failed":
+        out.diagnostics.CopyFrom(pb.Diagnostics(
+            output=output, reason=_reason_pb(pb, refusal_reason(
+                output, stage="action")["reason"])))
+    return out
+
+
 # not a unit: builds the gRPC servicers around the core above; it needs grpc
 # and the generated stubs, and lab/api-grpc.sh drives every rpc through it.
 def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
@@ -2278,8 +2562,10 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.
     def fail(context, code, output, extra="", stage="commit", moved_to="",
-             expired=None, gates=()):
+             expired=None, gates=(), reason=None):
         why = refusal_reason(output, stage=stage, moved_to=moved_to, expired=expired)
+        if reason:
+            why["reason"] = reason
         diags = pb.Diagnostics(items=[_diag_pb(pb, d) for d in parse_output(output)],
                                output=output, reason=_reason_pb(pb, why["reason"]),
                                running_revision=why["running_revision"],
@@ -2818,6 +3104,26 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 out.streams.add(**r).last_progress.CopyFrom(ts(lp))
             return out
 
+        # not a unit: an rpc, driven by lab/api-grpc.sh; clear_line() is
+        # what it decides, and is tested.
+        def Clear(self, req, context):
+            acct = account(context)
+            target = pb.ClearRequest.Target.Name(req.target)[len("TARGET_"):].lower()
+            mode = pb.ClearRequest.BgpMode.Name(req.bgp)[len("BGP_"):].lower()
+            line = clear_line(target, req.name, mode)
+            if line is None:
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT, "", stage="usage",
+                     extra=f"no clear for target {target} with name {req.name!r}")
+            try:
+                res = sessions.ops_worker(acct).ask("feed", [line])
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            if res["failed"]:
+                why = action_reason(res["output"])
+                fail(context, action_code(grpc, why), res["output"], stage="action",
+                     reason=why)
+            return pb.ClearResponse(output=res["output"], command=line)
+
     class Telemetry(rpc.TelemetryServiceServicer):
         # not a unit: a streaming rpc, driven by lab/api-grpc.sh.
         def Subscribe(self, req, context):
@@ -2876,6 +3182,41 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                     out.memory_used_bytes = smp["memory_used_bytes"]
                 yield out
 
+        # not a unit: a streaming rpc, driven by lab/api-grpc.sh;
+        # logmon.watch() and watch_words() are what it does, and are tested.
+        def WatchLogging(self, req, context):
+            import logmon
+            acct = account(context)
+            try:
+                ok, why = sessions.ops_worker(acct).ask("segment_readable", None)
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            if not ok:
+                context.abort(grpc.StatusCode.PERMISSION_DENIED
+                              if "may not read" in why else
+                              grpc.StatusCode.UNAVAILABLE, why)
+            opts, why = logmon.parse_args(watch_words(req))
+            if why:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, why)
+            opts["no_deliveries"] = req.no_deliveries
+            buf, why = logmon.open_segment()
+            if why:
+                context.abort(grpc.StatusCode.UNAVAILABLE, " ".join(why))
+            if logmon.header(buf) is None:
+                context.abort(grpc.StatusCode.UNAVAILABLE,
+                              "the event segment is not one this server reads")
+            pools = logmon.parse_pool_index(vpp_show("bpa", "pool", "index"))
+
+            # not a unit: a closure over this call's dataplane reads;
+            # logstate.parse_logging() is what it does, and is tested.
+            def read_logging():
+                text = vpp_logging()
+                return logstate.parse_logging(text) if text else None
+
+            for e in logmon.watch(opts, buf, pools, read_logging,
+                                  active=context.is_active):
+                yield log_event_pb(pb, e)
+
     class Routes(rpc.RouteServiceServicer):
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def ListRoutes(self, req, context):
@@ -2918,7 +3259,135 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             except WorkerError as e:
                 context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
 
-    servicers = [Config(), Operational(), Telemetry(), Routes(), Session()]
+    class System(rpc.SystemServiceServicer):
+        # not a unit: a helper of the rpcs below, driven by lab/api-grpc.sh.
+        def _worker(self, context):
+            try:
+                return sessions.ops_worker(account(context))
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+
+        # not a unit: the body of Reboot and Shutdown, driven by
+        # lab/api-grpc.sh; system_cost() is what it decides on, and is tested.
+        def _box(self, req, context, verb):
+            w = self._worker(context)
+            if not req.force:
+                cost = w.ask("system_cost")
+                if cost["unsaved"]:
+                    fail(context, grpc.StatusCode.FAILED_PRECONDITION, cost["said"],
+                         stage="action", reason="unsaved",
+                         extra="the running configuration has not been saved")
+                if cost["confirm_pending"]:
+                    fail(context, grpc.StatusCode.FAILED_PRECONDITION, cost["said"],
+                         stage="action", reason="confirm_pending",
+                         extra="the last commit has not been confirmed")
+            res = w.ask("feed", [f"system {verb}"])
+            if res["failed"]:
+                why = action_reason(res["output"])
+                fail(context, action_code(grpc, why), res["output"], stage="action",
+                     reason=why)
+            return pb.SystemActionResponse(output=res["output"])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def Reboot(self, req, context):
+            return self._box(req, context, "reboot")
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def Shutdown(self, req, context):
+            return self._box(req, context, "shutdown")
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh; hostrun() and
+        # run_log() are what it does, and are tested.
+        def RestartDataplane(self, req, context):
+            import doors
+            path = doors.api_run_log("dataplane")
+            if run_busy(path):
+                fail(context, grpc.StatusCode.FAILED_PRECONDITION, "", stage="action",
+                     reason="busy", extra="a dataplane restart is already running")
+            got = self._worker(context).ask("hostrun", {"kind": "dataplane"})
+            if not got["ok"]:
+                why = action_reason(got["output"])
+                fail(context, action_code(grpc, why), got["output"], stage="action",
+                     reason=why)
+            deadline = time.time() + RUN_WAIT
+            log = None
+            while time.time() < deadline and context.is_active():
+                log = run_log(path)
+                if log and log["done"]:
+                    break
+                time.sleep(0.5)
+            if not log or not log["done"]:
+                context.abort(grpc.StatusCode.DEADLINE_EXCEEDED,
+                              f"the dataplane restart did not finish in {RUN_WAIT} s;"
+                              f" GetUpgradeStatus-like reads of {path} follow it")
+            if log["status"] != 0:
+                fail(context, grpc.StatusCode.FAILED_PRECONDITION, log["text"],
+                     stage="action", reason="apply_failed")
+            return pb.SystemActionResponse(output=log["text"])
+
+        # not a unit: a streaming rpc, driven by lab/api-grpc.sh;
+        # upgrade_phases(), run_log() and hostrun() are what it does.
+        def Upgrade(self, req, context):
+            import doors
+            w = self._worker(context)
+            if not req.version:
+                res = w.ask("feed", ["system upgrade"])
+                for st in upgrade_phases(res["output"]) or [
+                        {"phase": "failed", "message": res["output"].strip()}]:
+                    yield progress_pb(pb, st, output=res["output"])
+                return
+            if not doors.RELEASE.match(req.version):
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT, "", stage="usage",
+                     extra=f"not a release: {req.version!r}, as in 0.149.25")
+            path = doors.api_run_log("upgrade")
+            if run_busy(path):
+                fail(context, grpc.StatusCode.FAILED_PRECONDITION, "", stage="action",
+                     reason="busy", extra="an upgrade is already running")
+            started = time.time()
+            got = w.ask("hostrun", {"kind": "upgrade", "version": req.version})
+            if not got["ok"]:
+                why = action_reason(got["output"])
+                fail(context, action_code(grpc, why), got["output"], stage="action",
+                     reason=why)
+            yield progress_pb(pb, {"phase": "started", "version": req.version,
+                                   "message": f"upgrading to {req.version}"},
+                              started=started)
+            sent, deadline = 0, time.time() + UPGRADE_WAIT
+            while time.time() < deadline and context.is_active():
+                log = run_log(path)
+                if log is None or log["started"] < started - 1:
+                    time.sleep(0.5)
+                    continue
+                steps = upgrade_phases(log["text"])
+                for st in steps[sent:]:
+                    if st["phase"] == "api_restart":
+                        st["api_away_seconds"] = API_AWAY_SECONDS
+                    yield progress_pb(pb, st, started=started,
+                                      output=log["text"] if st["phase"] == "failed"
+                                      else "")
+                    if st["phase"] in ("api_restart", "failed"):
+                        return
+                sent = len(steps)
+                if log["done"]:
+                    # Finished without the API restart line: installed and
+                    # the VTY could not be refreshed, or nothing to say.
+                    return
+                time.sleep(0.5)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh; run_log() and
+        # upgrade_phases() are what it reads, and are tested.
+        def GetUpgradeStatus(self, req, context):
+            import doors
+            account(context)
+            log = run_log(doors.api_run_log("upgrade"))
+            if log is None:
+                context.abort(grpc.StatusCode.NOT_FOUND,
+                              "no upgrade was started through the API on this box")
+            steps = upgrade_phases(log["text"])
+            last = steps[-1] if steps else {"phase": "started", "message": ""}
+            return progress_pb(pb, last, started=log["started"], output=log["text"])
+
+    servicers = [Config(), Operational(), Telemetry(), Routes(), Session(), System()]
     if health is not None:
         servicers.append(health_servicer(stats_factory, health[0], health[1], grpc,
                                          logwatch))
@@ -3050,9 +3519,8 @@ def main(argv):
                      daemon=True).start()
     logwatch = logstate.LogWatch()
     threading.Thread(target=log_watcher, args=(logwatch, stop), daemon=True).start()
-    cfg, ops, tel, routes, session, health = build(sessions, stats_factory, pb, rpc,
-                                                   grpc, history, (hpb, hrpc), meter,
-                                                   logwatch)
+    cfg, ops, tel, routes, session, system, health = build(
+        sessions, stats_factory, pb, rpc, grpc, history, (hpb, hrpc), meter, logwatch)
     # NO SO_REUSEPORT, which gRPC turns on by default: with it a second server
     # binds the same port beside the first, and the X520 bench (0.148.4) was
     # found with two listeners on 128.0.0.2:50051 after restarts. Without it
@@ -3065,6 +3533,7 @@ def main(argv):
     rpc.add_TelemetryServiceServicer_to_server(tel, server)
     rpc.add_RouteServiceServicer_to_server(routes, server)
     rpc.add_SessionServiceServicer_to_server(session, server)
+    rpc.add_SystemServiceServicer_to_server(system, server)
     hrpc.add_HealthServicer_to_server(health, server)
     # grpcio 1.51 raises where older ones returned 0: both are the same
     # refusal, said in one sentence rather than as a traceback.

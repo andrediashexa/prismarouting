@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 104
+# OFF-RED-AT-LEAST: 125
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -226,7 +226,11 @@ allocate() {  # allocate <third octet>: subscribers 100.64.<o>.1-20 of pool lg, 
     vppctl packet-generator new "name a$1x$h limit 1 node ip4-input interface pg0 size 60-60 \
         data { UDP: 100.64.$1.$h -> 8.8.8.8 UDP: 40000 -> 53 incrementing 8 }" >/dev/null 2>&1
   done
-  vppctl packet-generator enable >/dev/null 2>&1; sleep 1
+  # Each stream by name: a bare `enable` restarts every stream the lab ever
+  # made, the client's unlimited load1 among them, and pg0 then carried
+  # traffic for the rest of the run - Clear's counters measured non-zero.
+  for h in $(seq 1 20); do vppctl packet-generator enable-stream a$1x$h >/dev/null 2>&1; done
+  sleep 1
   for h in $(seq 1 20); do vppctl packet-generator delete a$1x$h >/dev/null 2>&1; done
 }
 collector_up
@@ -293,6 +297,83 @@ echo "=========== #558, phase 4: system, accounts, policy and the rest as fields
 # the rest staged in a candidate and held to ShowCandidate, never committed.
 T4=$(python3 lab/api_phase4_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
 printf '%s\n' "$T4" | sed 's/^/  /'
+echo "=========== #558, phase 5: the clears, the log stream, the box itself ==========="
+# A subscriber of pool lg with sessions for Clear to end.
+vppctl packet-generator new "name c558 limit 5 node ip4-input interface pg0 size 60-60 data { UDP: 100.64.11.5 -> 8.8.8.8 UDP: 4100 -> 53 incrementing 4 }" >/dev/null 2>&1
+vppctl packet-generator enable-stream c558 >/dev/null 2>&1
+sleep 1
+T5C=$(python3 lab/api_phase5_check.py /tmp/apistubs $C 127.0.0.1:50551 clear 2>&1)
+printf '%s\n' "$T5C" | sed 's/^/  /'
+# WatchLogging against the VTY's own monitor, both reading while subscribers
+# of pool lg allocate: the same events, kind and subscriber, in both.
+python3 lab/api_phase5_check.py /tmp/apistubs $C 127.0.0.1:50551 watch 14 \
+  > /tmp/watch5.txt 2>&1 &
+W5=$!
+$HX -c "monitor cgnat logging seconds 14" > /tmp/monitor5.txt 2>&1 &
+M5=$!
+sleep 3
+allocate 10
+wait $W5 $M5
+T5W=$(cat /tmp/watch5.txt)
+EVKINDS="ALLOC RELEASE EXHAUSTED"
+API_EV=$(printf '%s\n' "$T5W" | awk -v k="$EVKINDS" 'BEGIN{split(k,a," ");for(i in a)w[a[i]]=1}
+  $1=="EVENT" && ($2 in w) {print $2, $3}' | sort | tr '\n' ';')
+VTY_EV=$(awk -v k="$EVKINDS" 'BEGIN{split(k,a," ");for(i in a)w[a[i]]=1}
+  ($2 in w) {print $2, $3}' /tmp/monitor5.txt | sort | tr '\n' ';')
+printf '%s\n' "$T5W" | grep -E "^EVENT (STARTED|ALLOC|DELIVERY)" | head -6 | sed 's/^/  /'
+printf '%s\n' "$T5W" | grep "^RESULT" | sed 's/^/  /'
+# The VTY's own refusal of that account, which the API's is held to.
+VTY_NOREAD=$(runuser -u netview -- $HX -c "monitor cgnat logging seconds 1" 2>&1)
+echo "  the VTY as netview: $(printf '%s' "$VTY_NOREAD" | head -1)"
+echo "  API events: $(printf '%s' "$API_EV" | tr ';' '\n' | grep -c .), VTY lines: $(printf '%s' "$VTY_EV" | tr ';' '\n' | grep -c .)"
+# SystemService against a server whose systemctl and systemd-run are
+# stand-ins: a container has no box to restart, and a real reboot of the
+# machine this lab runs on would be the lab's own end. They record what they
+# were asked, and the systemd-run one writes the log a detached run writes on
+# a box, a line at a time. The real thing is measured on a box.
+mkdir -p /tmp/fakebin /run/prisma-routing/api
+cat > /tmp/fakebin/systemctl <<'SH'
+#!/bin/sh
+echo "$*" >> /tmp/fake-systemctl.argv
+case "$1" in reboot|poweroff) exit 0 ;; esac
+exit 1
+SH
+cat > /tmp/fakebin/systemd-run <<'SH'
+#!/bin/sh
+echo "$*" >> /tmp/fake-systemd-run.argv
+log=""; last=""
+for a in "$@"; do
+  case "$a" in --property=StandardOutput=truncate:*) log=${a#--property=StandardOutput=truncate:} ;; esac
+  last=$a
+done
+: > "$log"
+case "$last" in
+  *"system upgrade "*)
+    v=$(printf '%s' "$last" | sed -n "s/.*system upgrade \([0-9.]*\)'.*/\1/p")
+    ( sleep 1; echo "downloading https://prismarouting.com.br/releases/$v/upgrade" >> "$log"
+      sleep 1; printf 'the package matches its published sha256:\n    abc\n' >> "$log"
+      sleep 1; echo "installing the images" >> "$log"
+      echo "upgrade: refresh-the-vty is scheduled: the VTY restarts on the new release in a few seconds" >> "$log"
+      echo "upgraded to $v" >> "$log"
+      echo "    the VTY restarts on $v in a few seconds: this session ends then, and" >> "$log"
+      echo "prisma-api-exit 0" >> "$log" ) > /dev/null 2>&1 &
+    ;;
+  *"system dataplane restart"*)
+    ( sleep 1; echo "restarting the dataplane" >> "$log"
+      echo "prisma-api-exit 0" >> "$log" ) > /dev/null 2>&1 & ;;
+esac
+exit 0
+SH
+chmod +x /tmp/fakebin/systemctl /tmp/fakebin/systemd-run
+rm -f /tmp/fake-systemctl.argv /tmp/fake-systemd-run.argv /run/prisma-routing/api/*.log
+rm -f /tmp/api5.fifo; mkfifo /tmp/api5.fifo
+PATH=/tmp/fakebin:$PATH python3 src/prismash/apiserver.py --listen 127.0.0.1:50553 \
+  --dir $C/box --stubs /tmp/apistubs --stop-on-eof < /tmp/api5.fifo > /tmp/apiserver5.log 2>&1 &
+exec 9> /tmp/api5.fifo
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver5.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+T5S=$(python3 lab/api_phase5_check.py /tmp/apistubs $C 127.0.0.1:50553 system 2>&1)
+printf '%s\n' "$T5S" | sed 's/^/  /'
+exec 9>&-
 echo "=========== #558, phase 1: why refused, the confirm window, the candidates ==========="
 # Mappings in pool nb for the re-map gate to be about: a few packets from a
 # subscriber, just before.
@@ -456,6 +537,31 @@ expect "  an SNMP community is never a typed field: INVALID_ARGUMENT" t4 phase4-
 expect "  GetSchema: router bgp read as fields; hostname written as one, a community not" t4 phase4-schema
 expect "  GetSchema: every word literal, no choice holding a placeholder" t4 phase4-schema-literal-words
 expect "  and every line of GetRunning matches a GetSchema statement, order-free parts included" t4 phase4-schema-covers-running
+t5() { printf '%s\n' "$T5C" "$T5W" "$T5S" | grep -q "^RESULT $1 ok"; }
+expect "#558 phase 5: Clear pg0's counters: the dataplane's go back to zero" t5 clear-interface-one
+expect "  and every interface's" t5 clear-interface-all
+expect "  a CGNAT subscriber's sessions ended, its block left to the hold-down" t5 clear-subscriber
+t5both() { t5 clear-bgp && t5 clear-ospf; }
+expect "  a BGP neighbour soft out, and OSPF's process, as the VTY's clear" t5both
+expect "  an account without the role: PERMISSION_DENIED, REASON_PERMISSION" t5 clear-permission
+expect "  a name that is two words: INVALID_ARGUMENT, REASON_USAGE" t5 clear-usage
+expect "  an address in no pool: the dataplane's refusal, FAILED_PRECONDITION" t5 clear-usage-dataplane
+expect "WatchLogging: the same block events the VTY's monitor printed, kind and subscriber" \
+  sh -c 'test -n "$0" && test "$0" = "$1"' "$API_EV" "$VTY_EV"
+expect "  the stream ends when its seconds ran out" t5 watch-ended
+expect "  a filter the monitor does not take: INVALID_ARGUMENT" t5 watch-bad-filter
+t5noread() { t5 watch-unreadable && printf '%s' "$VTY_NOREAD" | grep -q "may not read /dev/shm/prisma-bpa-log"; }
+expect "  an account that may not read the segment: refused, as the VTY's monitor" t5noread
+expect "SystemService.Reboot with the configuration unsaved: REASON_UNSAVED, nothing asked" t5 system-reboot-unsaved
+expect "  by an account without the role: PERMISSION_DENIED" t5 system-reboot-permission
+expect "  with force: the VTY's reboot, systemctl reboot asked" t5 system-reboot-force
+expect "  Shutdown with force: systemctl poweroff asked" t5 system-shutdown-force
+expect "RestartDataplane: run on the host detached, its output when it finished" t5 system-dataplane-restart
+expect "Upgrade streams STARTED, DOWNLOAD, VERIFY, INSTALL, INSTALLED, API_RESTART; GetUpgradeStatus reads it back" t5 system-upgrade-stream
+expect "  the last message says how long the API is away, and ends the stream" t5 system-upgrade-away
+expect "  a version that is not a release: INVALID_ARGUMENT" t5 system-upgrade-bad-version
+expect "  an upgrade still running: REASON_BUSY" t5 system-upgrade-busy
+expect "  by an account without the role: PERMISSION_DENIED" t5 system-upgrade-permission
 p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }
 expect "#558: a line the prompt does not take refuses with reason GRAMMAR" p1 reason-grammar
 expect "  a pool without its prefixes: VALIDATION, from the commit and the check" p1 reason-validation

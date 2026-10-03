@@ -1474,6 +1474,54 @@ VLIB_CLI_COMMAND (bpa_show_subscriber_command, static) = {
 };
 
 /*
+ * `bpa clear subscriber <inside-address>` (#558, phase 5): every session of
+ * one subscriber ended, on every worker, under the barrier - the expiry
+ * walk's own discipline. The VTY's `clear cgnat subscriber` and the API's
+ * Clear run it. Its block is not released here: idle now, it is held down
+ * and released by the expiry process with its natEvent 17, as an expiry
+ * would, and the line says when that comes.
+ */
+/* not a unit: a CLI handler over the plugin's live tables; lab/api-grpc.sh
+ * clears a subscriber and reads its sessions gone. */
+static clib_error_t *
+bpa_clear_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
+				 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  ip4_address_t addr;
+  u32 i, freed = 0, host, pool_index, sub_idx;
+  f64 now;
+
+  if (!unformat (input, "%U", unformat_ip4_address, &addr))
+    return clib_error_return (0,
+			      "usage: bpa clear subscriber <inside-address>");
+  host = clib_net_to_host_u32 (addr.as_u32);
+  if (bpa_subscriber_pool (bm, host, &pool_index, &sub_idx))
+    return clib_error_return (0, "%U is not inside any configured pool",
+			      format_ip4_address, &addr);
+
+  now = vlib_time_now (vm);
+  vlib_worker_thread_barrier_sync (vm);
+  for (i = 0; i < vec_len (bm->per_thread); i++)
+    freed += bpa_subscriber_clear (vec_elt_at_index (bm->per_thread, i), host,
+				   now);
+  vlib_worker_thread_barrier_release (vm);
+
+  vlib_cli_output (vm, "cleared %u session(s) of %U", freed,
+		   format_ip4_address, &addr);
+  if (freed)
+    vlib_cli_output (vm, "its block is released after the hold-down (%us)",
+		     bm->block_holddown);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_clear_subscriber_command, static) = {
+  .path = "bpa clear subscriber",
+  .short_help = "bpa clear subscriber <inside-address>",
+  .function = bpa_clear_subscriber_command_fn,
+};
+
+/*
  * The inverse, and the one a court order or an abuse report asks.
  *
  * It says WHERE the answer comes from, because the two sources do not carry

@@ -1501,6 +1501,38 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 #define BPA_EXPIRE_INTERVAL 1.0
 #define BPA_EXPIRE_BUDGET   10000
 
+/*
+ * Every session of one subscriber, ended at once (#558, phase 5): `bpa clear
+ * subscriber`, which the VTY's `clear cgnat subscriber` and the API's Clear
+ * run. The caller holds the worker barrier, as for the expiry walk. The
+ * block is left to the path an idle one takes: with its last session gone
+ * it is held down and then released by the expiry process, with its natEvent
+ * 17 - so the log says what an expiry would, and a subscriber whose block
+ * had to change still waits out the hold-down another subscriber's flows
+ * were promised.
+ */
+/* not a unit: it frees sessions out of a worker's tables, which need the
+ * plugin's state; lab/api-grpc.sh clears a subscriber and reads it gone. */
+u32
+bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now)
+{
+  u32 i, freed = 0;
+
+  for (i = 0; i < vec_len (pt->sessions); i++)
+    {
+      bpa_session_t *s;
+
+      if (pool_is_free_index (pt->sessions, i))
+	continue;
+      s = pool_elt_at_index (pt->sessions, i);
+      if (s->ip_priv != ip_priv)
+	continue;
+      bpa_session_free (pt, s, now);
+      freed++;
+    }
+  return freed;
+}
+
 /* not a unit: a VPP process node; it needs the graph and its clock. */
 static uword
 bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)

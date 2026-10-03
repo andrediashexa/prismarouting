@@ -1243,5 +1243,255 @@ check(_vv[0]["ok"] and not _vv[1]["ok"] and _vv[1]["reason"] == "grammar"
 check(A.refusal_reason("error: x\n", stage="usage")["reason"] == "usage",
       "refusal_reason: a typed request's own words are a usage refusal")
 
+print("\n=== #558 phase 5: the clears, the box, the upgrade, the log stream ===")
+check(A.health_status("prisma.v1.SystemService", True) == "SERVING",
+      "health: SystemService is served (#558 phase 5)")
+
+check(A.clear_line("interface_counters") == "clear interface counters"
+      and A.clear_line("interface_counters", "ens19") == "clear interface counters ens19"
+      and A.clear_line("cgnat_subscriber", "100.64.0.9") == "clear cgnat subscriber 100.64.0.9"
+      and A.clear_line("bgp", "10.0.0.2", "soft_in") == "clear bgp 10.0.0.2 soft in"
+      and A.clear_line("bgp", "10.0.0.2") == "clear bgp 10.0.0.2"
+      and A.clear_line("ospf_process") == "clear ospf process"
+      and A.clear_line("isis_adjacency") == "clear isis adjacency",
+      "clear_line: each target as the VTY line it is")
+check(A.clear_line("bgp") is None and A.clear_line("cgnat_subscriber") is None
+      and A.clear_line("bgp", "10.0.0.2; system reboot") is None
+      and A.clear_line("bgp", "10.0.0.2 soft") is None
+      and A.clear_line("nothing", "x") is None and A.clear_line("bgp", "x", "fast") is None,
+      "clear_line: no line for a missing name, a second word, or a target it has not got")
+
+
+class _CostShell:
+    def __init__(self, unsaved, pending):
+        self.u, self.p = unsaved, pending
+
+    def say_unsaved(self):
+        if self.u:
+            print("warning: the running configuration has NOT been saved")
+
+    def say_unconfirmed(self):
+        if self.p:
+            print("warning: the last commit has NOT been confirmed")
+
+
+_c = A.system_cost(_CostShell(True, False))
+check(_c["unsaved"] and not _c["confirm_pending"] and "NOT been saved" in _c["said"],
+      f"system_cost: what the VTY warns of, as flags: {_c}")
+_c = A.system_cost(_CostShell(False, True))
+check(not _c["unsaved"] and _c["confirm_pending"], "system_cost: a confirm window")
+check(not any(A.system_cost(_CostShell(False, False))[k]
+              for k in ("unsaved", "confirm_pending")), "system_cost: nothing to lose")
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src",
+                         "prismash", "prismash.py")).read()
+check("has NOT been saved" in _src and "has NOT been confirmed" in _src,
+      "system_cost reads sentences the VTY prints")
+
+_UP = """downloading https://prismarouting.com.br/releases/0.149.25/x
+the package matches its published sha256:
+    abcd
+installing the images
+  loaded prisma-vpp
+upgraded to 0.149.25
+upgrade: refresh-the-vty is scheduled: the VTY restarts on the new release in a few seconds
+    the VTY restarts on 0.149.25 in a few seconds: this session ends then, and
+prisma-api-exit 0
+"""
+_ph = A.upgrade_phases(_UP)
+check([x["phase"] for x in _ph] == ["download", "verify", "install", "install",
+                                     "installed", "api_restart"]
+      and _ph[4]["version"] == "0.149.25",
+      f"upgrade_phases: download, verify, each install row, installed, the API's restart: "
+      f"{[x['phase'] for x in _ph]}")
+_ph = A.upgrade_phases("downloading x\nerror: system upgrade: it does not match its sha256\n"
+                       "prisma-api-exit 1\n")
+check([x["phase"] for x in _ph] == ["download", "failed"],
+      f"upgrade_phases: a refusal is one FAILED, the exit adds none: {_ph}")
+check([x["phase"] for x in A.upgrade_phases("prisma-api-exit 2\n")] == ["failed"],
+      "upgrade_phases: an exit that is not 0 with nothing said is a FAILED")
+_ph = A.upgrade_phases("this box runs: 0.149.24\nnewest published: 0.149.25\n")
+check(_ph == [{"phase": "checked", "message": "newest published: 0.149.25",
+               "newest": "0.149.25"}], f"upgrade_phases: no version, the newest named: {_ph}")
+for _phrase in ("downloading ", "the package matches its published sha256",
+                "upgraded to ", "the VTY restarts on", "newest published: "):
+    check(_phrase in _src, f"upgrade_phases reads a line the VTY prints: {_phrase!r}")
+
+with tempfile.TemporaryDirectory() as _d:
+    _p = os.path.join(_d, "upgrade.log")
+    check(A.run_log(_p) is None and not A.run_busy(_p), "run_log: no log, nothing running")
+    with open(_p, "w") as _f:
+        _f.write("downloading x\n")
+    _r = A.run_log(_p)
+    check(not _r["done"] and _r["status"] is None and A.run_busy(_p),
+          "run_log: a log with no exit line is a run still going")
+    check(not A.run_busy(_p, now=time.time() + 3600),
+          "run_busy: a run silent for half an hour is a run that died")
+    with open(_p, "a") as _f:
+        _f.write("prisma-api-exit 3\n")
+    _r = A.run_log(_p)
+    check(_r["done"] and _r["status"] == 3 and not A.run_busy(_p),
+          f"run_log: the exit line ends it, with its status: {_r['status']}")
+    check(A.segment_readable(_p) == (True, ""), "segment_readable: a file this account reads")
+    _ok, _why = A.segment_readable(os.path.join(_d, "none"))
+    check(not _ok and "no event segment" in _why, f"segment_readable: none there: {_why}")
+
+
+class _HostSys:
+    def __init__(self, rc=0, out=""):
+        self.rc, self.out, self.asked = rc, out, []
+
+    def _run(self, argv):
+        self.asked.append(argv)
+        return self.rc, self.out
+
+
+class _HostShell:
+    def __init__(self, allowed=True, rc=0, out=""):
+        self.allowed, self.sys = allowed, _HostSys(rc, out)
+
+    def require(self, cap, what):
+        if not self.allowed:
+            print(f"error: {what}: permission denied for a read-only account")
+        return self.allowed
+
+
+_h = _HostShell()
+_r = A.hostrun(_h, "upgrade", "0.149.25")
+check(_r["ok"] and _h.sys.asked and _h.sys.asked[0][0] == "systemd-run"
+      and "system upgrade 0.149.25" in _h.sys.asked[0][-1],
+      f"hostrun: the door that starts the upgrade, detached: {_h.sys.asked}")
+_h = _HostShell(allowed=False)
+_r = A.hostrun(_h, "dataplane")
+check(not _r["ok"] and not _h.sys.asked and "permission denied" in _r["output"],
+      "hostrun: the VTY's role first, nothing asked of the host")
+_h = _HostShell(rc=126, out="the host's door: start 'system upgrade' for the API: only root may")
+_r = A.hostrun(_h, "upgrade", "0.149.25")
+check(not _r["ok"] and A.action_reason(_r["output"]) == "permission",
+      f"hostrun: the host's root-only door, as a permission: {_r}")
+check(not A.hostrun(_HostShell(), "upgrade", "1.2")["ok"],
+      "hostrun: a version that is not a release starts nothing")
+check(A.action_reason("error: usage: clear interface counters [<interface>]\n") == "usage"
+      and A.action_reason("error: x\n") == "other",
+      "action_reason: a usage line, and an action's other refusals")
+
+
+class _SC:
+    PERMISSION_DENIED, INVALID_ARGUMENT, FAILED_PRECONDITION = "pd", "ia", "fp"
+
+
+class _Grpc:
+    StatusCode = _SC
+
+
+check(A.action_code(_Grpc, "permission") == "pd" and A.action_code(_Grpc, "usage") == "ia"
+      and A.action_code(_Grpc, "busy") == "fp", "action_code: the status for a reason")
+
+
+class _WReq:
+    def __init__(self, **kw):
+        self.__dict__.update(dict(raw=False, subscriber="", public_address="", port=0,
+                                  event="", pool="", seconds=0), **kw)
+
+
+check(A.watch_words(_WReq()) == [] and A.watch_words(_WReq(
+    raw=True, subscriber="100.64.0.9", public_address="200.0.0.5", port=1500,
+    event="alloc", pool="p", seconds=30)) == [
+    "raw", "subscriber", "100.64.0.9", "public", "200.0.0.5:1500", "event", "alloc",
+    "pool", "p", "seconds", "30"],
+    "watch_words: the request's filters as the monitor's own words")
+_old = os.environ.get("PRISMA_VPPCTL")
+with tempfile.TemporaryDirectory() as _d:
+    _v = os.path.join(_d, "vppctl")
+    with open(_v, "w") as _f:
+        _f.write("#!/bin/sh\necho \"asked: $*\"\n")
+    os.chmod(_v, 0o755)
+    os.environ["PRISMA_VPPCTL"] = _v
+    check(A.vpp_show("bpa", "pool", "index").strip() == "asked: show bpa pool index",
+          "vpp_show: `show <words>` through vppctl")
+    os.environ["PRISMA_VPPCTL"] = os.path.join(_d, "absent")
+    check(A.vpp_show("x") == "", "vpp_show: no dataplane is nothing")
+if _old is None:
+    os.environ.pop("PRISMA_VPPCTL", None)
+else:
+    os.environ["PRISMA_VPPCTL"] = _old
+
+
+class _TS:
+    def FromNanoseconds(self, n):
+        self.n = n
+
+
+class _Kind:
+    @staticmethod
+    def Value(name):
+        return name
+
+
+class _LE:
+    Kind = _Kind
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+        self.at, self.boot_time = _TS(), _TS()
+
+
+class _LPB:
+    LogEvent = _LE
+
+
+_e = A.log_event_pb(_LPB, {"kind": "alloc", "at": 10.5, "subscriber": "100.64.0.9",
+                           "public": "200.0.0.5", "port_first": 1024, "port_last": 1279,
+                           "pool": "p", "pool_id": 1, "identity": "", "text": "line"})
+check(_e.kind == "ALLOC" and _e.public_address == "200.0.0.5" and _e.at.n == 10500000000
+      and _e.pool == "p" and not hasattr(_e, "identity"),
+      "log_event_pb: a watch dict as LogEvent, empty fields left unset")
+_e = A.log_event_pb(_LPB, {"kind": "boot", "at": 1, "boot_wall": 2.0, "text": "b"})
+check(_e.kind == "BOOT" and _e.boot_time.n == 2000000000, "log_event_pb: a boot, its time")
+_t = _TS()
+A._stamp(_t, 1.25)
+check(_t.n == 1250000000, "_stamp: seconds to the nanosecond")
+
+
+class _Phase:
+    @staticmethod
+    def Value(name):
+        return name
+
+
+class _UPm:
+    Phase = _Phase
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+        self.started_at, self.diag = _TS(), None
+
+    @property
+    def diagnostics(self):
+        me = self
+
+        class _D:
+            def CopyFrom(self, d):
+                me.diag = d
+        return _D()
+
+
+class _UPB:
+    UpgradeProgress = _UPm
+
+    class Diagnostics:
+        REASON_OTHER = 14
+
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+
+_u = A.progress_pb(_UPB, {"phase": "api_restart", "message": "m", "api_away_seconds": 60},
+                   started=5)
+check(_u.phase == "API_RESTART" and _u.api_away_seconds == 60 and _u.started_at.n == 5e9,
+      "progress_pb: a step as UpgradeProgress, with when the run started")
+_u = A.progress_pb(_UPB, {"phase": "failed", "message": "error: x"}, output="error: x\n")
+check(_u.phase == "FAILED" and _u.diag is not None and _u.diag.reason == 14,
+      "progress_pb: a FAILED carries its diagnostics")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

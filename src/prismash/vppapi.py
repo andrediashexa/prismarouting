@@ -964,7 +964,8 @@ VTY_MESSAGES = frozenset({
     "sw_interface_set_flags", "sw_interface_set_interface_name",
     "sw_interface_set_mac_address", "sw_interface_set_mtu",
     "sw_interface_set_table", "sw_interface_tag_add_del",
-    "sw_member_interface_dump", "urpf_update", "vrrp_vr_add_del",
+    "sw_interface_clear_stats", "sw_member_interface_dump", "urpf_update",
+    "vrrp_vr_add_del",
     "vrrp_vr_dump", "vrrp_vr_start_stop", "vrrp_vr_track_if_add_del",
     "vrrp_vr_track_if_dump",
 })

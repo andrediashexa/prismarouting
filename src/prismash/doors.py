@@ -84,6 +84,49 @@ REFRESH_VTY = "/usr/lib/prisma-routing/refresh-the-vty"
 REFRESH_VTY_ARGV = ("systemd-run", "--collect", "--on-active=3",
                     "--unit=prisma-routing-refresh-vty", REFRESH_VTY)
 
+#: Where a detached run the API started writes what it prints (#558, phase
+#: 5): the host's /run/prisma-routing, which the management container mounts,
+#: so the API reads it there - and a new API, after the upgrade recreated the
+#: container, still finds it.
+API_RUN_DIR = "/run/prisma-routing/api"
+#: What the API may ask the host to run detached, by kind: the statement the
+#: host's VTY runs. An upgrade restarts the management container the API is
+#: in, and a dataplane restart outlasts a gRPC call: so neither runs in the
+#: API's process, and both are units of their own.
+API_RUNS = {"upgrade": "system upgrade", "dataplane": "system dataplane restart"}
+#: A release as `system upgrade` takes it.
+RELEASE = re.compile(r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$")
+
+
+def api_run_log(kind):
+    """The file a detached API run of `kind` writes to."""
+    return f"{API_RUN_DIR}/{kind}.log"
+
+
+def api_run_argv(kind, version=""):
+    """
+    The door that starts `kind` (API_RUNS) detached, as a transient unit
+    whose output goes to api_run_log(kind) and whose last line is
+    `prisma-api-exit <status>` - the whole shape, the version (an upgrade's
+    only argument) interpolated only after RELEASE accepted it. None for
+    anything else.
+    """
+    if kind not in API_RUNS:
+        return None
+    stmt = API_RUNS[kind]
+    if kind == "upgrade":
+        if version and not RELEASE.match(version):
+            return None
+        stmt = f"{stmt} {version}".strip()
+    elif version:
+        return None
+    return ("systemd-run", "--collect", f"--unit=prisma-routing-api-{kind}",
+            f"--property=StandardOutput=truncate:{api_run_log(kind)}",
+            "--property=StandardError=inherit",
+            "/bin/sh", "-c",
+            f"/usr/bin/prismash -c '{stmt}'; echo \"prisma-api-exit $?\"")
+
+
 #: The host's Linux interfaces, read (#540): one line each, with the VRF
 #: table of a VRF device and of a VRF's member on it - what ip_links() reads.
 LINKS_ARGV = ("ip", "-d", "-o", "link", "show")
@@ -217,6 +260,15 @@ def verb_of(argv, stdin=None):
     if n == 6 and argv[:4] == ("ip", "link", "set", "dev") \
             and NETDEV.match(argv[4]) and argv[5] == "nomaster":
         return "take a Linux interface out of its VRF"
+    # The API's upgrade and dataplane restart (#558, phase 5), detached.
+    for kind in API_RUNS:
+        stmt = argv[-1] if argv else ""
+        version = ""
+        if kind == "upgrade":
+            m = re.search(r"system upgrade ?([0-9.]*)'", stmt)
+            version = m.group(1) if m else ""
+        if api_run_argv(kind, version) == argv:
+            return f"start '{API_RUNS[kind]}' for the API"
     return None
 
 
