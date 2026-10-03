@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.18 - why a commit was refused, the confirm window and the candidates, typed
+
+### Added
+
 * **Why a change was refused, as a code; the confirm window and the
   candidates through the API.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 1)
   The first phase of putting the whole VTY in the API, in the order
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   guessing it; a candidate closed for idleness is told from one never opened.
   lab/api-grpc.sh provokes each refusal against a real server, reads the
   window across a server restart and lets a candidate expire.
-
-### Fixed
 
 ## 0.149.17 - what the API reaches, command by command
 
