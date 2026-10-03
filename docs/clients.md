@@ -85,7 +85,7 @@ prisma-web's ask (b) on #558: the BGP and OSPF forms stop parsing running text.
   for any read of the running configuration - `GetRunning`, `GetConfig` and
   `Show running-config` alike. It is as fast as an administrator's now: 0.42 s
   against 0.39 s in the lab, from 90.6 s, with the same content. **Client
-  workaround before 0.149.22:** a deadline of at least 120 s on those calls
+  workaround before 0.149.21:** a deadline of at least 120 s on those calls
   for such an account.
 * **Fixed (#560):** removing an interface's MTU (`SetConfig` clearing `mtu`,
   or the line `no mtu`) now sets the interface back to the box's default MTU;
