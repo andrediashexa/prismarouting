@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.21 - no mtu goes back to the default, and read-only reads are fast
+
+### Fixed
+
 * **`no mtu` left the dataplane at the last committed MTU.**
   ([#560](https://github.com/andrediashexa/hexarouting/issues/560)) It
   printed "the driver default applies after the interface is recreated" and
