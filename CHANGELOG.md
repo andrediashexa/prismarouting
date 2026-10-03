@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.20 - the configuration as fields, and its whole grammar as a schema
+
+### Added
+
 * **The configuration as fields, through the API: interfaces, CGNAT pools
   and the CGNAT log export.**
   ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 2)
@@ -98,8 +104,6 @@ version has a chance of seeing it.
   held to each tag by a test (0.149.19's named 0.149.17's). lab/api-grpc.sh takes an interface, a pool and the log
   export each through SetConfig, Commit and GetConfig, held to GetRunning's
   text.
-
-### Fixed
 
 ## 0.149.19 - Tab completion that helps remove, finish and address
 
