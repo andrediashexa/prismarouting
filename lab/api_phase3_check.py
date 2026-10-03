@@ -128,8 +128,13 @@ def check_read():
            f"static {len(t.static_routes)} bgp {len(t.bgp)} ospf {len(t.ospf)} "
            f"isis {len(t.isis)}")
     # Everything a block holds is somewhere: a field or `other`, verbatim.
-    result("routing-read-keeps-rest", bool(b) and "bgp log-neighbor-changes"
-           in list(b.other), f"bgp other {list(b.other) if b else None}")
+    # Since 0.149.24 (#558 phase 4) a known knob is read as a setting, the
+    # statement's keywords its key; what no key takes stays in `other`.
+    result("routing-read-keeps-rest", bool(b) and (
+        "bgp log-neighbor-changes" in list(b.other)
+        or any(x.key == "bgp log-neighbor-changes" for x in b.settings)),
+        f"bgp other {list(b.other) if b else None} settings "
+        f"{[x.key for x in b.settings] if b else None}")
 
 
 def check_interface_routing():

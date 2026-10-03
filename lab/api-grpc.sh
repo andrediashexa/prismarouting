@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 96
+# OFF-RED-AT-LEAST: 104
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -288,6 +288,11 @@ printf '%s\n' "$T2" | sed 's/^/  /'
 echo "=========== #558, phase 3: the routing configuration as fields ==========="
 T3=$(python3 lab/api_phase3_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
 printf '%s\n' "$T3" | sed 's/^/  /'
+echo "=========== #558, phase 4: system, accounts, policy and the rest as fields ==========="
+# The running configuration's policy, VRF and accounts held to GetRunning;
+# the rest staged in a candidate and held to ShowCandidate, never committed.
+T4=$(python3 lab/api_phase4_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
+printf '%s\n' "$T4" | sed 's/^/  /'
 echo "=========== #558, phase 1: why refused, the confirm window, the candidates ==========="
 # Mappings in pool nb for the re-map gate to be about: a few packets from a
 # subscriber, just before.
@@ -442,6 +447,15 @@ expect "  one field changed, a password not given kept" t3 set-neighbor-one-fiel
 expect "  DeleteConfig removes the neighbour, statement by statement" t3 delete-neighbor
 expect "  and its reply masks the password it removed" t3 delete-neighbor-masks-password
 expect "  a candidate's routing read typed, apart from the running one" t3 routing-candidate-read
+t4() { printf '%s\n' "$T4" | grep -q "^RESULT $1 ok"; }
+expect "#558 phase 4: GetConfig reads the policy, the VRF devices, the accounts and the API as GetRunning's text says" t4 phase4-running-read
+expect "  a candidate's route-map, FRR lists, attachment, SNMP user, OSPF knob and CGNAT globals, read typed as its text says" t4 phase4-candidate-read
+expect "  no SNMP community or passphrase appears in the typed answer" t4 phase4-no-secret
+expect "  SetConfig system and vrf_device: staged, read back typed and in the text; DeleteConfig vrfs" t4 phase4-typed-edits
+expect "  an SNMP community is never a typed field: INVALID_ARGUMENT" t4 phase4-secret-field-refused
+expect "  GetSchema: router bgp read as fields; hostname written as one, a community not" t4 phase4-schema
+expect "  GetSchema: every word literal, no choice holding a placeholder" t4 phase4-schema-literal-words
+expect "  and every line of GetRunning matches a GetSchema statement, order-free parts included" t4 phase4-schema-covers-running
 p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }
 expect "#558: a line the prompt does not take refuses with reason GRAMMAR" p1 reason-grammar
 expect "  a pool without its prefixes: VALIDATION, from the commit and the check" p1 reason-validation

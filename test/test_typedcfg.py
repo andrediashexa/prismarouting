@@ -231,7 +231,7 @@ check(not v6, f"every ipv6 statement's address/prefix is an IPv6 or either-famil
 print("=== schema: every mode the VTY has ===")
 sch = T.schema(P)
 by = {m["mode"]: m for m in sch}
-check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 26,
+check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 27,
       f"every mode of config_modes, in its order: {len(sch)}")
 check(sum(len(m["statements"]) for m in sch) > 350,
       f"{sum(len(m['statements']) for m in sch)} statements")
@@ -251,8 +251,16 @@ nb = [s_ for s_ in by["router bgp"]["statements"] if s_["words"][:1] == ["neighb
 check(nb and not any(s_["typed"] for s_ in nb), "router bgp: a mode with no typed statement")
 check(by["pool"]["path"] == ["nat", "cgnat", "pool <name>"]
       and by["term"]["path"] == ["policy-options", "policy-statement <name>", "term <name>"]
-      and by["pool"]["typed"] == "pools" and by["router bgp"]["typed"] == "",
+      and by["pool"]["typed"] == "pools" and by["router bgp"]["typed"] == "bgp",
       "each mode's full EditRequest.path, the parent's included, and its typed area")
+check(nb and all(s_["read_typed"] for s_ in nb),
+      "router bgp: read as fields (read_typed) though written as lines (0.149.24)")
+check(tmo and all(s_["read_typed"] for s_ in tmo) and not any(s_["typed"] for s_ in tmo),
+      "cgnat timeouts: read as fields, not written as fields")
+host = [s_ for s_ in by["config"]["statements"] if s_["words"][:1] == ["hostname"]]
+comm = [s_ for s_ in by["config"]["statements"] if s_["words"][:2] == ["snmp", "community"]]
+check(host and host[0]["typed"] and comm and not comm[0]["typed"] and comm[0]["read_typed"],
+      "config: hostname written as a field; an SNMP community read only, never written typed")
 srcs = {a["source"] for m in sch for st in m["statements"] for f in st["forms"]
         for a in f if a["source"]}
 check({"interfaces", "pools", "neighbours", "next_hops"} <= srcs,

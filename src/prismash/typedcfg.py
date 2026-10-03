@@ -28,7 +28,12 @@ from config import (block_paths, is_number, is_static_route, static_route_key,
 #: (phase 3). Empty in a request is all of them.
 CONFIG_AREAS = ("interfaces", "pools", "logging")
 ROUTING_AREAS = ("static", "bgp", "ospf", "ospf6", "isis", "interface_routing")
-AREAS = CONFIG_AREAS + ROUTING_AREAS
+#: The areas of #558 phase 4 - system, accounts, policy and the rest; kept
+#: in step with SYSTEM_AREAS below, which the readers are keyed by.
+OTHER_AREAS = ("system", "users", "snmp_users", "policy", "route_maps",
+               "frr_lists", "rpki", "routing_attachments", "vrfs", "vrrp",
+               "bundles", "cgnat_globals")
+AREAS = CONFIG_AREAS + ROUTING_AREAS + OTHER_AREAS
 
 #: The CGNAT log streams, as `logging <transport> ...` names them.
 TRANSPORTS = ("udp", "tcp", "syslog")
@@ -196,6 +201,8 @@ def config_typed(cfg, areas=()):
         out["logging"] = logging_typed(cfg)
     if want & set(ROUTING_AREAS):
         out.update(routing_typed(cfg, want & set(ROUTING_AREAS)))
+    if want & set(OTHER_AREAS):
+        out.update(system_areas_typed(cfg, want & set(OTHER_AREAS)))
     # Whatever the areas: the lines a client must show read only.
     out["box_owned"] = box_owned_lines(cfg)
     return out
@@ -827,6 +834,89 @@ def delete_for(cfg, area, name="", transport="", prefix="", next_hop="",
     return delete_lines(area, name, transport, prefix, next_hop, asn, vrf)
 
 
+#: The knobs of a routing block that phase 3 kept verbatim in `other`, read
+#: as {key: value} settings since phase 4: the key is the statement's own
+#: keywords, the value the rest ("" for a flag). Longest key first, so
+#: `default-information originate` wins over a shorter prefix. A key that
+#: names a password gives `<set>`, never the password.
+SETTING_KEYS = {
+    "bgp": ("bgp log-neighbor-changes", "bgp graceful-shutdown",
+            "bgp default ipv4-unicast", "bgp bestpath as-path multipath-relax",
+            "bgp bestpath", "bgp cluster-id", "bgp confederation",
+            "table-policy", "table-map", "timers bgp", "maximum-paths"),
+    "family": ("table-policy", "table-map", "vrf-import", "import",
+               "maximum-paths", "distance"),
+    "neighbor": ("maximum-prefix", "next-hop-self", "capability",
+                 "remove-private-AS", "advertisement-interval", "ttl-security",
+                 "local-as", "allowas-in", "solo", "passive", "port",
+                 "enforce-first-as"),
+    "neighbor_family": ("remove-private-AS", "advertise-map", "advertise",
+                        "addpath-tx-all-paths", "allowas-in", "attribute-unchanged",
+                        "as-override", "weight", "unsuppress-map",
+                        "route-reflector-client", "route-server-client"),
+    "ospf": ("export", "auto-cost reference-bandwidth", "maximum-paths",
+             "log-adjacency-changes", "timers throttle spf",
+             "timers throttle lsa", "distance", "neighbor",
+             "default-information originate", "compatible rfc1583",
+             "capability opaque", "max-metric"),
+    "isis": ("topology ipv6-unicast", "set-overload-bit", "export",
+             "default-information originate", "domain-password",
+             "area-password", "log-adjacency-changes", "lsp-mtu",
+             "lsp-gen-interval", "spf-interval", "max-lsp-lifetime",
+             "lsp-refresh-interval", "purge-originator"),
+}
+_SECRET_KEYS = ("domain-password", "area-password")
+
+
+def split_settings(other, kind, strip_words=0):
+    """
+    (settings, rest) of a block's verbatim `other` statements: each one a
+    SETTING_KEYS[kind] key starts becomes {"key", "value"}; the rest stay,
+    verbatim. `strip_words` drops leading words first - a neighbour's
+    statements start `neighbor <address>`.
+    """
+    keys = sorted(SETTING_KEYS[kind], key=lambda k: -len(k.split()))
+    settings, rest = [], []
+    for stmt in other:
+        w = stmt.split()[strip_words:]
+        for k in keys:
+            kw = k.split()
+            if w[:len(kw)] == kw:
+                value = " ".join(w[len(kw):])
+                if k in _SECRET_KEYS and value:
+                    value = "<set>"
+                settings.append({"key": k, "value": value})
+                break
+        else:
+            rest.append(stmt)
+    return settings, rest
+
+
+def _with_settings(block, kind, strip_words=0):
+    """Block dict `block` with its `other` split into settings and rest."""
+    block["settings"], block["other"] = split_settings(
+        block.get("other", []), kind, strip_words)
+    return block
+
+
+def routing_settings(out):
+    """routing_typed's answer with every block's knobs read as settings."""
+    for b in out.get("bgp", []):
+        _with_settings(b, "bgp")
+        for n in b.get("neighbors", []):
+            _with_settings(n, "neighbor", 2)
+        for f in b.get("families", []):
+            _with_settings(f, "family")
+            for n in f.get("neighbors", []):
+                _with_settings(n, "neighbor_family", 2)
+    for key in ("ospf", "ospf6"):
+        for b in out.get(key, []):
+            _with_settings(b, "ospf")
+    for b in out.get("isis", []):
+        _with_settings(b, "isis")
+    return out
+
+
 def routing_typed(cfg, areas):
     """The routing areas asked for, of Config `cfg`."""
     out = {}
@@ -842,7 +932,458 @@ def routing_typed(cfg, areas):
         out["isis"] = isis_typed(cfg)
     if "interface_routing" in areas:
         out["interface_routing"] = interface_routing_typed(cfg)
+    return routing_settings(out)
+
+
+# ----------------------------------- system, users, policies (phase 4)
+#
+# The rest of the configuration (#558 phase 4): the box's own settings, the
+# accounts, SNMP's users, the Junos-style policy, and what is left of the
+# routing half - FRR's lists, the route-maps an operator wrote, RPKI, the
+# protocol attachments - plus the VRF devices, the virtual routers and the
+# LACP bundles. Each is read off the same Config the VTY prints, never off a
+# screen. SECRETS ARE NEVER READ: a password is `password_set`, an SNMP
+# community is counted, an SNMP user's passphrases are only their protocol,
+# a key is counted - a client is told what is there, not what it is.
+
+SYSTEM_AREAS = ("system", "users", "snmp_users", "policy", "route_maps",
+                "frr_lists", "rpki", "routing_attachments", "vrfs", "vrrp",
+                "bundles", "cgnat_globals")
+
+
+def _kv(d):
+    """{k: v} as [{"key", "value"}] in key order: maps go out as pairs."""
+    return [{"key": k, "value": str(v)} for k, v in sorted(d.items())]
+
+
+def system_typed(cfg):
+    """The box's own settings: name, resolvers, SSH, the API, the SNMP
+    agent (communities counted, never shown), the dataplane card and the
+    cores and memory by role."""
+    snmp = dict(cfg.snmp)
+    return {
+        "hostname": cfg.hostname,
+        "dns_servers": list(cfg.dns_servers),
+        "ssh": {"port": _int(cfg.ssh.get("port")),
+                "listen_address": cfg.ssh.get("listen-address", ""),
+                "permit_root_login": cfg.ssh.get("permit-root-login", ""),
+                "password_authentication":
+                    cfg.ssh.get("password-authentication") == "yes"},
+        "api": {"enabled": cfg.api.get("enabled") == "yes",
+                "listen_address": cfg.api.get("listen-address", ""),
+                "port": _int(cfg.api.get("port"))},
+        "snmp": {"enabled": snmp.get("enabled") == "yes",
+                 "listen_address": snmp.get("listen-address", ""),
+                 "port": _int(snmp.get("port")),
+                 "enterprise_number": _int(snmp.get("enterprise-number")),
+                 "communities": len(cfg.snmp_communities),
+                 "trap_hosts": [{"address": a, "inform": kind == "inform"}
+                                for a, _community, kind
+                                in cfg.snmp_trap_hosts]},
+        "dataplane_interface": cfg.dataplane_if,
+        "cgnat_memory_gb": cfg.cgnat_memory_gb,
+        "cpu": _kv(cfg.cpu),
+        "memory": _kv(cfg.memory),
+    }
+
+
+def users_typed(cfg):
+    """The accounts: name, role ("" is read only), how many SSH keys, and
+    whether a password is set - never the hash, never a key."""
+    return [{"name": n, "role": u.role, "ssh_keys": len(u.keys),
+             "password_set": bool(u.password)}
+            for n, u in sorted(cfg.users.items())]
+
+
+def snmp_users_typed(cfg):
+    """SNMPv3 users: the protocols, never the passphrases."""
+    return [{"name": n,
+             "auth_protocol": (u.auth.split() or [""])[0],
+             "priv_protocol": (u.priv.split() or [""])[0]}
+            for n, u in sorted(cfg.snmp_users.items())]
+
+
+#: A term's `from` conditions, as the attribute policy.Term keeps them and
+#: the word the VTY takes them by.
+_FROM_KINDS = (("prefix_lists", "prefix-list"), ("communities", "community"),
+               ("as_paths", "as-path"), ("protocols", "protocol"),
+               ("tags", "tag"), ("metrics", "metric"),
+               ("neighbors", "neighbor"), ("families", "family"),
+               ("origins", "origin"), ("local_prefs", "local-preference"),
+               ("next_hops", "next-hop"),
+               ("large_communities", "large-community"),
+               ("ext_communities", "extended-community"),
+               ("validation", "validation-state"), ("policies", "policy"),
+               ("source_vrfs", "source-vrf"))
+
+
+def _filter_text(f):
+    """A route-filter (network, kind, upto) as the VTY writes it."""
+    network, kind, upto = f
+    return " ".join(x for x in (network, kind,
+                                str(upto) if upto is not None else "") if x)
+
+
+def policy_typed(cfg):
+    """
+    The Junos-style policy (#458): the named lists and every
+    policy-statement with its terms, each term's conditions by kind, its
+    changes and its decision - read by policy.parse, the parser the commit
+    compiles from. A line that parser cannot read is in `unread`, verbatim,
+    with why.
+    """
+    import policy as policy_mod
+    pol, bad = policy_mod.parse(cfg.policy)
+    statements = []
+    for name, terms in pol.statements.items():
+        out_terms = []
+        for tname, t in terms.items():
+            frm = [{"kind": word, "values": [str(v) for v in getattr(t, attr)]}
+                   for attr, word in _FROM_KINDS if getattr(t, attr)]
+            if t.filters:
+                frm.append({"kind": "route-filter",
+                            "values": [_filter_text(f) for f in t.filters]})
+            out_terms.append({
+                "name": tname, "from": frm,
+                "sets": [{"what": what, "args": [str(a) for a in args]}
+                         for what, args in t.sets],
+                "then": t.then or ""})
+        statements.append({"name": name,
+                           "default_action": pol.defaults.get(name, ""),
+                           "terms": out_terms})
+    return {
+        "prefix_lists": [{"name": n, "members": list(v)}
+                         for n, v in pol.prefix_lists.items()],
+        "communities": [{"name": n, "members": list(v)}
+                        for n, v in pol.communities.items()],
+        "large_communities": [{"name": n, "members": list(v)}
+                              for n, v in pol.large_communities.items()],
+        "extended_communities": [
+            {"name": n, "members": [f"{kind}:{v}" for kind, v in members]}
+            for n, members in pol.ext_communities.items()],
+        "as_paths": [{"name": n, "regex": v} for n, v in pol.as_paths.items()],
+        "statements": statements,
+        "unread": [{"line": line, "why": why} for line, why in bad],
+    }
+
+
+#: The prefix of the route-maps the policy compiler writes (policy.py): the
+#: box's, compiled from policy-options, never an operator's.
+COMPILED_MAP = "PO-"
+
+
+def _top_statements(cfg):
+    """The routing half's statements at the top level, in order."""
+    return [line for path, line in routing_statements(cfg) if path == []]
+
+
+def route_maps_typed(cfg):
+    """
+    The route-maps an operator wrote in the routing half: each entry's
+    action and sequence, its match and set lines, call, on-match, and the
+    rest verbatim. The compiled `PO-` maps are policy-options' and are read
+    there, not here.
+    """
+    entries = {}
+    order = []
+    for path, line in routing_statements(cfg):
+        if path == []:
+            w = line.split()
+            if w[:1] == ["route-map"] and len(w) >= 4 \
+                    and not w[1].startswith(COMPILED_MAP):
+                key = line
+                entries[key] = {"name": w[1], "action": w[2],
+                                "sequence": _int(w[3]), "matches": [],
+                                "sets": [], "call": "", "on_match": "",
+                                "description": "", "other": []}
+                order.append(key)
+            continue
+        head = path[0] if path else ""
+        if head not in entries:
+            continue
+        e, w = entries[head], line.split()
+        if w[0] == "match":
+            e["matches"].append(" ".join(w[1:]))
+        elif w[0] == "set":
+            e["sets"].append(" ".join(w[1:]))
+        elif w[0] == "call" and len(w) > 1:
+            e["call"] = w[1]
+        elif w[0] == "on-match":
+            e["on_match"] = " ".join(w[1:])
+        elif w[0] == "description":
+            e["description"] = " ".join(w[1:])
+        else:
+            e["other"].append(line)
+    maps = {}
+    for key in order:
+        e = entries[key]
+        maps.setdefault(e.pop("name"), []).append(e)
+    return [{"name": n, "entries": es} for n, es in maps.items()]
+
+
+def _list_entry(w, i):
+    """`[seq N] permit|deny <value...>` from word i: (seq, action, rest)."""
+    seq = 0
+    if w[i:i + 1] == ["seq"] and len(w) > i + 1:
+        seq, i = _int(w[i + 1]), i + 2
+    action = w[i] if len(w) > i else ""
+    return seq, action, w[i + 1:]
+
+
+def frr_lists_typed(cfg):
+    """
+    The lists written for FRR in the routing half: prefix-lists (each
+    entry's prefix and ge/le), community and large-community lists, and
+    AS-path access-lists. policy-options' own named lists are read in
+    `policy`.
+    """
+    prefix, bgp = {}, {}
+    for line in _top_statements(cfg):
+        w = line.split()
+        if w[:2] in (["ip", "prefix-list"], ["ipv6", "prefix-list"]) \
+                and len(w) > 3:
+            fam = "ipv4" if w[0] == "ip" else "ipv6"
+            if w[3] == "description":
+                continue
+            seq, action, rest = _list_entry(w, 3)
+            e = {"sequence": seq, "action": action,
+                 "prefix": rest[0] if rest else "", "ge": 0, "le": 0}
+            for k in ("ge", "le"):
+                if k in rest and rest.index(k) + 1 < len(rest):
+                    e[k] = _int(rest[rest.index(k) + 1])
+            prefix.setdefault((fam, w[2]), []).append(e)
+        elif w[:2] == ["bgp", "as-path"] and len(w) > 4 \
+                and w[2] == "access-list":
+            seq, action, rest = _list_entry(w, 4)
+            bgp.setdefault(("as-path", "", w[3]), []).append(
+                {"sequence": seq, "action": action, "value": " ".join(rest)})
+        elif w[:1] == ["bgp"] and len(w) > 3 and w[1] in (
+                "community-list", "large-community-list",
+                "extcommunity-list"):
+            i, style = 2, ""
+            if w[2] in ("standard", "expanded"):
+                style, i = w[2], 3
+            name = w[i] if len(w) > i else ""
+            seq, action, rest = _list_entry(w, i + 1)
+            kind = w[1][:-len("-list")]
+            bgp.setdefault((kind, style, name), []).append(
+                {"sequence": seq, "action": action, "value": " ".join(rest)})
+    return {
+        "prefix_lists": [{"family": fam, "name": n, "entries": es}
+                         for (fam, n), es in prefix.items()],
+        "bgp_lists": [{"kind": kind, "style": style, "name": n, "entries": es}
+                      for (kind, style, n), es in bgp.items()],
+    }
+
+
+def rpki_typed(cfg):
+    """The RPKI validator caches and timers (the `rpki` block)."""
+    out = {"caches": [], "polling_period": 0, "expire_interval": 0,
+           "retry_interval": 0, "other": []}
+    for path, line in routing_statements(cfg):
+        if path != ["rpki"]:
+            continue
+        w = line.split()
+        if w[:2] == ["rpki", "cache"] and len(w) > 4:
+            transport, i = "tcp", 2
+            if w[2] in ("tcp", "ssh"):
+                transport, i = w[2], 3
+            c = {"transport": transport, "host": w[i],
+                 "port": _int(w[i + 1]), "user": "", "source": "",
+                 "preference": 0}
+            rest = w[i + 2:]
+            if transport == "ssh" and rest and rest[0] not in (
+                    "source", "preference"):
+                c["user"] = rest[0]
+            for k in ("source", "preference"):
+                if k in rest and rest.index(k) + 1 < len(rest):
+                    v = rest[rest.index(k) + 1]
+                    c[k] = _int(v) if k == "preference" else v
+            out["caches"].append(c)
+        elif w[:1] == ["rpki"] and len(w) == 3 and w[1] in (
+                "polling_period", "expire_interval", "retry_interval"):
+            out[w[1]] = _int(w[2])
+        else:
+            out["other"].append(line)
     return out
+
+
+def routing_attachments_typed(cfg):
+    """
+    Where a route-map or a policy is attached outside a protocol's block:
+    `ip|ipv6 protocol <p> route-map <m>` (zebra's install filter) and
+    `fib-policy <p> <policy>` (#536). What else stands at the top of the
+    routing half - a list, a route-map's header, a block - is read by its
+    own area; the rest is in `other`, verbatim.
+    """
+    att, other = [], []
+    for line in _top_statements(cfg):
+        w = line.split()
+        if w[:2] in (["ip", "protocol"], ["ipv6", "protocol"]) and len(w) == 5 \
+                and w[3] == "route-map":
+            att.append({"kind": "protocol-route-map",
+                        "family": "ipv4" if w[0] == "ip" else "ipv6",
+                        "protocol": w[2], "name": w[4]})
+        elif w[:1] == ["fib-policy"] and len(w) == 3:
+            att.append({"kind": "fib-policy", "family": "",
+                        "protocol": w[1], "name": w[2]})
+        elif w[:1] in (["route-map"], ["router"], ["rpki"], ["vrf"],
+                       ["interface"]) \
+                or w[:2] in (["ip", "prefix-list"], ["ipv6", "prefix-list"],
+                             ["ip", "route"], ["ipv6", "route"]) \
+                or (w[:1] == ["bgp"] and len(w) > 1
+                    and w[1].endswith("-list")) \
+                or w[:2] == ["bgp", "as-path"] or box_owned(line):
+            continue
+        else:
+            other.append(line)
+    return {"attachments": att, "other": other}
+
+
+def vrfs_typed(cfg):
+    """The Linux VRF devices (#540): name and table."""
+    return [{"name": n, "table": t} for n, t in sorted(cfg.vrf_devices.items())]
+
+
+def vrrp_typed(cfg):
+    """The virtual routers (#7), per interface and VRID."""
+    return [{"interface": ifname, "vrid": vrid,
+             "addresses": list(vr["addresses"]), "priority": vr["priority"],
+             "track": [{"interface": t, "decrement": d}
+                       for t, d in sorted(vr["track"].items())]}
+            for ifname in sorted(cfg.vrrp)
+            for vrid, vr in sorted(cfg.vrrp[ifname].items())]
+
+
+def bundles_typed(cfg):
+    """The LACP bundles (#455): members, LACP mode, rate and hash."""
+    return [{"name": n, "members": list(b["members"]), "lacp": b["lacp"],
+             "rate": b["rate"], "hash": b["hash"]}
+            for n, b in sorted(cfg.bundles.items())]
+
+
+#: The system fields a typed edit may set, flattened: a nested setting is
+#: named by its block and key, `ssh.port`. Secrets are not among them - an
+#: SNMP community, a password or a key is set as a line, never typed here.
+SYSTEM_FIELDS = ("hostname", "dns_servers", "ssh.port", "ssh.listen_address",
+                 "ssh.permit_root_login", "ssh.password_authentication",
+                 "api.enabled", "api.listen_address", "api.port",
+                 "snmp.enabled", "snmp.listen_address", "snmp.port",
+                 "snmp.enterprise_number")
+
+
+def _get(d, field):
+    """d's value for a flattened field, `ssh.port` -> d["ssh"]["port"]."""
+    for part in field.split("."):
+        d = (d or {}).get(part)
+    return d
+
+
+def _yes(v):
+    return "yes" if v else "no"
+
+
+def system_lines(current, desired, fields=()):
+    """
+    The VTY lines that take the system settings from `current` (a
+    system_typed dict) to `desired` for the fields named - only what
+    differs, at the configuration level. An empty listen-address is the
+    statement removed; a zero port or number is left alone, as no value.
+    """
+    out = []
+    for f in _mask(fields, SYSTEM_FIELDS):
+        now, want = _get(current, f), _get(desired, f)
+        if f == "dns_servers":
+            now, want = list(now or []), list(want or [])
+            out += [f"no dns server {a}" for a in now if a not in want]
+            out += [f"dns server {a}" for a in want if a not in now]
+            continue
+        if now == want:
+            continue
+        block, _, key = f.partition(".")
+        word = key.replace("_", "-")
+        if f == "hostname":
+            out.append(f"hostname {want}" if want else "no hostname")
+        elif key in ("enabled", "password_authentication"):
+            out.append(f"{block} {word} {_yes(want)}")
+        elif key == "listen_address":
+            out.append(f"{block} {word} {want}" if want
+                       else f"no {block} {word}")
+        elif key in ("port", "enterprise_number"):
+            if want:
+                out.append(f"{block} {word} {want}")
+        else:
+            out.append(f"{block} {word} {want}")
+    return out
+
+
+def vrf_lines(current, desired):
+    """`vrf <name> table <id>` for a VRF device (#540), when it differs."""
+    name, table = desired.get("name") or "", desired.get("table") or 0
+    if not name or not table:
+        raise ValueError("vrf: give the device's name and its table")
+    if current and current.get("table") == table:
+        return []
+    return [f"vrf {name} table {table}"]
+
+
+def cgnat_globals_typed(cfg):
+    """
+    The `nat` > `cgnat` statements that are not a pool, an interface's role
+    or the log export: the session timeouts, the block hold-down, where
+    identities are read from (#21; a RADIUS secret is never read, only
+    whether one is set), the session table's sizing and the CGNAT's memory.
+    A statement no field takes is in `other`, verbatim.
+    """
+    out = {"timeouts": [], "block_holddown": 0, "identity_source": "",
+           "identity_path": "", "identity_radius_port": 0,
+           "identity_radius_secret_set": False, "session_table_buckets": 0,
+           "session_table_memory_mb": 0, "memory_gb": cfg.cgnat_memory_gb,
+           "other": []}
+    timeouts = {}
+    for g in cfg.globals:
+        w = g.split()
+        w = w[1:] if w[:1] == ["cgnat"] else w
+        if w[:1] == ["timeout"] and len(w) == 3:
+            timeouts[w[1]] = w[2]
+        elif w[:1] == ["block-holddown"] and len(w) == 2:
+            out["block_holddown"] = _int(w[1])
+        elif w[:1] == ["identity"] and len(w) > 1:
+            out["identity_source"] = w[1]
+            if w[1] in ("file", "dhcp-leases") and len(w) > 2:
+                out["identity_path"] = w[2]
+            elif w[1] == "radius":
+                out["identity_radius_secret_set"] = "secret" in w
+                if "port" in w and w.index("port") + 1 < len(w):
+                    out["identity_radius_port"] = _int(w[w.index("port") + 1])
+        elif w[:1] == ["session-table"]:
+            for k, field in (("buckets", "session_table_buckets"),
+                             ("memory", "session_table_memory_mb")):
+                if k in w and w.index(k) + 1 < len(w):
+                    out[field] = _int(w[w.index(k) + 1])
+            if len(w) == 2 and is_number(w[1]):
+                out["session_table_buckets"] = _int(w[1])
+        elif w[:1] == ["logging"]:
+            continue              # the log export's own area
+        else:
+            out["other"].append(g)
+    out["timeouts"] = _kv(timeouts)
+    return out
+
+
+SYSTEM_READERS = {"system": system_typed, "users": users_typed,
+                  "snmp_users": snmp_users_typed, "policy": policy_typed,
+                  "route_maps": route_maps_typed,
+                  "frr_lists": frr_lists_typed, "rpki": rpki_typed,
+                  "routing_attachments": routing_attachments_typed,
+                  "vrfs": vrfs_typed, "vrrp": vrrp_typed,
+                  "bundles": bundles_typed,
+                  "cgnat_globals": cgnat_globals_typed}
+
+
+def system_areas_typed(cfg, areas):
+    """The phase-4 areas asked for, of Config `cfg`."""
+    return {a: SYSTEM_READERS[a](cfg) for a in SYSTEM_AREAS if a in areas}
 
 
 # ------------------------------------------------------- box-owned lines
@@ -1156,13 +1697,32 @@ def delete_lines(area, name="", transport="", prefix="", next_hop="",
             raise ValueError(f"logging: name the transport to remove: "
                              f"{', '.join(TRANSPORTS)}")
         return list(LOGGING_PATH), [f"logging {transport} disable"]
+    if area == "vrfs":
+        if not name:
+            raise ValueError("vrfs: name the VRF device to remove")
+        return [], [f"no vrf {name} table"]
     raise ValueError(f"unknown area {area!r}: the removable areas are "
-                     f"interfaces, pools, logging, static, bgp")
+                     f"interfaces, pools, logging, static, bgp, vrfs")
 
 
 # ------------------------------------------------------------------ schema
 
 _RANGE = re.compile(r"^<(-?\d+)-(\d+)>$")
+
+
+#: An operator VRF's FRR block, as FRR takes and prints it: the static
+#: routes of that VRF. No VTY grammar holds it - the VTY passes it to FRR -
+#: so it is written here for GetSchema and the coverage document.
+VRF_FRR_BLOCK = {
+    "ip": ("IPv4 in this VRF", {
+        "route": ("a static route of this VRF",
+                  "<A.B.C.D/M> <next-hop>... [tag <1-4294967295>] "
+                  "[<1-255>]")}),
+    "ipv6": ("IPv6 in this VRF", {
+        "route": ("a static route of this VRF",
+                  "<X:X::X:X/M> <next-hop>... [tag <1-4294967295>] "
+                  "[<1-255>]")}),
+}
 
 
 def config_modes(P):
@@ -1235,6 +1795,11 @@ def config_modes(P):
         ("route-map", "route-map <name> permit|deny <seq>",
          '["route-map <name> permit|deny <seq>"]', P.ROUTE_MAP_BLOCK, adm,
          ["route-map <name> permit|deny <seq>"]),
+        # An operator VRF's own FRR block (#558 phase 4): its static
+        # routes, which phase 3 reads as `static` with their `vrf`. The
+        # VTY hands the block to FRR as it is; this is FRR's syntax.
+        ("vrf", "vrf <name>", '["vrf <name>"]', VRF_FRR_BLOCK, adm,
+         ["vrf <name>"]),
     ]
 
 
@@ -1243,7 +1808,28 @@ def config_modes(P):
 TYPED_MODES = {"interface (port)": ("interfaces", None),
                "interface (bundle)": ("interfaces", None),
                "pool": ("pools", None),
-               "cgnat": ("logging", ("logging",))}
+               "cgnat": ("logging", ("logging",)),
+               # Phase 4: SetConfig's `system` and `vrf_device`. `snmp` is
+               # left out on purpose: its community and trap-host carry a
+               # secret and are written as lines (its other settings are
+               # typed, which the first word alone cannot say).
+               "config": ("system", ("hostname", "dns", "ssh", "api",
+                                     "vrf"))}
+
+#: The modes GetConfig READS as fields though they are written as lines
+#: (#558 phases 3 and 4): their statements are `read_typed`, and `typed`
+#: only where TYPED_MODES says a SetConfig writes them too.
+READ_MODES = {"config": "system", "router static": "static",
+              "router bgp": "bgp",
+              "bgp neighbor": "bgp", "address-family": "bgp",
+              "address-family neighbor": "bgp", "router ospf": "ospf",
+              "router ospf6": "ospf6", "router isis": "isis",
+              "system": "system", "system memory": "system",
+              "system cpu": "system", "system dataplane": "system",
+              "user": "users", "snmp-user": "snmp_users",
+              "policy-options": "policy", "prefix-list": "policy",
+              "policy-statement": "policy", "term": "policy",
+              "route-map": "route_maps", "rpki": "rpki", "vrf": "static"}
 
 
 def dynamic_sources(P):
@@ -1259,6 +1845,79 @@ def dynamic_sources(P):
     return out
 
 
+def split_alternatives(token):
+    """
+    A grammar token's `|` alternatives, the `|` inside a `<...>` kept:
+    `<1-4294967295>|internal|external` -> ["<1-4294967295>", "internal",
+    "external"]; `<A.B.C.D|X:X::X:X>` is one alternative.
+    """
+    out, cur, depth = [], "", 0
+    for ch in token:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        if ch == "|" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return [a for a in out if a]
+
+
+def _is_placeholder(alt):
+    """An alternative that is not one literal word: `<n>`, and patterns
+    built around one too - `+<n>`, `soo:<asn>:<value>`, `<asn>...`."""
+    return "<" in alt
+
+
+def _clean(alt):
+    """One `<...>` placeholder, or one literal word: an alternative a client
+    can be given as a kind or a choice value. A compound pattern -
+    `+<n>`, `soo:<asn>:<value>` - is not, and keeps its token whole."""
+    if alt.startswith("<") and alt.endswith(">"):
+        return alt.count("<") == 1
+    return not any(c in alt for c in "<>:")
+
+
+def _alternation(t):
+    """The alternatives of token `t` when every one is clean, else None:
+    the token is then one pattern, given whole."""
+    alts = split_alternatives(t)
+    if len(alts) < 2 or not all(_clean(a) for a in alts):
+        return None
+    return alts
+
+
+def _kind_of(t):
+    """The kind of one alternative that is a single placeholder or word."""
+    m = _RANGE.match(t)
+    if m:
+        return "integer", int(m.group(1)), int(m.group(2))
+    kinds = {"<A.B.C.D/M>": "ipv4_prefix", "<A.B.C.D>": "ipv4_address",
+             "<X:X::X:X/M>": "ipv6_prefix", "<X:X::X:X>": "ipv6_address",
+             "<xx:xx:xx:xx:xx:xx>": "mac"}
+    if t in kinds:
+        return kinds[t], 0, 0
+    if t in ("<A.B.C.D|X:X::X:X>", "<collector>", "<source>", "<address>",
+             "<private-ip>", "<next-hop>", "<neighbour>", "<router-id>",
+             "<host>"):
+        return "address", 0, 0
+    if t in ("<prefix>", "<A.B.C.D/M|X:X::X:X/M>", "<network>"):
+        return "prefix", 0, 0
+    if t in ("<text>", "<line>", "<rest>"):
+        return "text", 0, 0
+    if t in ("<n>", "<ports>", "<seconds>", "<port>", "<GB>", "<MB>",
+             "<asn>", "<seq>", "<number>", "<metric>", "<value>", "<delay>",
+             "<hold>", "<keepalive>", "<init>", "<max>", "<minutes>",
+             "<percent>"):
+        return "integer", 0, 0
+    if _is_placeholder(t):
+        return "word", 0, 0
+    return "keyword", 0, 0
+
+
 def argument_of(token, sources=None):
     """
     One word of a VTY hint as a schema argument: {"name", "kind", "min",
@@ -1266,53 +1925,60 @@ def argument_of(token, sources=None):
     ipv4_prefix, ipv4_address, ipv6_prefix, ipv6_address, address, prefix,
     mac, choice, word, text, keyword; `source` names where the VTY completes
     its values from, when it does.
+
+    A token of alternatives (`inside|outside`, `<on|off>`) is a choice of
+    its literal values. One that mixes a placeholder with literal words
+    (`<1-4294967295>|internal|external`) is read here as the choice of the
+    literals with the integer's range beside it - hint_forms() makes it two
+    forms instead, which is what GetSchema answers (#558 phase 4: 0.149.22
+    stripped the angle brackets off the whole token and answered the value
+    "1-4294967295>").
     """
     opt = token.startswith("[") and token.endswith("]")
     t = token.strip("[]").rstrip(",")
+    many = t.endswith("...")
     arg = {"name": t, "kind": "word", "min": 0, "max": 0, "choices": [],
-           "optional": opt, "source": (sources or {}).get(t, "")}
-    m = _RANGE.match(t)
-    if m:
-        arg.update(kind="integer", min=int(m.group(1)), max=int(m.group(2)))
-    elif t == "<A.B.C.D/M>":
-        arg["kind"] = "ipv4_prefix"
-    elif t == "<A.B.C.D>":
-        arg["kind"] = "ipv4_address"
-    elif t == "<X:X::X:X/M>":
-        arg["kind"] = "ipv6_prefix"
-    elif t == "<X:X::X:X>":
-        arg["kind"] = "ipv6_address"
-    elif t in ("<A.B.C.D|X:X::X:X>", "<collector>", "<source>", "<address>",
-               "<private-ip>", "<next-hop>", "<neighbour>", "<router-id>",
-               "<host>"):
-        arg["kind"] = "address"
-    elif t in ("<prefix>", "<A.B.C.D/M|X:X::X:X/M>", "<network>"):
-        arg["kind"] = "prefix"
-    elif t == "<xx:xx:xx:xx:xx:xx>":
-        arg["kind"] = "mac"
-    elif t in ("<text>", "<line>", "<rest>"):
-        arg["kind"] = "text"
-    elif t in ("<n>", "<ports>", "<seconds>", "<port>", "<GB>", "<MB>",
-               "<asn>", "<seq>", "<number>", "<metric>", "<value>", "<delay>",
-               "<hold>", "<keepalive>", "<init>", "<max>", "<minutes>",
-               "<percent>"):
-        arg["kind"] = "integer"
-    elif t.startswith("<") and "|" in t:
-        arg.update(kind="choice", choices=t.strip("<>").split("|"))
-    elif not t.startswith("<") and "|" in t:
-        arg.update(kind="choice", choices=t.split("|"))
-    elif not t.startswith("<"):
-        arg["kind"] = "keyword"
+           "optional": opt, "source": (sources or {}).get(t, ""),
+           "many": many}
+    if many:
+        t = t[:-3]
+    if t.startswith("<") and t.endswith(">") and "|" in t \
+            and _kind_of(t)[0] != "word":
+        kind, lo, hi = _kind_of(t)     # an address or prefix of either family
+        arg.update(kind=kind, min=lo, max=hi)
+        return arg
+    alts = _alternation(t)
+    if alts is None and t.startswith("<") and t.endswith(">") and "|" in t \
+            and t.count("<") == 1:
+        alts = t[1:-1].split("|")      # `<on|off>`: a choice in one bracket
+    if alts:
+        lits = [a for a in alts if not _is_placeholder(a)]
+        arg.update(kind="choice", choices=lits)
+        for a in alts:
+            k, lo, hi = _kind_of(a)
+            if _is_placeholder(a) and k == "integer":
+                arg.update(min=lo, max=hi)
+        return arg
+    kind, lo, hi = _kind_of(t)
+    arg.update(kind=kind, min=lo, max=hi)
     return arg
 
 
-def hint_arguments(hint, sources=None):
-    """A hint string as its arguments, `[...]` groups as optional ones."""
-    if not hint:
-        return []
-    out = []
-    opt = 0
-    for tok in hint.replace("[", " [ ").replace("]", " ] ").split():
+def _hint_tokens(hint):
+    """
+    (token, optional) of a hint, `[...]` groups optional, separators out.
+    A token ending in a comma ends the grammar: what follows is prose for
+    the reader (`<interface>, or a name that creates one`), and 0.149.22
+    read its words as required keywords, so no `interface <name>` line
+    matched its own statement.
+    """
+    out, opt = [], 0
+    toks = hint.replace("[", " [ ").replace("]", " ] ").split()
+    for k, tok in enumerate(toks):
+        if tok.endswith(",") and tok != "," and k + 1 < len(toks) \
+                and not toks[k + 1].startswith(("<", "[")):
+            out.append((tok.rstrip(","), opt > 0))
+            break
         if tok == "[":
             opt += 1
             continue
@@ -1321,15 +1987,110 @@ def hint_arguments(hint, sources=None):
             continue
         if tok in ("|", "or", "...", ","):
             continue
+        out.append((tok, opt > 0))
+    return out
+
+
+def hint_arguments(hint, sources=None):
+    """A hint string as its arguments, `[...]` groups as optional ones."""
+    if not hint:
+        return []
+    out = []
+    for tok, opt in _hint_tokens(hint):
         a = argument_of(tok, sources)
-        a["optional"] = a["optional"] or opt > 0
+        a["optional"] = a["optional"] or opt
         out.append(a)
+    return out
+
+
+def _expand(tokens, sources):
+    """
+    The forms one alternative of a hint takes: a token that mixes a
+    placeholder with literal words gives one form per placeholder and one
+    for the literals, so a client never has to read `<1-n>|word` itself.
+    """
+    forms = [[]]
+    for tok, opt in tokens:
+        t = tok.strip("[]").rstrip(",")
+        alts = _alternation(t) or []
+        mixed = any(_is_placeholder(a) for a in alts)
+        if not mixed:
+            a = argument_of(tok, sources)
+            a["optional"] = a["optional"] or opt
+            forms = [f + [a] for f in forms]
+            continue
+        lits = [a for a in alts if not _is_placeholder(a)]
+        variants = []
+        for alt in alts:
+            if _is_placeholder(alt):
+                a = argument_of(alt, sources)
+                a["optional"] = opt
+                variants.append(a)
+        if lits:
+            variants.append({"name": "|".join(lits), "kind": "choice",
+                             "min": 0, "max": 0, "choices": lits,
+                             "optional": opt, "source": "", "many": False})
+        forms = [f + [v] for f in forms for v in variants]
+    return forms
+
+
+def group_keywords(form):
+    """
+    Form `form` with each keyword-led part marked: the keyword and the values
+    right after it that share its optional/required standing get a `group`
+    (1, 2, ...) and are `unordered` - FRR prints such parts in an order of
+    its own (`logging syslog <c> port 1601 enterprise 67033 ...` against the
+    grammar's `enterprise <n> [port <n>]`). The rest is positional, group 0,
+    in order: `[seq <n>] permit|deny <prefix>` is the group `seq <n>`, then
+    the positional choice and prefix.
+    """
+    group, lead_opt, in_group = 0, None, False
+    for a in form:
+        if a["kind"] == "keyword":
+            group += 1
+            lead_opt, in_group = a["optional"], True
+            a["group"], a["unordered"] = group, True
+        elif in_group and a["optional"] == lead_opt:
+            a["group"], a["unordered"] = group, True
+        else:
+            in_group = False
+            a["group"], a["unordered"] = 0, False
+    return form
+
+
+def hint_forms(hint, sources=None):
+    """Every form a hint allows: its top-level ` | ` alternatives, each
+    with its mixed alternations expanded and its keyword-led parts marked."""
+    if not hint:
+        return [[]]
+    out = []
+    for part in hint.split(" | "):
+        out += [group_keywords(f) for f in _expand(_hint_tokens(part),
+                                                   sources)]
     return out
 
 
 #: Words every level offers that are the session's, or are read elsewhere.
 _SESSION = ("exit", "top", "up", "end", "show", "commit", "rollback", "no",
             "exit-address-family", "save")
+
+
+def key_words(keys, sources=None):
+    """
+    (words, arguments) of a statement's grammar keys - `["neighbor
+    <address>", "remote-as"]`: the literal words, and each placeholder an
+    argument with the number of words before it as its `position`. 0.149.22
+    put the placeholders among the words (#558 phase 4).
+    """
+    words, args = [], []
+    for tok in " ".join(keys).split():
+        if _is_placeholder(tok) or "|" in tok:
+            a = argument_of(tok, sources)
+            a.update(position=len(words), group=0, unordered=False)
+            args.append(a)
+        else:
+            words.append(tok)
+    return words, args
 
 
 def _walk(node, prefix, out, sources, depth=0):
@@ -1344,13 +2105,163 @@ def _walk(node, prefix, out, sources, depth=0):
             _walk(sub, prefix + [key], out, sources, depth + 1)
         else:
             hint = sub if isinstance(sub, str) else ""
-            # `<collector> src <source> [port <n>] | disable`: each side of a
-            # top-level `|` is a form of its own.
-            forms = [hint_arguments(part, sources)
-                     for part in hint.split(" | ")] if hint else [[]]
-            out.append({"words": prefix + key.split(), "help": help_,
-                        "forms": forms,
+            words, lead = key_words(prefix + [key], sources)
+            forms = []
+            for form in hint_forms(hint, sources):
+                for a in form:
+                    a["position"] = len(words)
+                forms.append([dict(x) for x in lead] + form)
+            out.append({"words": words, "help": help_, "forms": forms,
+                        "first": (prefix + [key])[0].split()[0],
                         "repeatable": "may repeat" in (help_ or "")})
+
+
+def takes_rest(arg):
+    """Whether argument `arg` takes every token left on the line."""
+    return arg["kind"] == "text" or bool(arg.get("many"))
+
+
+def _value_ok(arg, tok):
+    """Whether one token can be argument `arg`'s value."""
+    kind = arg["kind"]
+    if kind == "keyword":
+        return tok == arg["name"]
+    if kind == "choice":
+        return tok in arg["choices"]
+    if kind == "integer":
+        if not is_number(tok.lstrip("+-")):
+            return False
+        return not arg["max"] or arg["min"] <= int(tok) <= arg["max"]
+    if kind in ("ipv4_prefix", "ipv4_address"):
+        return "." in tok and ":" not in tok
+    if kind in ("ipv6_prefix", "ipv6_address"):
+        return ":" in tok
+    return bool(tok)
+
+
+def form_matches(tokens, words, form):
+    """
+    Whether `tokens` (a line's words, `no` already taken off) are one use of
+    a statement with `words` and arguments `form`: the words in order with
+    each argument at its `position` among them; after them, a token that is
+    an unused group's keyword takes that group - in ANY order - and any
+    other fills the next positional argument, an optional one that does not
+    fit being skipped. A `text` argument, or one that takes `many` values,
+    takes the rest of the line. Every required argument and group is there.
+    """
+    i = 0
+    lead = [a for a in form if a.get("position", len(words)) < len(words)]
+    trail = [a for a in form if a.get("position", len(words)) >= len(words)]
+    for w_i, w in enumerate(words):
+        for a in [x for x in lead if x["position"] == w_i]:
+            if i >= len(tokens) or not _value_ok(a, tokens[i]):
+                return False
+            i += 1
+        if i >= len(tokens) or tokens[i] != w:
+            return False
+        i += 1
+    positional = [a for a in trail if not a.get("unordered")]
+    groups = {}
+    for a in trail:
+        if a.get("unordered"):
+            groups.setdefault(a["group"], []).append(a)
+    seen, p = set(), 0
+    while i < len(tokens):
+        g = next((g for g, m in groups.items()
+                  if g not in seen and m[0]["name"] == tokens[i]), None)
+        if g is not None:
+            j = i + 1
+            for a in groups[g][1:]:
+                if takes_rest(a):
+                    j = len(tokens)
+                    break
+                if j >= len(tokens) or not _value_ok(a, tokens[j]):
+                    return False
+                j += 1
+            seen.add(g)
+            i = j
+            continue
+        while p < len(positional) and not takes_rest(positional[p]) \
+                and not _value_ok(positional[p], tokens[i]) \
+                and positional[p]["optional"]:
+            p += 1
+        if p >= len(positional):
+            return False
+        a = positional[p]
+        if takes_rest(a):
+            return all(g in seen or m[0]["optional"]
+                       for g, m in groups.items())
+        if not _value_ok(a, tokens[i]):
+            return False
+        p, i = p + 1, i + 1
+    return (all(a["optional"] for a in positional[p:])
+            and all(g in seen or m[0]["optional"] for g, m in groups.items()))
+
+
+def statement_matches(line, st):
+    """Whether config line `line` is a use - or the `no` - of schema
+    statement `st`: some form matches its words."""
+    tokens = line.split()
+    if tokens[:1] == ["no"] and st.get("removable"):
+        tokens = tokens[1:]
+        return any(form_matches(tokens, st["words"], f) or
+                   form_matches(tokens, st["words"],
+                                [a for a in f if a.get("position", 0)
+                                 < len(st["words"])])
+                   for f in st["forms"])
+    return any(form_matches(tokens, st["words"], f) for f in st["forms"])
+
+
+def _path_matches(pattern, headers):
+    """Whether block headers `headers` are a mode's EditRequest.path
+    `pattern` - `["router bgp <asn>"]` against `["router bgp 65000"]`."""
+    if len(pattern) != len(headers):
+        return False
+    for p, h in zip(pattern, headers):
+        pw, hw = p.split(), h.split()
+        # `bond<n>` is a placeholder too: a bundle's path is
+        # `interface bond<n>`, and its header `interface ae0`.
+        lit = [w for w in pw if "<" not in w and "|" not in w]
+        if hw[:len(lit)] != lit[:len(hw)] and not all(
+                w in hw for w in lit):
+            return False
+        if pw and hw and pw[0] != hw[0]:
+            return False
+    return True
+
+
+def unmatched_lines(sch, text):
+    """
+    The lines of configuration text `text` (as `show running-config` prints
+    it, indented by block) that no statement of schema `sch` describes: each
+    line is tried against the modes whose path its block headers are, its
+    `<- not checked` mark and the box-owned lines left aside. Empty is what
+    a client building on GetSchema needs - every line of a running box
+    matches a statement, order-free parts included.
+    """
+    stack, misses = [], []
+    for raw in text.splitlines():
+        line = raw.split("<- not checked")[0].rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("!") or stripped in (
+                "exit", "exit-vrf", "exit-address-family", "end"):
+            if stripped in ("exit", "exit-vrf", "exit-address-family"):
+                depth = len(line) - len(stripped)
+                stack = [(d, h) for d, h in stack if d < depth]
+            continue
+        depth = len(line) - len(stripped)
+        stack = [(d, h) for d, h in stack if d < depth]
+        headers = [h for _d, h in stack]
+        if box_owned(stripped, any(h.startswith("vrf prisma-")
+                                   for h in headers)):
+            stack.append((depth, stripped))
+            continue
+        modes = [m for m in sch if _path_matches(m["path"], headers)]
+        if not any(statement_matches(stripped, st) for m in modes
+                   for st in m["statements"]):
+            misses.append(("/".join(headers), stripped))
+        stack.append((depth, stripped))
+    return misses
 
 
 def _negations(node):
@@ -1358,6 +2269,24 @@ def _negations(node):
     if not isinstance(neg, tuple) or not isinstance(neg[1], dict):
         return set()
     return set(neg[1])
+
+
+#: Statements the VTY takes that its `?` tree does not list, on purpose -
+#: `vrf <name> table <id>` (#540) is left out so the tree's "not checked"
+#: mark does not claim FRR's `vrf <name>` block - but that GetSchema must
+#: still describe, or a running box's line matches nothing (#558 phase 4).
+#: {mode: [(keys, hint, help, removable)]}.
+EXTRA_STATEMENTS = {
+    "config": [(["vrf <name>", "table"], "<1-4294967295>",
+                "a VRF device on the host, on the table its interfaces' "
+                "`vrf <n>` use (#540)", True),
+               # A route-map's header is how its block is entered: the
+               # route-map mode's own path, a statement at this level too.
+               (["route-map <name>"], "permit|deny <1-65535>",
+                "a route-map entry, entered as a block", True),
+               # An operator VRF's FRR block, entered as `vrf <name>`.
+               (["vrf <name>"], "", "a VRF's own FRR block, entered", True)],
+}
 
 
 def schema(P, modes=()):
@@ -1380,17 +2309,27 @@ def schema(P, modes=()):
             continue
         stmts = []
         _walk(node, [], stmts, sources)
+        extra_removable = set()
+        for keys, hint, help_, removable in EXTRA_STATEMENTS.get(mode, ()):
+            _walk({" ".join(keys): (help_, hint)}, [], stmts, sources)
+            if removable:
+                extra_removable.add(id(stmts[-1]))
         neg = _negations(node)
         area, only = TYPED_MODES.get(mode, ("", None))
+        read_area = READ_MODES.get(mode, area)
         for st in stmts:
-            first = st["words"][0]
-            st["removable"] = first in neg or (
+            first = st.pop("first")
+            st["removable"] = id(st) in extra_removable or first in neg or (
                 mode == "cgnat" and st["words"][:1] == ["logging"]
                 and len(st["words"]) > 1 and st["words"][1] in TRANSPORTS)
-            st["no_words"] = ["no"] + st["words"] if first in neg else []
+            st["no_words"] = (["no"] + st["words"]
+                              if id(st) in extra_removable or first in neg
+                              else [])
             st["typed"] = bool(area) and (only is None or first in only)
+            st["read_typed"] = st["typed"] or bool(read_area)
         out.append({"mode": mode, "path": list(path), "enter": enter,
-                    "roles": roles, "typed": area, "statements": stmts})
+                    "roles": roles, "typed": read_area or area,
+                    "statements": stmts})
     return out
 
 
@@ -1433,8 +2372,15 @@ def edit_for(cfg, area, obj, fields=()):
     if area == "bgp":
         return bgp_path(obj.get("asn"), obj.get("vrf")), bgp_neighbor_lines(
             find_bgp(cfg, obj.get("asn"), obj.get("vrf")), obj, fields)
+    if area == "system":
+        return [], system_lines(system_typed(cfg), obj, fields)
+    if area == "vrfs":
+        name = obj.get("name") or ""
+        cur = ({"name": name, "table": cfg.vrf_devices[name]}
+               if name in cfg.vrf_devices else None)
+        return [], vrf_lines(cur, obj)
     raise ValueError(f"unknown area {area!r}: the editable areas are "
-                     f"interfaces, pools, logging, static, bgp")
+                     f"interfaces, pools, logging, static, bgp, system, vrfs")
 
 
 def names_for(cfg, area, known_interfaces=()):

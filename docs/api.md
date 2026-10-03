@@ -295,7 +295,19 @@ other face, not a second configuration:
   optional, whether it may repeat, its `no` words, its `source` when the VTY
   completes it from the box (`interfaces`, `pools`, `neighbours`,
   `next_hops`, `prefix_lists`, `route_maps`...), and whether GetConfig types
-  it. `release` and `digest` version it: equal digests are equal grammars.
+  it. Since 0.149.24: `words` are literal keywords only, and each
+  argument's `position` says how many words come before it (`neighbor
+  <address> remote-as <asn>` is words `neighbor`, `remote-as`, with
+  `<address>` at 1); a `|` between a placeholder and words is one form per
+  kind, never a choice holding a placeholder; a keyword-led part (the
+  keyword and the values sharing its optional/required standing) has a
+  `group` and is `unordered` - FRR prints such parts in an order of its own,
+  so match them in any order after the words, the other arguments in
+  theirs; `many` is one or more values to the end of the line. Every line of
+  a running box's configuration matches a statement, the box-owned ones
+  aside (`lab/api-grpc.sh` holds GetRunning to it with the product's own
+  matcher, typedcfg.unmatched_lines). `release` and `digest` version it:
+  equal digests are equal grammars.
   `with_values` adds what each source holds on the box now (that asks the
   dataplane and FRR, so it is off by default). It replaces parsing
   docs/api-coverage.md, whose format stays a contract until clients have
@@ -382,6 +394,77 @@ interface's OSPF settings at the prompt, holds GetConfig's routing areas to
 GetRunning's text block by block, and takes a static route and a BGP
 neighbour through SetConfig, Commit, GetConfig, the VTY's text and
 DeleteConfig.
+
+### The rest of the configuration as fields
+
+#558's fourth phase reads every other part of the configuration through the
+same `GetConfig`, by area - after it, no configuration statement is reachable
+only as text (docs/api-coverage.md says, statement by statement, how each is
+read and written):
+
+* **`system`:** the hostname, the resolvers in order, SSH (port,
+  listen-address, permit-root-login, password authentication), the API's
+  listener, the SNMP agent (enabled, listen-address, port, the enterprise
+  number the MIB is rooted at, how many communities there are, each trap
+  host as its address and whether it is an inform), the card the dataplane
+  is given, the CGNAT's memory, and `system` > `cpu` / `memory` statement by
+  statement as pairs (they take effect at the next boot).
+* **`users`:** each account's name, role (`""` is read only), how many SSH
+  keys it has and whether a password is set. **`snmp_users`:** each SNMPv3
+  user's name and its auth and privacy protocols.
+* **`policy`:** policy-options (#458) as the commit's own parser reads it -
+  the named prefix-lists, communities, large and extended communities and
+  AS paths, and each policy-statement with its terms in order: the `from`
+  conditions by kind (`prefix-list`, `community`, `route-filter`,
+  `protocol`, `policy`...), the `set` changes and the decision. A line the
+  parser cannot read is in `unread`, with why.
+* **`route_maps`, `frr_lists`, `routing_attachments`:** what is written for
+  FRR at the top of the routing half - the route-maps an operator wrote
+  (each entry's action, sequence, match and set statements, call, on-match;
+  the compiled `PO-` maps are policy-options' and are in `policy`), the
+  prefix-lists with each entry's ge/le, the community, large-community and
+  AS-path lists, and where a route-map or a policy is attached outside a
+  protocol's block (`ip|ipv6 protocol ... route-map`, `fib-policy`).
+* **`rpki`:** the validator caches (transport, host, port, user, source,
+  preference) and the timers. **`vrfs`:** the Linux VRF devices (#540).
+  **`vrrp`:** each virtual router, per interface and VRID, its addresses,
+  priority and tracks. **`bundles`:** each LACP bundle's members, mode, rate
+  and hash. **`cgnat_globals`:** the `nat` > `cgnat` statements other than
+  pools, roles and the log export - the session timeouts, the block
+  hold-down, the identity source, the session table and the CGNAT's memory.
+* **The routing blocks' knobs.** What phase 3 kept verbatim in a block's
+  `other` - `bgp log-neighbor-changes`, a neighbour's `maximum-prefix`,
+  OSPF's `auto-cost reference-bandwidth`, IS-IS's `set-overload-bit` and the
+  like - is read as `settings` since this phase: the statement's keywords as
+  the key, the rest as the value (`""` for a flag). What no key takes is
+  still in `other`.
+* **Secrets are never read.** An account's password is `password_set`, a
+  key is counted, an SNMP community is counted, a trap host's community and
+  an SNMP user's passphrases are left out, an IS-IS password is `<set>`, a
+  RADIUS identity secret is `identity_radius_secret_set`. They are set as
+  lines through Edit; no typed field takes one, and naming one in
+  `SetConfig.fields` is `INVALID_ARGUMENT`.
+* **Edits: the system settings and the VRF devices.** `SetConfig` with a
+  `system` writes only what differs, at the configuration level; its fields
+  are named by block and key - `hostname`, `dns_servers`, `ssh.port`,
+  `ssh.listen_address`, `ssh.permit_root_login`,
+  `ssh.password_authentication`, `api.enabled`, `api.listen_address`,
+  `api.port`, `snmp.enabled`, `snmp.listen_address`, `snmp.port`,
+  `snmp.enterprise_number` - and **name them**: an empty `fields` applies
+  every field, so an unset `dns_servers` would remove the resolvers. An
+  empty listen-address removes the statement; a zero port is left alone.
+  With a `vrf_device` it writes `vrf <name> table <id>`; `DeleteConfig` with
+  `area` "vrfs" and the `name` removes one. The rest is written as lines
+  through Edit, which GetSchema describes: `read_typed` says GetConfig reads
+  a statement as a field, `typed` that SetConfig writes it too.
+
+`lab/api-grpc.sh` holds the running configuration's policy, VRF device,
+accounts and API listener to GetRunning's text, stages a route-map, FRR
+lists, an attachment, an SNMP user and community, an OSPF knob and CGNAT
+globals in a candidate and holds GetConfig of that candidate to its own
+text, takes the system settings and a VRF device through SetConfig,
+GetConfig and DeleteConfig, and searches the typed answer for the secrets
+it staged.
 
 ## Limits a client meets
 

@@ -59,15 +59,25 @@ check(by.get(("pool", "block-size"), (0, 0, 0, ""))[3] == "typed"
       "a pool statement is typed through GetConfig/SetConfig (0.149.20)")
 check(by.get(("pool", "no max-blocks"), (0, 0, 0, ""))[3] == "typed",
       "and so is its `no`")
-check(by.get(("interface (port)", "vrrp"), (0, 0, 0, ""))[3] == "text"
-      or not any(k[0] == "interface (port)" and k[1].startswith("vrrp") and v[3] == "typed"
-                 for k, v in by.items()),
-      "an interface's vrrp stays a line: no typed field carries it")
+vr = [v for k, v in by.items() if k[0] == "interface (port)" and k[1].startswith("vrrp")]
+check(vr and all(v[3] == "typed" and "area vrrp" in v[5] and "written as lines" in v[5]
+                 for v in vr),
+      "an interface's vrrp is read as fields (area vrrp) and written as lines (0.149.24)")
 check(any(k[0] == "cgnat" and k[1].startswith("logging") and v[3] == "typed"
           for k, v in by.items())
-      and all(v[3] == "text" for k, v in by.items()
+      and all(v[3] == "typed" and "cgnat_globals" in v[5] for k, v in by.items()
               if k[0] == "cgnat" and k[1].startswith("timeout")),
-      "cgnat: logging typed, the rest still lines")
+      "cgnat: logging typed; the timeouts read as fields in cgnat_globals (0.149.24)")
+# #558 phase 4: no CONFIGURATION statement is text any more - what stays text
+# is operational (a `show`, a probe), and each config row has a reason.
+config_text = [k for k, v in by.items() if v[3] == "text" and "Edit" in v[4]]
+check(not config_text,
+      f"no configuration statement is text-only after phase 4: {config_text[:5]}")
+check(by.get(("bgp neighbor", "neighbor <address> remote-as"), (0, 0, 0, ""))[3] == "typed",
+      "a neighbour's remote-as is typed: the two-word grammar key is compared word by word")
+check(by.get(("router ospf", "auto-cost reference-bandwidth"), (0, 0, 0, ""))[3] == "typed"
+      and "settings" in by[("router ospf", "auto-cost reference-bandwidth")][5],
+      "an OSPF knob phase 3 left in `other` is read as a setting (0.149.24)")
 
 # A rule naming an rpc that does not exist would send a reader nowhere.
 proto = open(os.path.join(REPO, "api", "prisma", "v1", "prisma.proto")).read()

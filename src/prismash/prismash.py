@@ -1696,9 +1696,31 @@ ARG_PREFIX_LIST = "<prefix-list>"
 ARG_NEIGHBOUR = "<neighbour>"
 ARG_AS_PATH_LIST = "<as-path-list>"
 ARG_COMMUNITY_LIST = "<community-list>"
+# The whole of FRR's line for each list written at the top of the routing
+# half (#558 phase 4): their hints named the list only, so GetSchema - which
+# reads hints - described no line a box prints. They start with the same
+# placeholder as before, which is what completion reads them by.
+PREFIX_LIST_LINE = ("<prefix-list> [seq <1-4294967295>] permit|deny "
+                    "<A.B.C.D/M> [ge <0-32>] [le <0-32>] | "
+                    "<prefix-list> description <text>")
+PREFIX_LIST6_LINE = ("<prefix-list> [seq <1-4294967295>] permit|deny "
+                     "<X:X::X:X/M> [ge <0-128>] [le <0-128>] | "
+                     "<prefix-list> description <text>")
+AS_PATH_LIST_LINE = ("<as-path-list> [seq <1-4294967295>] permit|deny "
+                     "<regex>...")
+COMMUNITY_LIST_LINE = ("[standard|expanded] <community-list> "
+                       "[seq <1-4294967295>] permit|deny <community>...")
 ARG_ROUTE_MAP = "<route-map>"
 ARG_PEER_GROUP = "<peer-group>"
 ARG_AREA = "<area>"
+# An area's settings as FRR takes and prints them, the area first (#558
+# phase 4). The same placeholder leads, which is what completion reads.
+OSPF_AREA_LINE = ("<area> stub [no-summary] | <area> nssa [no-summary] | "
+                  "<area> range <A.B.C.D/M> [not-advertise] | "
+                  "<area> authentication [message-digest] | "
+                  "<area> default-cost <0-16777215>")
+OSPF6_AREA_LINE = ("<area> stub [no-summary] | <area> nssa [no-summary] | "
+                   "<area> range <X:X::X:X/M> [not-advertise]")
 ARG_ISIS_TAG = "<isis-instance>"
 ARG_REV = "<0-19>"
 # The operator's own word, so the tree enumerates nothing under it and TAB
@@ -1962,7 +1984,9 @@ OSPF_BLOCK = {
     }),
     "network": ("run OSPF on the interfaces this prefix covers",
                 "<A.B.C.D/M> area <area>"),
-    "area": ("area settings", ARG_AREA),
+    # What an area is set to, in the hint (#558 phase 4): `<area>` alone
+    # described no line a box prints (`area 1 stub`).
+    "area": ("area settings", OSPF_AREA_LINE),
     "passive-interface": ("run OSPF on it but send no hellos - what every "
                           "subscriber-facing port should be", ARG_INTERFACE),
     "default-information": ("originate a default route", {
@@ -2056,7 +2080,7 @@ OSPF6_BLOCK = {
                       "32-bit id written like an IPv4 address and is not an "
                       "address", "<A.B.C.D>"),
     }),
-    "area": ("area settings", ARG_AREA),
+    "area": ("area settings", OSPF6_AREA_LINE),
     "redistribute": ("inject routes from another source", {
         "connected": ("directly attached networks", "[route-map <name>]"),
         "static": ("configured static routes", "[route-map <name>]"),
@@ -2181,9 +2205,14 @@ INTERFACE_BLOCK = {
     # two lines up.
     "vrrp": ("stand for a service address together with the peer (RFC 5798), "
              "on the dataplane interface where the packets are",
+             # The VRID in every alternative (#558 phase 4): factored out
+             # of the second and third, as it was, the hint said `priority
+             # <n>` stood alone - and GetSchema, which reads it, answered a
+             # form no line of a box matches.
              f"<{VRID_MIN}-{VRID_MAX}> address <A.B.C.D> | "
-             f"priority <{VRRP_PRIORITY_MIN}-{VRRP_PRIORITY_MAX}> | "
-             f"track <interface> decrement "
+             f"<{VRID_MIN}-{VRID_MAX}> priority "
+             f"<{VRRP_PRIORITY_MIN}-{VRRP_PRIORITY_MAX}> | "
+             f"<{VRID_MIN}-{VRID_MAX}> track <interface> decrement "
              f"<{VRRP_DECREMENT_MIN}-{VRRP_DECREMENT_MAX}>"),
     "exit": ("leave the interface", None),
 }
@@ -2415,9 +2444,12 @@ BGP_NEIGHBOUR = {
 
 BGP_AF_NEIGHBOUR = {
     "activate": ("carry THIS address family with the neighbour", None),
+    # The direction in the hint too (#558 phase 4): GetSchema reads it, and
+    # a box's `neighbor X route-map M in` matched no form of `<route-map>`.
     "route-map": ("apply a route-map in one direction",
-                  ARG_ROUTE_MAP),
-    "prefix-list": ("apply a prefix-list in one direction", ARG_PREFIX_LIST),
+                  f"{ARG_ROUTE_MAP} in|out"),
+    "prefix-list": ("apply a prefix-list in one direction",
+                    f"{ARG_PREFIX_LIST} in|out"),
     "next-hop-self": ("advertise this box as the next hop", None),
     "soft-reconfiguration": ("keep what the neighbour sent, so policy can be "
                              "re-applied without bouncing the session", {
@@ -3807,14 +3839,14 @@ TREE = {
                          None)}),
         "ip": ("IP configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
-                            ARG_PREFIX_LIST),
+                            PREFIX_LIST_LINE),
             # How a fib-policy is held and read back (#536).
             "protocol": ("a route-map on what zebra installs from a "
                          "protocol; type it as fib-policy",
                          "<protocol> route-map <route-map>")}),
         "ipv6": ("IPv6 configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
-                            ARG_PREFIX_LIST),
+                            PREFIX_LIST6_LINE),
             "protocol": ("a route-map on what zebra installs from a "
                          "protocol; type it as fib-policy",
                          "<protocol> route-map <route-map>")}),
@@ -3827,12 +3859,12 @@ TREE = {
         "bgp": ("BGP-wide lists a route-map matches on", {
             "as-path": ("AS path matching", {
                 "access-list": ("a named list of AS-path regexes",
-                                ARG_AS_PATH_LIST),
+                                AS_PATH_LIST_LINE),
             }),
             "community-list": ("a named list of communities",
-                               ARG_COMMUNITY_LIST),
+                               COMMUNITY_LIST_LINE),
             "large-community-list": ("a named list of large communities",
-                                     ARG_COMMUNITY_LIST),
+                                     COMMUNITY_LIST_LINE),
         }),
         "rpki": ("origin validation: the caches this box asks", None),
         "router": ("routing, static and dynamic", {
@@ -3880,7 +3912,11 @@ TREE = {
                                   "<1-4294967295>"),
             "community": ("an SNMPv2c community, read-only", ARG_WORD),
             "trap-host": ("where to send notifications: '<address> community "
-                          "<string> [inform]'", "<address>"),
+                          "<string> [inform]'",
+                         # The whole shape, not the address alone (#558
+                         # phase 4): GetSchema reads the hint, and a
+                         # trap-host line matched no form of `<address>`.
+                         "<address> community <string> [inform]"),
         }),
         "snmp-user": ("an SNMPv3 user", ARG_SNMP_USER),
         "api": ("the management API (gRPC, mutual TLS), off by default", {
@@ -3905,7 +3941,9 @@ TREE = {
             ROLE_ADMIN: ("routing, CGNAT, accounts and the box itself", None),
             ROLE_CGNAT: ("CGNAT configuration only", None)}),
         "ssh-key": ("an authorized public key, as it appears in "
-                    "authorized_keys", "<type> <key> [comment]"),
+                    # `[<comment>...]`: a comment is a value of any words,
+                    # not the keyword `comment` the old hint spelled.
+                    "authorized_keys", "<type> <key> [<comment>...]"),
         "password": ("a crypt hash, never a plaintext password "
                      "(openssl passwd -6)", "<hash>"),
         "exit": ("leave the user", None),

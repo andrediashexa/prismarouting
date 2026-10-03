@@ -525,6 +525,298 @@ message TypedConfig {
   repeated OspfConfig ospf6 = 11;
   repeated IsisConfig isis = 12;
   repeated InterfaceRoutingConfig interface_routing = 13;
+  // The rest of the configuration (#558, phase 4). SECRETS ARE NEVER READ:
+  // a password is `password_set`, an SNMP community is counted, an SNMP
+  // user's passphrases are their protocol only, a key is counted.
+  SystemConfig system = 14;
+  repeated UserConfig users = 15;
+  repeated SnmpUserConfig snmp_users = 16;
+  // policy-options (#458), as policy.py parses it for the commit.
+  PolicyConfig policy = 17;
+  // The route-maps an operator wrote in the routing half; the compiled
+  // `PO-` maps are policy-options' and are in `policy`.
+  repeated RouteMapConfig route_maps = 18;
+  // FRR's prefix-lists, community/large-community lists and AS-path
+  // access-lists, written in the routing half.
+  FrrListsConfig frr_lists = 19;
+  RpkiConfig rpki = 20;
+  // `ip|ipv6 protocol <p> route-map <m>` and `fib-policy <p> <policy>`;
+  // any other top-level routing statement verbatim in `other`.
+  RoutingAttachmentsConfig routing_attachments = 21;
+  repeated VrfDeviceConfig vrfs = 22;
+  repeated VrrpConfig vrrp = 23;
+  repeated BundleConfig bundles = 24;
+  // `nat` > `cgnat` statements other than pools, roles and the log export.
+  CgnatGlobalsConfig cgnat_globals = 25;
+}
+
+message CgnatGlobalsConfig {
+  // Seconds, by "udp", "icmp", "tcp-transitory", "tcp-established"; a kind
+  // not listed is at its default.
+  repeated KeyValue timeouts = 1;
+  // Seconds; 0 is the default.
+  uint32 block_holddown = 2;
+  // "file", "dhcp-leases", "radius", "none", or "" when not stated (#21).
+  string identity_source = 3;
+  string identity_path = 4;
+  uint32 identity_radius_port = 5;
+  // The RADIUS secret itself is never read.
+  bool identity_radius_secret_set = 6;
+  // 0: not stated (sized by the box).
+  uint32 session_table_buckets = 7;
+  uint32 session_table_memory_mb = 8;
+  // `memory <GB>`, from the next boot; 0 is sized by the tuner.
+  uint32 memory_gb = 9;
+  repeated string other = 10;
+}
+
+// A setting held as a pair: system > cpu / memory.
+message KeyValue {
+  string key = 1;
+  string value = 2;
+}
+
+message SshConfig {
+  uint32 port = 1;
+  string listen_address = 2;
+  // "yes", "no", "prohibit-password" or "forced-commands-only".
+  string permit_root_login = 3;
+  bool password_authentication = 4;
+}
+
+message ApiConfig {
+  bool enabled = 1;
+  // Empty: the management address (no listener is configured).
+  string listen_address = 2;
+  uint32 port = 3;
+}
+
+message SnmpTrapHost {
+  string address = 1;
+  // An inform (acknowledged), else a trap. The community is never read.
+  bool inform = 2;
+}
+
+message SnmpAgentConfig {
+  bool enabled = 1;
+  string listen_address = 2;
+  uint32 port = 3;
+  // The root PRISMA-ROUTING-MIB is served under (67033 when not named).
+  uint32 enterprise_number = 4;
+  // How many SNMPv2c communities are configured; their strings are secrets.
+  uint32 communities = 5;
+  repeated SnmpTrapHost trap_hosts = 6;
+}
+
+message SystemConfig {
+  // "" when no statement names it (the installer's default).
+  string hostname = 1;
+  repeated string dns_servers = 2;
+  SshConfig ssh = 3;
+  ApiConfig api = 4;
+  SnmpAgentConfig snmp = 5;
+  // The card the dataplane is given (system > dataplane > interface).
+  string dataplane_interface = 6;
+  // 0: sized from the subscriber target by the tuner.
+  uint32 cgnat_memory_gb = 7;
+  // system > cpu and system > memory, statement by statement; they take
+  // effect at the next boot.
+  repeated KeyValue cpu = 8;
+  repeated KeyValue memory = 9;
+}
+
+message UserConfig {
+  string name = 1;
+  // "administrator", "cgnat-operator", or "" for read only.
+  string role = 2;
+  // How many SSH public keys the account has.
+  uint32 ssh_keys = 3;
+  bool password_set = 4;
+}
+
+message SnmpUserConfig {
+  string name = 1;
+  // "sha", "md5"...; "" for none. The passphrases are never read.
+  string auth_protocol = 2;
+  // "aes", "des"...; "" for none.
+  string priv_protocol = 3;
+}
+
+message NamedList {
+  string name = 1;
+  repeated string members = 2;
+}
+
+message AsPathRegex {
+  string name = 1;
+  string regex = 2;
+}
+
+// One condition of a term: every value of a kind ORed, kinds ANDed.
+message PolicyMatchConfig {
+  // The VTY's word after `from`: "prefix-list", "community", "as-path",
+  // "protocol", "route-filter", "neighbor", "family", "policy"...
+  string kind = 1;
+  repeated string values = 2;
+}
+
+message PolicySetConfig {
+  // The VTY's word after `set`: "local-preference", "community", "metric"...
+  string what = 1;
+  repeated string args = 2;
+}
+
+message PolicyTermConfig {
+  string name = 1;
+  repeated PolicyMatchConfig from = 2;
+  repeated PolicySetConfig sets = 3;
+  // "accept", "reject", "next term", "next policy", or "" for none.
+  string then = 4;
+}
+
+message PolicyStatementConfig {
+  string name = 1;
+  // What a route no term decided gets: "accept", "reject", or "".
+  string default_action = 2;
+  repeated PolicyTermConfig terms = 3;
+}
+
+message PolicyUnreadLine {
+  string line = 1;
+  string why = 2;
+}
+
+message PolicyConfig {
+  repeated NamedList prefix_lists = 1;
+  repeated NamedList communities = 2;
+  repeated NamedList large_communities = 3;
+  // Members as "rt:<asn>:<value>" / "soo:<asn>:<value>".
+  repeated NamedList extended_communities = 4;
+  repeated AsPathRegex as_paths = 5;
+  repeated PolicyStatementConfig statements = 6;
+  // A policy-options line the parser could not read, verbatim, with why.
+  repeated PolicyUnreadLine unread = 7;
+}
+
+message RouteMapEntry {
+  // "permit" or "deny".
+  string action = 1;
+  uint32 sequence = 2;
+  // FRR's words after `match` / `set`, one statement each.
+  repeated string matches = 3;
+  repeated string sets = 4;
+  string call = 5;
+  // "next", "goto <n>", or "".
+  string on_match = 6;
+  string description = 7;
+  repeated string other = 8;
+}
+
+message RouteMapConfig {
+  string name = 1;
+  repeated RouteMapEntry entries = 2;
+}
+
+message PrefixListEntry {
+  // 0: not stated (FRR numbers it).
+  uint32 sequence = 1;
+  string action = 2;
+  string prefix = 3;
+  // 0: not stated.
+  uint32 ge = 4;
+  uint32 le = 5;
+}
+
+message FrrPrefixList {
+  // "ipv4" or "ipv6".
+  string family = 1;
+  string name = 2;
+  repeated PrefixListEntry entries = 3;
+}
+
+message BgpListEntry {
+  uint32 sequence = 1;
+  string action = 2;
+  // The community, large community or regular expression, as written.
+  string value = 3;
+}
+
+message BgpList {
+  // "community", "large-community", "extcommunity" or "as-path".
+  string kind = 1;
+  // "standard", "expanded", or "" (an AS-path list has none).
+  string style = 2;
+  string name = 3;
+  repeated BgpListEntry entries = 4;
+}
+
+message FrrListsConfig {
+  repeated FrrPrefixList prefix_lists = 1;
+  repeated BgpList bgp_lists = 2;
+}
+
+message RpkiCache {
+  // "tcp" or "ssh".
+  string transport = 1;
+  string host = 2;
+  uint32 port = 3;
+  // ssh only; the key files are never read.
+  string user = 4;
+  string source = 5;
+  uint32 preference = 6;
+}
+
+message RpkiConfig {
+  repeated RpkiCache caches = 1;
+  // 0: not stated (FRR's default).
+  uint32 polling_period = 2;
+  uint32 expire_interval = 3;
+  uint32 retry_interval = 4;
+  repeated string other = 5;
+}
+
+message RoutingAttachment {
+  // "protocol-route-map" or "fib-policy".
+  string kind = 1;
+  // "ipv4" / "ipv6" for a protocol route-map; "" for a fib-policy.
+  string family = 2;
+  string protocol = 3;
+  // The route-map or the policy-statement.
+  string name = 4;
+}
+
+message RoutingAttachmentsConfig {
+  repeated RoutingAttachment attachments = 1;
+  repeated string other = 2;
+}
+
+message VrfDeviceConfig {
+  string name = 1;
+  uint32 table = 2;
+}
+
+message VrrpTrack {
+  string interface = 1;
+  uint32 decrement = 2;
+}
+
+message VrrpConfig {
+  string interface = 1;
+  uint32 vrid = 2;
+  repeated string addresses = 3;
+  uint32 priority = 4;
+  repeated VrrpTrack track = 5;
+}
+
+message BundleConfig {
+  string name = 1;
+  repeated string members = 2;
+  // "active" or "passive".
+  string lacp = 3;
+  // "fast" or "slow".
+  string rate = 4;
+  // "l2", "l23" or "l34".
+  string hash = 5;
 }
 
 // A static route. Top level is `router static` on the VTY's screens, with
@@ -577,6 +869,10 @@ message BgpConfig {
   // not print one back. False only when `no bgp default ipv4-unicast` is
   // stated. A family's `activate` is what is stated; read it with this.
   bool default_ipv4_unicast = 7;
+  // The block's knobs phase 3 kept in `other`, as key (the statement's
+  // keywords) and value ("" for a flag; a password is "<set>"), #558
+  // phase 4. What no key takes is still in `other`.
+  repeated KeyValue settings = 8;
 }
 
 // A neighbour (or peer-group) at the router level.
@@ -601,6 +897,10 @@ message BgpNeighborConfig {
   bool shutdown = 11;
   bool bfd = 12;
   repeated string other = 13;
+  // The block's knobs phase 3 kept in `other`, as key (the statement's
+  // keywords) and value ("" for a flag; a password is "<set>"), #558
+  // phase 4. What no key takes is still in `other`.
+  repeated KeyValue settings = 14;
 }
 
 // An `address-family` of a `router bgp` block.
@@ -614,6 +914,10 @@ message BgpFamilyConfig {
   repeated RedistributeConfig redistribute = 5;
   repeated BgpNeighborFamilyConfig neighbors = 6;
   repeated string other = 7;
+  // The block's knobs phase 3 kept in `other`, as key (the statement's
+  // keywords) and value ("" for a flag; a password is "<set>"), #558
+  // phase 4. What no key takes is still in `other`.
+  repeated KeyValue settings = 8;
 }
 
 message BgpAggregateConfig {
@@ -637,6 +941,10 @@ message BgpNeighborFamilyConfig {
   bool soft_reconfiguration_inbound = 9;
   bool default_originate = 10;
   repeated string other = 11;
+  // The block's knobs phase 3 kept in `other`, as key (the statement's
+  // keywords) and value ("" for a flag; a password is "<set>"), #558
+  // phase 4. What no key takes is still in `other`.
+  repeated KeyValue settings = 12;
 }
 
 // A `router ospf` (version 2) or `router ospf6` (version 3) block.
@@ -655,6 +963,10 @@ message OspfConfig {
   // The `default-information` statement verbatim; "" when absent.
   string default_information = 10;
   repeated string other = 11;
+  // The block's knobs phase 3 kept in `other`, as key (the statement's
+  // keywords) and value ("" for a flag; a password is "<set>"), #558
+  // phase 4. What no key takes is still in `other`.
+  repeated KeyValue settings = 12;
 }
 
 message OspfNetworkConfig {
@@ -681,6 +993,10 @@ message IsisConfig {
   string metric_style = 5;
   repeated RedistributeConfig redistribute = 6;
   repeated string other = 7;
+  // The block's knobs phase 3 kept in `other`, as key (the statement's
+  // keywords) and value ("" for a flag; a password is "<set>"), #558
+  // phase 4. What no key takes is still in `other`.
+  repeated KeyValue settings = 8;
 }
 
 // What an interface's FRR block says to the IGPs.
@@ -738,6 +1054,10 @@ message SetConfigRequest {
     // neighbour of a `router bgp` block.
     StaticRouteConfig static_route = 6;
     BgpNeighborEdit bgp_neighbor = 7;
+    // #558 phase 4: the system settings (fields named like "ssh.port"),
+    // and a Linux VRF device (#540).
+    SystemConfig system = 8;
+    VrfDeviceConfig vrf_device = 9;
   }
   // The fields to change, by their names in the message above ("mtu",
   // "ipv4", "collectors"; "ports" for port_first/port_last, "vlan" for the
@@ -757,9 +1077,9 @@ message SetConfigResponse {
 
 message DeleteConfigRequest {
   string candidate_id = 1;
-  // "interfaces", "pools", "logging", "static" or "bgp".
+  // "interfaces", "pools", "logging", "static", "bgp" or "vrfs".
   string area = 2;
-  // The interface or pool.
+  // The interface, pool or VRF device.
   string name = 3;
   // logging: "udp", "tcp" or "syslog".
   string transport = 4;
@@ -799,8 +1119,29 @@ message SchemaArgument {
   // "users", ...); empty when it does not. ConfigSchema.values holds them
   // when asked.
   string source = 7;
+  // How many of the statement's `words` come before it (#558 phase 4):
+  // `neighbor <address> remote-as <asn>` is words ["neighbor", "remote-as"]
+  // with <address> at 1 and <asn> at 2. `words` holds literal keywords only;
+  // a placeholder is always an argument (in 0.149.22 one could be a word).
+  uint32 position = 8;
+  // A keyword-led part - the keyword and the values after it that share
+  // its optional/required standing - that may come anywhere after the
+  // statement's words, in any order among the other unordered parts: FRR
+  // prints them in an order of its own (`logging syslog <c> port 1601
+  // enterprise 67033 ...`). The other arguments are positional and keep
+  // their order (`[seq <n>] permit|deny <prefix>`: `seq <n>` a part, the
+  // choice and the prefix positional).
+  bool unordered = 9;
+  // Which keyword-led part it belongs to (1, 2, ...); 0 is positional.
+  uint32 group = 10;
+  // It takes one or more values, to the end of the line (the grammar's
+  // `<community>...`); `text` takes the rest of the line as one value.
+  bool many = 11;
 }
 
+// One way to write a statement. A `|` between a placeholder and words in
+// the grammar (`<1-4294967295>|internal|external`) is two forms: one with
+// the integer, one with the choice - never a choice holding a placeholder.
 message SchemaForm {
   repeated SchemaArgument arguments = 1;
 }
@@ -819,6 +1160,9 @@ message SchemaStatement {
   bool repeatable = 6;
   // GetConfig/SetConfig read and write it as a field (#558, phase 2).
   bool typed = 7;
+  // GetConfig reads it as a field, whether or not SetConfig writes it
+  // (#558 phases 3-4: the routing half, system, accounts, policy).
+  bool read_typed = 8;
 }
 
 message SchemaMode {
@@ -832,8 +1176,8 @@ message SchemaMode {
   // The roles that may change it.
   string roles = 4;
   repeated SchemaStatement statements = 5;
-  // The GetConfig area that types it ("interfaces", "pools", "logging"), or
-  // empty.
+  // The GetConfig area that reads it ("interfaces", "pools", "logging",
+  // "bgp", "system", "policy"...), or empty.
   string typed_area = 6;
 }
 

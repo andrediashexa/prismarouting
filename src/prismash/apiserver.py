@@ -2025,9 +2025,42 @@ def status_message(output, extra=""):
 #: The typed areas by the SetConfigRequest field that carries each (#558).
 AREA_OF_FIELD = {"interface": "interfaces", "pool": "pools",
                  "logging": "logging", "static_route": "static",
-                 "bgp_neighbor": "bgp"}
+                 "bgp_neighbor": "bgp", "system": "system",
+                 "vrf_device": "vrfs"}
 
 #: TypedConfig's repeated routing fields (#558 phase 3), by typedcfg's area.
+#: The areas of #558 phase 4, as {area: (TypedConfig field, message,
+#: repeated)}: the singular ones are one message, the others a list.
+OTHER_FIELDS = {"system": ("system", "SystemConfig", False),
+                "users": ("users", "UserConfig", True),
+                "snmp_users": ("snmp_users", "SnmpUserConfig", True),
+                "policy": ("policy", "PolicyConfig", False),
+                "route_maps": ("route_maps", "RouteMapConfig", True),
+                "frr_lists": ("frr_lists", "FrrListsConfig", False),
+                "rpki": ("rpki", "RpkiConfig", False),
+                "routing_attachments": ("routing_attachments",
+                                        "RoutingAttachmentsConfig", False),
+                "vrfs": ("vrfs", "VrfDeviceConfig", True),
+                "vrrp": ("vrrp", "VrrpConfig", True),
+                "bundles": ("bundles", "BundleConfig", True),
+                "cgnat_globals": ("cgnat_globals", "CgnatGlobalsConfig",
+                                  False)}
+
+
+def other_areas_pb(pb, out, d):
+    """The phase-4 areas of typed_config's answer `d`, into TypedConfig
+    `out`: one message or a list each, through msg_from_dict."""
+    for area, (field, msg, repeated) in OTHER_FIELDS.items():
+        if area not in d:
+            continue
+        cls = getattr(pb, msg)
+        if repeated:
+            getattr(out, field).extend(msg_from_dict(cls, x)
+                                       for x in d[area])
+        else:
+            getattr(out, field).CopyFrom(msg_from_dict(cls, d[area]))
+
+
 ROUTING_FIELDS = {"static": ("static_routes", "StaticRouteConfig"),
                   "bgp": ("bgp", "BgpConfig"), "ospf": ("ospf", "OspfConfig"),
                   "ospf6": ("ospf6", "OspfConfig"),
@@ -2176,7 +2209,8 @@ def schema_pb(pb, sch):
                                    removable=st["removable"],
                                    no_words=st["no_words"],
                                    repeatable=st["repeatable"],
-                                   typed=st["typed"])
+                                   typed=st["typed"],
+                                   read_typed=st.get("read_typed", st["typed"]))
             for form in st["forms"]:
                 sf = ss.forms.add()
                 for arg in form:
@@ -2488,6 +2522,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             for area, (field, msg) in ROUTING_FIELDS.items():
                 getattr(out, field).extend(
                     msg_from_dict(getattr(pb, msg), x) for x in d.get(area, []))
+            other_areas_pb(pb, out, d)
             return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
@@ -2523,11 +2558,12 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             if which is None:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
                      "error: name the object to set: interface, pool, logging, "
-                     "static_route or bgp_neighbor",
+                     "static_route, bgp_neighbor, system or vrf_device",
                      stage="usage")
             obj = {"interface": interface_dict, "pool": pool_dict,
                    "logging": logging_dict, "static_route": dict_from_msg,
-                   "bgp_neighbor": bgp_edit_dict}[which](getattr(req, which))
+                   "bgp_neighbor": bgp_edit_dict, "system": dict_from_msg,
+                   "vrf_device": dict_from_msg}[which](getattr(req, which))
             try:
                 r = c["worker"].ask("typed_lines", {
                     "area": AREA_OF_FIELD[which], "object": obj,
