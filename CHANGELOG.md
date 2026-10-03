@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.23 - no neighbor removes a BGP neighbour cleanly
+
+### Fixed
+
 * **`no neighbor X` at the prompt removes a BGP neighbour cleanly.**
   ([#562](https://github.com/andrediashexa/hexarouting/issues/562))
   It was staged as a statement of its own: FRR deleted the neighbour and the
