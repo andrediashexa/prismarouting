@@ -254,6 +254,13 @@ printf '%s\n' "$APIOK" | tail -2 | sed 's/^/  /'
 APIENV=$(cat /etc/prisma-routing/api.env 2>&1)
 APIRUN=$($HX -c "show running-config" 2>&1 | grep '^api ')
 printf '%s\n' "$APIRUN" | sed 's/^/  /'
+echo "=========== #558, phase 2: the configuration as fields ==========="
+# Before phase 1, which leaves a commit-confirmed window open for the second
+# server to read: every commit here would confirm it. Each typed edit goes the
+# whole road - SetConfig, Commit, GetConfig of the running configuration - and
+# the typed read is held to GetRunning's text, which is the VTY's.
+T2=$(python3 lab/api_phase2_check.py /tmp/apistubs $C 127.0.0.1:50551 2>&1)
+printf '%s\n' "$T2" | sed 's/^/  /'
 echo "=========== #558, phase 1: why refused, the confirm window, the candidates ==========="
 # Mappings in pool nb for the re-map gate to be about: a few packets from a
 # subscriber, just before.
@@ -379,6 +386,20 @@ expect "the event stream told each turn: lost, stalled, connected, delivering" s
   'for k in log-disconnected log-stalled log-connected log-delivering; do printf "%s" "$1" | grep -q "EVENT $k syslog" || exit 1; done' \
   _ "$EVENTS"
 expect_in "  and the fields of a stall are still the screen's" "RESULT logging-fields ok" "$LOG2"
+t2() { printf '%s\n' "$T2" | grep -q "^RESULT $1 ok"; }
+expect "#558 phase 2: GetConfig reads the running interfaces and pools, as GetRunning's text says" t2 config-read-running
+expect "  SetConfig on an interface: the lines staged, committed, read back typed and in the VTY's text" t2 set-interface-roundtrip
+expect "  and set back to nothing: no description, no mtu" t2 set-interface-removes
+expect "  SetConfig on a pool: timeouts, alarm and caps, round trip" t2 set-pool-roundtrip
+expect "  and removed again" t2 set-pool-removes
+expect "  SetConfig on the log export: a UDP collector and enable, round trip" t2 set-logging-roundtrip
+expect "  and disabled again" t2 set-logging-disables
+expect "  a candidate read typed, and DeleteConfig removes a pool from it" t2 candidate-read-and-delete
+expect "  a typed edit the VTY refuses: INVALID_ARGUMENT with its reason, nothing staged" t2 typed-edit-refused
+expect "  an unknown field: INVALID_ARGUMENT, USAGE" t2 typed-edit-usage
+expect "  GetSchema: each area's grammar, ranges and forms, what <name> may be" t2 schema
+expect "  ValidateLines: each line accepted or refused with its reason, nothing committed" t2 validate-lines
+expect "  an account without the role reads the configuration typed" t2 readonly-reads-typed
 p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }
 expect "#558: a line the prompt does not take refuses with reason GRAMMAR" p1 reason-grammar
 expect "  a pool without its prefixes: VALIDATION, from the commit and the check" p1 reason-validation

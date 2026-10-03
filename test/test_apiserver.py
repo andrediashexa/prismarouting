@@ -1041,5 +1041,167 @@ check(A.status_message("warning: pool 'lg': nothing here announces X\n"
       and A.status_message("plain\n") == "plain",
       "a refusal's status message is its first error, not a warning before it")
 
+# ----------------------------------------------- #558 phase 2: typed config
+
+from config import Config as _Cfg  # noqa: E402
+
+_TXT = """nat
+ cgnat
+  pool A
+   prefix-inside 100.64.0.0/10
+   prefix-outside 200.0.0.0/24
+   block-size 256
+   policy interleaved
+   mode dynamic
+   exit
+  logging syslog 10.0.0.2 port 601 enterprise 67033 facility 16 severity 6
+  exit
+ exit
+interface ens18
+ description up link
+ ipv4 address 10.0.0.1/24
+ mtu 1500
+ exit
+"""
+
+
+class _TSh:
+    """A Shell as the typed operations read it: a candidate and the running."""
+
+    def __init__(self, cand=True):
+        self.candidate = _Cfg.parse(_TXT) if cand else None
+        self._run = _Cfg.parse(_TXT)
+        self.dp = None
+
+    def running_config(self):
+        return self._run
+
+
+_tsh = _TSh()
+_tsh.candidate.mtus["ens18"] = 9000
+_tr = A.typed_config(_tsh, {"source": "running", "areas": ["interfaces"]})
+_tc = A.typed_config(_tsh, {"source": "candidate"})
+check(_tr["interfaces"][0]["mtu"] == 1500 and _tc["interfaces"][0]["mtu"] == 9000
+      and sorted(_tc) == ["interfaces", "logging", "pools"] and list(_tr) == ["interfaces"],
+      "typed_config: the running or the candidate Config itself, the areas asked for")
+try:
+    A.typed_config(_TSh(cand=False), {"source": "candidate"})
+    check(False, "typed_config with no candidate refuses")
+except ValueError:
+    check(True, "typed_config with no candidate in the session refuses")
+_tl = A.typed_lines(_tsh, {"area": "pools", "object": {"name": "A", "max_blocks": 4},
+                           "fields": ["max_blocks"]})
+check(_tl == {"path": ["nat", "cgnat", "pool A"], "lines": ["max-blocks 4"]},
+      f"typed_lines: the lines and where they go, against the candidate: {_tl}")
+_orig_if = A.interfaces_of
+A.interfaces_of = lambda sh, names=(): [{"name": "ens19"}]
+try:
+    _ts = A.typed_schema(_tsh, {"areas": ["interfaces", "pools"]})
+finally:
+    A.interfaces_of = _orig_if
+check([a["area"] for a in _ts] == ["interfaces", "pools"]
+      and "ens19" in _ts[0]["names"] and "ens18" in _ts[0]["names"]
+      and _ts[1]["names"] == ["A"],
+      "typed_schema: the grammar, with what <name> may be today")
+check(A.handle(_tsh, "typed", {"source": "running", "areas": ["pools"]})["pools"][0]["name"] == "A"
+      and A.handle(_tsh, "typed_lines", {"area": "logging", "object": {
+          "enabled": True}, "fields": ["enabled"]})["lines"] == ["logging enable"],
+      "handle answers the typed operations")
+
+
+class _FPB:
+    """Message stand-ins: a constructor that keeps its fields."""
+
+    class _M:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    InterfaceConfig = PortForwardConfig = PoolConfig = LogCollectorConfig = \
+        LoggingConfig = _M
+
+
+_ip = A.interface_pb(_FPB, _tc["interfaces"][0])
+check(_ip.name == "ens18" and _ip.mtu == 9000 and _ip.ipv4 == ["10.0.0.1/24"],
+      "interface_pb: every field of the dict")
+_pp = A.pool_pb(_FPB, _tc["pools"][0])
+check(_pp.name == "A" and not hasattr(_pp, "vrf") and _pp.forwards == [],
+      "pool_pb: an unset VRF stays unset - every VRF, not VRF 0")
+_lp = A.logging_pb(_FPB, _tc["logging"])
+_sy = [c for c in _lp.collectors if c.transport == "syslog"][0]
+_ud = [c for c in _lp.collectors if c.transport == "udp"][0]
+check(_sy.facility == 16 and not hasattr(_ud, "facility"),
+      "logging_pb: facility/severity only where stated")
+
+
+class _Msg:
+    def __init__(self, has=(), **kw):
+        self.__dict__.update(kw)
+        self._has = set(has)
+
+    def HasField(self, f):
+        return f in self._has
+
+
+_pm = _Msg(has={"vrf"}, timeouts={"udp": 5}, algs={}, forwards=[], vrf=3, outside_vrf=0,
+           **{k: 0 for k in A.POOL_SCALARS}, **{k: [] for k in A.POOL_LISTS})
+_pd = A.pool_dict(_pm)
+check(_pd["vrf"] == 3 and _pd["outside_vrf"] is None and _pd["timeouts"] == {"udp": 5},
+      "pool_dict: a set VRF, an unset one None")
+check(A._has(_pm, "vrf") and not A._has(_pm, "outside_vrf"), "_has")
+_im = _Msg(**{k: "" for k in A.INTERFACE_KEYS})
+_im.ipv4, _im.ipv6, _im.name = ["10.0.0.9/24"], [], "x"
+check(A.interface_dict(_im)["ipv4"] == ["10.0.0.9/24"] and A.interface_dict(_im)["name"] == "x",
+      "interface_dict")
+_cm = _Msg(has={"severity"}, transport="syslog", configured=True, collector="c", port=0,
+           source="", enterprise=67033, facility=0, severity=6)
+_ld = A.logging_dict(_Msg(enabled=True, collectors=[_cm]))
+check(_ld["collectors"][0]["facility"] is None and _ld["collectors"][0]["severity"] == 6,
+      "logging_dict: an unset facility is None, a set severity its value")
+
+
+class _SPB:
+    class ConfigSchema:
+        def __init__(self):
+            self.areas = _Rep(_SPB._Area)
+
+    class _Area:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+            self.statements = _Rep(_SPB._Stmt)
+
+    class _Stmt:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+            self.forms = _Rep(_SPB._Form)
+
+    class _Form:
+        def __init__(self, **kw):
+            self.arguments = _Rep(dict)
+
+
+class _Rep(list):
+    def __init__(self, make):
+        super().__init__()
+        self.make = make
+
+    def add(self, **kw):
+        x = self.make(**kw)
+        self.append(x)
+        return x
+
+
+_sp = A.schema_pb(_SPB, _ts)
+check(len(_sp.areas) == 2 and _sp.areas[1].names == ["A"]
+      and any(st.words == ["block-size"] for st in _sp.areas[1].statements),
+      "schema_pb: each area, statement, form and argument")
+_vv = A.validate_verdicts(["mtu 9000", "mtu 1"], [
+    {"output": "", "failed": False, "at": -1},
+    {"output": "error: mtu: 1 is outside 576-9216\n", "failed": True, "at": 0}])
+check(_vv[0]["ok"] and not _vv[1]["ok"] and _vv[1]["reason"] == "grammar"
+      and "576-9216" in _vv[1]["message"],
+      f"validate_verdicts: a line accepted, a line refused with its reason: {_vv}")
+check(A.refusal_reason("error: x\n", stage="usage")["reason"] == "usage",
+      "refusal_reason: a typed request's own words are a usage refusal")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

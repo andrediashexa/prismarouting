@@ -178,13 +178,30 @@ CONFIG_RULES = [
 #: What a typed rpc reads back of a configuration level, though the level
 #: is edited as lines: the note a UI needs to know it can read it typed.
 TYPED_READS = {
-    "interface (port)": "typed read: ListInterfaces (description, mtu, admin, "
-                        "addresses); typed edit is phase 2",
-    "interface (bundle)": "typed read: ListInterfaces, ListBundles; typed "
-                          "edit is phase 2",
-    "pool": "typed read: ListPools; typed config read/edit is phase 2",
-    "cgnat": "logging: typed read GetLogging; typed config is phase 2",
+    "interface (bundle)": "the shared statements are typed through "
+                          "GetConfig/SetConfig; member and lacp are lines",
+    "cgnat": "logging is typed through GetConfig/SetConfig; GetLogging is "
+             "its runtime state",
 }
+
+#: Statements read and written as fields by ConfigService.GetConfig /
+#: SetConfig / DeleteConfig (#558, phase 2), by level and first words; the
+#: line form through Edit stays for each of them too.
+TYPED_CONFIG = {
+    "interface (port)": ("description", "vlan", "vrf", "linux-name",
+                         "mac-address", "cgnat", "ipv4", "ipv6 address",
+                         "ipv6 nd", "shutdown", "mtu", "urpf"),
+    "interface (bundle)": ("description", "vrf", "linux-name", "mac-address",
+                           "cgnat", "ipv4", "ipv6 address", "ipv6 nd",
+                           "shutdown", "mtu", "urpf"),
+    "pool": ("prefix-inside", "prefix-outside", "block-size", "ports",
+             "policy", "timeout", "max-blocks", "initial-allocation",
+             "block-stride", "reserve", "bypass", "utilisation-alarm",
+             "max-sessions", "max-session-rate", "tcp-mss", "forward",
+             "filter", "alg", "vrf", "outside-vrf", "mode"),
+    "cgnat": ("logging",),
+}
+TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"
 
 
 def classify_operational(words):
@@ -201,6 +218,12 @@ def classify_config(level, words):
                 return cls, api, note
     if words[0] in SESSION_WORDS:
         return "n/a", "-", "the session's"
+    stmt = words[1:] if words[0] == "no" else words
+    for first in TYPED_CONFIG.get(level, ()):
+        if stmt[:len(first.split())] == first.split():
+            return ("typed", TYPED_CONFIG_API,
+                    "and as lines through Edit; GetSchema/ValidateLines check "
+                    "a line (0.149.20)")
     return ("text", "ConfigService.Edit (lines) / GetRunning",
             TYPED_READS.get(level, ""))
 
@@ -247,8 +270,6 @@ def rows():
 NOT_IN_THE_VTY = [
     ("clear interface counters (one or all)", "phase 3: in the VTY and the API at once"),
     ("clear a CGNAT subscriber's sessions / its block", "phase 3: in the VTY and the API at once"),
-    ("a schema of the configuration grammar, to validate and complete lines",
-     "phase 2"),
 ]
 
 PHASES = """\
@@ -266,7 +287,8 @@ grouping rule (#533).
    items, confirm pending, grammar, validation, apply failed, usage);
    `ConfigService.GetPendingConfirm`; `ConfigService.ListCandidates`, and
    `expires_at` / `last_activity` / `idle_seconds` on the candidate replies.
-2. **Typed configuration for what the UI edits** (items 4-5).
+2. **Typed configuration for what the UI edits** (items 4-5) - *delivered
+   in 0.149.20*.
    `ConfigService.GetConfig(area, source=running|candidate)` returning
    `InterfaceConfig {name, description, mtu, shutdown, ipv4[], ipv6[],
    cgnat_role, vrf, linux_name}`, `PoolConfig {name, prefix_inside[],

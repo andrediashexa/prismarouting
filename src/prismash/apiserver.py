@@ -52,6 +52,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import logstate  # noqa: E402 - the CGNAT log export's state (#555)
+import typedcfg  # noqa: E402 - typed configuration (#558, phase 2)
 
 #: Where the server listens inside the management container: the backplane
 #: address the host forwards the management address to (#448's bp0).
@@ -216,6 +217,11 @@ def refusal_reason(output, stage="commit", moved_to="", expired=None):
     text = output or ""
     if denied(text):
         out["reason"] = "permission"
+        return out
+    # A typed request whose own fields cannot become a line (#558, phase 2):
+    # the request's words, not the VTY's grammar, were wrong.
+    if stage == "usage":
+        out["reason"] = "usage"
         return out
     m = LIMIT_RE.search(text)
     if m:
@@ -1048,6 +1054,43 @@ def routes_page(sh, args):
             "at": snap.at}
 
 
+def typed_config(sh, args):
+    """
+    The typed configuration of the areas asked for (#558, phase 2): of the
+    candidate this worker holds when `source` is "candidate", else of the
+    running configuration - the same Config objects `show running-config`
+    and `show this` print, never text parsed again.
+    """
+    cfg = sh.candidate if args.get("source") == "candidate" else \
+        sh.running_config()
+    if cfg is None:
+        raise ValueError("no candidate is open in this session")
+    return typedcfg.config_typed(cfg, args.get("areas") or ())
+
+
+def typed_lines(sh, args):
+    """(path, lines) that set one object of this worker's candidate."""
+    if sh.candidate is None:
+        raise ValueError("no candidate is open in this session")
+    path, lines = typedcfg.edit_for(sh.candidate, args["area"], args["object"],
+                                    args.get("fields") or ())
+    return {"path": path, "lines": lines}
+
+
+def typed_schema(sh, args):
+    """The grammar of the areas asked for, with what `<name>` may be today."""
+    import prismash as P
+    cfg = sh.running_config()
+    try:
+        known = [r["name"] for r in interfaces_of(sh)]
+    except Exception:  # noqa: BLE001 - the grammar still answers without them
+        known = []
+    out = typedcfg.schema(P, args.get("areas") or ())
+    for a in out:
+        a["names"] = typedcfg.names_for(cfg, a["area"], known)
+    return out
+
+
 def handle(sh, op, args):
     """One request to a worker's Shell `sh`; what goes back over the pipe."""
     if op == "feed":
@@ -1068,6 +1111,12 @@ def handle(sh, op, args):
                                sh.running_config().text())
     if op == "screen":
         return screen(sh, args)
+    if op == "typed":
+        return typed_config(sh, args or {})
+    if op == "typed_lines":
+        return typed_lines(sh, args or {})
+    if op == "schema":
+        return typed_schema(sh, args or {})
     if op in READERS:
         return READERS[op](sh, args)
     raise ValueError(f"unknown worker operation {op!r}")
@@ -1945,6 +1994,124 @@ def status_message(output, extra=""):
     return (errors or diags or [{"message": output.strip()}])[0]["message"]
 
 
+#: The typed areas by the SetConfigRequest field that carries each (#558).
+AREA_OF_FIELD = {"interface": "interfaces", "pool": "pools",
+                 "logging": "logging"}
+
+INTERFACE_KEYS = ("name", "kind", "description", "mtu", "shutdown", "ipv4",
+                  "ipv6", "cgnat_role", "vrf", "linux_name", "vlan_outer",
+                  "vlan_inner", "mac_address", "urpf", "router_advertisements")
+POOL_SCALARS = ("name", "block_size", "port_first", "port_last", "policy",
+                "mode", "max_blocks", "initial_allocation", "block_stride",
+                "reserve", "utilisation_alarm", "max_sessions",
+                "max_session_rate", "tcp_mss", "filter")
+POOL_LISTS = ("prefix_inside", "prefix_outside", "bypass_source",
+              "bypass_destination")
+COLLECTOR_KEYS = ("transport", "configured", "collector", "port", "source",
+                  "enterprise")
+
+
+def interface_pb(pb, d):
+    """A typedcfg interface dict as an InterfaceConfig."""
+    return pb.InterfaceConfig(**{k: d[k] for k in INTERFACE_KEYS})
+
+
+def pool_pb(pb, d):
+    """A typedcfg pool dict as a PoolConfig; an unset VRF stays unset."""
+    kw = {k: d[k] for k in POOL_SCALARS + POOL_LISTS}
+    kw["timeouts"] = dict(d["timeouts"])
+    kw["algs"] = dict(d["algs"])
+    kw["forwards"] = [pb.PortForwardConfig(**f) for f in d["forwards"]]
+    for k in ("vrf", "outside_vrf"):
+        if d[k] is not None:
+            kw[k] = d[k]
+    return pb.PoolConfig(**kw)
+
+
+def logging_pb(pb, d):
+    """A typedcfg logging dict as a LoggingConfig."""
+    cols = []
+    for c in d["collectors"]:
+        kw = {k: c[k] for k in COLLECTOR_KEYS if k in c}
+        for k in ("facility", "severity"):
+            if c.get(k) is not None:
+                kw[k] = c[k]
+        cols.append(pb.LogCollectorConfig(**kw))
+    return pb.LoggingConfig(enabled=d["enabled"], collectors=cols)
+
+
+def _has(msg, field):
+    try:
+        return msg.HasField(field)
+    except ValueError:
+        return False
+
+
+def interface_dict(m):
+    """An InterfaceConfig as typedcfg's dict."""
+    return {k: (list(getattr(m, k)) if k in ("ipv4", "ipv6")
+                else getattr(m, k)) for k in INTERFACE_KEYS}
+
+
+def pool_dict(m):
+    """A PoolConfig as typedcfg's dict; an unset VRF is None."""
+    d = {k: getattr(m, k) for k in POOL_SCALARS}
+    d.update({k: list(getattr(m, k)) for k in POOL_LISTS})
+    d["timeouts"] = dict(m.timeouts)
+    d["algs"] = dict(m.algs)
+    d["forwards"] = [{"protocol": f.protocol, "public_port": f.public_port,
+                      "private_address": f.private_address,
+                      "private_port": f.private_port} for f in m.forwards]
+    for k in ("vrf", "outside_vrf"):
+        d[k] = getattr(m, k) if _has(m, k) else None
+    return d
+
+
+def logging_dict(m):
+    """A LoggingConfig as typedcfg's dict."""
+    cols = []
+    for c in m.collectors:
+        d = {k: getattr(c, k) for k in COLLECTOR_KEYS}
+        for k in ("facility", "severity"):
+            d[k] = getattr(c, k) if _has(c, k) else None
+        cols.append(d)
+    return {"enabled": m.enabled, "collectors": cols}
+
+
+def schema_pb(pb, areas):
+    """typedcfg.schema()'s areas as a ConfigSchema."""
+    out = pb.ConfigSchema()
+    for a in areas:
+        sa = out.areas.add(area=a["area"], path=a["path"],
+                           names=a.get("names", []))
+        for st in a["statements"]:
+            ss = sa.statements.add(words=st["words"], help=st["help"],
+                                   removable=st["removable"])
+            for form in st["forms"]:
+                sf = ss.forms.add()
+                for arg in form:
+                    sf.arguments.add(**arg)
+    return out
+
+
+def validate_verdicts(lines, outcomes):
+    """
+    ValidateLines' answer: per line {"line", "ok", "reason", "message"}, from
+    `outcomes`, each feed_lines()'s result for that one line.
+    """
+    out = []
+    for line, res in zip(lines, outcomes):
+        text = res["output"].strip()
+        if res["failed"]:
+            out.append({"line": line, "ok": False,
+                        "reason": refusal_reason(res["output"], stage="edit")["reason"],
+                        "message": status_message(res["output"]) or text})
+        else:
+            out.append({"line": line, "ok": True, "reason": "",
+                        "message": text})
+    return out
+
+
 def _reason_pb(pb, reason):
     """refusal_reason()'s code as prisma.v1's Diagnostics.Reason value."""
     return getattr(pb.Diagnostics, "REASON_" + reason.upper(),
@@ -2200,6 +2367,113 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 ci.created_at.CopyFrom(ts(row["created"]))
                 ci.last_activity.CopyFrom(ts(row["last_activity"]))
                 ci.expires_at.CopyFrom(ts(row["expires_at"]))
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetConfig(self, req, context):
+            args = {"areas": list(req.areas)}
+            try:
+                if req.candidate_id:
+                    c = candidate(context, req.candidate_id)
+                    d = c["worker"].ask("typed", dict(args, source="candidate"))
+                    out = pb.TypedConfig(source="candidate",
+                                         candidate_id=req.candidate_id)
+                else:
+                    w = sessions.ops_worker(account(context))
+                    d = w.ask("typed", dict(args, source="running"))
+                    out = pb.TypedConfig(source="running",
+                                         revision=revision_of(w.ask("running")))
+            except WorkerError as e:
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT,
+                     f"error: {str(e).split(': ', 1)[-1]}", stage="usage")
+            out.interfaces.extend(interface_pb(pb, x) for x in d.get("interfaces", []))
+            out.pools.extend(pool_pb(pb, x) for x in d.get("pools", []))
+            if "logging" in d:
+                out.logging.CopyFrom(logging_pb(pb, d["logging"]))
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def _stage(self, context, c, path, lines):
+            """Lines at `path`, staged as Edit stages them: the reply."""
+            out = pb.SetConfigResponse(path=path, lines=lines)
+            if lines:
+                res = c["worker"].ask("feed", edit_lines(path, lines))
+                if res["failed"]:
+                    code = (grpc.StatusCode.PERMISSION_DENIED
+                            if denied(res["output"])
+                            else grpc.StatusCode.INVALID_ARGUMENT)
+                    c["worker"].ask("feed", ["top"])
+                    fail(context, code, res["output"], stage="edit")
+                out.output = res["output"]
+                out.diagnostics.extend(_diag_pb(pb, d)
+                                       for d in parse_output(res["output"]))
+            t = sessions.timing(c)
+            out.last_activity.CopyFrom(ts(t["last_activity"]))
+            out.expires_at.CopyFrom(ts(t["expires_at"]))
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def SetConfig(self, req, context):
+            c = candidate(context, req.candidate_id)
+            which = req.WhichOneof("object")
+            if which is None:
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT,
+                     "error: name the object to set: interface, pool or logging",
+                     stage="usage")
+            obj = {"interface": interface_dict, "pool": pool_dict,
+                   "logging": logging_dict}[which](getattr(req, which))
+            try:
+                r = c["worker"].ask("typed_lines", {
+                    "area": AREA_OF_FIELD[which], "object": obj,
+                    "fields": list(req.fields)})
+            except WorkerError as e:
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT,
+                     f"error: {str(e).split(': ', 1)[-1]}", stage="usage")
+            return self._stage(context, c, r["path"], r["lines"])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def DeleteConfig(self, req, context):
+            c = candidate(context, req.candidate_id)
+            try:
+                path, lines = typedcfg.delete_lines(req.area, req.name,
+                                                    req.transport)
+            except ValueError as e:
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT,
+                     f"error: {e}", stage="usage")
+            return self._stage(context, c, path, lines)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetSchema(self, req, context):
+            try:
+                areas = sessions.ops_worker(account(context)).ask(
+                    "schema", {"areas": list(req.areas)})
+            except WorkerError as e:
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT,
+                     f"error: {str(e).split(': ', 1)[-1]}", stage="usage")
+            return schema_pb(pb, areas)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ValidateLines(self, req, context):
+            acct = account(context)
+            try:
+                cid, _base, _text, _ = sessions.open(acct)
+            except PermissionError as e:
+                fail(context, grpc.StatusCode.PERMISSION_DENIED, str(e))
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            try:
+                w = sessions.get(acct, cid)["worker"]
+                outcomes = []
+                for line in req.lines:
+                    outcomes.append(w.ask("feed", edit_lines(req.path, [line])))
+                    w.ask("feed", ["top"])
+            finally:
+                sessions.close(acct, cid)
+            out = pb.ValidateLinesResponse()
+            for v in validate_verdicts(list(req.lines), outcomes):
+                out.verdicts.add(line=v["line"], ok=v["ok"],
+                                 reason=_reason_pb(pb, v["reason"]) if v["reason"] else 0,
+                                 message=v["message"])
             return out
 
     class Operational(rpc.OperationalServiceServicer):

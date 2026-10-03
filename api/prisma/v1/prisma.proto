@@ -192,6 +192,26 @@ service ConfigService {
   rpc GetPendingConfirm(GetPendingConfirmRequest) returns (PendingConfirm);
   // This account's open candidates, with when each expires (#558).
   rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
+
+  // Typed configuration (#558, phase 2): interfaces, CGNAT pools and the
+  // CGNAT log export as fields, read off the same parsed configuration the
+  // VTY holds - the running one, or a candidate's.
+  rpc GetConfig(GetConfigRequest) returns (TypedConfig);
+  // Sets one object of a candidate to the fields given: the server writes
+  // the VTY lines that take it there (returned in `lines`) and stages them
+  // exactly as Edit would, so every refusal, gate and Diagnostics.reason of
+  // the line form applies. `fields` limits the change to the fields named.
+  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
+  // Removes one object from a candidate, as `no interface`, `no pool` or
+  // `logging <transport> disable` does.
+  rpc DeleteConfig(DeleteConfigRequest) returns (SetConfigResponse);
+  // The grammar of these areas as the prompt's `?` answers it: each
+  // statement, its forms and each argument's kind, range or choices.
+  rpc GetSchema(GetSchemaRequest) returns (ConfigSchema);
+  // Each line, at a hierarchy path, checked by the VTY in a throwaway
+  // candidate: accepted or refused with its Diagnostics.reason. Nothing is
+  // staged anywhere a client can see.
+  rpc ValidateLines(ValidateLinesRequest) returns (ValidateLinesResponse);
 }
 
 message OpenCandidateRequest {
@@ -362,6 +382,227 @@ message ListCandidatesResponse {
   repeated CandidateInfo candidates = 1;
   // The server's idle rule: a candidate unused this long is closed.
   uint32 idle_seconds = 2;
+}
+
+// ---------------------------------------------------- typed configuration
+
+message GetConfigRequest {
+  // Empty reads the running configuration; set, that candidate's.
+  string candidate_id = 1;
+  // "interfaces", "pools", "logging"; empty is all three.
+  repeated string areas = 2;
+}
+
+// An interface as its `interface <name>` block states it. A field at its
+// default is a statement the block does not have.
+message InterfaceConfig {
+  string name = 1;
+  // "port", "loopback", "bundle" or "subinterface" (read only).
+  string kind = 2;
+  string description = 3;
+  // 0: no `mtu` statement, the box's default.
+  uint32 mtu = 4;
+  bool shutdown = 5;
+  // "a.b.c.d/m", in the order written.
+  repeated string ipv4 = 6;
+  repeated string ipv6 = 7;
+  // "", "inside" or "outside": `cgnat inside|outside`.
+  string cgnat_role = 8;
+  // 0: the default table, no `vrf` statement.
+  uint32 vrf = 9;
+  // "": the interface's own name (the pair is made under it).
+  string linux_name = 10;
+  // A sub-interface's tags (0: none); set only when creating one.
+  uint32 vlan_outer = 11;
+  uint32 vlan_inner = 12;
+  string mac_address = 13;
+  // "", "strict" or "loose".
+  string urpf = 14;
+  // `no ipv6 nd suppress-ra`: router advertisements are sent.
+  bool router_advertisements = 15;
+}
+
+message PortForwardConfig {
+  // "tcp" or "udp".
+  string protocol = 1;
+  uint32 public_port = 2;
+  string private_address = 3;
+  uint32 private_port = 4;
+}
+
+// A CGNAT pool as its `pool <name>` block states it.
+message PoolConfig {
+  string name = 1;
+  repeated string prefix_inside = 2;
+  repeated string prefix_outside = 3;
+  uint32 block_size = 4;
+  // Both 0: the device's own port range (no `ports` statement).
+  uint32 port_first = 5;
+  uint32 port_last = 6;
+  // "interleaved" or "blocked".
+  string policy = 7;
+  // "deterministic" or "dynamic".
+  string mode = 8;
+  // Unset: every VRF (no statement), which is not VRF 0.
+  optional uint32 vrf = 9;
+  optional uint32 outside_vrf = 10;
+  // Overrides only, seconds, by name ("udp", "icmp", "tcp-syn", "gre",
+  // "tcp-transitory", "tcp-established", "port-holddown", "alg-expect").
+  map<string, uint32> timeouts = 11;
+  // 1: one block per subscriber, the default.
+  uint32 max_blocks = 12;
+  // Ports; 0: one block.
+  uint32 initial_allocation = 13;
+  uint32 block_stride = 14;
+  uint32 reserve = 15;
+  repeated string bypass_source = 16;
+  repeated string bypass_destination = 17;
+  // Percent; 0: off.
+  uint32 utilisation_alarm = 18;
+  // 0: unlimited.
+  uint32 max_sessions = 19;
+  uint32 max_session_rate = 20;
+  // "": off; "auto"; or a number of bytes.
+  string tcp_mss = 21;
+  // "endpoint-independent" or "address-dependent".
+  string filter = 22;
+  // Only the ALGs the operator chose ("ftp", "rtsp", "pptp", "esp", "sip").
+  map<string, bool> algs = 23;
+  repeated PortForwardConfig forwards = 24;
+}
+
+// One CGNAT log stream's collector, as `logging <transport> ...` states it.
+message LogCollectorConfig {
+  // "udp" (IPFIX), "tcp" (IPFIX over TCP) or "syslog" (RFC 5424 over TCP).
+  string transport = 1;
+  // false: no collector (`logging <transport> disable`, or never set).
+  bool configured = 2;
+  string collector = 3;
+  // 0: the transport's default port.
+  uint32 port = 4;
+  // udp only: the source address the export leaves from (`src`).
+  string source = 5;
+  // syslog only: the structured-data enterprise number.
+  uint32 enterprise = 6;
+  // syslog only; unset: the box's defaults.
+  optional uint32 facility = 7;
+  optional uint32 severity = 8;
+}
+
+message LoggingConfig {
+  // `logging enable`: UDP export on.
+  bool enabled = 1;
+  // Always the three, udp, tcp, syslog, in that order, on a read.
+  repeated LogCollectorConfig collectors = 2;
+}
+
+message TypedConfig {
+  // "running" or "candidate".
+  string source = 1;
+  // The running revision read (empty for a candidate).
+  string revision = 2;
+  string candidate_id = 3;
+  repeated InterfaceConfig interfaces = 4;
+  repeated PoolConfig pools = 5;
+  LoggingConfig logging = 6;
+}
+
+message SetConfigRequest {
+  string candidate_id = 1;
+  oneof object {
+    InterfaceConfig interface = 2;
+    PoolConfig pool = 3;
+    LoggingConfig logging = 4;
+  }
+  // The fields to change, by their names in the message above ("mtu",
+  // "ipv4", "collectors"; "ports" for port_first/port_last, "vlan" for the
+  // tags); empty changes every field to the value given.
+  repeated string fields = 5;
+}
+
+message SetConfigResponse {
+  // Where the lines were staged, and the lines, as Edit would take them.
+  repeated string path = 1;
+  repeated string lines = 2;
+  repeated Diagnostic diagnostics = 3;
+  string output = 4;
+  google.protobuf.Timestamp last_activity = 5;
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+message DeleteConfigRequest {
+  string candidate_id = 1;
+  // "interfaces", "pools" or "logging".
+  string area = 2;
+  // The interface or pool.
+  string name = 3;
+  // logging: "udp", "tcp" or "syslog".
+  string transport = 4;
+}
+
+message GetSchemaRequest {
+  // Empty is all three areas.
+  repeated string areas = 1;
+}
+
+message SchemaArgument {
+  // As the prompt shows it: "<64-32768>", "src", "<A.B.C.D/M>".
+  string name = 1;
+  // "integer", "ipv4_prefix", "ipv4_address", "ipv6_prefix", "address",
+  // "mac", "choice", "word", "text" (the rest of the line) or "keyword"
+  // (the literal word itself).
+  string kind = 2;
+  // integer: the range, inclusive (0/0 when the grammar states none).
+  int64 min = 3;
+  int64 max = 4;
+  // choice: the values.
+  repeated string choices = 5;
+  bool optional = 6;
+}
+
+message SchemaForm {
+  repeated SchemaArgument arguments = 1;
+}
+
+message SchemaStatement {
+  // The statement's words, e.g. ["timeout", "udp"], ["ipv4", "address"].
+  repeated string words = 1;
+  string help = 2;
+  // One per alternative ("<collector> ... | disable" is two).
+  repeated SchemaForm forms = 3;
+  // Whether `no <words>` removes it.
+  bool removable = 4;
+}
+
+message SchemaArea {
+  string area = 1;
+  // Where its lines are typed, as EditRequest.path, "<name>" a placeholder.
+  repeated string path = 2;
+  repeated SchemaStatement statements = 3;
+  // What "<name>" may be today: the interfaces or pools configured.
+  repeated string names = 4;
+}
+
+message ConfigSchema {
+  repeated SchemaArea areas = 1;
+}
+
+message ValidateLinesRequest {
+  repeated string path = 1;
+  repeated string lines = 2;
+}
+
+message LineVerdict {
+  string line = 1;
+  bool ok = 2;
+  // When refused: the same code Edit would carry (GRAMMAR, LIMIT, ...).
+  Diagnostics.Reason reason = 3;
+  // The VTY's words, accepted or refused.
+  string message = 4;
+}
+
+message ValidateLinesResponse {
+  repeated LineVerdict verdicts = 1;
 }
 
 // ----------------------------------------------------------- operational

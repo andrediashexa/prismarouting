@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""
+src/prismash/typedcfg.py (#558, phase 2): typed reads off the VTY's own
+Config, desired state turned into the exact VTY lines, and the schema read
+off the VTY's grammar.
+
+THE ROUND TRIP IS THE POINT. Every edit here is checked the way a box would
+take it: the lines typedcfg writes are fed through the VTY's own parser
+(Config.parse of the block with the lines applied is not available without a
+box, so the lines are checked against the grammar's words and against the
+values a re-read gives), and lab/api-grpc.sh does the rest on a real VTY -
+SetConfig, Commit, GetConfig equal to `show running-config`.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "src", "prismash"))
+import typedcfg as T  # noqa: E402
+import prismash as P  # noqa: E402
+from config import Config  # noqa: E402
+
+fail = 0
+
+
+def check(cond, msg):
+    global fail
+    if not cond:
+        fail += 1
+        print(f"  FAIL: {msg}")
+    else:
+        print(f"  [ ok ] {msg}")
+
+
+TEXT = """nat
+ cgnat
+  pool A
+   prefix-inside 100.64.0.0/10
+   prefix-outside 200.0.0.0/24
+   block-size 256
+   ports 1024 65535
+   policy interleaved
+   mode dynamic
+   vrf 7
+   max-blocks 8
+   timeout udp 120
+   alg ftp off
+   forward tcp 8080 to 100.64.0.5 80
+   exit
+  logging udp 10.0.0.2 src 10.0.0.1 port 4739
+  logging syslog 10.0.0.2 port 601 enterprise 67033 facility 16 severity 6
+  logging enable
+  exit
+ exit
+interface ens18
+ description up link
+ ipv4 address 10.0.0.1/24
+ ipv6 address 2001:db8::1/64
+ mtu 1500
+ cgnat outside
+ exit
+interface lo1
+ ipv4 address 10.255.0.1/32
+ exit
+"""
+cfg = Config.parse(TEXT)
+check(not cfg.unknown, f"the sample parses whole: {cfg.unknown}")
+
+print("=== reads ===")
+d = T.config_typed(cfg)
+check(sorted(d) == ["interfaces", "logging", "pools"], "all three areas by default")
+i = {x["name"]: x for x in d["interfaces"]}
+e = i["ens18"]
+check(e["description"] == "up link" and e["mtu"] == 1500 and not e["shutdown"]
+      and e["ipv4"] == ["10.0.0.1/24"] and e["ipv6"] == ["2001:db8::1/64"]
+      and e["cgnat_role"] == "outside" and e["vrf"] == 0 and e["linux_name"] == "",
+      f"interface_typed: the block's fields, absent ones as defaults: {e}")
+check(T.interface_typed(cfg, "ens18") == e, "interface_typed is what interfaces_typed lists")
+check([x["name"] for x in T.interfaces_typed(cfg)] == sorted(cfg.interface_names()),
+      "interfaces_typed: every interface the configuration has a block for")
+cfg.loopbacks.add("lo1")
+check(T.interface_kind(cfg, "lo1") == "loopback" and T.interface_kind(cfg, "ens18") == "port",
+      "interface_kind: a loopback, a port")
+p = T.pool_typed(cfg.pools["A"])
+check(p["prefix_inside"] == ["100.64.0.0/10"] and p["block_size"] == 256
+      and (p["port_first"], p["port_last"]) == (1024, 65535) and p["mode"] == "dynamic"
+      and p["vrf"] == 7 and p["outside_vrf"] is None and p["max_blocks"] == 8
+      and p["timeouts"] == {"udp": 120} and p["algs"] == {"ftp": False}
+      and p["forwards"] == [{"protocol": "tcp", "public_port": 8080,
+                             "private_address": "100.64.0.5", "private_port": 80}],
+      f"pool_typed: every statement, an unset VRF as None (every VRF, not VRF 0): {p}")
+check([x["name"] for x in T.pools_typed(cfg)] == ["A"], "pools_typed: every pool")
+lg = T.logging_typed(cfg)
+cols = {c["transport"]: c for c in lg["collectors"]}
+check(lg["enabled"] and cols["udp"] == {"transport": "udp", "configured": True,
+                                        "collector": "10.0.0.2", "port": 4739,
+                                        "source": "10.0.0.1"}
+      and not cols["tcp"]["configured"]
+      and cols["syslog"]["enterprise"] == 67033 and cols["syslog"]["facility"] == 16
+      and [c["transport"] for c in lg["collectors"]] == ["udp", "tcp", "syslog"],
+      f"logging_typed: enabled, each transport's collector, always the three: {lg}")
+check(T.logging_line_typed(["syslog", "disable"])["configured"] is False
+      and T.logging_line_typed(["enable"]) is None,
+      "logging_line_typed: a disable is unconfigured; `enable` is not a collector")
+try:
+    T.config_typed(cfg, ["routes"])
+    check(False, "an unknown area is refused")
+except ValueError as ex:
+    check("unknown area" in str(ex), "config_typed refuses an unknown area")
+
+print("=== edits: desired state as the lines an operator types ===")
+want = dict(e, description="", mtu=9000, ipv4=["10.0.0.2/24"], shutdown=True,
+            cgnat_role="inside")
+lines = T.interface_lines(e, want)
+check(lines == ["no description", "no ipv4 address 10.0.0.1/24",
+                "ipv4 address 10.0.0.2/24", "shutdown", "mtu 9000", "cgnat inside"],
+      f"interface_lines: removals before additions, only what changed: {lines}")
+check(T.interface_lines(e, e) == [], "an unchanged interface writes nothing")
+check(T.interface_lines(e, want, ["mtu"]) == ["mtu 9000"],
+      "a field mask limits the change to the fields named")
+new = T.interface_lines(None, dict(T.interface_typed_blank("ens20"),
+                                   description="new", ipv4=["192.0.2.1/24"]))
+check(new == ["description new", "ipv4 address 192.0.2.1/24"],
+      f"a new interface: only what is set: {new}")
+try:
+    T.interface_lines(e, want, ["bogus"])
+    check(False, "an unknown field is refused")
+except ValueError as ex:
+    check("unknown field" in str(ex), "_mask refuses an unknown field, naming the fields")
+check(T._mask([], ("a", "b")) == ["a", "b"] and T._list_lines("x", ["1"], ["2"]) == ["no x 1", "x 2"],
+      "_mask, _list_lines")
+pw = dict(p, max_blocks=1, timeouts={"icmp": 30}, algs={}, prefix_outside=["200.0.0.0/23"],
+          vrf=None, forwards=[], port_first=0, port_last=0)
+pl = T.pool_lines(p, pw)
+check(pl == ["no prefix-outside 200.0.0.0/24", "prefix-outside 200.0.0.0/23",
+             "no ports", "no vrf", "no timeout udp", "timeout icmp 30", "no max-blocks",
+             "no alg ftp", "no forward tcp 8080 to 100.64.0.5 80"],
+      f"pool_lines: each statement and its `no`: {pl}")
+check(T.pool_lines(p, p) == [], "an unchanged pool writes nothing")
+blank = T.pool_typed_blank("B")
+check(blank["mode"] == "deterministic" and blank["block_size"] == 512,
+      "pool_typed_blank: the VTY's own defaults for a new pool")
+check(T._forward_line({"protocol": "udp", "public_port": 53, "private_address": "100.64.0.9",
+                       "private_port": 53}) == "forward udp 53 to 100.64.0.9 53",
+      "_forward_line: the line that added a forward")
+lw = {"enabled": False, "collectors": [
+    {"transport": "syslog", "configured": False},
+    {"transport": "tcp", "configured": True, "collector": "10.0.0.9", "port": 4740}]}
+ll = T.logging_lines(lg, lw)
+check(ll == ["logging syslog disable", "logging tcp 10.0.0.9 port 4740", "logging disable"],
+      f"logging_lines: a collector set or disabled, the unlisted one left alone: {ll}")
+check(T.logging_lines(lg, lg) == [], "an unchanged log export writes nothing")
+check(T.collector_line({"transport": "syslog", "configured": True, "collector": "c",
+                        "enterprise": 67033, "facility": 0, "severity": None})
+      == "logging syslog c enterprise 67033 facility 0",
+      "collector_line: facility 0 is a value, an unset severity is the box's default")
+try:
+    T.collector_line({"transport": "udp", "configured": True, "collector": "c"})
+    check(False, "a udp collector needs its source")
+except ValueError as ex:
+    check("src" in str(ex), "collector_line refuses a udp collector with no source")
+check(T._same_collector(cols["udp"], dict(cols["udp"])), "_same_collector")
+check(T.interface_path("ens18") == ["interface ens18"]
+      and T.pool_path("A") == ["nat", "cgnat", "pool A"], "the paths Edit takes")
+check(T.delete_lines("pools", "A") == (["nat", "cgnat"], ["no pool A"])
+      and T.delete_lines("logging", transport="tcp") == (["nat", "cgnat"],
+                                                         ["logging tcp disable"]),
+      "delete_lines: as the VTY removes each")
+path, ls = T.edit_for(cfg, "interfaces", dict(e, mtu=1400), ["mtu"])
+check(path == ["interface ens18"] and ls == ["mtu 1400"],
+      "edit_for: relative to what the candidate holds now")
+check(T.names_for(cfg, "pools") == ["A"] and "ens99" in T.names_for(cfg, "interfaces", ["ens99"]),
+      "names_for: configured pools; interfaces with the dataplane's")
+
+print("=== every line an edit writes is one the VTY's grammar has ===")
+GRAMMAR = {"interfaces": P.PORT_BLOCK, "pools": P.TREE["pool"],
+           "logging": P.TREE["cgnat"]}
+
+
+def in_grammar(node, words):
+    """Does the grammar have the statement these words start? (`no` included)"""
+    if words[0] == "no":
+        neg = node.get("no")
+        return isinstance(neg, tuple) and isinstance(neg[1], dict) and words[1] in neg[1]
+    cur = node
+    for w in words:
+        if not isinstance(cur, dict) or w not in cur:
+            return isinstance(cur, str) or cur is None or not isinstance(cur, dict)
+        val = cur[w]
+        cur = val[1] if isinstance(val, tuple) and len(val) > 1 else None
+    return True
+
+
+for area, ls in (("interfaces", lines + new), ("pools", pl), ("logging", ll)):
+    bad = [x for x in ls if not in_grammar(GRAMMAR[area], x.split())]
+    check(not bad, f"{area}: every line is in the grammar: {bad}")
+
+print("=== schema ===")
+sc = {a["area"]: a for a in T.schema(P)}
+check(sorted(sc) == ["interfaces", "logging", "pools"], "every area")
+bs = [s for s in sc["pools"]["statements"] if s["words"] == ["block-size"]][0]
+check(bs["forms"][0][0]["kind"] == "integer" and bs["forms"][0][0]["max"] == 32768,
+      f"block-size: an integer with its range: {bs}")
+mx = [s for s in sc["pools"]["statements"] if s["words"] == ["max-blocks"]][0]
+check(mx["removable"] and not bs["removable"], "removable: `no max-blocks` exists, `no block-size` does not")
+udp = [s for s in sc["logging"]["statements"] if s["words"] == ["logging", "udp"]][0]
+check(len(udp["forms"]) == 2 and udp["forms"][1][0]["name"] == "disable"
+      and udp["forms"][0][0]["kind"] == "address",
+      f"logging udp: two forms, the collector an address: {udp['forms']}")
+pre = [s for s in sc["pools"]["statements"] if s["words"] == ["prefix-inside"]][0]
+check(pre["forms"][0][0]["kind"] == "ipv4_prefix", "prefix-inside: an IPv4 prefix")
+check(T.argument_of("<on|off>")["choices"] == ["on", "off"]
+      and T.argument_of("[x]")["optional"], "argument_of: a choice, an optional word")
+check([a["optional"] for a in T.hint_arguments("<a> [port <n>]")] == [False, True, True],
+      "hint_arguments: a bracketed group is optional")
+check(T.area_grammar(P, "logging")[0] == ["nat", "cgnat"], "area_grammar: where logging is typed")
+st = []
+T._walk({"a": ("help", "<1-2>"), "exit": ("x", None)}, [], st)
+check([s["words"] for s in st] == [["a"]], "_walk skips the session's words")
+check(T._negations({"no": ("n", {"x": ("", None)})}) == {"x"}, "_negations")
+check(T._int("7") == 7 and T._int("x") == 0, "_int")
+check(T._blank_collector("syslog")["facility"] is None, "_blank_collector")
+
+if fail:
+    print(f"\n{fail} FAILURES")
+    sys.exit(1)
+print("\nALL TESTS PASSED")
