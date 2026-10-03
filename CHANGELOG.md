@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.24 - the rest of the configuration as fields, and the schema fixed
+
+### Added
+
 * **The rest of the configuration as fields (#558, phase 4).**
   ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
   GetConfig reads twelve more areas off the same parsed configuration the
@@ -121,8 +127,6 @@ version has a chance of seeing it.
   out on purpose, are described too. A test renders a
   configuration with every area and requires each line to match a
   statement; lab/api-grpc.sh does the same with the lab box's GetRunning.
-
-### Fixed
 
 ## 0.149.23 - no neighbor removes a BGP neighbour cleanly
 
