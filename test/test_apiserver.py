@@ -1082,8 +1082,8 @@ _tsh.candidate.mtus["ens18"] = 9000
 _tr = A.typed_config(_tsh, {"source": "running", "areas": ["interfaces"]})
 _tc = A.typed_config(_tsh, {"source": "candidate"})
 check(_tr["interfaces"][0]["mtu"] == 1500 and _tc["interfaces"][0]["mtu"] == 9000
-      and sorted(_tc) == ["interfaces", "logging", "pools", "revision"]
-      and sorted(_tr) == ["interfaces", "revision"]
+      and sorted(_tc) == ["box_owned", "interfaces", "logging", "pools", "revision"]
+      and sorted(_tr) == ["box_owned", "interfaces", "revision"]
       and _tr["revision"] == A.revision_of(_tsh.running_config().text())
       and _tc["revision"] == "",
       "typed_config: the running or the candidate Config itself, the areas asked for")
@@ -1096,16 +1096,21 @@ _tl = A.typed_lines(_tsh, {"area": "pools", "object": {"name": "A", "max_blocks"
                            "fields": ["max_blocks"]})
 check(_tl == {"path": ["nat", "cgnat", "pool A"], "lines": ["max-blocks 4"]},
       f"typed_lines: the lines and where they go, against the candidate: {_tl}")
-_orig_if = A.interfaces_of
-A.interfaces_of = lambda sh, names=(): [{"name": "ens19"}]
-try:
-    _ts = A.typed_schema(_tsh, {"areas": ["interfaces", "pools"]})
-finally:
-    A.interfaces_of = _orig_if
-check([a["area"] for a in _ts] == ["interfaces", "pools"]
-      and "ens19" in _ts[0]["names"] and "ens18" in _ts[0]["names"]
-      and _ts[1]["names"] == ["A"],
-      "typed_schema: the grammar, with what <name> may be today")
+_ts = A.typed_schema(_tsh, {"modes": ["interface (port)", "pool"]})
+check([m["mode"] for m in _ts["modes"]] == ["pool", "interface (port)"]
+      and len(_ts["digest"]) == 64 and _ts["release"] and _ts["values"] == {}
+      and len(_ts["box_owned"]) == 4,
+      "typed_schema: the modes asked for, versioned by release and digest, no values unasked")
+
+
+class _DSh(_TSh):
+    def dynamic_options(self, hint, prefix):
+        return {"ens19": "", "ens18": ""} if hint == "<interface>" else {}
+
+
+_tv = A.typed_schema(_DSh(), {"modes": ["pool"], "with_values": True})
+check(_tv["values"].get("interfaces") == ["ens18", "ens19"] and "pools" in _tv["values"],
+      f"typed_schema with_values: each dynamic source's values now: {_tv['values']}")
 check(A.handle(_tsh, "typed", {"source": "running", "areas": ["pools"]})["pools"][0]["name"] == "A"
       and A.handle(_tsh, "typed_lines", {"area": "logging", "object": {
           "enabled": True}, "fields": ["enabled"]})["lines"] == ["logging enable"],
@@ -1162,12 +1167,26 @@ check(_ld["collectors"][0]["facility"] is None and _ld["collectors"][0]["severit
       "logging_dict: an unset facility is None, a set severity its value")
 
 
+class _Rep(list):
+    def __init__(self, make):
+        super().__init__()
+        self.make = make
+
+    def add(self, **kw):
+        x = self.make(**kw)
+        self.append(x)
+        return x
+
+
 class _SPB:
     class ConfigSchema:
-        def __init__(self):
-            self.areas = _Rep(_SPB._Area)
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+            self.modes = _Rep(_SPB._Mode)
+            self.values = {}
+            self.box_owned = _Rep(dict)
 
-    class _Area:
+    class _Mode:
         def __init__(self, **kw):
             self.__dict__.update(kw)
             self.statements = _Rep(_SPB._Stmt)
@@ -1182,21 +1201,21 @@ class _SPB:
             self.arguments = _Rep(dict)
 
 
-class _Rep(list):
-    def __init__(self, make):
-        super().__init__()
-        self.make = make
-
-    def add(self, **kw):
-        x = self.make(**kw)
-        self.append(x)
-        return x
+class _VL:
+    def __init__(self):
+        self.values = []
 
 
-_sp = A.schema_pb(_SPB, _ts)
-check(len(_sp.areas) == 2 and _sp.areas[1].names == ["A"]
-      and any(st.words == ["block-size"] for st in _sp.areas[1].statements),
-      "schema_pb: each area, statement, form and argument")
+_sp_in = dict(_ts, values={"pools": ["A"]})
+_spo = _SPB.ConfigSchema
+_SPB.ConfigSchema = type("CS", (_spo,), {"__init__": lambda self, **kw: (
+    _spo.__init__(self, **kw), setattr(self, "values", __import__("collections").defaultdict(_VL)))[0]})
+_sp = A.schema_pb(_SPB, _sp_in)
+check(len(_sp.modes) == 2 and _sp.release == _ts["release"] and _sp.digest == _ts["digest"]
+      and any(st.words == ["block-size"] for st in _sp.modes[0].statements)
+      and _sp.values["pools"].values == ["A"] and len(_sp.box_owned) == 4,
+      "schema_pb: each mode, statement, form and argument, the release, digest, values, "
+      "and the box-owned statements")
 _vv = A.validate_verdicts(["mtu 9000", "mtu 1"], [
     {"output": "", "failed": False, "at": -1},
     {"output": "error: mtu: 1 is outside 576-9216\n", "failed": True, "at": 0}])

@@ -1082,16 +1082,25 @@ def typed_lines(sh, args):
 
 
 def typed_schema(sh, args):
-    """The grammar of the areas asked for, with what `<name>` may be today."""
+    """
+    The configuration grammar of the modes asked for (every one when none
+    is): typedcfg.schema() off the VTY's own tree, with the release, a hash,
+    and - when asked - what each dynamic source holds now.
+    """
     import prismash as P
-    cfg = sh.running_config()
-    try:
-        known = [r["name"] for r in interfaces_of(sh)]
-    except Exception:  # noqa: BLE001 - the grammar still answers without them
-        known = []
-    out = typedcfg.schema(P, args.get("areas") or ())
-    for a in out:
-        a["names"] = typedcfg.names_for(cfg, a["area"], known)
+    modes = typedcfg.schema(P, args.get("modes") or ())
+    out = {"modes": modes, "digest": typedcfg.schema_digest(modes),
+           "release": P.prisma_routing_version(), "values": {},
+           "box_owned": [{"pattern": p, "why": w} for p, w in typedcfg.BOX_OWNED]}
+    if args.get("with_values"):
+        for hint, fn in P.Shell.DYNAMIC.items():
+            source = fn[len("dyn_"):] if fn.startswith("dyn_") else fn
+            if source in out["values"]:
+                continue
+            try:
+                out["values"][source] = sorted(sh.dynamic_options(hint, ""))
+            except Exception:  # noqa: BLE001 - a source that cannot answer has none
+                out["values"][source] = []
     return out
 
 
@@ -2082,19 +2091,27 @@ def logging_dict(m):
     return {"enabled": m.enabled, "collectors": cols}
 
 
-def schema_pb(pb, areas):
-    """typedcfg.schema()'s areas as a ConfigSchema."""
-    out = pb.ConfigSchema()
-    for a in areas:
-        sa = out.areas.add(area=a["area"], path=a["path"],
-                           names=a.get("names", []))
-        for st in a["statements"]:
-            ss = sa.statements.add(words=st["words"], help=st["help"],
-                                   removable=st["removable"])
+def schema_pb(pb, sch):
+    """typed_schema()'s answer as a ConfigSchema."""
+    out = pb.ConfigSchema(release=sch.get("release", ""),
+                          digest=sch.get("digest", ""))
+    for m in sch["modes"]:
+        sm = out.modes.add(mode=m["mode"], path=m["path"], enter=m["enter"],
+                           roles=m["roles"], typed_area=m["typed"])
+        for st in m["statements"]:
+            ss = sm.statements.add(words=st["words"], help=st["help"],
+                                   removable=st["removable"],
+                                   no_words=st["no_words"],
+                                   repeatable=st["repeatable"],
+                                   typed=st["typed"])
             for form in st["forms"]:
                 sf = ss.forms.add()
                 for arg in form:
                     sf.arguments.add(**arg)
+    for source, vals in sch.get("values", {}).items():
+        out.values[source].values.extend(vals)
+    for b in sch.get("box_owned", []):
+        out.box_owned.add(pattern=b["pattern"], why=b["why"])
     return out
 
 
@@ -2393,6 +2410,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             out.pools.extend(pool_pb(pb, x) for x in d.get("pools", []))
             if "logging" in d:
                 out.logging.CopyFrom(logging_pb(pb, d["logging"]))
+            for b in d.get("box_owned", []):
+                out.box_owned.add(line=b["line"], why=b["why"])
             return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
@@ -2448,12 +2467,13 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def GetSchema(self, req, context):
             try:
-                areas = sessions.ops_worker(account(context)).ask(
-                    "schema", {"areas": list(req.areas)})
+                sch = sessions.ops_worker(account(context)).ask(
+                    "schema", {"modes": list(req.modes),
+                               "with_values": req.with_values})
             except WorkerError as e:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
                      f"error: {str(e).split(': ', 1)[-1]}", stage="usage")
-            return schema_pb(pb, areas)
+            return schema_pb(pb, sch)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def ValidateLines(self, req, context):

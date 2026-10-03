@@ -32,7 +32,7 @@ generated from the VTY's grammar.
 prisma-web's items 4 and 5: interfaces, CGNAT pools and the CGNAT log export
 read and written as fields.
 
-* **Contract:** additive. `prisma.proto` sha256 `7a79d42a7da00b8f9fe1fc4b04a604133078b13a6b5263a3925ea1e6bd38ff93`.
+* **Contract:** additive. `prisma.proto` sha256 `4cdfee65edf97ae1239d5c4a18648250b04a0d08ff4d4b6106b117e47ea86c09`.
 * **New rpcs (ConfigService):** `GetConfig`, `SetConfig`, `DeleteConfig`,
   `GetSchema`, `ValidateLines`, with `InterfaceConfig`, `PoolConfig`,
   `PortForwardConfig`, `LogCollectorConfig`, `LoggingConfig`, `TypedConfig`
@@ -53,10 +53,40 @@ read and written as fields.
   partial object with an empty mask clears what it leaves out. Refusals
   carry the 0.149.18 reason codes; a request whose fields cannot become a
   line is `INVALID_ARGUMENT` / `REASON_USAGE`.
-* **Validating or completing a line a person types:** `GetSchema` gives each
-  statement's forms and each argument's kind and range, and `names` (the
-  interfaces and pools that exist); `ValidateLines` asks the VTY itself,
-  line by line, in a candidate nobody sees, with the reason of each refusal.
+* **Every configuration area editable from the web, as lines checked
+  against the grammar:** `GetSchema` is the whole configuration grammar,
+  generated from the VTY's own tree - 26 modes (CGNAT, interfaces, system,
+  users, SNMP users, policies, router static/bgp/ospf/ospf6/isis, rpki,
+  route-maps) with about 400 statements: the `path` to type each mode's
+  statements at, each statement's forms, each argument's kind (`integer`
+  with its range, `ipv4_prefix`/`ipv6_prefix`/`prefix`, `ipv4_address`/
+  `address`, `choice` with its values, `text`), `optional`, `repeatable`,
+  the `no` words, the `source` the VTY completes it from (`interfaces`,
+  `neighbours`, `next_hops`, `prefix_lists`, ...), and `typed` where
+  GetConfig/SetConfig carry it as a field. Cache it by `digest` (it changes
+  only with the grammar; `release` says whose); `with_values` adds each
+  source's values now. `ValidateLines` then asks the VTY itself, line by
+  line, in a candidate nobody sees, with the reason of each refusal; `Edit`
+  stages them. Typed reads of the routing configuration (static, BGP
+  neighbours and address families, OSPF, IS-IS) are the next phase.
+* **The box's own lines, read only on purpose:** `TypedConfig.box_owned`
+  lists the running configuration's lines that are the box's, not the
+  operator's - `log syslog <level>`, `service integrated-vtysh-config`, a
+  `vrf prisma-*` block and its `exit-vrf` (on .166, 4 of its 30 lines) -
+  each with why; `ConfigSchema.box_owned` lists their patterns. No grammar
+  takes them and the VTY marks them "not checked": show them read only, not
+  as unknown. An operator's own VRF block is not among them.
+* **IPv6 placeholders:** docs/api-coverage.md printed `ipv6 address
+  <A.B.C.D/M>` (and its `no`) through 0.149.18. The VTY's own hint was
+  wrong; 0.149.19 (#557) corrected it to `<X:X::X:X/M>` and the document,
+  generated from that hint, followed. A sweep of every statement finds no
+  other IPv6 argument labelled IPv4 (an OSPFv3 `router-id` is a dotted quad
+  by the protocol). This is a correction within the same syntax, not a
+  change of the format the next item keeps.
+* **docs/api-coverage.md stays a contract** until you have moved to
+  GetSchema: its statement syntax (`<A.B.C.D/M>`, `<1-N>`, `a|b`,
+  `[optional]`) and its "Entered with ... `EditRequest.path` ... changed by"
+  lines keep their shape; a change to either is announced here first.
 * **Replacing the 0.149.8 guard's diff parsing:** `GetConfig(areas:
   ["logging"])` says which collectors are configured, typed. The guard itself
   is not needed on a box at 0.149.8 or later: disabling a syslog that was

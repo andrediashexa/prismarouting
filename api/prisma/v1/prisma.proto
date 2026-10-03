@@ -205,8 +205,11 @@ service ConfigService {
   // Removes one object from a candidate, as `no interface`, `no pool` or
   // `logging <transport> disable` does.
   rpc DeleteConfig(DeleteConfigRequest) returns (SetConfigResponse);
-  // The grammar of these areas as the prompt's `?` answers it: each
-  // statement, its forms and each argument's kind, range or choices.
+  // The whole configuration grammar as the prompt's `?` answers it: every
+  // mode, how it is entered, each statement's forms, each argument's kind,
+  // range, choices and value source, and its `no` - generated from the
+  // VTY's own tree, so it cannot differ from the prompt. Versioned by
+  // `release` and `digest`.
   rpc GetSchema(GetSchemaRequest) returns (ConfigSchema);
   // Each line, at a hierarchy path, checked by the VTY in a throwaway
   // candidate: accepted or refused with its Diagnostics.reason. Nothing is
@@ -505,6 +508,17 @@ message TypedConfig {
   repeated InterfaceConfig interfaces = 4;
   repeated PoolConfig pools = 5;
   LoggingConfig logging = 6;
+  // Lines of this configuration that are the BOX's, not the operator's
+  // (FRR's own logging, the box's own VRF): no grammar takes them and the
+  // VTY marks them "not checked". Show them read only, on purpose - every
+  // read answers them, whatever the areas.
+  repeated BoxOwnedLine box_owned = 7;
+}
+
+message BoxOwnedLine {
+  string line = 1;
+  // Why it is the box's.
+  string why = 2;
 }
 
 message SetConfigRequest {
@@ -541,14 +555,19 @@ message DeleteConfigRequest {
 }
 
 message GetSchemaRequest {
-  // Empty is all three areas.
-  repeated string areas = 1;
+  // The configuration modes to describe, as SchemaMode.mode names them
+  // ("pool", "router bgp", "interface (port)"); empty is every mode.
+  repeated string modes = 1;
+  // Also answer `values`: what each dynamic source holds on this box now.
+  // Off by default: it asks the dataplane and FRR.
+  bool with_values = 2;
 }
 
 message SchemaArgument {
   // As the prompt shows it: "<64-32768>", "src", "<A.B.C.D/M>".
   string name = 1;
-  // "integer", "ipv4_prefix", "ipv4_address", "ipv6_prefix", "address",
+  // "integer", "ipv4_prefix", "ipv4_address", "ipv6_prefix",
+  // "ipv6_address", "address" (either family), "prefix" (either family),
   // "mac", "choice", "word", "text" (the rest of the line) or "keyword"
   // (the literal word itself).
   string kind = 2;
@@ -558,6 +577,11 @@ message SchemaArgument {
   // choice: the values.
   repeated string choices = 5;
   bool optional = 6;
+  // Where the VTY completes this argument's values from ("interfaces",
+  // "pools", "neighbours", "next_hops", "prefix_lists", "route_maps",
+  // "users", ...); empty when it does not. ConfigSchema.values holds them
+  // when asked.
+  string source = 7;
 }
 
 message SchemaForm {
@@ -570,21 +594,54 @@ message SchemaStatement {
   string help = 2;
   // One per alternative ("<collector> ... | disable" is two).
   repeated SchemaForm forms = 3;
-  // Whether `no <words>` removes it.
+  // Whether a `no` removes it, and the words that start that `no` (a list
+  // item takes its value after them: `no ipv4 address <A.B.C.D/M>`).
   bool removable = 4;
+  repeated string no_words = 5;
+  // The grammar's help says it may repeat (more than one at a time).
+  bool repeatable = 6;
+  // GetConfig/SetConfig read and write it as a field (#558, phase 2).
+  bool typed = 7;
 }
 
-message SchemaArea {
-  string area = 1;
-  // Where its lines are typed, as EditRequest.path, "<name>" a placeholder.
+message SchemaMode {
+  // The mode's name: "config", "pool", "router bgp", "interface (port)".
+  string mode = 1;
+  // EditRequest.path to type its statements at; "<name>", "<asn>" and the
+  // like are placeholders the client fills.
   repeated string path = 2;
-  repeated SchemaStatement statements = 3;
-  // What "<name>" may be today: the interfaces or pools configured.
-  repeated string names = 4;
+  // How it is entered, as docs/api-coverage.md says it.
+  string enter = 3;
+  // The roles that may change it.
+  string roles = 4;
+  repeated SchemaStatement statements = 5;
+  // The GetConfig area that types it ("interfaces", "pools", "logging"), or
+  // empty.
+  string typed_area = 6;
+}
+
+message ValueList {
+  repeated string values = 1;
 }
 
 message ConfigSchema {
-  repeated SchemaArea areas = 1;
+  repeated SchemaMode modes = 1;
+  // The release whose VTY this grammar is, and a hash of the grammar: equal
+  // hashes are equal grammars, so a client caches by it.
+  string release = 2;
+  string digest = 3;
+  // with_values: each dynamic source's values on this box now.
+  map<string, ValueList> values = 4;
+  // The statements a running configuration may hold that no mode's grammar
+  // takes because they are the box's own: read only. TypedConfig.box_owned
+  // lists the ones a configuration has.
+  repeated BoxOwnedStatement box_owned = 5;
+}
+
+message BoxOwnedStatement {
+  // The statement as a pattern: "log syslog <level>", "vrf prisma-<name>".
+  string pattern = 1;
+  string why = 2;
 }
 
 message ValidateLinesRequest {

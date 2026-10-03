@@ -397,7 +397,8 @@ expect "  and disabled again" t2 set-logging-disables
 expect "  a candidate read typed, and DeleteConfig removes a pool from it" t2 candidate-read-and-delete
 expect "  a typed edit the VTY refuses: INVALID_ARGUMENT with its reason, nothing staged" t2 typed-edit-refused
 expect "  an unknown field: INVALID_ARGUMENT, USAGE" t2 typed-edit-usage
-expect "  GetSchema: each area's grammar, ranges and forms, what <name> may be" t2 schema
+expect "  GetSchema: every mode's grammar, ranges, forms, sources, versioned" t2 schema
+expect "  and, asked, what each dynamic source holds on the box now" t2 schema-values
 expect "  ValidateLines: each line accepted or refused with its reason, nothing committed" t2 validate-lines
 expect "  an account without the role reads the configuration typed" t2 readonly-reads-typed
 p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }

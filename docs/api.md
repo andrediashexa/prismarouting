@@ -89,7 +89,7 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `ListCandidates` | the account's open candidates (#558): each one's base, staged lines, creation, last activity and expiry, and the server's idle rule |
 | | `GetConfig` | interfaces, CGNAT pools and the CGNAT log export as fields (#558, phase 2), of the running configuration or of a candidate |
 | | `SetConfig`, `DeleteConfig` | one object of a candidate set to the fields given, or removed: the server writes the VTY lines and stages them as `Edit` does |
-| | `GetSchema` | the grammar of those areas as the prompt's `?` answers it, and what `<name>` may be |
+| | `GetSchema` | the whole configuration grammar as the prompt's `?` answers it - every mode, statement, argument, `no` form and value source - versioned by release and digest |
 | | `ValidateLines` | lines checked by the VTY in a throwaway candidate, each accepted or refused with its reason |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show`; `GetSystem` carries `show system uptime`'s clocks (0.148.7, #534): `boot_time`, `dataplane_started`, `control_plane_started`, `vty_started`, `release_installed_at` (unset when not read), `last_boot_reason` (only as recorded: `system reboot by <account>`, or `not recorded`) and `dataplane_restarted` |
 | | `ListPolicies` | `show policy` (#538): every policy-statement, its terms with their statements and `then`, its `default-action`, its `policy-options` block as typed, and where the running routing applies it |
@@ -255,8 +255,9 @@ permission, unknown, the re-map gate and expiry against a real server.
 ### The configuration as fields
 
 `GetConfig`, `SetConfig`, `DeleteConfig`, `GetSchema` and `ValidateLines`
-(#558, phase 2) cover what a UI edits most: each interface's block, each
-CGNAT pool, and the CGNAT log export's collectors. They are the line form's
+(#558, phase 2) cover what a UI edits most - each interface's block, each
+CGNAT pool, and the CGNAT log export's collectors - as fields, and every
+configuration mode as grammar. They are the line form's
 other face, not a second configuration:
 
 * **Reads come off the VTY's own Config.** `GetConfig` with no
@@ -282,11 +283,29 @@ other face, not a second configuration:
   (`INVALID_ARGUMENT`), and a commit of the candidate meets the same gates.
   A request whose own fields cannot become a line answers
   `INVALID_ARGUMENT` with `REASON_USAGE`.
-* **`GetSchema`** is the grammar the prompt's `?` answers from for these
-  areas: each statement's words, help, its forms (`<collector> src <source>
-  [port <n>] | disable` is two) and each argument's kind (`integer` with its
-  range, `ipv4_prefix`, `address`, `choice` with its values, `text`...), and
-  whether `no` removes it; `names` is what `<name>` may be today.
+* **`GetSchema`** is the WHOLE configuration grammar, generated from the
+  tree the prompt's `?` answers from - every mode (26: config, nat, cgnat,
+  pool, system and its levels, policy-options and its levels, user,
+  snmp-user, the interfaces, router static/bgp/ospf/ospf6/isis, rpki,
+  route-map), each with the `path` to type its statements at, how it is
+  entered and the roles that change it. Each statement has its words, help,
+  its forms (`<collector> src <source> [port <n>] | disable` is two), each
+  argument's kind (`integer` with its range, `ipv4_prefix`, `ipv6_prefix`,
+  `address`, `prefix`, `choice` with its values, `text`...), whether it is
+  optional, whether it may repeat, its `no` words, its `source` when the VTY
+  completes it from the box (`interfaces`, `pools`, `neighbours`,
+  `next_hops`, `prefix_lists`, `route_maps`...), and whether GetConfig types
+  it. `release` and `digest` version it: equal digests are equal grammars.
+  `with_values` adds what each source holds on the box now (that asks the
+  dataplane and FRR, so it is off by default). It replaces parsing
+  docs/api-coverage.md, whose format stays a contract until clients have
+  moved.
+* **The box's own lines.** A running configuration holds lines no grammar
+  takes because they are the box's - FRR's `log syslog <level>`, `service
+  integrated-vtysh-config`, a `vrf prisma-*` block and its `exit-vrf` - and
+  the VTY marks them "not checked". `TypedConfig.box_owned` lists the ones a
+  configuration has, with why, on every read; `ConfigSchema.box_owned` lists
+  their patterns. A UI shows them read only, on purpose.
 * **`ValidateLines`** opens a candidate nobody sees, feeds each line at
   `path`, answers each accepted or refused with the VTY's words and its
   reason, and discards it: nothing is committed and the running revision

@@ -95,8 +95,15 @@ def check_read():
           and list(pg0[0].ipv4) == ["100.64.3.254/22"]
           and list(nb[0].prefix_inside) == ["100.64.0.0/22"]
           and f"block-size {nb[0].block_size}" in block(run_text, "pool nb"))
+    # The box's own lines (#558): read only, never an operator's (this lab
+    # has a VRF `red` of its own, which must not be among them).
+    owned = [b.line for b in t.box_owned]
+    ok = ok and all(b.why for b in t.box_owned) and "vrf red" not in owned \
+        and all(x.strip() in owned for x in run_text.splitlines()
+                if x.strip() in ("service integrated-vtysh-config", "vrf prisma-bp"))
     result("config-read-running", ok,
-           f"pg0 {list(pg0[0].ipv4) if pg0 else None} nb {list(nb[0].prefix_inside) if nb else None}")
+           f"pg0 {list(pg0[0].ipv4) if pg0 else None} nb "
+           f"{list(nb[0].prefix_inside) if nb else None} box-owned {owned}")
 
 
 def check_interface_roundtrip():
@@ -240,17 +247,37 @@ def check_refusals():
 
 
 def check_schema():
+    import time
+    t0 = time.monotonic()
     s = cfg.GetSchema(pb.GetSchemaRequest(), timeout=60)
-    areas = {a.area: a for a in s.areas}
-    bs = [st for st in areas["pools"].statements if list(st.words) == ["block-size"]]
+    took = time.monotonic() - t0
+    modes = {m.mode: m for m in s.modes}
+    n = sum(len(m.statements) for m in s.modes)
+    bs = [st for st in modes["pool"].statements if list(st.words) == ["block-size"]]
     arg = bs[0].forms[0].arguments[0] if bs else None
-    udp = [st for st in areas["logging"].statements if list(st.words) == ["logging", "udp"]]
-    ok = (sorted(areas) == ["interfaces", "logging", "pools"] and arg is not None
-          and arg.kind == "integer" and (arg.min, arg.max) == (64, 32768)
-          and "nb" in areas["pools"].names and "pg0" in areas["interfaces"].names
-          and udp and len(udp[0].forms) == 2)
-    result("schema", ok, f"block-size {arg.kind if arg else None} {arg.min if arg else ''}-"
-           f"{arg.max if arg else ''} names {list(areas['pools'].names)}")
+    udp = [st for st in modes["cgnat"].statements if list(st.words) == ["logging", "udp"]]
+    srcs = {a.source for m in s.modes for st in m.statements for f in st.forms
+            for a in f.arguments if a.source}
+    ok = (len(modes) == 26 and "router bgp" in modes and "router isis" in modes
+          and arg is not None and arg.kind == "integer" and (arg.min, arg.max) == (64, 32768)
+          and list(modes["pool"].path) == ["nat", "cgnat", "pool <name>"]
+          and modes["pool"].typed_area == "pools" and bs[0].typed
+          and udp and len(udp[0].forms) == 2
+          and {"interfaces", "neighbours", "pools"} <= srcs
+          and s.release and len(s.digest) == 64 and not s.values
+          and len(s.box_owned) == 4)
+    result("schema", ok, f"{len(modes)} modes {n} statements in {took * 1000:.0f} ms, "
+           f"release {s.release} digest {s.digest[:8]}")
+    t0 = time.monotonic()
+    v = cfg.GetSchema(pb.GetSchemaRequest(modes=["pool", "interface (port)"],
+                                          with_values=True), timeout=120)
+    took = time.monotonic() - t0
+    vals = {k: list(x.values) for k, x in v.values.items()}
+    result("schema-values", [m.mode for m in v.modes] == ["pool", "interface (port)"]
+           and "nb" in vals.get("pools", []) and "pg0" in vals.get("interfaces", [])
+           and v.digest != s.digest,
+           f"in {took * 1000:.0f} ms: pools {vals.get('pools')} interfaces "
+           f"{vals.get('interfaces')}")
 
 
 def check_validate():

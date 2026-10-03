@@ -187,6 +187,68 @@ def config_typed(cfg, areas=()):
         out["pools"] = pools_typed(cfg)
     if "logging" in want:
         out["logging"] = logging_typed(cfg)
+    # Whatever the areas: the lines a client must show read only.
+    out["box_owned"] = box_owned_lines(cfg)
+    return out
+
+
+# ------------------------------------------------------- box-owned lines
+
+#: Statements the running configuration holds that are the BOX's, not the
+#: operator's: no grammar of this VTY takes them, it marks them "<- not
+#: checked" and hands them to FRR as they are, and a client shows them read
+#: only on purpose rather than as unknown. (words as a pattern, why).
+#: Measured on the X520 bench's running configuration: 4 of its 30 lines.
+BOX_OWNED = (
+    ("log syslog <level>",
+     "FRR's own logging, written by FRR into its configuration"),
+    ("service integrated-vtysh-config",
+     "FRR's one-file configuration mode, which the box's FRR runs in"),
+    ("vrf prisma-<name>",
+     "a VRF of the box's own (prisma-bp is the containers' backplane, #447); "
+     "the VTY never makes, removes or edits one"),
+    ("exit-vrf", "closes the box's own VRF block above it"),
+)
+
+
+def box_owned(line, in_box_vrf=False):
+    """
+    Why `line` is a box-owned statement (BOX_OWNED), or "" when it is not.
+    `in_box_vrf`: the line is inside a `vrf prisma-*` block, whose lines and
+    whose `exit-vrf` are the box's too - an operator's VRF's are not.
+    """
+    w = line.split()
+    if not w:
+        return ""
+    if w[:2] == ["log", "syslog"]:
+        return BOX_OWNED[0][1]
+    if w == ["service", "integrated-vtysh-config"]:
+        return BOX_OWNED[1][1]
+    if w[0] == "vrf" and len(w) == 2 and w[1].startswith("prisma-"):
+        return BOX_OWNED[2][1]
+    if in_box_vrf:
+        return BOX_OWNED[3][1] if w == ["exit-vrf"] else BOX_OWNED[2][1]
+    return ""
+
+
+def box_owned_lines(cfg):
+    """[{"line", "why"}]: the box-owned statements Config `cfg` holds."""
+    out = []
+    in_box_vrf = False
+    for line in cfg.routing:
+        stripped = line.strip()
+        if not stripped or stripped == "!":
+            continue
+        w = stripped.split()
+        if w[:1] == ["vrf"]:
+            in_box_vrf = False
+        why = box_owned(stripped, in_box_vrf)
+        if w[:1] == ["vrf"]:
+            in_box_vrf = bool(why)
+        elif w == ["exit-vrf"]:
+            in_box_vrf = False
+        if why:
+            out.append({"line": stripped, "why": why})
     return out
 
 
@@ -441,41 +503,148 @@ def delete_lines(area, name="", transport=""):
 _RANGE = re.compile(r"^<(-?\d+)-(\d+)>$")
 
 
-def argument_of(token):
+def config_modes(P):
+    """
+    Every configuration mode the VTY has, from prismash module `P`: (mode,
+    how it is entered, the EditRequest.path as docs/api-coverage.md prints
+    it, its grammar node, the roles that change it, the path as a list).
+
+    THE ONE TABLE: tools/api-coverage.py reads it to write the coverage
+    document and GetSchema reads it to answer, so the two cannot list
+    different modes. The third column is the document's own text - prisma-web
+    parses it until GetSchema replaces it - and is not to be reworded.
+    """
+    adm, cg = "administrator", "administrator, cgnat-operator"
+    pol = ["policy-options", "policy-statement <name>"]
+    af = ["router bgp <asn>", "address-family <afi> <safi>"]
+    return [
+        ("config", "configure", "[]", P.TREE["config"], adm, []),
+        ("nat", "nat", '["nat"]', P.TREE["nat"], cg, ["nat"]),
+        ("cgnat", "nat > cgnat", '["nat","cgnat"]', P.TREE["cgnat"], cg,
+         ["nat", "cgnat"]),
+        ("pool", "nat > cgnat > pool <name>", '["nat","cgnat","pool <name>"]',
+         P.TREE["pool"], cg, ["nat", "cgnat", "pool <name>"]),
+        ("system", "system", '["system"]', P.TREE["system"], adm, ["system"]),
+        ("system memory", "system > memory", '["system","memory"]',
+         P.TREE["memory"], adm, ["system", "memory"]),
+        ("system cpu", "system > cpu", '["system","cpu"]', P.TREE["cpu"], adm,
+         ["system", "cpu"]),
+        ("system dataplane", "system > dataplane", '["system","dataplane"]',
+         P.TREE["dataplane"], adm, ["system", "dataplane"]),
+        ("policy-options", "policy-options", '["policy-options"]',
+         P.TREE["policy-options"], adm, ["policy-options"]),
+        ("prefix-list", "policy-options > prefix-list <name>",
+         '["policy-options","prefix-list <name>"]', P.TREE["prefix-list"], adm,
+         ["policy-options", "prefix-list <name>"]),
+        ("policy-statement", "policy-options > policy-statement <name>",
+         '["policy-options","policy-statement <name>"]',
+         P.TREE["policy-statement"], adm, pol),
+        ("term", "... > policy-statement <name> > term <name>",
+         '[..., "term <name>"]', P.TREE["term"], adm, pol + ["term <name>"]),
+        ("user", "user <name>", '["user <name>"]', P.TREE["user"], adm,
+         ["user <name>"]),
+        ("snmp-user", "snmp-user <name>", '["snmp-user <name>"]',
+         P.TREE["snmp-user"], adm, ["snmp-user <name>"]),
+        ("interface (port)", "interface <name>", '["interface <name>"]',
+         P.PORT_BLOCK, adm, ["interface <name>"]),
+        ("interface (bundle)", "interface bond<n>", '["interface bond<n>"]',
+         P.INTERFACE_BLOCK, adm, ["interface bond<n>"]),
+        ("router static", "router static", '["router static"]',
+         P.STATIC_BLOCK_GRAMMAR, adm, ["router static"]),
+        ("rpki", "rpki", '["rpki"]', P.RPKI_BLOCK, adm, ["rpki"]),
+        ("router bgp", "router bgp <asn>", '["router bgp <asn>"]', P.BGP_BLOCK,
+         adm, ["router bgp <asn>"]),
+        ("bgp neighbor", "router bgp <asn>: neighbor <address> ...",
+         '["router bgp <asn>"]', {"neighbor <address>": (
+             "a BGP session", P.BGP_NEIGHBOUR)}, adm, ["router bgp <asn>"]),
+        ("address-family", "router bgp <asn> > address-family <afi> <safi>",
+         '["router bgp <asn>","address-family <afi> <safi>"]', P.BGP_AF_BLOCK,
+         adm, af),
+        ("address-family neighbor",
+         "... > address-family: neighbor <address> ...",
+         '[..., "address-family <afi> <safi>"]', {"neighbor <address>": (
+             "a BGP session", P.BGP_AF_NEIGHBOUR)}, adm, af),
+        ("router ospf", "router ospf", '["router ospf"]', P.OSPF_BLOCK, adm,
+         ["router ospf"]),
+        ("router ospf6", "router ospf6", '["router ospf6"]', P.OSPF6_BLOCK,
+         adm, ["router ospf6"]),
+        ("router isis", "router isis <tag>", '["router isis <tag>"]',
+         P.ISIS_BLOCK, adm, ["router isis <tag>"]),
+        ("route-map", "route-map <name> permit|deny <seq>",
+         '["route-map <name> permit|deny <seq>"]', P.ROUTE_MAP_BLOCK, adm,
+         ["route-map <name> permit|deny <seq>"]),
+    ]
+
+
+#: The modes GetConfig/SetConfig read and write as fields (#558, phase 2),
+#: and which of their statements: None is every one.
+TYPED_MODES = {"interface (port)": ("interfaces", None),
+               "interface (bundle)": ("interfaces", None),
+               "pool": ("pools", None),
+               "cgnat": ("logging", ("logging",))}
+
+
+def dynamic_sources(P):
+    """
+    {argument as the grammar names it: the source of its values}, from the
+    VTY's own completion table (Shell.DYNAMIC): "<interface>" -> "interfaces",
+    "<neighbour>" -> "neighbours", "<next-hop>" -> "next_hops".
+    """
+    out = {}
+    for hint, fn in P.Shell.DYNAMIC.items():
+        token = hint.split()[0].rstrip(",")
+        out[token] = fn[len("dyn_"):] if fn.startswith("dyn_") else fn
+    return out
+
+
+def argument_of(token, sources=None):
     """
     One word of a VTY hint as a schema argument: {"name", "kind", "min",
-    "max", "choices", "optional"}. The kinds are integer, ipv4_prefix,
-    ipv4_address, ipv6_prefix, address, mac, choice, word, text, keyword.
+    "max", "choices", "optional", "source"}. The kinds are integer,
+    ipv4_prefix, ipv4_address, ipv6_prefix, ipv6_address, address, prefix,
+    mac, choice, word, text, keyword; `source` names where the VTY completes
+    its values from, when it does.
     """
     opt = token.startswith("[") and token.endswith("]")
-    t = token.strip("[]")
+    t = token.strip("[]").rstrip(",")
     arg = {"name": t, "kind": "word", "min": 0, "max": 0, "choices": [],
-           "optional": opt}
+           "optional": opt, "source": (sources or {}).get(t, "")}
     m = _RANGE.match(t)
     if m:
         arg.update(kind="integer", min=int(m.group(1)), max=int(m.group(2)))
-    elif t in ("<A.B.C.D/M>",):
+    elif t == "<A.B.C.D/M>":
         arg["kind"] = "ipv4_prefix"
-    elif t in ("<A.B.C.D>",):
+    elif t == "<A.B.C.D>":
         arg["kind"] = "ipv4_address"
-    elif t in ("<X:X::X:X/M>",):
+    elif t == "<X:X::X:X/M>":
         arg["kind"] = "ipv6_prefix"
-    elif t in ("<collector>", "<source>", "<address>", "<private-ip>"):
+    elif t == "<X:X::X:X>":
+        arg["kind"] = "ipv6_address"
+    elif t in ("<A.B.C.D|X:X::X:X>", "<collector>", "<source>", "<address>",
+               "<private-ip>", "<next-hop>", "<neighbour>", "<router-id>",
+               "<host>"):
         arg["kind"] = "address"
+    elif t in ("<prefix>", "<A.B.C.D/M|X:X::X:X/M>", "<network>"):
+        arg["kind"] = "prefix"
     elif t == "<xx:xx:xx:xx:xx:xx>":
         arg["kind"] = "mac"
-    elif t in ("<text>",):
+    elif t in ("<text>", "<line>", "<rest>"):
         arg["kind"] = "text"
-    elif t in ("<n>", "<ports>", "<seconds>", "<port>"):
+    elif t in ("<n>", "<ports>", "<seconds>", "<port>", "<GB>", "<MB>",
+               "<asn>", "<seq>", "<number>", "<metric>", "<value>", "<delay>",
+               "<hold>", "<keepalive>", "<init>", "<max>", "<minutes>",
+               "<percent>"):
         arg["kind"] = "integer"
     elif t.startswith("<") and "|" in t:
         arg.update(kind="choice", choices=t.strip("<>").split("|"))
+    elif not t.startswith("<") and "|" in t:
+        arg.update(kind="choice", choices=t.split("|"))
     elif not t.startswith("<"):
         arg["kind"] = "keyword"
     return arg
 
 
-def hint_arguments(hint):
+def hint_arguments(hint, sources=None):
     """A hint string as its arguments, `[...]` groups as optional ones."""
     if not hint:
         return []
@@ -488,32 +657,38 @@ def hint_arguments(hint):
         if tok == "]":
             opt = max(0, opt - 1)
             continue
-        if tok == "|":
+        if tok in ("|", "or", "...", ","):
             continue
-        a = argument_of(tok)
+        a = argument_of(tok, sources)
         a["optional"] = a["optional"] or opt > 0
         out.append(a)
     return out
 
 
-def _walk(node, prefix, out, depth=0):
+#: Words every level offers that are the session's, or are read elsewhere.
+_SESSION = ("exit", "top", "up", "end", "show", "commit", "rollback", "no",
+            "exit-address-family", "save")
+
+
+def _walk(node, prefix, out, sources, depth=0):
     for key, val in node.items():
-        if key in ("exit", "top", "up", "end", "show", "commit", "no"):
+        if key in _SESSION and not prefix:
             continue
         if not isinstance(val, tuple):
             continue
         help_ = val[0] if val else ""
         sub = val[1] if len(val) > 1 else None
-        if isinstance(sub, dict) and sub and depth < 6:
-            _walk(sub, prefix + [key], out, depth + 1)
+        if isinstance(sub, dict) and sub and depth < 7:
+            _walk(sub, prefix + [key], out, sources, depth + 1)
         else:
             hint = sub if isinstance(sub, str) else ""
             # `<collector> src <source> [port <n>] | disable`: each side of a
             # top-level `|` is a form of its own.
-            forms = [hint_arguments(part) for part in hint.split(" | ")] \
-                if hint else [[]]
-            out.append({"words": prefix + [key], "help": help_,
-                        "forms": forms})
+            forms = [hint_arguments(part, sources)
+                     for part in hint.split(" | ")] if hint else [[]]
+            out.append({"words": prefix + key.split(), "help": help_,
+                        "forms": forms,
+                        "repeatable": "may repeat" in (help_ or "")})
 
 
 def _negations(node):
@@ -523,40 +698,45 @@ def _negations(node):
     return set(neg[1])
 
 
-def area_grammar(P, area):
+def schema(P, modes=()):
     """
-    (path template, grammar node) for an area, from prismash module `P` - the
-    tree the prompt's `?` answers from.
+    The grammar of every configuration mode (or the `modes` named) as the
+    prompt's `?` answers it: [{"mode", "path", "enter", "roles", "typed",
+    "statements": [{"words", "help", "forms", "removable", "no_words",
+    "repeatable", "typed"}]}].
     """
-    if area == "interfaces":
-        return (["interface <name>"], P.PORT_BLOCK)
-    if area == "pools":
-        return (["nat", "cgnat", "pool <name>"], P.TREE["pool"])
-    if area == "logging":
-        return (["nat", "cgnat"],
-                {"logging": P.TREE["cgnat"]["logging"]})
-    raise ValueError(f"unknown area {area!r}: the areas are {', '.join(AREAS)}")
-
-
-def schema(P, areas=()):
-    """
-    The grammar of each area: [{"area", "path", "statements": [{"words",
-    "help", "arguments", "removable"}]}], read off the VTY's own tree.
-    """
-    want = list(areas) or list(AREAS)
+    table = config_modes(P)
+    known = [m[0] for m in table]
+    bad = [m for m in modes if m not in known]
+    if bad:
+        raise ValueError(f"unknown mode {bad[0]!r}: the modes are "
+                         f"{', '.join(known)}")
+    sources = dynamic_sources(P)
     out = []
-    for area in want:
-        path, node = area_grammar(P, area)
+    for mode, enter, _doc, node, roles, path in table:
+        if modes and mode not in modes:
+            continue
         stmts = []
-        _walk(node, [], stmts)
-        neg = _negations(node) | (_negations(P.TREE["cgnat"])
-                                  if area == "logging" else set())
-        for s in stmts:
-            s["removable"] = s["words"][0] in neg or (
-                area == "logging" and len(s["words"]) > 1
-                and s["words"][1] in TRANSPORTS)
-        out.append({"area": area, "path": path, "statements": stmts})
+        _walk(node, [], stmts, sources)
+        neg = _negations(node)
+        area, only = TYPED_MODES.get(mode, ("", None))
+        for st in stmts:
+            first = st["words"][0]
+            st["removable"] = first in neg or (
+                mode == "cgnat" and st["words"][:1] == ["logging"]
+                and len(st["words"]) > 1 and st["words"][1] in TRANSPORTS)
+            st["no_words"] = ["no"] + st["words"] if first in neg else []
+            st["typed"] = bool(area) and (only is None or first in only)
+        out.append({"mode": mode, "path": list(path), "enter": enter,
+                    "roles": roles, "typed": area, "statements": stmts})
     return out
+
+
+def schema_digest(modes):
+    """A stable hash of a schema: equal for equal grammars, whatever release."""
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps(modes, sort_keys=True).encode()).hexdigest()
 
 
 def edit_for(cfg, area, obj, fields=()):
@@ -586,8 +766,8 @@ def edit_for(cfg, area, obj, fields=()):
 
 
 def names_for(cfg, area, known_interfaces=()):
-    """What `<name>` may be for an area: the configured objects, and for
-    interfaces also those the dataplane has."""
+    """What `<name>` may be for a typed area: the configured objects, and
+    for interfaces also those the dataplane has."""
     if area == "interfaces":
         return sorted(set(cfg.interface_names()) | set(known_interfaces))
     if area == "pools":

@@ -68,7 +68,7 @@ check(not cfg.unknown, f"the sample parses whole: {cfg.unknown}")
 
 print("=== reads ===")
 d = T.config_typed(cfg)
-check(sorted(d) == ["interfaces", "logging", "pools"], "all three areas by default")
+check(sorted(d) == ["box_owned", "interfaces", "logging", "pools"], "all three areas by default, and the box's own lines")
 i = {x["name"]: x for x in d["interfaces"]}
 e = i["ens18"]
 check(e["description"] == "up link" and e["mtu"] == 1500 and not e["shutdown"]
@@ -199,28 +199,84 @@ for area, ls in (("interfaces", lines + new), ("pools", pl), ("logging", ll)):
     bad = [x for x in ls if not in_grammar(GRAMMAR[area], x.split())]
     check(not bad, f"{area}: every line is in the grammar: {bad}")
 
-print("=== schema ===")
-sc = {a["area"]: a for a in T.schema(P)}
-check(sorted(sc) == ["interfaces", "logging", "pools"], "every area")
-bs = [s for s in sc["pools"]["statements"] if s["words"] == ["block-size"]][0]
-check(bs["forms"][0][0]["kind"] == "integer" and bs["forms"][0][0]["max"] == 32768,
-      f"block-size: an integer with its range: {bs}")
-mx = [s for s in sc["pools"]["statements"] if s["words"] == ["max-blocks"]][0]
-check(mx["removable"] and not bs["removable"], "removable: `no max-blocks` exists, `no block-size` does not")
-udp = [s for s in sc["logging"]["statements"] if s["words"] == ["logging", "udp"]][0]
+print("=== box-owned statements: read only, on purpose ===")
+own = Config.parse("""! routing
+log syslog informational
+service integrated-vtysh-config
+vrf prisma-bp
+exit-vrf
+vrf red
+ ip route 1.0.0.0/8 10.0.0.1
+exit-vrf
+""")
+bo = [x["line"] for x in T.box_owned_lines(own)]
+check(bo == ["log syslog informational", "service integrated-vtysh-config",
+             "vrf prisma-bp", "exit-vrf"],
+      f"box_owned_lines: FRR's own, the box's VRF and its exit-vrf; not an operator's VRF: {bo}")
+check(T.box_owned("vrf prisma-x") and not T.box_owned("vrf red")
+      and T.box_owned("exit-vrf", in_box_vrf=True) and not T.box_owned("exit-vrf"),
+      "box_owned: by the statement, and by the block it is in")
+check("box_owned" in T.config_typed(own, ["pools"]), "every typed read answers them, whatever the areas")
+check(len(T.BOX_OWNED) == 4 and all(why for _, why in T.BOX_OWNED), "BOX_OWNED: each with its why")
+
+print("=== no IPv6 statement carries an IPv4 placeholder ===")
+v6 = [(m["mode"], " ".join(st["words"]), a["name"]) for m in T.schema(P)
+      for st in m["statements"] if any("ipv6" in w or "ospf6" in w for w in st["words"])
+      # A router-id is a 32-bit number written as an IPv4 address in OSPFv3
+      # too (RFC 5340 A.3.1): its dotted quad is right.
+      and "router-id" not in st["words"]
+      for f in st["forms"] for a in f if a["kind"].startswith("ipv4")]
+check(not v6, f"every ipv6 statement's address/prefix is an IPv6 or either-family one: {v6}")
+
+print("=== schema: every mode the VTY has ===")
+sch = T.schema(P)
+by = {m["mode"]: m for m in sch}
+check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 26,
+      f"every mode of config_modes, in its order: {len(sch)}")
+check(sum(len(m["statements"]) for m in sch) > 350,
+      f"{sum(len(m['statements']) for m in sch)} statements")
+bs = [s_ for s_ in by["pool"]["statements"] if s_["words"] == ["block-size"]][0]
+check(bs["forms"][0][0]["kind"] == "integer" and bs["forms"][0][0]["max"] == 32768
+      and bs["typed"] and not bs["removable"],
+      f"block-size: an integer with its range, typed, not removable: {bs}")
+mx = [s_ for s_ in by["pool"]["statements"] if s_["words"] == ["max-blocks"]][0]
+check(mx["removable"] and mx["no_words"] == ["no", "max-blocks"], "a `no` form, its words")
+udp = [s_ for s_ in by["cgnat"]["statements"] if s_["words"] == ["logging", "udp"]][0]
 check(len(udp["forms"]) == 2 and udp["forms"][1][0]["name"] == "disable"
-      and udp["forms"][0][0]["kind"] == "address",
-      f"logging udp: two forms, the collector an address: {udp['forms']}")
-pre = [s for s in sc["pools"]["statements"] if s["words"] == ["prefix-inside"]][0]
-check(pre["forms"][0][0]["kind"] == "ipv4_prefix", "prefix-inside: an IPv4 prefix")
+      and udp["forms"][0][0]["kind"] == "address" and udp["typed"],
+      f"logging udp: two forms, the collector an address, typed: {udp['forms']}")
+tmo = [s_ for s_ in by["cgnat"]["statements"] if s_["words"][:1] == ["timeout"]]
+check(tmo and not any(s_["typed"] for s_ in tmo), "cgnat: only logging is typed")
+nb = [s_ for s_ in by["router bgp"]["statements"] if s_["words"][:1] == ["neighbor"]]
+check(nb and not any(s_["typed"] for s_ in nb), "router bgp: a mode with no typed statement")
+check(by["pool"]["path"] == ["nat", "cgnat", "pool <name>"]
+      and by["term"]["path"] == ["policy-options", "policy-statement <name>", "term <name>"]
+      and by["pool"]["typed"] == "pools" and by["router bgp"]["typed"] == "",
+      "each mode's full EditRequest.path, the parent's included, and its typed area")
+srcs = {a["source"] for m in sch for st in m["statements"] for f in st["forms"]
+        for a in f if a["source"]}
+check({"interfaces", "pools", "neighbours", "next_hops"} <= srcs,
+      f"dynamic value sources, from the VTY's own completion table: {sorted(srcs)}")
+check(T.dynamic_sources(P)["<interface>"] == "interfaces", "dynamic_sources")
+check(any(st["repeatable"] for st in by["interface (port)"]["statements"]),
+      "a statement the grammar says may repeat")
+check([m["mode"] for m in T.schema(P, ["pool"])] == ["pool"], "schema of one mode")
+try:
+    T.schema(P, ["nosuch"])
+    check(False, "an unknown mode is refused")
+except ValueError as ex:
+    check("unknown mode" in str(ex), "schema refuses an unknown mode, naming the modes")
+check(T.schema_digest(sch) == T.schema_digest(T.schema(P)) and len(T.schema_digest(sch)) == 64,
+      "schema_digest: stable for the same grammar")
 check(T.argument_of("<on|off>")["choices"] == ["on", "off"]
-      and T.argument_of("[x]")["optional"], "argument_of: a choice, an optional word")
+      and T.argument_of("[x]")["optional"]
+      and T.argument_of("<interface>", T.dynamic_sources(P))["source"] == "interfaces",
+      "argument_of: a choice, an optional word, a dynamic source")
 check([a["optional"] for a in T.hint_arguments("<a> [port <n>]")] == [False, True, True],
       "hint_arguments: a bracketed group is optional")
-check(T.area_grammar(P, "logging")[0] == ["nat", "cgnat"], "area_grammar: where logging is typed")
 st = []
-T._walk({"a": ("help", "<1-2>"), "exit": ("x", None)}, [], st)
-check([s["words"] for s in st] == [["a"]], "_walk skips the session's words")
+T._walk({"a": ("help", "<1-2>"), "exit": ("x", None)}, [], st, {})
+check([s_["words"] for s_ in st] == [["a"]], "_walk skips the session's words")
 check(T._negations({"no": ("n", {"x": ("", None)})}) == {"x"}, "_negations")
 check(T._int("7") == 7 and T._int("x") == 0, "_int")
 check(T._blank_collector("syslog")["facility"] is None, "_blank_collector")
