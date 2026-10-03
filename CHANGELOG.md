@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.19 - Tab completion that helps remove, finish and address
+
+### Added
+
 * **TAB completion that helps remove, finish and address.**
   ([#557](https://github.com/andrediashexa/hexarouting/issues/557))
   Reported by the maintainer: removing configuration completed nothing, and
@@ -95,8 +101,6 @@ version has a chance of seeing it.
   neighbours and the next hops in use; `listen-address` from the box's own
   addresses; `ipv6 address` shows the IPv6 shape. lab/complete.sh drives the
   VTY in a pty on a box: 19 of 19, and 13 red against 0.149.16.
-
-### Fixed
 
 ## 0.149.18 - why a commit was refused, the confirm window and the candidates, typed
 
