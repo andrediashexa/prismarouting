@@ -885,6 +885,11 @@ _LISTINGS = {
     # of what `vrf` says.
     "prisma# [edit interface ens18] ?":
         ("configuration", ("interface ens18",), ""),
+    # A statement complete as typed, with the optional words that may still
+    # follow it and the <Enter> line (#557). Both documents quote it.
+    "prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?":
+        ("configuration", ("router static",),
+         "10.77.0.0/16 next-hop 10.9.9.2 "),
 }
 
 _seen = set()

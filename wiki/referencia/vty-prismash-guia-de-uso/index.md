@@ -119,6 +119,37 @@ Uma fonte que não consegue responder simplesmente não oferece nada e deixa a d
 
 Ambas são contextuais: dentro de um pool, `?` lista os campos do pool, não os comandos globais.
 
+### Remover o que está configurado: `no` + TAB
+
+Depois do `no`, o TAB completa **o que está configurado ali**, palavra por palavra, e o valor vem inteiro — remover é digitar exatamente o que existe, e é aí que a completação mais ajuda:
+
+* dentro de uma interface, `no ipv4 address <TAB>` insere o endereço que ela tem;
+* em `router bgp`, `no neighbor <TAB>` oferece a sessão configurada;
+* num pool, `no prefix-outside <TAB>` oferece o prefixo dele;
+* `no user <TAB>` lista as contas.
+
+O que a caixa recusa remover não é oferecido: uma porta física, a conta `root`, a VRF do backplane, e o `no hostname` nunca leva o nome.
+
+### Palavras opcionais e o fim do comando: `<Enter>`
+
+Depois de um argumento posicional, as palavras opcionais completam uma a uma. Numa rota estática, digitado o next-hop, aparecem `distance`, `tag` e `description` (`d<TAB>` completa); a que já está na linha some da lista; depois da palavra-chave vem a dica do valor dela (`<1-255>`). O mesmo vale para o BGP (`network`, `aggregate-address`, `maximum-prefix`), OSPF, IS-IS, route-map e para o `logging` do CGNAT.
+
+Quando o comando já está completo, o `?` e o TAB duplo mostram uma linha `<Enter>` — junto das opcionais, se houver:
+
+```
+prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?
+  description  optional
+  distance     optional
+  tag          optional
+  <Enter>      the command is complete: Enter runs it
+```
+
+A mensagem "(no known options here; the command is passed to FRR)" fica só para o que a VTY de fato não conhece.
+
+### Endereços
+
+O next-hop de uma rota estática completa com os vizinhos que o dataplane resolveu, os vizinhos BGP e os next-hops que outras rotas já usam — só os que estão numa rede de alguma interface — além de `blackhole`, `reject` e `Null0`. O `listen-address` de `ssh`, `snmp` e `api` completa com os endereços da própria caixa. Onde não há o que oferecer, a dica mostra o formato: `<A.B.C.D/M>`, `<X:X::X:X/M>`, `<A.B.C.D|X:X::X:X>`.
+
 ## Abreviações
 
 Você não precisa digitar a palavra inteira. **Qualquer abreviação que sirva a uma única declaração vale pela declaração inteira** — a caixa completa por você antes de ler a linha:

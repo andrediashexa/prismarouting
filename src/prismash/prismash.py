@@ -1603,6 +1603,13 @@ VPP_ERROR = re.compile(r"^(unknown input\b|[a-z][a-z0-9 _-]*: \S)")
 # ---------------------------------------------------------------------------
 
 ARG_PREFIX = "<A.B.C.D/M>"
+#: The IPv6 shape. `ipv6 address` showed the IPv4 one, which tells an
+#: operator the wrong thing about the one argument they were asking about
+#: (#557).
+ARG_PREFIX6 = "<X:X::X:X/M>"
+#: An address of this box's own, either family: where a daemon listens.
+#: Completed from the addresses the configuration gives the box (#557).
+ARG_LOCAL_ADDRESS = "<A.B.C.D|X:X::X:X>"
 ARG_WORD = "<word>"
 
 # A RANGE IS A PROMISE, so there is one of these per quantity and not one for
@@ -1830,6 +1837,10 @@ SHOW = {
 #: shape (#436). A static route starts with its prefix, and without this the
 #: tree could walk no further than the first word of one.
 ARG_STATIC_PREFIX = "<prefix>"
+#: What `?` and a double TAB show where a statement is complete as typed -
+#: Cisco's `<cr>`, in words (#557). An entry of the list, never inserted.
+ENTER = "<Enter>"
+ENTER_HELP = "the command is complete: Enter runs it"
 VALUE_SHAPES = {
     ARG_STATIC_PREFIX: lambda w: "/" in w and _is_network(w),
 }
@@ -1846,11 +1857,13 @@ def _is_network(word) -> bool:
     except ValueError:
         return False
 
+#: A static route's next hop, and what may follow it. Named so the box can
+#: answer it: the neighbours on the networks it is connected to (#557).
+ARG_STATIC_NEXT_HOP = ("<next-hop> [distance <1-255>] [tag <1-4294967295>] "
+                       "[description <text>]")
 _STATIC_ROUTE = {
     "next-hop": ("where it goes: an address, an interface, blackhole, Null0 "
-                 "or reject",
-                 "<next-hop> [distance <1-255>] [tag <1-4294967295>] "
-                 "[description <text>]"),
+                 "or reject", ARG_STATIC_NEXT_HOP),
 }
 STATIC_BLOCK_GRAMMAR = {
     ARG_STATIC_PREFIX: ("a destination this box is told about, rather than "
@@ -2140,7 +2153,7 @@ INTERFACE_BLOCK = {
     }),
     "isis": ("IS-IS settings on this interface", ISIS_INTERFACE),
     "ipv6": ("IPv6 addressing", {
-        "address": ("an address on this interface, may repeat", ARG_PREFIX),
+        "address": ("an address on this interface, may repeat", ARG_PREFIX6),
         "nd": ("neighbour discovery", {
             "suppress-ra": ("stop advertising this box as a router", None),
         }),
@@ -2810,7 +2823,8 @@ CGNAT_CONFIG = {
         # name without one for IANA, so a line this box writes without it is
         # a line a collector may read as somebody else's.
         "syslog": ("export as RFC 5424 syslog lines",
-                   "<collector> enterprise <n> [options] | disable"),
+                   "<collector> enterprise <n> [port <n>] [facility <0-23>] "
+                   "[severity <0-7>] | disable"),
     }),
     # Who held a private address, for the log and for nothing else (#21).
     # A file rather than a statement per subscriber: the list is written by a
@@ -3845,7 +3859,7 @@ TREE = {
                        "typed", "<address>")}),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_PORT),
-            "listen-address": ("address to listen on", ARG_WORD),
+            "listen-address": ("address to listen on", ARG_LOCAL_ADDRESS),
             "permit-root-login": ("whether root may log in over SSH", {
                 "yes": ("password or key", None),
                 "no": ("not at all", None),
@@ -3857,7 +3871,7 @@ TREE = {
         "user": ("an account that may log in", ARG_USER),
         "snmp": ("the SNMP agent, read-only by construction", {
             "enabled": ("run the agent", {"yes": ("", None), "no": ("", None)}),
-            "listen-address": ("address to listen on", ARG_WORD),
+            "listen-address": ("address to listen on", ARG_LOCAL_ADDRESS),
             "port": ("UDP port", ARG_PORT),
             "enterprise-number": ("the IANA number the product's MIB is "
                                   "served under; the product's own if unset",
@@ -3870,7 +3884,7 @@ TREE = {
         "api": ("the management API (gRPC, mutual TLS), off by default", {
             "enabled": ("serve it", {"yes": ("", None), "no": ("", None)}),
             "listen-address": ("the management address it listens on",
-                               ARG_WORD),
+                               ARG_LOCAL_ADDRESS),
             "port": ("TCP port", ARG_PORT),
         }),
         "commit": ("apply the candidate configuration", COMMIT),
@@ -4247,6 +4261,194 @@ def walk_from(node, words):
         node = sub
         hint = None
     return node, hint
+
+
+def walk_end(node, words):
+    """
+    Where `words` leave a walk down the tree, saying WHICH of four places it
+    is - what walk_from() cannot tell apart, because a statement that ends on
+    a leaf and a word the tree has never heard of both come back as
+    (None, None) there (#557):
+
+      ("node", node, None, [])     more words of the box's own follow
+      ("leaf", None, None, [])     the statement is complete as typed
+      ("arg", None, hint, typed)   an argument: `typed` is what was given
+      ("unknown", None, None, [])  a word the tree does not know
+    """
+    for i, w in enumerate(words):
+        if not isinstance(node, dict):
+            return ("leaf", None, None, []) if node is None \
+                else ("unknown", None, None, [])
+        entry = node.get(w) or shaped_entry(node, w)
+        if entry is None:
+            return "unknown", None, None, []
+        _, sub = entry
+        if isinstance(sub, str):
+            return "arg", None, sub, words[i + 1:]
+        if sub is None:
+            return ("leaf", None, None, []) if i == len(words) - 1 \
+                else ("unknown", None, None, [])
+        node = sub
+    return "node", node, None, []
+
+
+def _is_address(word) -> bool:
+    """An IPv4 or IPv6 address, no mask (#557)."""
+    try:
+        ipaddress.ip_address(word)
+        return True
+    except ValueError:
+        return False
+
+
+def _hint_elements(text):
+    """
+    A hint's grammar as elements: ("req", [alternative token lists]) for what
+    must come, ("opt", [alternative token lists]) for a bracketed group. One
+    level of brackets, which is every hint the tree has.
+    """
+    elements, depth, group = [], 0, []
+    for tok in re.findall(r"\[|\]|[^\s\[\]]+", text):
+        if tok == "[":
+            depth += 1
+            group = []
+            continue
+        if tok == "]":
+            depth = max(0, depth - 1)
+            alts = [a.split() for a in " ".join(group).split(" | ")]
+            alts = [a for a in alts if a and a != ["options"]]
+            if alts:
+                elements.append(("opt", alts))
+            continue
+        if depth:
+            group.append(tok)
+        else:
+            elements.append(("req", [[tok]]))
+    return elements
+
+
+def _token_takes(tok, word):
+    """Does hint token `tok` accept `word`? A placeholder takes any word, a
+    keyword (or `a|b` alternation of keywords) only itself."""
+    if tok.startswith("<") or tok == "...":
+        return True
+    return word in tok.split("|")
+
+
+def _token_offer(tok):
+    """What a token offers: keywords to complete, or a placeholder hint."""
+    if tok.startswith("<") or tok == "...":
+        return {}, tok
+    return {k: "" for k in tok.split("|") if k}, None
+
+
+def hint_progress(hint, typed):
+    """
+    An argument hint read as grammar and followed through `typed` (#557):
+    `(options, value_hint, complete)` for what may come next, or None when
+    the words do not fit it - the caller then keeps the plain hint.
+
+    Optional groups that stand together are taken in any order and each once,
+    so a static route offers `distance`, `tag` and `description` after its
+    next hop, and stops offering `distance` once it is on the line. After a
+    keyword that takes a value, the value's own hint is what is shown. A
+    `<text>` takes every word after it.
+    """
+    text = hint.strip().strip("'")
+    alts, depth, cur = [], 0, ""
+    for part in re.split(r"(\[|\]| \| )", text):
+        if part == "[":
+            depth += 1
+        elif part == "]":
+            depth = max(0, depth - 1)
+        if part == " | " and depth == 0:
+            alts.append(cur)
+            cur = ""
+        else:
+            cur += part
+    alts.append(cur)
+    for alt_text in alts:
+        res = _hint_follow(_hint_elements(alt_text), typed)
+        if res is not None:
+            return res
+    return None
+
+
+def _hint_follow(elements, typed):
+    i, used, pending, greedy = 0, set(), [], False
+    for word in typed:
+        if greedy:
+            continue
+        if pending:
+            tok = pending.pop(0)
+            if not _token_takes(tok, word):
+                return None
+            greedy = tok == "<text>"
+            continue
+        # The run of optional groups from i, and the required element after.
+        run, j = [], i
+        while j < len(elements) and elements[j][0] == "opt":
+            run.append(j)
+            j += 1
+        took = False
+        for k in run:           # a keyword-led group first
+            if k in used:
+                continue
+            for alt in elements[k][1]:
+                if not alt[0].startswith("<") and _token_takes(alt[0], word):
+                    used.add(k)
+                    pending = list(alt[1:])
+                    took = True
+                    break
+            if took:
+                break
+        if not took and j < len(elements):
+            alt = elements[j][1][0]
+            if not alt[0].startswith("<") and _token_takes(alt[0], word):
+                i, used, pending, took = j + 1, set(), list(alt[1:]), True
+        if not took:
+            for k in run:       # then an optional value
+                if k not in used and elements[k][1][0][0].startswith("<"):
+                    used.add(k)
+                    pending = list(elements[k][1][0][1:])
+                    took = True
+                    break
+        if not took and j < len(elements):
+            alt = elements[j][1][0]
+            if _token_takes(alt[0], word):
+                i, used, pending, took = j + 1, set(), list(alt[1:]), True
+                greedy = alt[0] == "<text>"
+            elif alt[0] == "..." and i > 0:
+                took = True
+        if not took:
+            if any(e == ("opt", [["<asn>", "..."]]) for e in elements):
+                continue
+            return None
+    if greedy:
+        return {}, None, True
+    if pending:
+        opts, h = _token_offer(pending[0])
+        return opts, h, False
+    run, j = [], i
+    while j < len(elements) and elements[j][0] == "opt":
+        run.append(j)
+        j += 1
+    opts, value_hint = {}, None
+    for k in run:
+        if k in used:
+            continue
+        for alt in elements[k][1]:
+            o, h = _token_offer(alt[0])
+            for key in o:
+                opts[key] = "optional"
+            if h and value_hint is None:
+                value_hint = h
+    complete = j >= len(elements)
+    if not complete:
+        o, h = _token_offer(elements[j][1][0][0])
+        opts.update(o)
+        value_hint = value_hint or h
+    return opts, value_hint, complete
 
 
 def takes_a_value(node):
@@ -21749,6 +21951,102 @@ class Shell:
         cfg = self.candidate or self.running_config()
         return {name: "SNMPv3 user" for name in cfg.snmp_users}
 
+    def dyn_local_addresses(self):
+        """
+        The box's own addresses, as the configuration gives them, without the
+        mask: what a daemon can listen on (#557). From the candidate when one
+        is being edited, so an address added a line ago is offered.
+        """
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for ifname, addrs in sorted(cfg.addresses.items()):
+            for a in addrs:
+                found.setdefault(a.split("/")[0], f"on {ifname}")
+        return found
+
+    #: How long an answer from the dataplane is reused by completion. A TAB
+    #: pressed twice must not ask twice, and a neighbour table a few seconds
+    #: old is still the right list to choose a next hop from (#557).
+    COMPLETION_CACHE_SECONDS = 5.0
+
+    def _cached(self, key, fetch):
+        """`fetch()`'s answer, reused for COMPLETION_CACHE_SECONDS."""
+        cache = self.__dict__.setdefault("_completion_cache", {})
+        hit = cache.get(key)
+        now = time.monotonic()
+        if hit and now - hit[0] < self.COMPLETION_CACHE_SECONDS:
+            return hit[1]
+        value = fetch()
+        cache[key] = (now, value)
+        return value
+
+    def _dataplane_neighbours(self):
+        """IP neighbours the dataplane has resolved, both families, from its
+        own table: {address: interface}. Empty when it cannot be asked."""
+        # not a unit: the query _dataplane_neighbours hands _cached(), read through its owner
+        # by test_prismash_complete.py
+        def fetch():
+            found = {}
+            for cmd in ("show ip neighbors", "show ip6 neighbors"):
+                try:
+                    rc, out = self.dp.run(cmd)
+                except Exception:
+                    continue
+                if rc != 0:
+                    continue
+                for line in out.splitlines():
+                    w = line.split()
+                    addr = next((x for x in w if _is_address(x)), None)
+                    if addr:
+                        found.setdefault(addr, w[-1] if len(w) > 1 else "")
+            return found
+        return self._cached("neighbours", fetch)
+
+    def dyn_next_hops(self):
+        """
+        Where a static route can go, from what the box knows (#557): the
+        neighbours the dataplane has resolved, the BGP neighbours and the next
+        hops other routes already use - each kept only when it lies on a
+        network an interface is configured on, since a next hop is reached
+        through one - and the three keywords that are not an address.
+        """
+        cfg = self.candidate or self.running_config()
+        nets = []
+        for addrs in cfg.addresses.values():
+            for a in addrs:
+                try:
+                    nets.append(ipaddress.ip_interface(a).network)
+                except ValueError:
+                    pass
+
+        # not a unit: a closure inside dyn_next_hops, read through its owner
+        # by test_prismash_complete.py
+        def connected(addr):
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                return False
+            return not nets or any(ip.version == n.version and ip in n
+                                   for n in nets)
+
+        found = {}
+        for line in group_static(cfg.routing, cfg.static_descriptions):
+            w = line.split()
+            if "next-hop" in w[:-1]:
+                hop = w[w.index("next-hop") + 1]
+                if connected(hop):
+                    found.setdefault(hop, "a next hop a route already uses")
+        for addr, how in self.dyn_neighbours().items():
+            if connected(addr):
+                found.setdefault(addr, f"BGP neighbour, {how}")
+        for addr, ifname in self._dataplane_neighbours().items():
+            if connected(addr):
+                found.setdefault(addr, f"resolved on {ifname}")
+        found.update({"blackhole": "discard, silently",
+                      "reject": "discard, answering unreachable",
+                      "Null0": "the same as blackhole"})
+        return found
+
     #: hint -> the method that answers it. Kept as data so a marker added to
     #: the tree without a source here shows up as an absence rather than
     #: silently going back to being a bare "<word>".
@@ -21766,6 +22064,8 @@ class Shell:
         ARG_ISIS_TAG: "dyn_isis_tags",
         ARG_AS_PATH_LIST: "dyn_as_path_lists",
         ARG_COMMUNITY_LIST: "dyn_community_lists",
+        ARG_LOCAL_ADDRESS: "dyn_local_addresses",
+        ARG_STATIC_NEXT_HOP: "dyn_next_hops",
     }
 
     def dynamic_options(self, hint, prefix):
@@ -21801,7 +22101,213 @@ class Shell:
         return block_grammar(self.frr_ctx[-1], words) or {
             "exit": ("leave the block", None)}
 
+    #: Statements written into a configuration by the box itself, never by an
+    #: operator: offering `no` for them invites removing what the product
+    #: needs (`vrf prisma-bp` is the containers' backplane, #447).
+    NOT_REMOVABLE_HERE = ("frr version", "frr defaults", "service integrated-",
+                          "log syslog", "vrf prisma-", "user root", "exit")
+
+    def _here_statements(self):
+        """
+        The statements configured at the level being edited, as word lists, in
+        the words `show this` prints them - what `no` can name there (#557).
+
+        From the CANDIDATE, like `show this`: an operator removing something
+        is removing it from what they are editing. Secrets stop the words
+        before them, so a completion never prints a password `show this`
+        redacts. Empty when this level has no model to read from.
+        """
+        cfg = self.candidate
+        if cfg is None:
+            return []
+        lines = []
+        if self.mode == "pool" and self.pool is not None:
+            src = (cfg.pools[self.pool.name] if self.pool.name in cfg.pools
+                   else self.pool)
+            lines = [l for l in src.lines()[1:] if l.startswith(" ")
+                     and not l.startswith("  ")]
+        elif self.mode == "user" and self.user is not None:
+            lines = self.user.lines()[1:]
+        elif self.mode == "snmp-user" and self.snmp_user is not None:
+            lines = self.snmp_user.lines()[1:]
+        elif self.frr_ctx:
+            block = self.frr_ctx[-1]
+            if block.startswith("interface "):
+                lines += cfg.interface_lines(block.split(None, 1)[1])
+            lines += [l for l in redact(frr_block_lines(
+                cfg.routing, self.frr_ctx, cfg.static_descriptions))
+                if not l.startswith("  ")]
+        elif self.nat_ctx:
+            if self.nat_ctx[0] == SYSTEM_HIERARCHY:
+                return []
+            depth = len(self.nat_ctx)
+            lines = [l for l in cfg.cgnat_block()
+                     if len(l) - len(l.lstrip(" ")) == depth]
+        else:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.print_config(cfg)
+            for l in out.getvalue().splitlines():
+                if l.startswith(ROUTING_HEADER):
+                    break
+                if l and not l.startswith((" ", "!")):
+                    lines.append(l)
+            grouped = group_static(redact(cfg.routing),
+                                   cfg.static_descriptions)
+            lines += [l for l, path in zip(grouped, block_paths(grouped))
+                      if path == []]
+        stmts = []
+        for l in lines:
+            l = re.sub(r"\s+<- .*$", "", l).strip()
+            if not l or l.startswith("!") or l.startswith(
+                    self.NOT_REMOVABLE_HERE):
+                continue
+            w = l.split()
+            if not self.frr_ctx and not self.nat_ctx and self.mode == "config":
+                # A physical port is not created by a configuration, so it
+                # cannot be removed by one (the refusal in do_config).
+                if w[0] == "interface" and len(w) > 1 and "." not in w[1] \
+                        and not _is_loopback(w[1]) and not _is_bundle(w[1]):
+                    continue
+                if w[0] == "hostname":
+                    w = w[:1]           # `no hostname`, never with the name
+            for i, word in enumerate(w):
+                if word.startswith("<") or "****" in word:
+                    w = w[:i]           # a secret ends what may be offered
+                    break
+            if w:
+                stmts.append(w)
+        return stmts
+
+    def no_options(self, typed, prefix):
+        """
+        What `no` offers after `typed`: the next word of every statement
+        configured here that begins with those words, a configured value
+        completing whole (#557). The level's own `no` grammar, where it has
+        one, decides which statements may be named at all - a pool shows its
+        `block-size` and its `no` does not take one.
+        """
+        stmts = self._here_statements()
+        if not stmts:
+            return {}
+        allowed = None
+        # Inside a block the level's own `no` grammar is complete and decides.
+        # At the top of configuration mode it is not - it names four words,
+        # and `no user`, `no router` and `no ip prefix-list` are all taken -
+        # so there what is configured decides alone, and the exceptions the
+        # handlers refuse are left out in _here_statements().
+        top = (self.mode == "config" and not self.frr_ctx
+               and not self.nat_ctx)
+        if not typed and not top:
+            gram, _, _ = self._grammar_options("no ", False)
+            words = {k for k in gram if not k.startswith("<")}
+            allowed = words or None
+        out = {}
+        n = len(typed)
+        for w in stmts:
+            if len(w) <= n or w[:n] != typed or not _starts(w[n], prefix):
+                continue
+            if allowed is not None and w[0] not in allowed:
+                continue
+            text = " ".join(w)
+            out.setdefault(w[n], "configured: " + (
+                text if len(text) <= 52 else text[:49] + "..."))
+        return out
+
     def _options(self, line, ending_word):
+        """
+        What `?` and Tab offer after `line`: the grammar's answer, except after
+        `no`, where what is CONFIGURED here comes first - a removal has to name
+        exactly what is there, and that is when completion helps most (#557).
+        """
+        words = line.split()
+        prefix = words[-1] if (ending_word and words) else ""
+        if ending_word and words:
+            words = words[:-1]
+        opts, hint, prefix = self._grammar_options(line, ending_word)
+        if self.mode != "operational" and "|" not in line \
+                and words[:1] == ["no"]:
+            # What is configured here, beside what the grammar takes: `no
+            # shutdown` is right on an interface that never had one, and the
+            # address to remove is the one that is there (#557).
+            mine = self.no_options(words[1:], prefix)
+            if mine:
+                opts = {**opts, **mine}
+        if not words or "|" in line:
+            return opts, hint, prefix
+        # Past the first word of an argument whose hint carries optional
+        # words, the hint is grammar to follow, not a picture to repeat: the
+        # optional keywords complete, the ones already used drop out, and a
+        # keyword's own value hint follows it (#557).
+        root, walk, _ = self._grammar_root(words)
+        state, _, arg_hint, typed = walk_end(root, walk)
+        if state == "arg" and (typed or arg_hint.lstrip("'").startswith("[")):
+            res = hint_progress(arg_hint, typed)
+            if res is not None:
+                more, value_hint, complete = res
+                more = {k: v for k, v in more.items() if _starts(k, prefix)}
+                if value_hint and value_hint in self.DYNAMIC:
+                    more.update(self.dynamic_options(value_hint, prefix))
+                if complete and not prefix:
+                    more[ENTER] = ENTER_HELP
+                if more or value_hint:
+                    return more, value_hint, prefix
+        if prefix:
+            return opts, hint, prefix
+        done, optional = self.statement_end(words)
+        if not done:
+            return opts, hint, prefix
+        # Complete as typed: what may still follow, and the line that says
+        # Enter runs it - never "(no known options here)", which reads as a
+        # statement this VTY does not know (#557).
+        opts = dict(optional if hint else opts)
+        opts[ENTER] = ENTER_HELP
+        return opts, None, prefix
+
+    def _grammar_root(self, words):
+        """The node `?` walks from for `words`, and the words it walks - the
+        same choice _grammar_options() makes, held in one place for
+        statement_end() (#557)."""
+        if words[:1] == ["show"] and (self.frr_ctx or self.mode in BLOCK_MODES):
+            return SHOW, words[1:], True
+        if self.mode != "operational" and words[:1] \
+                and words[0] in PROBE_TOOLS:
+            return TREE["operational"], words, False
+        if self.frr_ctx:
+            return self.block_grammar(words), words, False
+        return TREE.get(self.grammar_mode()), words, words[:1] == ["show"]
+
+    def statement_end(self, words):
+        """
+        Is the statement `words` complete as typed, and which optional words
+        may still follow it (#557)?
+
+        Complete means: the walk ended on a leaf; or on an argument whose hint
+        has been given every word it requires; or on a `show` that names
+        something (`show configuration`, which `compare` may follow); or a
+        `no` naming in full a statement configured here. A path the tree does
+        not know is NOT complete - that one goes to FRR as typed, and saying
+        otherwise would be this VTY claiming a grammar it does not have.
+        """
+        if words[:1] == ["no"] and self.mode != "operational":
+            if words[1:] in self._here_statements():
+                return True, {}
+        root, walk, is_show = self._grammar_root(words)
+        state, node, hint, typed = walk_end(root, walk)
+        if state == "leaf":
+            return True, {}
+        if state == "arg":
+            res = hint_progress(hint, typed)
+            if res is None:
+                return False, {}
+            opts, _, complete = res
+            return complete, opts if complete else {}
+        # A node is NOT complete just for having been reached: `show cgnat`
+        # with nothing after it runs nothing, and the tree does not say which
+        # nodes do, so this does not guess.
+        return False, {}
+
+    def _grammar_options(self, line, ending_word):
         # After a pipe, the only words that mean anything are the filters. The
         # command's own grammar does not apply there and offering it would
         # send the operator back into the command they have already finished
@@ -21915,6 +22421,10 @@ class Shell:
             self._last_opts = opts
             self._last_hint = hint
             self._matches = sorted(opts)
+            if set(opts) == {ENTER}:
+                # Alone, readline would insert it; with a second entry that
+                # shares nothing with it, it only lists (#557).
+                self._matches = [ENTER, "\u200b"]
             if not opts and hint:
                 # With no options readline never calls the display hook, so the
                 # argument hint would never appear. Two entries with no common
@@ -21926,6 +22436,8 @@ class Shell:
             return None
         if not self._last_opts:
             return m            # a hint is not a completion: never inserted
+        if m == ENTER:
+            return m            # nor is <Enter>: it is a key, not a word
         return m + " "
 
     def display_matches(self, substitution, matches, longest):
@@ -21933,7 +22445,9 @@ class Shell:
         print()
         if opts:
             width = max(len(m) for m in opts)
-            for m in sorted(opts):
+            # <Enter> last, where Cisco puts <cr>: after what may still be
+            # typed, the line that says nothing more has to be (#557).
+            for m in sorted(opts, key=lambda k: (k == ENTER, k)):
                 print(f"  {m:<{width}}  {opts[m]}")
         hint = getattr(self, "_last_hint", None)
         if hint:

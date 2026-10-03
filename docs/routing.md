@@ -129,6 +129,53 @@ the operator what they already knew and sent them to `vppctl` or `ip link` in
 another window, which are the two tools this VTY exists to keep them out of, at
 the first argument ([#98](https://github.com/andrediashexa/hexarouting/issues/98)).
 
+### What `no` names, what may still follow, and when a statement is done
+
+**After `no`, what is configured here completes**
+([#557](https://github.com/andrediashexa/hexarouting/issues/557)). Removing a
+statement means typing it exactly as it is, and that is when completion helps
+most: `no ipv4 address <TAB>` inside an interface inserts the address it has,
+`no neighbor <TAB>` the session, a pool's `no prefix-outside <TAB>` its
+prefix, `no user <TAB>` the accounts. The values come from the candidate - the
+same lines `show this` prints - beside what the level's `no` grammar takes, so
+`no shutdown` is still offered on an interface that never had one. What the
+box refuses to remove is not offered: a physical port, `root`, the
+backplane's VRF, and `no hostname` never takes the name.
+
+**A positional argument's optional words complete, one step at a time.** A
+hint such as `<next-hop> [distance <1-255>] [tag <1-4294967295>] [description
+<text>]` is read as grammar: once the next hop is typed, `distance`, `tag` and
+`description` are offered and complete (`d<TAB>`); one already on the line is
+not offered again; after a keyword its own value hint follows (`<1-255>`), and
+a `<text>` takes the rest of the line. The same reading serves every hint with
+optional words - BGP `network`, `aggregate-address` and `maximum-prefix`, the
+OSPF, OSPFv3 and IS-IS statements, route-maps, RPKI caches, the CGNAT's
+`logging` exports.
+
+**A statement complete as typed says so.** `?` and a double TAB print an
+`<Enter>` line where nothing more is needed - beside the optional words when
+there are some - instead of an empty list or "(no known options here; the
+command is passed to FRR)", which read as "not known". That line stays for a
+path this VTY has no grammar for; it is never shown for one it has.
+
+```
+prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?
+  description  optional
+  distance     optional
+  tag          optional
+  <Enter>      the command is complete: Enter runs it
+```
+
+**Addresses complete from what the box knows.** A static route's next hop
+offers the neighbours the dataplane has resolved, the BGP neighbours and the
+next hops other routes use - each only on a network an interface is
+configured on - and `blackhole`, `reject`, `Null0`. `ssh`, `snmp` and `api`
+`listen-address` offer the box's own addresses. Where nothing is known, the
+hint shows the shape: `<A.B.C.D/M>`, `<X:X::X:X/M>` (which `ipv6 address`
+did not, until now), `<A.B.C.D|X:X::X:X>`. The dataplane's neighbour table is
+asked once in five seconds, not once per key: measured in lab/complete.sh, a
+first TAB 2 ms, the next ones under 1 ms.
+
 `local0` is never offered: it is VPP's own loopback and configures nothing.
 
 Inside a block, `?` offers **only what is valid there**:

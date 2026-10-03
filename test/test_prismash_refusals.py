@@ -997,11 +997,21 @@ print(f"  {len(_logging)} ways the export does not arrive, each said out loud")
 # spelling added to the tree appears on this screen with nothing to keep in
 # step, and a list written out here would be the third copy.
 _rv, _text = driven(shell().apply_logging, "cgnat logging sideways".split())
+# A row wider than the console is folded onto the next line (the 79-column
+# rule); joined back here, so the row compared is the one the tree spells
+# (#557 spelled out the syslog options, and that row now folds).
+_rows = []
+for _l in _text.splitlines():
+    if _rows and _rows[-1].startswith("    logging ") \
+            and _l.startswith("    ") and not _l.startswith("    logging "):
+        _rows[-1] += " " + _l.strip()
+    else:
+        _rows.append(_l)
 for _word, (_what, _hint) in prismash.CGNAT_CONFIG["logging"][1].items():
     # In the words typed under `cgnat`, where the statement is (#446).
     _row = (f"    logging {_word}"
             + (f" {_hint}" if _hint else ""))
-    check(_row in _text.splitlines(),
+    check(_row in _rows,
           f"the refusal offers {_word!r} as the tree spells it: {_text!r}")
 print(f"  and the {len(prismash.CGNAT_CONFIG['logging'][1])} shapes it does "
       f"take, each out of the table `?` answers from")
