@@ -71,7 +71,8 @@ services = dict(re.findall(r"service (\w+) \{(.*?)\n\}", body, re.S))
 want = {
     "ConfigService": ["OpenCandidate", "Edit", "ShowCandidate", "Compare",
                       "Check", "Commit", "Confirm", "Rollback", "Save",
-                      "CloseCandidate", "GetRunning", "ListRevisions"],
+                      "CloseCandidate", "GetRunning", "ListRevisions",
+                      "GetPendingConfirm", "ListCandidates"],
     "OperationalService": ["GetVersion", "GetSystem", "ListInterfaces",
                            "ListPools", "GetSubscriber", "GetSessionsSummary",
                            "ListBgpNeighbors", "ListOspfNeighbors",

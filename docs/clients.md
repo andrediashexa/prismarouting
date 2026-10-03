@@ -27,6 +27,49 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.18 - why a change was refused, the confirm window, the candidates (#558, phase 1)
+
+Phase 1 of #558, ordered by prisma-web's own list (items 1-3).
+
+* **Contract:** additive. `prisma.proto` sha256 `8fdfa4978201d4fa54fe5d0b8b368bc3ae95d6ca163d23c2bb0ac303c550ed5d`.
+* **Refusal reasons:** every refused ConfigService call carries
+  `Diagnostics.reason` in the `prisma-diagnostics-bin` trailer:
+  - `STALE_BASE` (`FAILED_PRECONDITION`) with `running_revision`, the revision
+    GetRunning answers now;
+  - `PERMISSION` (`PERMISSION_DENIED`);
+  - `CANDIDATE_EXPIRED` and `CANDIDATE_UNKNOWN` (both `NOT_FOUND`);
+  - `LIMIT` (`INVALID_ARGUMENT` at entry, `FAILED_PRECONDITION` at a commit)
+    with `limit_field`, `limit` and `limit_size`,
+    all in bytes (e.g. `cgnat identity file`, 255, 256);
+  - `GATE_REMAP`, `GATE_DIVERGE`, `GATE_CUTOFF` with `gate_items`;
+  - `CONFIRM_PENDING`, `GRAMMAR`, `VALIDATION`, `APPLY_FAILED`, `USAGE` and
+    `OTHER`.
+
+  `CheckResponse.reason` (7) is the code a Commit would meet, so a gate is
+  known before committing. The human message is unchanged.
+* **Replacing the stale workaround:** `routes/config.rs is_stale` compares
+  the candidate's base with GetRunning. Read `REASON_STALE_BASE` and
+  `running_revision` instead; the comparison is no longer needed.
+* **GetPendingConfirm** (ConfigService): `pending`, `revision` (the running
+  revision the box would revert from), `deadline`, `account`, `comment`,
+  `committed_at`, `minutes`, `revert_attempts` and `overdue`. It is read from
+  the box's own state: the same after an API server or a back-end restart,
+  and for any account. A read-only account gets `minutes` 0 because it
+  cannot read the window file, but `deadline` is still right. Replace the
+  in-memory banner with this call at start and on every
+  `confirm-pending`/`confirmed` event.
+* **Candidate lifecycle:**
+  - `ListCandidates` gives the calling account's candidates, oldest first,
+    each with `base_revision`, `created_at`, `last_activity`, `expires_at`
+    and `staged_lines`, plus the server's `idle_seconds` (1800 on a box).
+    Listing does not count as activity.
+  - `OpenCandidateResponse` gains `expires_at` (4) and `idle_seconds` (5).
+  - `EditResponse` gains `last_activity` (3) and `expires_at` (4).
+
+  Replace the 25-minute guess and the "NOT_FOUND means expired" mapping with
+  `expires_at` and `REASON_CANDIDATE_EXPIRED`.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.17 - what the API reaches, command by command
 
 * **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).

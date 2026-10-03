@@ -58,8 +58,14 @@ import logstate  # noqa: E402 - the CGNAT log export's state (#555)
 DEFAULT_LISTEN = "128.0.0.2:50051"
 #: The certificates, under the directory the container shares with the host.
 API_DIR = os.environ.get("PRISMA_API_DIR", "/etc/prisma-routing/api")
-#: A candidate nobody has touched for this long is closed.
-CANDIDATE_IDLE = 1800
+#: A candidate nobody has touched for this long is closed. A client reads it
+#: back as ListCandidatesResponse.idle_seconds and each candidate's
+#: expires_at (#558) rather than assuming it; PRISMA_API_CANDIDATE_IDLE is
+#: for lab/api-grpc.sh, which expires one in seconds.
+CANDIDATE_IDLE = int(os.environ.get("PRISMA_API_CANDIDATE_IDLE", "") or 1800)
+#: Candidates the server closed for idleness, remembered so a call naming
+#: one answers "expired" and not "never existed" (#558) - at most this many.
+EXPIRED_KEEP = 1000
 #: An account's process for operational calls is kept this long between uses.
 WORKER_IDLE = 300
 #: The commands Show takes: reads, never a change and never a shell. Not
@@ -150,6 +156,145 @@ def denied(text):
 def revision_of(text):
     """A revision id for a configuration's text: equal texts, equal ids."""
     return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+# ---------------------------------------------- why a change was refused
+
+#: A refusal's reason, as prisma.v1's Diagnostics.Reason names it (#558).
+#: The order is the order refusal_reason() tests in: the first that matches
+#: is the answer, so a commit refused at a gate is not also "validation".
+REASONS = ("stale_base", "permission", "candidate_expired", "candidate_unknown",
+           "limit", "gate_remap", "gate_diverge", "gate_cutoff",
+           "confirm_pending", "grammar", "validation", "apply_failed",
+           "usage", "other")
+#: config.text_error's verdict: "<what>: <size> bytes, and the limit is <n>".
+LIMIT_RE = re.compile(r"^(?:error: )?(.+?): (\d+) bytes, and the limit is (\d+)$",
+                      re.M)
+#: The VTY's sentences for each refusal, as prismash.py prints them. Each is
+#: a sentence the VTY prints only for that refusal - test/test_apiserver.py
+#: holds this table to prismash.py's own source, so a reworded message turns
+#: the suite red instead of quietly answering "other".
+REFUSAL_TEXTS = (
+    ("gate_remap", "if that is what you mean, type: commit remap"),
+    ("gate_diverge", "if that is what you mean, type: commit diverge"),
+    ("gate_cutoff", "if that is what you mean, type: commit cutoff"),
+    ("confirm_pending", "the box is still on the unconfirmed configuration"),
+    ("confirm_pending", "cannot confirm: "),
+    ("grammar", "statement(s) in this batch were refused"),
+    ("grammar", "there are lines this VTY does not "),
+    ("grammar", "not a statement FRR accepts here"),
+    ("grammar", "% Unknown command"),
+    ("validation", "candidate did not pass validation"),
+    ("apply_failed", "commit failed; rolling back to the previous state"),
+    ("apply_failed", "FRR refused "),
+    ("usage", "usage: commit confirmed"),
+    ("usage", "expected 1-60"),
+    ("other", "no candidate configuration"),
+)
+
+
+def refusal_reason(output, stage="commit", moved_to="", expired=None):
+    """
+    Why the VTY refused, as a code a client can act on (#558): {"reason",
+    "running_revision", "limit_field", "limit", "limit_size"}. `moved_to` is
+    the running revision when the refusal is a base that moved; `expired`
+    True/False when the refusal is a candidate the server does not hold
+    (closed for idleness, or never opened). `stage` is where it was refused,
+    "edit" or "commit", and decides what a refusal no sentence names is: the
+    prompt refuses a line by its grammar, a commit by its validation. The
+    VTY's words stay the human message - this reads them, it does not
+    replace them.
+    """
+    out = {"reason": "other", "running_revision": "", "limit_field": "",
+           "limit": 0, "limit_size": 0}
+    if moved_to:
+        out.update(reason="stale_base", running_revision=moved_to)
+        return out
+    if expired is not None:
+        out["reason"] = "candidate_expired" if expired else "candidate_unknown"
+        return out
+    text = output or ""
+    if denied(text):
+        out["reason"] = "permission"
+        return out
+    m = LIMIT_RE.search(text)
+    if m:
+        out.update(reason="limit", limit_field=m.group(1).strip(),
+                   limit_size=int(m.group(2)), limit=int(m.group(3)))
+        return out
+    for reason, phrase in REFUSAL_TEXTS:
+        if phrase in text:
+            out["reason"] = reason
+            return out
+    # Anything else: at entry the prompt refuses a line by its grammar, at a
+    # commit the candidate by what it means. An answer with no error at all
+    # stays "other" - it is not a refusal this table knows.
+    if any(d["severity"] == "error" for d in parse_output(text)):
+        out["reason"] = "grammar" if stage == "edit" else "validation"
+    return out
+
+
+def check_reason(res, gates):
+    """
+    What a Commit of a checked candidate would be refused for (#558), or "".
+    `commit check` itself never refuses at a gate - it reports - so a check
+    that passed with gate items still answers the gate a Commit would meet.
+    """
+    if res["failed"]:
+        return refusal_reason(res["output"], stage="commit")["reason"]
+    for reason, key in (("gate_remap", "remap"), ("gate_diverge", "diverge"),
+                        ("gate_cutoff", "cutoff")):
+        if gates.get(key):
+            return reason
+    return ""
+
+
+def pending_confirm(confirm, state, running, now=None):
+    """
+    The `commit confirmed` window the box holds (#558), or {"pending": False}.
+
+    From the box, never from a client's memory: `state` is the config state
+    file in /run (ConfigState.read(): confirm_pending, confirm_deadline,
+    commit_by, commit_at, comment), which every account can read, and
+    `confirm` the root-owned window file (ConfirmPending.read()), which a
+    read-only account cannot - so the deadline comes from either, the window
+    file's minutes and revert attempts when it was readable. `running` is the
+    running configuration's text: the unconfirmed revision is its revision.
+    """
+    pending = bool(confirm) or state.get("confirm_pending") == "yes"
+    if not pending:
+        return {"pending": False}
+    deadline = 0.0
+    if confirm and confirm.get("deadline"):
+        deadline = float(confirm["deadline"])
+    else:
+        try:
+            deadline = float(state.get("confirm_deadline") or 0)
+        except ValueError:
+            deadline = 0.0
+    try:
+        at = int(state.get("commit_at") or 0)
+    except ValueError:
+        at = 0
+    return {"pending": True, "revision": revision_of(running or ""),
+            "deadline": deadline, "account": state.get("commit_by", ""),
+            "comment": state.get("comment", ""), "committed_at": at,
+            "minutes": int((confirm or {}).get("minutes") or 0),
+            "revert_attempts": int((confirm or {}).get("attempts") or 0),
+            "overdue": bool(deadline) and (now or time.time()) > deadline}
+
+
+def staged_lines(base, text):
+    """How many lines a candidate changes against its base: + and - lines."""
+    return sum(1 for ln in difflib.unified_diff(base.splitlines(),
+                                                text.splitlines(), lineterm="")
+               if ln[:1] in "+-" and not ln.startswith(("+++", "---")))
+
+
+def wall_of(mono, now_mono=None, now_wall=None):
+    """A time.monotonic() reading as a wall-clock time."""
+    return (now_wall if now_wall is not None else time.time()) - \
+        ((now_mono if now_mono is not None else time.monotonic()) - mono)
 
 
 def config_diff(base, now):
@@ -918,6 +1063,9 @@ def handle(sh, op, args):
         return sh.rb.list()
     if op == "confirm":
         return sh.confirm.read()
+    if op == "pending_confirm":
+        return pending_confirm(sh.confirm.read(), sh.state.read(),
+                               sh.running_config().text())
     if op == "screen":
         return screen(sh, args)
     if op in READERS:
@@ -1057,7 +1205,8 @@ class Sessions:
         self.idle = idle
         self.ops_idle = ops_idle
         self.route_idle = route_idle
-        self.candidates = {}   # id -> {"account", "worker", "base"}
+        self.candidates = {}   # id -> {"account", "worker", "base", "created"}
+        self.expired = {}      # id -> account, the candidates reap() closed
         self.ops = {}          # account -> Worker
         # The console's own process per account (Show): a ping or a traceroute
         # holds its process for as long as it runs, and in the operational
@@ -1093,8 +1242,46 @@ class Sessions:
             raise
         cid = uuid.uuid4().hex
         with self.lock:
-            self.candidates[cid] = {"account": account, "worker": w, "base": base}
+            self.candidates[cid] = {"account": account, "worker": w, "base": base,
+                                    "created": time.time()}
         return cid, base, text, res["output"]
+
+    def was_expired(self, account, cid):
+        """Did reap() close `cid`, `account`'s, for idleness? (#558)"""
+        with self.lock:
+            return self.expired.get(cid) == account
+
+    def timing(self, c):
+        """A candidate's created, last activity and expiry, wall-clock (#558)."""
+        last = wall_of(c["worker"].used)
+        return {"created": c.get("created", last), "last_activity": last,
+                "expires_at": last + self.idle}
+
+    def listing(self, account):
+        """
+        `account`'s open candidates, oldest first, each {"id", "base",
+        "created", "last_activity", "expires_at", "staged"} (#558).
+
+        Asking a candidate's process for its text would count as using it and
+        push its expiry back - so a client polling ListCandidates would keep
+        every candidate alive for ever. Its last use is put back after.
+        """
+        self.reap()
+        with self.lock:
+            mine = [(k, c) for k, c in self.candidates.items()
+                    if c["account"] == account]
+        out = []
+        for cid, c in sorted(mine, key=lambda kc: kc[1].get("created", 0)):
+            used = c["worker"].used
+            try:
+                text = c["worker"].ask("candidate") or ""
+            except Exception:  # noqa: BLE001 - a dead process lists as unknown
+                text = None
+            c["worker"].used = used
+            row = {"id": cid, "base": c["base"], **self.timing(c),
+                   "staged": staged_lines(c["base"], text) if text is not None else 0}
+            out.append(row)
+        return out
 
     def get(self, account, cid):
         """The candidate `cid` of `account`; KeyError for anybody else's or none."""
@@ -1151,6 +1338,10 @@ class Sessions:
         with self.lock:
             stale = [k for k, c in self.candidates.items()
                      if now - c["worker"].used > self.idle]
+            for k in stale:
+                self.expired[k] = self.candidates[k]["account"]
+            while len(self.expired) > EXPIRED_KEEP:
+                self.expired.pop(next(iter(self.expired)))
             gone = [self.candidates.pop(k)["worker"] for k in stale]
             idle = [a for a, w in self.ops.items() if now - w.used > self.ops_idle]
             gone += [self.ops.pop(a) for a in idle]
@@ -1739,6 +1930,27 @@ def health_status(service, stats_ok, log_status=None):
 # management image builds (tools/gen-api.sh) and `make test`'s machine does
 # not have. The functions above are the logic; these translate.
 
+def status_message(output, extra=""):
+    """
+    The status message of a refused call: `extra` when the server says it,
+    else the VTY's first ERROR - not its first diagnostic. A commit the VTY
+    refused after warning about something else answered with the warning,
+    and a client read "nothing here announces 200.150.0.32/30" as why its
+    hostname change failed (#558's lab).
+    """
+    if extra:
+        return extra
+    diags = parse_output(output)
+    errors = [d for d in diags if d["severity"] == "error"]
+    return (errors or diags or [{"message": output.strip()}])[0]["message"]
+
+
+def _reason_pb(pb, reason):
+    """refusal_reason()'s code as prisma.v1's Diagnostics.Reason value."""
+    return getattr(pb.Diagnostics, "REASON_" + reason.upper(),
+                   pb.Diagnostics.REASON_OTHER)
+
+
 def _diag_pb(pb, d):
     sev = {"error": pb.Diagnostic.SEVERITY_ERROR,
            "warning": pb.Diagnostic.SEVERITY_WARNING,
@@ -1770,20 +1982,35 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         return a
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.
-    def fail(context, code, output, extra=""):
+    def fail(context, code, output, extra="", stage="commit", moved_to="",
+             expired=None, gates=()):
+        why = refusal_reason(output, stage=stage, moved_to=moved_to, expired=expired)
         diags = pb.Diagnostics(items=[_diag_pb(pb, d) for d in parse_output(output)],
-                               output=output)
+                               output=output, reason=_reason_pb(pb, why["reason"]),
+                               running_revision=why["running_revision"],
+                               limit_field=why["limit_field"], limit=why["limit"],
+                               limit_size=why["limit_size"],
+                               gate_items=list(gates) if why["reason"].startswith("gate_")
+                               else [])
         context.set_trailing_metadata((("prisma-diagnostics-bin",
                                         diags.SerializeToString()),))
-        msg = (extra or (parse_output(output) or [{"message": output.strip()}])[0]["message"])
-        context.abort(code, msg[:1000] or "refused")
+        context.abort(code, status_message(output, extra)[:1000] or "refused")
+
+    # not a unit: a closure of build(), driven by lab/api-grpc.sh.
+    def gone(context, acct, cid):
+        """A candidate this account does not hold: expired, or never (#558)."""
+        expired = sessions.was_expired(acct, cid)
+        fail(context, grpc.StatusCode.NOT_FOUND, "", expired=expired,
+             extra=(f"candidate {cid} expired: unused for {sessions.idle} s"
+                    if expired else f"no candidate {cid}"))
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.
     def candidate(context, cid):
+        acct = account(context)
         try:
-            return sessions.get(account(context), cid)
+            return sessions.get(acct, cid)
         except KeyError:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"no candidate {cid}")
+            gone(context, acct, cid)
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.
     def ts(epoch):
@@ -1804,8 +2031,15 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT, str(e))
             except WorkerError as e:
                 context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
-            return pb.OpenCandidateResponse(candidate_id=cid,
-                                            base_revision=revision_of(base), text=text)
+            out = pb.OpenCandidateResponse(candidate_id=cid,
+                                           base_revision=revision_of(base), text=text,
+                                           idle_seconds=int(sessions.idle))
+            try:
+                out.expires_at.CopyFrom(ts(sessions.timing(
+                    sessions.get(acct, cid))["expires_at"]))
+            except KeyError:
+                pass
+            return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def Edit(self, req, context):
@@ -1815,10 +2049,14 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 code = (grpc.StatusCode.PERMISSION_DENIED if denied(res["output"])
                         else grpc.StatusCode.INVALID_ARGUMENT)
                 c["worker"].ask("feed", ["top"])
-                fail(context, code, res["output"])
-            return pb.EditResponse(diagnostics=[_diag_pb(pb, d) for d in
-                                                parse_output(res["output"])],
-                                   output=res["output"])
+                fail(context, code, res["output"], stage="edit")
+            out = pb.EditResponse(diagnostics=[_diag_pb(pb, d) for d in
+                                               parse_output(res["output"])],
+                                  output=res["output"])
+            t = sessions.timing(c)
+            out.last_activity.CopyFrom(ts(t["last_activity"]))
+            out.expires_at.CopyFrom(ts(t["expires_at"]))
+            return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def ShowCandidate(self, req, context):
@@ -1838,11 +2076,13 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             c = candidate(context, req.candidate_id)
             res = c["worker"].ask("feed", ["top", "commit check"])
             g = c["worker"].ask("gates")
+            why = check_reason(res, g)
             return pb.CheckResponse(
                 passed=not res["failed"],
                 diagnostics=[_diag_pb(pb, d) for d in parse_output(res["output"])],
                 remap=g["remap"], cutoff=g["cutoff"], diverge=g["diverge"],
-                output=res["output"])
+                output=res["output"],
+                reason=_reason_pb(pb, why) if why else 0)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def Commit(self, req, context):
@@ -1850,7 +2090,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             try:
                 c = sessions.get(acct, req.candidate_id)
             except KeyError:
-                context.abort(grpc.StatusCode.NOT_FOUND, f"no candidate {req.candidate_id}")
+                gone(context, acct, req.candidate_id)
             c["worker"].ask("feed", ["top"])
             r = commit(sessions, acct, req.candidate_id, comment=req.comment,
                        confirmed_minutes=req.confirmed_minutes,
@@ -1859,11 +2099,14 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             if r["moved"]:
                 fail(context, grpc.StatusCode.FAILED_PRECONDITION, r["moved"],
                      "the running configuration changed since this candidate "
-                     "was opened; open a new candidate and apply again")
+                     "was opened; open a new candidate and apply again",
+                     moved_to=r["revision"])
             if not r["ok"]:
                 code = (grpc.StatusCode.PERMISSION_DENIED if denied(r["output"])
                         else grpc.StatusCode.FAILED_PRECONDITION)
-                fail(context, code, r["output"])
+                g = c["worker"].ask("gates")
+                fail(context, code, r["output"],
+                     gates=g["remap"] + g["diverge"] + g["cutoff"])
             out = pb.CommitResponse(revision=r["revision"], output=r["output"],
                                     diagnostics=[_diag_pb(pb, d) for d in
                                                  parse_output(r["output"])])
@@ -1892,7 +2135,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             c = candidate(context, req.candidate_id)
             res = c["worker"].ask("feed", ["top", f"rollback {int(req.revision)}"])
             if res["failed"]:
-                fail(context, grpc.StatusCode.INVALID_ARGUMENT, res["output"])
+                fail(context, grpc.StatusCode.INVALID_ARGUMENT, res["output"], stage="edit")
             return pb.EditResponse(output=res["output"],
                                    diagnostics=[_diag_pb(pb, d) for d in
                                                 parse_output(res["output"])])
@@ -1909,10 +2152,11 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def CloseCandidate(self, req, context):
+            acct = account(context)
             try:
-                sessions.close(account(context), req.candidate_id)
+                sessions.close(acct, req.candidate_id)
             except KeyError:
-                context.abort(grpc.StatusCode.NOT_FOUND, f"no candidate {req.candidate_id}")
+                gone(context, acct, req.candidate_id)
             return pb.CloseResponse()
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
@@ -1927,6 +2171,35 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             for n, when, comment in rows:
                 rev = out.revisions.add(number=n, comment=comment)
                 rev.committed_at.FromJsonString(when)
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetPendingConfirm(self, req, context):
+            p = sessions.ops_worker(account(context)).ask("pending_confirm")
+            out = pb.PendingConfirm(pending=p["pending"])
+            if p["pending"]:
+                out.revision = p["revision"]
+                out.account = p["account"]
+                out.comment = p["comment"]
+                out.minutes = p["minutes"]
+                out.revert_attempts = p["revert_attempts"]
+                out.overdue = p["overdue"]
+                if p["deadline"]:
+                    out.deadline.CopyFrom(ts(p["deadline"]))
+                if p["committed_at"]:
+                    out.committed_at.CopyFrom(ts(p["committed_at"]))
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListCandidates(self, req, context):
+            out = pb.ListCandidatesResponse(idle_seconds=int(sessions.idle))
+            for row in sessions.listing(account(context)):
+                ci = out.candidates.add(candidate_id=row["id"],
+                                        base_revision=revision_of(row["base"]),
+                                        staged_lines=row["staged"])
+                ci.created_at.CopyFrom(ts(row["created"]))
+                ci.last_activity.CopyFrom(ts(row["last_activity"]))
+                ci.expires_at.CopyFrom(ts(row["expires_at"]))
             return out
 
     class Operational(rpc.OperationalServiceServicer):

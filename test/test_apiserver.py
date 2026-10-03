@@ -184,6 +184,13 @@ class FakeShell:
                 return {"deadline": 1700000000}
         self.confirm = Confirm()
 
+        class State:
+            def read(_):
+                return {"confirm_pending": "yes", "confirm_deadline": "1700000000",
+                        "commit_by": "root", "commit_at": "1699999700",
+                        "comment": "via api"}
+        self.state = State()
+
     def feed(self, line):
         self.fed.append(line)
         print(f"fed {line}")
@@ -918,6 +925,121 @@ check((_f["carrier"], _f["logger_pid"], _f["export_ring_dropped"], _f["worker_qu
 check(_f["streams"][0]["bytes_sent"] == 600 and _f["streams"][0]["delivering"]
       and _f["streams"][2]["packets_sent"] == 3 and _f["text"] == _scr,
       "a stream's counters and verdict, and the screen itself, verbatim")
+
+print("=== #558: why a change was refused, the confirm window, the candidates ===")
+R = A.refusal_reason
+check(A.refusal_reason("", moved_to="abc")["reason"] == "stale_base"
+      and R("", moved_to="abc")["running_revision"] == "abc",
+      "a base that moved: stale_base, with the revision it moved to")
+check(R("", expired=True)["reason"] == "candidate_expired"
+      and R("", expired=False)["reason"] == "candidate_unknown",
+      "a candidate the server closed for idleness, and one it never held")
+check(R("error: configure: permission denied for a read-only account")["reason"]
+      == "permission", "the role's refusal: permission")
+_lim = R("error: cgnat identity file: 256 bytes, and the limit is 255\n"
+         "    the field it travels in is bpa.api", stage="edit")
+check(_lim["reason"] == "limit" and _lim["limit_field"] == "cgnat identity file"
+      and _lim["limit"] == 255 and _lim["limit_size"] == 256,
+      f"config.text_error's verdict: limit, its field, limit and size: {_lim}")
+import config as _C  # noqa: E402
+_v, _ = _C.text_error("cgnat identity file", "/" + "a" * 255, True)
+check(A.LIMIT_RE.search("error: " + _v) is not None,
+      f"LIMIT_RE reads the verdict config.text_error really writes: {_v!r}")
+for _phrase, _want in (("    if that is what you mean, type: commit remap", "gate_remap"),
+                       ("    if that is what you mean, type: commit diverge", "gate_diverge"),
+                       ("    if that is what you mean, type: commit cutoff", "gate_cutoff"),
+                       ("error: the box is still on the unconfirmed configuration",
+                        "confirm_pending"),
+                       ("error: refusing to commit: 2 statement(s) in this batch were refused",
+                        "grammar"),
+                       ("error: candidate did not pass validation; nothing applied",
+                        "validation"),
+                       ("error: commit failed; rolling back to the previous state",
+                        "apply_failed"),
+                       ("error: usage: commit confirmed <minutes> [comment <text>]", "usage")):
+    check(R("error: x\n" + _phrase)["reason"] == _want, f"{_want}: {_phrase.strip()}")
+check(R("error: a static route needs 'next-hop <next-hop>'", stage="edit")["reason"]
+      == "grammar" and R("error: pool 'P': inside and outside required")["reason"]
+      == "validation",
+      "a refusal no sentence names: grammar at entry, validation at a commit")
+check(R("commit complete\n")["reason"] == "other", "no error at all is not a known refusal")
+# THE TABLE IS HELD TO THE VTY'S OWN SOURCE: a sentence reworded there would
+# leave the reason quietly "other" here.
+_src = open(os.path.join(os.path.dirname(A.__file__), "prismash.py")).read() + \
+    open(os.path.join(os.path.dirname(A.__file__), "config.py")).read()
+_missing = [ph for _, ph in A.REFUSAL_TEXTS
+            if ph.strip() not in _src and ph != "% Unknown command"]
+check(not _missing, f"every sentence REFUSAL_TEXTS reads is one the VTY prints: {_missing}")
+check(set(r for r, _ in A.REFUSAL_TEXTS) <= set(A.REASONS),
+      "every reason the table gives is one prisma.v1 names")
+check(A.check_reason({"failed": False, "output": ""}, {"remap": ["s1"], "diverge": [],
+                                                       "cutoff": []}) == "gate_remap"
+      and A.check_reason({"failed": False, "output": ""}, {"remap": [], "diverge": [],
+                                                           "cutoff": []}) == ""
+      and A.check_reason({"failed": True, "output": "error: candidate did not pass "
+                          "validation; nothing applied"}, {}) == "validation",
+      "a check: the gate a Commit would meet, its refusal, or nothing")
+
+_st = {"confirm_pending": "yes", "confirm_deadline": "1700000000", "commit_by": "web",
+       "commit_at": "1699999700", "comment": "via api"}
+_p = A.pending_confirm({"deadline": 1700000000.0, "minutes": 5, "attempts": 0}, _st,
+                       "hostname x\n", now=1699999800)
+check(_p["pending"] and _p["account"] == "web" and _p["comment"] == "via api"
+      and _p["deadline"] == 1700000000.0 and _p["minutes"] == 5 and not _p["overdue"]
+      and _p["revision"] == A.revision_of("hostname x\n") and _p["committed_at"] == 1699999700,
+      f"the window from the box: who, why, when, and the revision it reverts from: {_p}")
+_p = A.pending_confirm(None, _st, "", now=1700000100)
+check(_p["pending"] and _p["deadline"] == 1700000000 and _p["minutes"] == 0 and _p["overdue"],
+      "an account that cannot read the window file still reads it from the state "
+      "file, deadline and all; past it, overdue")
+check(A.pending_confirm(None, {"confirm_pending": "no"}, "") == {"pending": False}
+      and A.pending_confirm(None, {}, "") == {"pending": False}, "no window, nothing else")
+check(A.staged_lines("a\nb\n", "a\nc\nd\n") == 3 and A.staged_lines("a\n", "a\n") == 0,
+      "staged lines: what the candidate adds and removes against its base")
+check(abs(A.wall_of(100.0, now_mono=110.0, now_wall=1000.0) - 990.0) < 1e-9,
+      "a monotonic reading as wall-clock time")
+
+S2 = A.Sessions(worker=W, idle=60, ops_idle=60)
+_c, *_ = S2.open(me)
+S2.get(me, _c)["base"] = "hostname old\n"
+_before = S2.get(me, _c)["worker"].used
+_rows = S2.listing(me)
+check(len(_rows) == 1 and _rows[0]["id"] == _c and _rows[0]["staged"] == 2
+      and abs(_rows[0]["expires_at"] - _rows[0]["last_activity"] - 60) < 1e-6,
+      f"ListCandidates: this account's candidate, its staged lines, its expiry: {_rows}")
+check(S2.get(me, _c)["worker"].used == _before,
+      "listing does not count as using the candidate: it would never expire")
+check(S2.listing("somebody-else") == [], "nobody else's candidates")
+_t = S2.timing(S2.get(me, _c))
+check(_t["expires_at"] - _t["last_activity"] == 60 and _t["created"] <= _t["last_activity"] + 1,
+      f"Sessions.timing: created, last activity, and expiry the idle rule after it: {_t}")
+
+
+class _PB:
+    class Diagnostics:
+        REASON_OTHER, REASON_LIMIT, REASON_STALE_BASE = 14, 5, 1
+
+
+check(A._reason_pb(_PB, "limit") == 5 and A._reason_pb(_PB, "stale_base") == 1
+      and A._reason_pb(_PB, "no-such") == 14,
+      "_reason_pb: a reason as its enum value, an unknown one as OTHER")
+S2.idle = 0
+time.sleep(0.05)
+S2.reap()
+check(S2.was_expired(me, _c) and not S2.was_expired("somebody-else", _c)
+      and not S2.was_expired(me, "never-opened"),
+      "a candidate reap() closed is remembered as expired, for its own account")
+_w = S2.ops_worker(me)
+_pc = _w.ask("pending_confirm")
+check(_pc["pending"] and _pc["account"] == "root", f"the worker reads the window: {_pc}")
+for _w in list(S2.ops.values()):
+    _w.close()
+
+check(A.status_message("warning: pool 'lg': nothing here announces X\n"
+                       "error: hostname: not allowed\n") == "hostname: not allowed"
+      and A.status_message("warning: w\n") == "w" and A.status_message("", "said") == "said"
+      and A.status_message("plain\n") == "plain",
+      "a refusal's status message is its first error, not a warning before it")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
