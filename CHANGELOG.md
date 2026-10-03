@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.22 - the routing configuration as fields
+
+### Added
+
 * **The routing configuration as fields in the API (#558, phase 3).**
   ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
   `ConfigService.GetConfig` reads static routes, BGP (routers, neighbours
@@ -93,8 +99,6 @@ version has a chance of seeing it.
   protocol at the prompt and holds the typed read to `show
   running-config`, and takes a route and a neighbour through the whole
   road. docs/api-coverage.md: 278 command paths typed, from 169.
-
-### Fixed
 
 ## 0.149.21 - no mtu goes back to the default, and read-only reads are fast
 
