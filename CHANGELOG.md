@@ -77,6 +77,51 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The rest of the configuration as fields (#558, phase 4).**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  GetConfig reads twelve more areas off the same parsed configuration the
+  VTY prints: `system` (hostname, resolvers, SSH, the API's listener, the
+  SNMP agent, the dataplane card, the cores and memory by role), `users`,
+  `snmp_users`, `policy` (policy-options' lists and every policy-statement's
+  terms, conditions, changes and decision, as the commit's parser reads
+  them), `route_maps`, `frr_lists` and `routing_attachments` (what is
+  written for FRR at the top of the routing half), `rpki`, `vrfs`, `vrrp`,
+  `bundles` and `cgnat_globals` (timeouts, hold-down, identity source,
+  session table, memory). The routing blocks' knobs phase 3 kept in `other`
+  are read as `settings`, key and value. Secrets are never read: a password
+  is `password_set`, a key or a community is counted, a passphrase is its
+  protocol, an IS-IS password is `<set>`. SetConfig writes the system
+  settings (named by block and key, `ssh.port`) and VRF devices;
+  DeleteConfig removes a VRF device. GetSchema's statements say
+  `read_typed` beside `typed`. docs/api-coverage.md: 611 command paths
+  typed, from 278 - and no configuration statement is reachable only as
+  text any more; what stays text is operational (a `show`, a probe). Two
+  classifier slips are fixed with it: a BGP neighbour's typed statements
+  were listed as text, because the grammar's `neighbor <address>` is one
+  key of two words; and a bundle's IGP settings were not counted, though
+  phase 3 read them.
+* **GetSchema described lines no box writes, and missed lines every box
+  does.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  Found by prisma-web building its editor on 0.149.22's schema. Placeholders
+  sat among a statement's `words` (`["<prefix>"]`, `["neighbor <address>",
+  "remote-as"]`): words are literal now and a placeholder is an argument
+  with the `position` it takes among them. `<1-4294967295>|internal|external`
+  arrived as a choice whose first value was `1-4294967295>`: a `|` between a
+  placeholder and words is now one form per kind. FRR prints a statement's
+  keyword-led parts in its own order (`logging syslog <c> port 1601
+  enterprise 67033`), which no form allowed: each such part has a `group`
+  and is `unordered`. And some hints described only a name - `snmp
+  trap-host`, `ssh-key`, `vrrp` (whose VRID was factored out of two
+  alternatives), a neighbour's `route-map`/`prefix-list` (without the
+  `in|out` FRR writes), an OSPF `area` (without `stub`, `nssa`, `range`)
+  and the FRR lists at the configuration level - so their lines matched
+  nothing; the hints the prompt shows now give the whole syntax, and `vrf
+  <name> table <id>`, a route-map's header and an operator VRF's FRR block
+  (`vrf <name>` with its `ip route`, mode `vrf`), which the `?` tree leaves
+  out on purpose, are described too. A test renders a
+  configuration with every area and requires each line to match a
+  statement; lab/api-grpc.sh does the same with the lab box's GetRunning.
+
 ### Fixed
 
 ## 0.149.23 - no neighbor removes a BGP neighbour cleanly

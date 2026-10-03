@@ -141,7 +141,8 @@ TYPED_CONFIG = {
     "interface (port)": ("description", "vlan", "vrf", "linux-name",
                          "mac-address", "cgnat", "ipv4", "ipv6 address",
                          "ipv6 nd", "shutdown", "mtu", "urpf"),
-    "interface (bundle)": ("description", "vrf", "linux-name", "mac-address",
+    "interface (bundle)": ("description", "vlan", "vrf", "linux-name",
+                           "mac-address",
                            "cgnat", "ipv4", "ipv6 address", "ipv6 nd",
                            "shutdown", "mtu", "urpf"),
     "pool": ("prefix-inside", "prefix-outside", "block-size", "ports",
@@ -181,8 +182,110 @@ TYPED_ROUTING_READS = {
     "router isis": ("net", "is-type", "metric-style", "redistribute"),
     "interface (port)": ("ip ospf", "ipv6 ospf6", "ip router isis",
                          "ipv6 router isis", "isis"),
+    # An operator VRF's FRR block: its static routes, read by phase 3 as
+    # `static` with their `vrf` (phase 4 lists the block as a mode).
+    "vrf": ("ip route", "ipv6 route"),
+    # A bundle's FRR `interface` block is read the same way (phase 4).
+    "interface (bundle)": ("ip ospf", "ipv6 ospf6", "ip router isis",
+                           "ipv6 router isis", "isis"),
 }
 TYPED_ROUTING_API = "ConfigService.GetConfig (fields) / Edit (lines)"
+#: Which typedcfg.SETTING_KEYS a routing level's knobs are read by (#558
+#: phase 4): what phase 3 left in `other`, as key and value.
+SETTING_KIND = {"router bgp": "bgp", "address-family": "family",
+                "bgp neighbor": "neighbor",
+                "address-family neighbor": "neighbor_family",
+                "router ospf": "ospf", "router ospf6": "ospf",
+                "router isis": "isis"}
+
+
+#: The rest of the configuration (#558, phase 4): by level, the statements
+#: GetConfig reads as fields - (first words, area, written as fields too).
+#: "*" is every statement of the level. What is read typed but written as
+#: lines is so because it carries a secret (a community, a password, a
+#: passphrase, a key) or has no field-shaped edit yet; the note says which.
+TYPED_PHASE4 = {
+    "config": (("hostname", "system", True), ("dns server", "system", True),
+               ("ssh", "system", True), ("api", "system", True),
+               ("snmp enabled", "system", True),
+               ("snmp listen-address", "system", True),
+               ("snmp port", "system", True),
+               ("snmp enterprise-number", "system", True),
+               ("snmp community", "system", False),
+               ("snmp trap-host", "system", False),
+               ("vrf", "vrfs", True),
+               ("ip prefix-list", "frr_lists", False),
+               ("ipv6 prefix-list", "frr_lists", False),
+               ("bgp community-list", "frr_lists", False),
+               ("bgp large-community-list", "frr_lists", False),
+               ("bgp as-path", "frr_lists", False),
+               ("ip protocol", "routing_attachments", False),
+               ("ipv6 protocol", "routing_attachments", False),
+               ("fib-policy", "routing_attachments", False)),
+    "cgnat": (("timeout", "cgnat_globals", False),
+              ("block-holddown", "cgnat_globals", False),
+              ("identity", "cgnat_globals", False),
+              ("session-table", "cgnat_globals", False),
+              ("memory", "cgnat_globals", False),
+              ("pool", "pools", True), ("interface", "interfaces", True)),
+    "system": (("*", "system", False),),
+    "system memory": (("*", "system", False),),
+    "system cpu": (("*", "system", False),),
+    "system dataplane": (("*", "system", False),),
+    "user": (("*", "users", False),),
+    "snmp-user": (("*", "snmp_users", False),),
+    "policy-options": (("*", "policy", False),),
+    "prefix-list": (("*", "policy", False),),
+    "policy-statement": (("*", "policy", False),),
+    "term": (("*", "policy", False),),
+    "route-map": (("*", "route_maps", False),),
+    "rpki": (("*", "rpki", False),),
+    "interface (port)": (("vrrp", "vrrp", False),),
+    "interface (bundle)": (("vrrp", "vrrp", False), ("member", "bundles", False),
+                           ("lacp", "bundles", False),
+                           ("load-balance", "bundles", False)),
+}
+#: Why a phase-4 area is written as lines, by area.
+PHASE4_LINES_WHY = {
+    "system": "a community or trap host carries a secret; system > memory, "
+              "cpu and dataplane take effect at the next boot",
+    "users": "an account carries a password and keys",
+    "snmp_users": "an SNMP user carries passphrases",
+    "policy": "a policy is a program: written as lines, read as fields",
+    "route_maps": "written as lines, read as fields",
+    "frr_lists": "written as lines, read as fields",
+    "routing_attachments": "written as lines, read as fields",
+    "rpki": "an SSH cache names key files",
+    "cgnat_globals": "a RADIUS identity source carries a secret",
+    "vrrp": "written as lines, read as fields",
+    "bundles": "written as lines, read as fields",
+}
+
+
+#: The words that ENTER a block rather than state anything (#558 phase 4):
+#: a client reaches each through EditRequest.path, and what is inside is
+#: classified line by line under the block's own level.
+BLOCK_ENTRIES = {"config": ("nat", "rpki", "router", "interface", "system",
+                            "policy-options", "user", "snmp-user",
+                            "route-map"),
+                 # `vrf <name>` (FRR's block) vs `vrf <name> table <id>`:
+                 # the second is a statement, area vrfs (phase 4).
+                 "nat": ("cgnat",)}
+
+
+def classify_phase4(level, stmt):
+    """(class, api, note) when phase 4 types `stmt` at `level`, else None."""
+    for first, area, written in TYPED_PHASE4.get(level, ()):
+        if first == "*" or stmt[:len(first.split())] == first.split():
+            if written:
+                return ("typed", TYPED_CONFIG_API,
+                        f"area {area}: read and written as fields "
+                        f"(0.149.24)")
+            return ("typed", "ConfigService.GetConfig (fields) / Edit "
+                    "(lines)", f"area {area}: read as fields since "
+                    f"0.149.24; written as lines - "
+                    f"{PHASE4_LINES_WHY[area]}")
+    return None
 
 
 def classify_operational(words):
@@ -199,7 +302,20 @@ def classify_config(level, words):
                 return cls, api, note
     if words[0] in SESSION_WORDS:
         return "n/a", "-", "the session's"
+    # A grammar key can be two words ("neighbor <address>"): compare word
+    # by word, or a neighbour's typed statements never match (they were
+    # listed as text in 0.149.22's document for that reason).
+    words = " ".join(words).split()
     stmt = words[1:] if words[0] == "no" else words
+    if words[0] != "no" and len(words) <= 3 \
+            and words[0] in BLOCK_ENTRIES.get(level, ()) \
+            and (words[0] != "interface" or level != "cgnat"):
+        return ("typed", "ConfigService.Edit (path)",
+                "enters the block; its statements are classified under it, "
+                "and GetConfig reads them by area")
+    p4 = classify_phase4(level, stmt)
+    if p4:
+        return p4
     for first in TYPED_CONFIG.get(level, ()):
         if first.startswith("<") and stmt and stmt[0].startswith("<"):
             return ("typed", TYPED_CONFIG_API,
@@ -211,6 +327,17 @@ def classify_config(level, words):
                     "a line (0.149.22)" if level == "router static" else
                     "and as lines through Edit; GetSchema/ValidateLines check "
                     "a line (0.149.20)")
+    if words == ["exit-address-family"]:
+        return "n/a", "-", "closes the address-family block"
+    kind = SETTING_KIND.get(level)
+    if kind:
+        body = stmt[2:] if stmt[:1] == ["neighbor"] and kind.startswith(
+            "neighbor") else stmt
+        for key in typedcfg.SETTING_KEYS[kind]:
+            if body[:len(key.split())] == key.split():
+                return ("typed", TYPED_ROUTING_API,
+                        "read as a key/value in the block's `settings` since "
+                        "0.149.24; written as lines")
     if level in TYPED_NEIGHBOR_WORDS and stmt[:1] == ["neighbor"]:
         if len(stmt) > 2 and stmt[2] in TYPED_NEIGHBOR_WORDS[level]:
             return ("typed", TYPED_CONFIG_API,
@@ -372,9 +499,10 @@ def render():
             lines.append(f"| {cls} | {count[cls]} |")
     lines += [
         "",
-        "Configuration statements are counted one per grammar path; every one",
-        "is `text` - an `EditRequest` carries it as the line it is at the",
-        "prompt, at the level `path` names - unless a rule gives it its own rpc.",
+        "Configuration statements are counted one per grammar path. Every one",
+        "is written as the line it is at the prompt, at the level `path`",
+        "names (`ConfigService.Edit`); `typed` says GetConfig also reads it as",
+        "fields (#558), and SetConfig writes it where the API column names it.",
         "Statements the VTY hands to FRR unread (`<- not checked`) are",
         "reachable the same way: Edit passes them on as the VTY would.",
         "",

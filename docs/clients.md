@@ -27,6 +27,73 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.24 - the rest of the configuration as fields (#558, phase 4)
+
+prisma-web's ask (c) on #558: system, users/SNMP and policies typed, and
+with it every other configuration area - after this release no
+configuration statement is reachable only as text.
+
+* **Contract:** additive. `prisma.proto` sha256 `4403c9c2813624c4dc9135821388512de1c74be78450315cff1256ce1f0fe883`.
+* **GetConfig's new areas** (TypedConfig 14-25): `system` (`SystemConfig`:
+  hostname, dns_servers, ssh, api, snmp, dataplane_interface,
+  cgnat_memory_gb, cpu and memory as `KeyValue` pairs), `users`
+  (`UserConfig`), `snmp_users` (`SnmpUserConfig`), `policy`
+  (`PolicyConfig`: named lists, statements, terms - `PolicyTermConfig.from`
+  is a list of `PolicyMatchConfig` by kind, `sets` of `PolicySetConfig`,
+  `then`; `unread` for a line the parser could not read), `route_maps`,
+  `frr_lists`, `rpki`, `routing_attachments`, `vrfs`, `vrrp`, `bundles`,
+  `cgnat_globals`. No area named is still every area, these included.
+* **Settings:** `BgpConfig`, `BgpFamilyConfig`, `BgpNeighborConfig`,
+  `BgpNeighborFamilyConfig`, `OspfConfig` and `IsisConfig` gain `settings`
+  (`KeyValue`): the knobs phase 3 kept in `other` - `bgp
+  log-neighbor-changes`, `maximum-prefix`, `auto-cost reference-bandwidth`,
+  `set-overload-bit`... - key the statement's keywords, value the rest (`""`
+  a flag). **Moved:** such a statement is no longer in `other`; read both
+  if you showed `other`.
+* **Sentinels and secrets:** 0 / `""` is "not stated" throughout (a port 0,
+  an identity source `""`); `role` `""` is a read-only account. **No secret
+  is ever read:** `password_set`, `ssh_keys` (a count), `snmp.communities`
+  (a count), a trap host without its community, an SNMP user's protocols
+  only, an IS-IS password as `"<set>"`, `identity_radius_secret_set`.
+* **Edits:** `SetConfigRequest.system` (8) and `.vrf_device` (9);
+  `DeleteConfigRequest.area` `"vrfs"`. System fields are named by block and
+  key (`ssh.port`, `api.listen_address`, `snmp.enterprise_number`) - **name
+  them**: an empty `fields` applies every field, and an unset `dns_servers`
+  removes the resolvers. A secret is never a typed field: naming one is
+  `INVALID_ARGUMENT`; set it as a line.
+* **GetSchema:** `SchemaStatement.read_typed` (8) - GetConfig reads it as a
+  field - beside `typed` (SetConfig writes it too). `SchemaMode.typed_area`
+  now names the area of the routing, system, account and policy modes.
+* **GetSchema fixes (your three reports on 0.149.22):**
+  - `words` are literal keywords only. A placeholder is an argument with
+    `position` (8): how many words come before it. router static's statement
+    is words `["next-hop"]` with `<prefix>` at 0; `neighbor <address>
+    remote-as` is words `["neighbor", "remote-as"]` with `<address>` at 1.
+  - A `|` between a placeholder and words is one FORM per kind: `remote-as`
+    has a form with an integer 1-4294967295 and one with the choice
+    `internal`/`external`. No choice value holds `<` or `>`, none is empty;
+    a compound pattern (`rt|soo:<asn>:<value>...`) is one `word` argument.
+  - Order: a keyword-led part has a `group` (10) and is `unordered` (9) -
+    match such parts in any order after the words; the other arguments keep
+    theirs (`[seq <n>] permit|deny <prefix>`: `seq <n>` a part, the choice
+    and prefix positional). `many` (11): one or more values to the end.
+  - Lines that matched nothing now match: the hints of `snmp trap-host`
+    (`<address> community <string> [inform]`), `ssh-key` (`[<comment>...]`,
+    not the keyword `comment`), `vrrp` (the VRID in every form), a
+    neighbour's `route-map`/`prefix-list` (`<name> in|out`), an OSPF `area`
+    (`stub`, `nssa`, `range`, `authentication`, `default-cost`) and the FRR
+    lists at the configuration level give their whole syntax, and `vrf
+    <name> table <id>` and `route-map <name> permit|deny <seq>` are
+    described, and so is an operator VRF's FRR block (`vrf <name>`, its
+    `ip route`/`ipv6 route`: mode `vrf`, 27 modes). 412 statements (from 407). Every line of the lab box's
+    GetRunning matches one; `typedcfg.unmatched_lines` is the matcher.
+* **docs/api-coverage.md:** 611 command paths typed (from 278), 0
+  configuration statements text-only; what stays text is operational. Its
+  format is unchanged; some rows read longer because those hints now give
+  the whole syntax (`ip prefix-list <prefix-list> [seq <1-4294967295>]
+  permit|deny ...`), and IPv6 rows already said `<X:X::X:X/M>` since
+  0.149.19.
+
 ## 0.149.23 - `no neighbor X` removes a BGP neighbour cleanly (#562)
 
 * **Contract:** unchanged (`prisma.proto` sha256 `11163ea9328b3a12c8cf90d28af4e75ce9972b3c45a9f06842de62544b8a4d01`).
