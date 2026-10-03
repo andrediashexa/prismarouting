@@ -87,6 +87,10 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `CloseCandidate`, `GetRunning`, `ListRevisions` | |
 | | `GetPendingConfirm` | the `commit confirmed` window the box holds (#558): its deadline, who committed it and why, the revision it reverts from - from the box's own state, so the same after a restart of the server or the client, and for any account |
 | | `ListCandidates` | the account's open candidates (#558): each one's base, staged lines, creation, last activity and expiry, and the server's idle rule |
+| | `GetConfig` | interfaces, CGNAT pools and the CGNAT log export as fields (#558, phase 2), of the running configuration or of a candidate |
+| | `SetConfig`, `DeleteConfig` | one object of a candidate set to the fields given, or removed: the server writes the VTY lines and stages them as `Edit` does |
+| | `GetSchema` | the grammar of those areas as the prompt's `?` answers it, and what `<name>` may be |
+| | `ValidateLines` | lines checked by the VTY in a throwaway candidate, each accepted or refused with its reason |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show`; `GetSystem` carries `show system uptime`'s clocks (0.148.7, #534): `boot_time`, `dataplane_started`, `control_plane_started`, `vty_started`, `release_installed_at` (unset when not read), `last_boot_reason` (only as recorded: `system reboot by <account>`, or `not recorded`) and `dataplane_restarted` |
 | | `ListPolicies` | `show policy` (#538): every policy-statement, its terms with their statements and `then`, its `default-action`, its `policy-options` block as typed, and where the running routing applies it |
 | | `GetPolicyCounters` | `show policy <name>`'s hits (#538): per route-map a policy is in - its `attach_point` as `test policy ... at` says it, every place applying it (`applied_at`), the daemon that runs it - how many routes each term matched; `counted` false when the daemon reported no such map, `compiled` false for a term with no clause at that use. An empty `policy` is every policy, each map once; a policy that does not exist is `NOT_FOUND` |
@@ -239,7 +243,7 @@ does not pass, or when a Commit would meet a gate.
 | `REASON_GRAMMAR` | `INVALID_ARGUMENT`, `FAILED_PRECONDITION` | a line the VTY's grammar does not take, or a commit of a batch that had one |
 | `REASON_VALIDATION` | `FAILED_PRECONDITION` | the candidate refused for what it means (a pool without its prefixes) |
 | `REASON_APPLY_FAILED` | `FAILED_PRECONDITION` | applied and failed (FRR refused a line); the box rolled back |
-| `REASON_USAGE` | `FAILED_PRECONDITION` | the commit's own words were wrong (`confirmed` outside 1-60) |
+| `REASON_USAGE` | `FAILED_PRECONDITION`, `INVALID_ARGUMENT` | the request's own words were wrong: `confirmed` outside 1-60, or a typed edit with an unknown field, area or transport, or one its fields cannot write (a UDP collector with no source) |
 | `REASON_OTHER` | any | none of the above: read the message |
 
 The server reads the code from the VTY's own sentences, and
@@ -247,6 +251,51 @@ The server reads the code from the VTY's own sentences, and
 reworded there turns the suite red instead of quietly answering `OTHER`.
 `lab/api-grpc.sh` provokes each of grammar, validation, limit, stale base,
 permission, unknown, the re-map gate and expiry against a real server.
+
+### The configuration as fields
+
+`GetConfig`, `SetConfig`, `DeleteConfig`, `GetSchema` and `ValidateLines`
+(#558, phase 2) cover what a UI edits most: each interface's block, each
+CGNAT pool, and the CGNAT log export's collectors. They are the line form's
+other face, not a second configuration:
+
+* **Reads come off the VTY's own Config.** `GetConfig` with no
+  `candidate_id` reads the running configuration (its `revision` is
+  GetRunning's); with one, that candidate. The fields are what `show
+  running-config` prints, never text parsed again by the server, so the two
+  cannot disagree. A field at its default is a statement the block does not
+  have: `mtu` 0, `vrf` 0, `cgnat_role` "", a pool's unset `vrf` (every VRF,
+  which is not VRF 0).
+* **Edits are lines.** `SetConfig` sets one object - an `interface`, a
+  `pool`, or the `logging` export - to the fields given, against what the
+  candidate holds now. The server writes the lines an operator would type
+  (`description uplink`, `no mtu`, `no ipv4 address 10.0.0.1/24`,
+  `logging udp <c> src <s> port <n>`), stages them exactly as `Edit` does,
+  and returns them in `lines`, with the `path` they went to. `fields`
+  limits the change to the fields named (`"ports"` for `port_first` and
+  `port_last`, `"vlan"` for the tags); empty changes every field, so a
+  client sending a partial object names what it means. A collector the
+  `logging` object does not list is left alone; one listed with
+  `configured` false is disabled. Unchanged fields write nothing.
+* **Every refusal of the line form applies**, with its `Diagnostics.reason`:
+  the VTY refuses `mtu 50` at entry exactly as at the prompt
+  (`INVALID_ARGUMENT`), and a commit of the candidate meets the same gates.
+  A request whose own fields cannot become a line answers
+  `INVALID_ARGUMENT` with `REASON_USAGE`.
+* **`GetSchema`** is the grammar the prompt's `?` answers from for these
+  areas: each statement's words, help, its forms (`<collector> src <source>
+  [port <n>] | disable` is two) and each argument's kind (`integer` with its
+  range, `ipv4_prefix`, `address`, `choice` with its values, `text`...), and
+  whether `no` removes it; `names` is what `<name>` may be today.
+* **`ValidateLines`** opens a candidate nobody sees, feeds each line at
+  `path`, answers each accepted or refused with the VTY's words and its
+  reason, and discards it: nothing is committed and the running revision
+  does not move. Lines are fed in order, so a later line sees the earlier
+  ones.
+
+`lab/api-grpc.sh` takes an interface, a pool and the log export each through
+SetConfig, Commit and GetConfig, and holds the typed read to GetRunning's
+text.
 
 ## Limits a client meets
 

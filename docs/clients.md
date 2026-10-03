@@ -27,6 +27,46 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.20 - the configuration as fields (#558, phase 2)
+
+prisma-web's items 4 and 5: interfaces, CGNAT pools and the CGNAT log export
+read and written as fields.
+
+* **Contract:** additive. `prisma.proto` sha256 `7a79d42a7da00b8f9fe1fc4b04a604133078b13a6b5263a3925ea1e6bd38ff93`.
+* **New rpcs (ConfigService):** `GetConfig`, `SetConfig`, `DeleteConfig`,
+  `GetSchema`, `ValidateLines`, with `InterfaceConfig`, `PoolConfig`,
+  `PortForwardConfig`, `LogCollectorConfig`, `LoggingConfig`, `TypedConfig`
+  and the schema messages. Field numbers and meanings are in the proto and in
+  docs/api.md, "The configuration as fields".
+* **Defaults and sentinels:** a field at its default is a statement the block
+  does not have - `mtu` 0, `vrf` 0, `cgnat_role` "", `linux_name` "" (the
+  interface's own name), `port_first`/`port_last` 0/0 (the device's range),
+  `max_blocks` 1, `tcp_mss` "" (off); a pool's `vrf`/`outside_vrf` UNSET is
+  every VRF, which is not VRF 0 (check `HasField`); a syslog collector's
+  `facility`/`severity` unset are the box's defaults. `LoggingConfig` always
+  lists the three collectors, udp, tcp, syslog, in that order, on a read.
+* **Replacing front/src/lib/vty.ts's line building:** send the object to
+  `SetConfig` instead of building lines - the server writes them from the
+  candidate's current state, stages them as `Edit` does, and answers them
+  in `SetConfigResponse.lines` (show them as the preview). Name the
+  `fields` you mean: an empty mask sets EVERY field to the value sent, so a
+  partial object with an empty mask clears what it leaves out. Refusals
+  carry the 0.149.18 reason codes; a request whose fields cannot become a
+  line is `INVALID_ARGUMENT` / `REASON_USAGE`.
+* **Validating or completing a line a person types:** `GetSchema` gives each
+  statement's forms and each argument's kind and range, and `names` (the
+  interfaces and pools that exist); `ValidateLines` asks the VTY itself,
+  line by line, in a candidate nobody sees, with the reason of each refusal.
+* **Replacing the 0.149.8 guard's diff parsing:** `GetConfig(areas:
+  ["logging"])` says which collectors are configured, typed. The guard itself
+  is not needed on a box at 0.149.8 or later: disabling a syslog that was
+  never enabled is harmless there (#551). For boxes before 0.149.8, keep it,
+  reading `configured` from GetConfig instead of the diff.
+* **What is not typed yet:** an interface's VRRP, IS-IS and OSPF statements,
+  a bundle's members and LACP, and the rest of the configuration stay lines
+  through `Edit`; docs/api-coverage.md lists each (169 commands typed now).
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.19 - TAB completion that helps remove, finish and address (#557)
 
 * **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
