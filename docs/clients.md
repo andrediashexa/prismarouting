@@ -69,7 +69,8 @@ read and written as fields.
 
 ## 0.149.19 - TAB completion that helps remove, finish and address (#557)
 
-* **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
+* **Contract:** unchanged since 0.149.18 (`prisma.proto` sha256
+  `8fdfa497...50ed5d`).
 * **Behaviour:** the VTY only. Completion after `no` offers what is
   configured; optional words after a positional argument complete; `?` on a
   complete statement prints an `<Enter>` line; next hops and listen addresses
@@ -333,7 +334,7 @@ Fixes #547 and #549.
 
 ## 0.149.4 - the API comes back after an upgrade recreates the VTY's container
 
-* **Contract:** unchanged.
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
 * **Fixed (#546):** after an upgrade the API could stay unreachable for about
   ten minutes: the backplane kept a stale route to the old container. Since
   0.149.4 the API answers again as soon as the new container is up.
@@ -342,7 +343,7 @@ Fixes #547 and #549.
 
 ## 0.149.3 - an unknown link speed is 0, not 4.3 Tbps
 
-* **Contract:** unchanged.
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
 * **Fixed (#545):** `Interface.speed_bps` was 4294967295000 for an interface
   whose speed the dataplane does not know (VPP's 0xFFFFFFFF kbps, seen on
   virtio). It is 0 now, as the contract says. **Client workaround on 0.149.2:**
