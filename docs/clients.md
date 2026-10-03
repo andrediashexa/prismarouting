@@ -27,9 +27,80 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.20 - the configuration as fields (#558, phase 2)
+
+prisma-web's items 4 and 5: interfaces, CGNAT pools and the CGNAT log export
+read and written as fields.
+
+* **Contract:** additive. `prisma.proto` sha256 `4cdfee65edf97ae1239d5c4a18648250b04a0d08ff4d4b6106b117e47ea86c09`.
+* **New rpcs (ConfigService):** `GetConfig`, `SetConfig`, `DeleteConfig`,
+  `GetSchema`, `ValidateLines`, with `InterfaceConfig`, `PoolConfig`,
+  `PortForwardConfig`, `LogCollectorConfig`, `LoggingConfig`, `TypedConfig`
+  and the schema messages. Field numbers and meanings are in the proto and in
+  docs/api.md, "The configuration as fields".
+* **Defaults and sentinels:** a field at its default is a statement the block
+  does not have - `mtu` 0, `vrf` 0, `cgnat_role` "", `linux_name` "" (the
+  interface's own name), `port_first`/`port_last` 0/0 (the device's range),
+  `max_blocks` 1, `tcp_mss` "" (off); a pool's `vrf`/`outside_vrf` UNSET is
+  every VRF, which is not VRF 0 (check `HasField`); a syslog collector's
+  `facility`/`severity` unset are the box's defaults. `LoggingConfig` always
+  lists the three collectors, udp, tcp, syslog, in that order, on a read.
+* **Replacing front/src/lib/vty.ts's line building:** send the object to
+  `SetConfig` instead of building lines - the server writes them from the
+  candidate's current state, stages them as `Edit` does, and answers them
+  in `SetConfigResponse.lines` (show them as the preview). Name the
+  `fields` you mean: an empty mask sets EVERY field to the value sent, so a
+  partial object with an empty mask clears what it leaves out. Refusals
+  carry the 0.149.18 reason codes; a request whose fields cannot become a
+  line is `INVALID_ARGUMENT` / `REASON_USAGE`.
+* **Every configuration area editable from the web, as lines checked
+  against the grammar:** `GetSchema` is the whole configuration grammar,
+  generated from the VTY's own tree - 26 modes (CGNAT, interfaces, system,
+  users, SNMP users, policies, router static/bgp/ospf/ospf6/isis, rpki,
+  route-maps) with about 400 statements: the `path` to type each mode's
+  statements at, each statement's forms, each argument's kind (`integer`
+  with its range, `ipv4_prefix`/`ipv6_prefix`/`prefix`, `ipv4_address`/
+  `address`, `choice` with its values, `text`), `optional`, `repeatable`,
+  the `no` words, the `source` the VTY completes it from (`interfaces`,
+  `neighbours`, `next_hops`, `prefix_lists`, ...), and `typed` where
+  GetConfig/SetConfig carry it as a field. Cache it by `digest` (it changes
+  only with the grammar; `release` says whose); `with_values` adds each
+  source's values now. `ValidateLines` then asks the VTY itself, line by
+  line, in a candidate nobody sees, with the reason of each refusal; `Edit`
+  stages them. Typed reads of the routing configuration (static, BGP
+  neighbours and address families, OSPF, IS-IS) are the next phase.
+* **The box's own lines, read only on purpose:** `TypedConfig.box_owned`
+  lists the running configuration's lines that are the box's, not the
+  operator's - `log syslog <level>`, `service integrated-vtysh-config`, a
+  `vrf prisma-*` block and its `exit-vrf` (on .166, 4 of its 30 lines) -
+  each with why; `ConfigSchema.box_owned` lists their patterns. No grammar
+  takes them and the VTY marks them "not checked": show them read only, not
+  as unknown. An operator's own VRF block is not among them.
+* **IPv6 placeholders:** docs/api-coverage.md printed `ipv6 address
+  <A.B.C.D/M>` (and its `no`) through 0.149.18. The VTY's own hint was
+  wrong; 0.149.19 (#557) corrected it to `<X:X::X:X/M>` and the document,
+  generated from that hint, followed. A sweep of every statement finds no
+  other IPv6 argument labelled IPv4 (an OSPFv3 `router-id` is a dotted quad
+  by the protocol). This is a correction within the same syntax, not a
+  change of the format the next item keeps.
+* **docs/api-coverage.md stays a contract** until you have moved to
+  GetSchema: its statement syntax (`<A.B.C.D/M>`, `<1-N>`, `a|b`,
+  `[optional]`) and its "Entered with ... `EditRequest.path` ... changed by"
+  lines keep their shape; a change to either is announced here first.
+* **Replacing the 0.149.8 guard's diff parsing:** `GetConfig(areas:
+  ["logging"])` says which collectors are configured, typed. The guard itself
+  is not needed on a box at 0.149.8 or later: disabling a syslog that was
+  never enabled is harmless there (#551). For boxes before 0.149.8, keep it,
+  reading `configured` from GetConfig instead of the diff.
+* **What is not typed yet:** an interface's VRRP, IS-IS and OSPF statements,
+  a bundle's members and LACP, and the rest of the configuration stay lines
+  through `Edit`; docs/api-coverage.md lists each (169 commands typed now).
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.19 - TAB completion that helps remove, finish and address (#557)
 
-* **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
+* **Contract:** unchanged since 0.149.18 (`prisma.proto` sha256
+  `8fdfa497...50ed5d`).
 * **Behaviour:** the VTY only. Completion after `no` offers what is
   configured; optional words after a positional argument complete; `?` on a
   complete statement prints an `<Enter>` line; next hops and listen addresses
@@ -293,7 +364,7 @@ Fixes #547 and #549.
 
 ## 0.149.4 - the API comes back after an upgrade recreates the VTY's container
 
-* **Contract:** unchanged.
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
 * **Fixed (#546):** after an upgrade the API could stay unreachable for about
   ten minutes: the backplane kept a stale route to the old container. Since
   0.149.4 the API answers again as soon as the new container is up.
@@ -302,7 +373,7 @@ Fixes #547 and #549.
 
 ## 0.149.3 - an unknown link speed is 0, not 4.3 Tbps
 
-* **Contract:** unchanged.
+* **Contract:** unchanged (`prisma.proto` sha256 `269fb5c9...106f`).
 * **Fixed (#545):** `Interface.speed_bps` was 4294967295000 for an interface
   whose speed the dataplane does not know (VPP's 0xFFFFFFFF kbps, seen on
   virtio). It is 0 now, as the contract says. **Client workaround on 0.149.2:**

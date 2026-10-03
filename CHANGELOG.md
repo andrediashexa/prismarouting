@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The configuration as fields, through the API: interfaces, CGNAT pools
+  and the CGNAT log export.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 2)
+  prisma-web built VTY lines by hand from a grammar it assumed and parsed
+  diffs to know which log collectors were configured. ConfigService gains
+  `GetConfig` (the running configuration or a candidate's, read off the
+  same Config the VTY holds, never text parsed again), `SetConfig` and
+  `DeleteConfig` (desired state turned into the exact lines an operator
+  types, staged through Edit's own feed, so every refusal and reason code
+  applies, the lines returned), `GetSchema` (the WHOLE configuration
+  grammar - 26 modes, about 400 statements - generated from the tree the
+  prompt's `?` answers from: each mode's path, each argument's kind, range,
+  choices and value source, the `no` forms, versioned by release and a
+  digest) and `ValidateLines` (lines checked by the VTY in a candidate
+  nobody sees). The box's own lines (FRR's logging, the box's VRF) are
+  listed read only on every typed read. The mode table is one, in the
+  product, read by GetSchema and by tools/api-coverage.py alike. 169
+  commands are typed now, from 39. docs/clients.md's contract hashes are
+  held to each tag by a test (0.149.19's named 0.149.17's). lab/api-grpc.sh takes an interface, a pool and the log
+  export each through SetConfig, Commit and GetConfig, held to GetRunning's
+  text.
+
 ### Fixed
 
 ## 0.149.19 - Tab completion that helps remove, finish and address

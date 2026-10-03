@@ -72,7 +72,10 @@ want = {
     "ConfigService": ["OpenCandidate", "Edit", "ShowCandidate", "Compare",
                       "Check", "Commit", "Confirm", "Rollback", "Save",
                       "CloseCandidate", "GetRunning", "ListRevisions",
-                      "GetPendingConfirm", "ListCandidates"],
+                      "GetPendingConfirm", "ListCandidates",
+                      # #558 phase 2: typed configuration.
+                      "GetConfig", "SetConfig", "DeleteConfig", "GetSchema",
+                      "ValidateLines"],
     "OperationalService": ["GetVersion", "GetSystem", "ListInterfaces",
                            "ListPools", "GetSubscriber", "GetSessionsSummary",
                            "ListBgpNeighbors", "ListOspfNeighbors",

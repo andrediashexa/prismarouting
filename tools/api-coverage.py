@@ -30,6 +30,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
 import prismash as P  # noqa: E402
+import typedcfg  # noqa: E402
 
 DOC = os.path.join(REPO, "docs", "api-coverage.md")
 
@@ -44,62 +45,11 @@ SHARED_WORDS = ("show", "commit", "rollback")
 #: meets them: (level, how it is entered, the path EditRequest.path names,
 #: the grammar, who may change it). The block grammars are
 #: prismash.block_grammar's - the same tables `?` answers from.
-CONFIG_LEVELS = [
-    ("config", "configure", "[]", P.TREE["config"], "administrator"),
-    ("nat", "nat", '["nat"]', P.TREE["nat"], "administrator, cgnat-operator"),
-    ("cgnat", "nat > cgnat", '["nat","cgnat"]', P.TREE["cgnat"],
-     "administrator, cgnat-operator"),
-    ("pool", "nat > cgnat > pool <name>", '["nat","cgnat","pool <name>"]',
-     P.TREE["pool"], "administrator, cgnat-operator"),
-    ("system", "system", '["system"]', P.TREE["system"], "administrator"),
-    ("system memory", "system > memory", '["system","memory"]',
-     P.TREE["memory"], "administrator"),
-    ("system cpu", "system > cpu", '["system","cpu"]', P.TREE["cpu"],
-     "administrator"),
-    ("system dataplane", "system > dataplane", '["system","dataplane"]',
-     P.TREE["dataplane"], "administrator"),
-    ("policy-options", "policy-options", '["policy-options"]',
-     P.TREE["policy-options"], "administrator"),
-    ("prefix-list", "policy-options > prefix-list <name>",
-     '["policy-options","prefix-list <name>"]', P.TREE["prefix-list"],
-     "administrator"),
-    ("policy-statement", "policy-options > policy-statement <name>",
-     '["policy-options","policy-statement <name>"]',
-     P.TREE["policy-statement"], "administrator"),
-    ("term", "... > policy-statement <name> > term <name>",
-     '[..., "term <name>"]', P.TREE["term"], "administrator"),
-    ("user", "user <name>", '["user <name>"]', P.TREE["user"],
-     "administrator"),
-    ("snmp-user", "snmp-user <name>", '["snmp-user <name>"]',
-     P.TREE["snmp-user"], "administrator"),
-    ("interface (port)", "interface <name>", '["interface <name>"]',
-     P.PORT_BLOCK, "administrator"),
-    ("interface (bundle)", "interface bond<n>", '["interface bond<n>"]',
-     P.INTERFACE_BLOCK, "administrator"),
-    ("router static", "router static", '["router static"]',
-     P.STATIC_BLOCK_GRAMMAR, "administrator"),
-    ("rpki", "rpki", '["rpki"]', P.RPKI_BLOCK, "administrator"),
-    ("router bgp", "router bgp <asn>", '["router bgp <asn>"]', P.BGP_BLOCK,
-     "administrator"),
-    ("bgp neighbor", "router bgp <asn>: neighbor <address> ...",
-     '["router bgp <asn>"]', {"neighbor <address>": (
-         "a BGP session", P.BGP_NEIGHBOUR)}, "administrator"),
-    ("address-family", "router bgp <asn> > address-family <afi> <safi>",
-     '["router bgp <asn>","address-family <afi> <safi>"]', P.BGP_AF_BLOCK,
-     "administrator"),
-    ("address-family neighbor", "... > address-family: neighbor <address> ...",
-     '[..., "address-family <afi> <safi>"]', {"neighbor <address>": (
-         "a BGP session", P.BGP_AF_NEIGHBOUR)}, "administrator"),
-    ("router ospf", "router ospf", '["router ospf"]', P.OSPF_BLOCK,
-     "administrator"),
-    ("router ospf6", "router ospf6", '["router ospf6"]', P.OSPF6_BLOCK,
-     "administrator"),
-    ("router isis", "router isis <tag>", '["router isis <tag>"]', P.ISIS_BLOCK,
-     "administrator"),
-    ("route-map", "route-map <name> permit|deny <seq>",
-     '["route-map <name> permit|deny <seq>"]', P.ROUTE_MAP_BLOCK,
-     "administrator"),
-]
+#: Every configuration level, from the product's own table
+#: (typedcfg.config_modes), which GetSchema answers from too: the document and
+#: the API cannot list different modes. (level, how it is entered, the path
+#: as this document prints it, its grammar, the roles that change it.)
+CONFIG_LEVELS = [m[:5] for m in typedcfg.config_modes(P)]
 
 # ------------------------------------------------------------ the rules
 
@@ -178,13 +128,30 @@ CONFIG_RULES = [
 #: What a typed rpc reads back of a configuration level, though the level
 #: is edited as lines: the note a UI needs to know it can read it typed.
 TYPED_READS = {
-    "interface (port)": "typed read: ListInterfaces (description, mtu, admin, "
-                        "addresses); typed edit is phase 2",
-    "interface (bundle)": "typed read: ListInterfaces, ListBundles; typed "
-                          "edit is phase 2",
-    "pool": "typed read: ListPools; typed config read/edit is phase 2",
-    "cgnat": "logging: typed read GetLogging; typed config is phase 2",
+    "interface (bundle)": "the shared statements are typed through "
+                          "GetConfig/SetConfig; member and lacp are lines",
+    "cgnat": "logging is typed through GetConfig/SetConfig; GetLogging is "
+             "its runtime state",
 }
+
+#: Statements read and written as fields by ConfigService.GetConfig /
+#: SetConfig / DeleteConfig (#558, phase 2), by level and first words; the
+#: line form through Edit stays for each of them too.
+TYPED_CONFIG = {
+    "interface (port)": ("description", "vlan", "vrf", "linux-name",
+                         "mac-address", "cgnat", "ipv4", "ipv6 address",
+                         "ipv6 nd", "shutdown", "mtu", "urpf"),
+    "interface (bundle)": ("description", "vrf", "linux-name", "mac-address",
+                           "cgnat", "ipv4", "ipv6 address", "ipv6 nd",
+                           "shutdown", "mtu", "urpf"),
+    "pool": ("prefix-inside", "prefix-outside", "block-size", "ports",
+             "policy", "timeout", "max-blocks", "initial-allocation",
+             "block-stride", "reserve", "bypass", "utilisation-alarm",
+             "max-sessions", "max-session-rate", "tcp-mss", "forward",
+             "filter", "alg", "vrf", "outside-vrf", "mode"),
+    "cgnat": ("logging",),
+}
+TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"
 
 
 def classify_operational(words):
@@ -201,6 +168,12 @@ def classify_config(level, words):
                 return cls, api, note
     if words[0] in SESSION_WORDS:
         return "n/a", "-", "the session's"
+    stmt = words[1:] if words[0] == "no" else words
+    for first in TYPED_CONFIG.get(level, ()):
+        if stmt[:len(first.split())] == first.split():
+            return ("typed", TYPED_CONFIG_API,
+                    "and as lines through Edit; GetSchema/ValidateLines check "
+                    "a line (0.149.20)")
     return ("text", "ConfigService.Edit (lines) / GetRunning",
             TYPED_READS.get(level, ""))
 
@@ -247,8 +220,6 @@ def rows():
 NOT_IN_THE_VTY = [
     ("clear interface counters (one or all)", "phase 3: in the VTY and the API at once"),
     ("clear a CGNAT subscriber's sessions / its block", "phase 3: in the VTY and the API at once"),
-    ("a schema of the configuration grammar, to validate and complete lines",
-     "phase 2"),
 ]
 
 PHASES = """\
@@ -266,7 +237,8 @@ grouping rule (#533).
    items, confirm pending, grammar, validation, apply failed, usage);
    `ConfigService.GetPendingConfirm`; `ConfigService.ListCandidates`, and
    `expires_at` / `last_activity` / `idle_seconds` on the candidate replies.
-2. **Typed configuration for what the UI edits** (items 4-5).
+2. **Typed configuration for what the UI edits** (items 4-5) - *delivered
+   in 0.149.20*.
    `ConfigService.GetConfig(area, source=running|candidate)` returning
    `InterfaceConfig {name, description, mtu, shutdown, ipv4[], ipv6[],
    cgnat_role, vrf, linux_name}`, `PoolConfig {name, prefix_inside[],
@@ -331,6 +303,13 @@ def render():
         "| **What** | Every command and configuration statement of the VTY, and how prisma.v1 reaches it: **typed** (an rpc with fields), **text** (the screen through `OperationalService.Show`, or lines through `ConfigService.Edit`), **none** (not reachable), **n/a** (the session's own, or excluded on purpose). |",
         "| **Where** | Generated by `tools/api-coverage.py` from the same tables `?` answers from; checked by `test/test_api_coverage.py`. The API reference is [docs/api.md](api.md); per-release changes for clients are [docs/clients.md](clients.md). |",
         "| **When** | Regenerated with every release that adds a command or an rpc (#558). |",
+        "",
+        "> **This document's format is a contract** until clients have moved to",
+        "> `ConfigService.GetSchema` (0.149.20), which answers the same grammar",
+        "> typed. prisma-web parses the statement syntax below (`<A.B.C.D/M>`,",
+        "> `<1-N>`, `a|b`, `[optional]`) and each level's \"Entered with ...",
+        "> `EditRequest.path` ... changed by\" line, so neither changes shape",
+        "> without a docs/clients.md entry saying so first.",
         "",
         "## Summary",
         "",

@@ -54,8 +54,20 @@ check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "none",
       "system reboot is not reachable yet")
 check(by.get(("operational", "start shell"), (0, 0, 0, ""))[3] == "n/a",
       "a shell is excluded on purpose")
-check(by.get(("pool", "block-size"), (0, 0, 0, ""))[3] == "text",
-      "a pool statement is a line through Edit")
+check(by.get(("pool", "block-size"), (0, 0, 0, ""))[3] == "typed"
+      and "GetConfig" in by.get(("pool", "block-size"), (0, 0, 0, "", ""))[4],
+      "a pool statement is typed through GetConfig/SetConfig (0.149.20)")
+check(by.get(("pool", "no max-blocks"), (0, 0, 0, ""))[3] == "typed",
+      "and so is its `no`")
+check(by.get(("interface (port)", "vrrp"), (0, 0, 0, ""))[3] == "text"
+      or not any(k[0] == "interface (port)" and k[1].startswith("vrrp") and v[3] == "typed"
+                 for k, v in by.items()),
+      "an interface's vrrp stays a line: no typed field carries it")
+check(any(k[0] == "cgnat" and k[1].startswith("logging") and v[3] == "typed"
+          for k, v in by.items())
+      and all(v[3] == "text" for k, v in by.items()
+              if k[0] == "cgnat" and k[1].startswith("timeout")),
+      "cgnat: logging typed, the rest still lines")
 
 # A rule naming an rpc that does not exist would send a reader nowhere.
 proto = open(os.path.join(REPO, "api", "prisma", "v1", "prisma.proto")).read()
