@@ -27,7 +27,7 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.149.18 - TAB completion that helps remove, finish and address (#557)
+## 0.149.19 - TAB completion that helps remove, finish and address (#557)
 
 * **Contract:** unchanged (`prisma.proto` sha256 `b08a5a08...0c3e7a`).
 * **Behaviour:** the VTY only. Completion after `no` offers what is
