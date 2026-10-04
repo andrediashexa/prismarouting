@@ -371,6 +371,11 @@ exit 0
 SH
 chmod +x /tmp/fakebin/systemctl /tmp/fakebin/systemd-run
 rm -f /tmp/fake-systemctl.argv /tmp/fake-systemd-run.argv /run/prisma-routing/api/*.log
+# Made by root, writable by all (#563): opsman, not root, now runs the
+# stand-ins too, and a file it created in sticky /tmp is one root may not
+# open for writing (fs.protected_regular) - the root checks after it then
+# read a list their own calls never reached.
+for _f in /tmp/fake-systemctl.argv /tmp/fake-systemd-run.argv; do : > $_f; chmod 0666 $_f; done
 rm -f /tmp/api5.fifo; mkfifo /tmp/api5.fifo
 PATH=/tmp/fakebin:$PATH python3 src/prismash/apiserver.py --listen 127.0.0.1:50553 \
   --dir $C/box --stubs /tmp/apistubs --stop-on-eof < /tmp/api5.fifo > /tmp/apiserver5.log 2>&1 &

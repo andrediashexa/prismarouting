@@ -105,13 +105,7 @@ configure
 * É um grupo do sistema, como os papéis: desativar a conta no sistema tira a permissão junto.
 * O grupo `prisma-operator` é criado pelo primeiro commit que dá `operator` a alguém. A partir da 0.150.0 o instalador já o cria.
 
-Quem não tem `operator` recebe a recusa pelo nome, antes de qualquer coisa acontecer:
-
-```
-error: system reboot: permission denied for this account
-    only root and members of prisma-operator may ('operator' in the account's
-    user block)
-```
+Quem não tem `operator` recebe a recusa antes de qualquer coisa acontecer, com o motivo e o grupo que libera a ação: `prisma-operator`.
 
 A **consulta** de versões — `system upgrade` sem versão, que só diz qual versão a caixa roda e qual é a mais nova publicada — não muda nada, então **qualquer conta** pode fazer. Ela é lida pelo sistema da caixa, porque a rede da VTY termina no backplane e não alcança o site de releases; até a 0.149.25 essa consulta falhava ali para todo mundo.
 

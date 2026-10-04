@@ -112,7 +112,8 @@ class FakeFrr(prismash.Frr):
 # and reads the invoking account's real groups, so a suite that left them
 # alone would measure a read-only account being refused `configure` and
 # nothing else.
-prismash.capabilities = lambda: {prismash.CAP_ALL, prismash.CAP_CGNAT}
+prismash.capabilities = lambda: {prismash.CAP_ALL, prismash.CAP_CGNAT,
+                                  prismash.CAP_OPERATOR}
 prismash.Vpp = FakeVpp
 prismash.Frr = FakeFrr
 
@@ -235,7 +236,7 @@ print("=== 5. the interactive session is NOT gated ===")
 # would be the alarm that is always on.
 api = FakeApi()
 sh = prismash.Shell()
-sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT, prismash.CAP_OPERATOR}
 sh.api = api
 sh.dp = FakeVpp()
 sh.frr = FakeFrr()

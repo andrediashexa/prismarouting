@@ -208,13 +208,9 @@ def system_checks():
         # account's: netview is not refused it. Whether the releases can be
         # read from the lab is not the question - the box reads them
         # through its host (#563) - only that permission is not why.
-        try:
-            got = list(netview.Upgrade(pb.UpgradeRequest(), timeout=60))
-        except grpc.RpcError as e:
-            result("upgrade-check-anyone",
-                   e.code() != grpc.StatusCode.PERMISSION_DENIED,
-                   f"{e.code().name} {e.details()[:100]}")
-            return
+        # An answer is required: any refusal, permission or not, is red -
+        # the lab's off mode (no client the server trusts) must not pass it.
+        got = list(netview.Upgrade(pb.UpgradeRequest(), timeout=60))
         text = " ".join(p.message + p.output for p in got)
         result("upgrade-check-anyone", "this box runs" in text
                and "permission" not in text, text[:120])
