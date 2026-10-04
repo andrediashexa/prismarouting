@@ -58,7 +58,7 @@ No nível de `address-family` valem `neighbor` (a lista por família, abaixo), `
 | `timers` | `<keepalive> <hold>` | temporizadores da sessão |
 | `maximum-prefix` | `<n> [<pct>] [restart <min>]` | derruba a sessão acima desse número de prefixos |
 | `next-hop-self` |           | anuncia esta caixa como próximo salto |
-| `bfd`   |           | acompanha a sessão por BFD, para a falha ser de segundos e não de minutos |
+| `bfd`   | `[profile <nome>]` | acompanha a sessão por BFD, para a falha ser de milissegundos e não de minutos; com `profile`, nos tempos daquele perfil (veja [BFD](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m), seção BFD) |
 | `shutdown` |           | segura a sessão derrubada, mantendo a configuração |
 | `peer-group` | `<nome>`  | põe o vizinho num peer group |
 | `capability extended-nexthop` |           | rotas IPv4 por cima de uma sessão IPv6; é o que uma sessão sem endereço no enlace usa |

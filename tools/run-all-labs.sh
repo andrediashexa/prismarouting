@@ -323,7 +323,7 @@ BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
 # either, and the header says so.
 OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c:off policy-d:off policy-igp:off commit-readback:off heap-full:off hot-card:off control-plane-dies:kill-vpp detreserve:off dns:off drain-slope:no-drain ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
            in-place:off initial:off cgnat-workers:off lacp:off doors:off
-           api-grpc:off ftp64:off pref64:off prune-images:off
+           api-grpc:off ftp64:off pref64:off prune-images:off bfd:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent nat64:off oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
@@ -363,6 +363,7 @@ hw-lab:needs a real NIC bound to vfio-pci
 hw-vpp:needs a real NIC, and uses host networking
 boot-iso:the release gate runs this, against a tag
 install-iso:the release gate runs this, against a tag
+bfd-measure:a measurement and not a pass or fail: it sweeps BFD intervals for docs/bfd.md and takes about fifteen minutes by design (#559). Run it deliberately: sh tools/lab.sh bfd-measure
 soak:hours of churn is the point of it (#30), and four minutes is its SHORTEST run. The longest lab here is about two minutes, and a suite that waited on this one would stop being run - which is how a suite loses the assertion instead of the lab losing it. Run it deliberately: sh tools/lab.sh soak, or sh tools/lab.sh soak 28800 for the eight hours it is for
 "
 

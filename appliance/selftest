@@ -1012,7 +1012,9 @@ if vtysh -c "show version" >/dev/null 2>&1; then
   # out for one release longer (#187): the VTY accepted `router ospf6` and the
   # installer enabled every daemon but that one, so OSPFv3 was the one
   # protocol a box could be configured for and never run.
-  for d in bgpd ospfd ospf6d isisd; do
+  # bfdd since #559: the routing container turns it on as it starts, so a box
+  # upgraded by a patch lists it here until its next reboot.
+  for d in bgpd ospfd ospf6d isisd bfdd; do
     case " $daemons " in *" $d "*) ;; *) missing="$missing $d" ;; esac
   done
   if [ -n "$missing" ]; then

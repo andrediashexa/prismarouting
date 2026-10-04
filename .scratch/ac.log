@@ -1,0 +1,21 @@
+  [ ok ] the walk finds the VTY's commands: 689
+  [ ok ] every command path has a classification
+  [ ok ] show version is typed (GetVersion)
+  [ ok ] show cgnat drops is typed (GetDrops, #558 phase 6)
+  [ ok ] show hardware is typed (GetHardware, #558 phase 7)
+  [ ok ] ping is typed, a stream (Ping, #558 phase 7)
+  FAIL: and the one screen left as text is the peer copy named by a path on the box's disk: ['show cgnat ha peer', 'show bfd peers', 'show bfd peer', 'bfd']
+  [ ok ] system reboot is typed (SystemService.Reboot, #558 phase 5)
+  [ ok ] no VTY path is unreachable through the API (#558 phase 5): []
+  [ ok ] a shell is excluded on purpose
+  [ ok ] a pool statement is typed through GetConfig/SetConfig (0.149.20)
+  [ ok ] and so is its `no`
+  [ ok ] an interface's vrrp is read as fields (area vrrp) and written as lines (0.149.24)
+  [ ok ] cgnat: logging typed; the timeouts read as fields in cgnat_globals (0.149.24)
+  FAIL: no configuration statement is text-only after phase 4: [('config', 'bfd')]
+  [ ok ] a neighbour's remote-as is typed: the two-word grammar key is compared word by word
+  [ ok ] an OSPF knob phase 3 left in `other` is read as a setting (0.149.24)
+  [ ok ] every rpc a rule names is in the proto
+  FAIL: docs/api-coverage.md is current: docs/api-coverage.md is stale: run python3 tools/api-coverage.py
+
+3 FAILURES

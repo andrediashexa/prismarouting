@@ -126,6 +126,30 @@ sync_agentx() {
 }
 sync_agentx
 
+# BFDD IS ON, AND IT IS ON HERE (#559). The VTY offers `bfd` and every
+# protocol's `bfd` word, and a box without bfdd takes all of them and watches
+# nothing - the #99 shape exactly. The other routing daemons are enabled by
+# the installer, and this one is not, because a patch release cannot change
+# the installer (tools/release-gate.sh, #410) while this image rides every
+# upgrade: put here, a box gets bfdd at the first start of this container on
+# a release that has it, installed or upgraded. Only `no` becomes `yes`, and
+# a missing line is added; a box whose daemons file says anything else about
+# bfdd is left as it is. Written in place, for the owner and mode the file
+# has.
+enable_bfdd() {
+  f=$ETCFRR/daemons
+  [ -f "$f" ] || return 0
+  if grep -q "^bfdd=" "$f"; then
+    grep -qx "bfdd=no" "$f" || return 0
+    sed "s/^bfdd=no$/bfdd=yes/" "$f" > "$f.bfdd" && cat "$f.bfdd" > "$f"
+  else
+    { cat "$f"; echo "bfdd=yes"; } > "$f.bfdd" && cat "$f.bfdd" > "$f"
+  fi
+  rm -f "$f.bfdd"
+  echo "frr-entrypoint: bfdd enabled in $f" >&2
+}
+enable_bfdd
+
 "$FRRINIT" start 2>&1 | sed 's/^/frr-entrypoint: /'
 
 # WAIT ON watchfrr, which is what FRR itself supervises the daemons with: a

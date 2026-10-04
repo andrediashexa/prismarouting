@@ -47,7 +47,7 @@
 set -u
 LAB_T0=$(date +%s)
 
-start_frr zebra staticd bgpd ospfd ospf6d isisd
+start_frr zebra staticd bgpd ospfd ospf6d isisd bfdd
 sleep 2
 
 # Three, because section 4d needs one interface per value: a probe that types
@@ -356,6 +356,29 @@ run "interface dum9" " no ipv6 ospf6 area"
 run "no router ospf6"
 
 echo
+echo "=========== 4f. BFD, whose timers come back only when they are not the default ==="
+# #559 put `bfd`, its sessions and its profiles into the VTY's grammar, and six
+# entries into FRR_OMITS_AT off this section. Each default has its control at
+# a value that is not one, in a profile of its own so that no probe reads
+# what an earlier one typed; the profile is removed after each.
+for _p in "detect-multiplier 3:detect-multiplier 7" \
+          "receive-interval 300:receive-interval 250" \
+          "transmit-interval 300:transmit-interval 250" \
+          "echo receive-interval 50:echo receive-interval 70" \
+          "echo transmit-interval 50:echo transmit-interval 70" \
+          "minimum-ttl 254:minimum-ttl 200"; do
+  _def=${_p%%:*}; _ctl=${_p#*:}
+  probe ABSENT     "  $_def" "bfd" " no profile rb" -- \
+        "bfd" " profile rb" "  $_def"
+  probe ROUNDTRIPS "  $_ctl" "bfd" " no profile rb" -- \
+        "bfd" " profile rb" "  $_ctl"
+done
+# And a session that names no timer at all comes back as its header alone.
+probe ROUNDTRIPS " peer 10.9.9.2 interface dum9" \
+      "bfd" " no peer 10.9.9.2 interface dum9" -- \
+      "bfd" " peer 10.9.9.2 interface dum9"
+
+echo
 echo "=========== 5. the ordinary case, for contrast ==========="
 # Most statements do come back. If these went ABSENT the whole read-back idea
 # would be dead, and the lab would be saying so instead of asserting a list.
@@ -374,7 +397,7 @@ echo "=========== 6. the undo worked ==========="
 # The assertion that makes every one above mean something. If a probe's undo
 # silently failed, the next probe read a configuration the previous one had
 # written, and this file would be measuring its own order.
-LEFT=$(cfg | grep -cE "^ +(ip ospf|ipv6 ospf6|timers throttle|neighbor (10\.9\.9\.9|dum9))|^ip route 192\.0\.2\.0|^router ospf6" || true)
+LEFT=$(cfg | grep -cE "^ +(ip ospf|ipv6 ospf6|timers throttle|neighbor (10\.9\.9\.9|dum9)|profile rb|peer 10\.9\.9\.2)|^ip route 192\.0\.2\.0|^router ospf6" || true)
 cfg | sed 's/^/  /'
 expect "nothing a probe typed is left behind (found $LEFT)" test "${LEFT:-1}" -eq 0
 

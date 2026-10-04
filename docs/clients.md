@@ -27,6 +27,20 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.8 - BFD, phase 1
+
+* **Contract:** unchanged (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).
+* **BFD at the VTY (#559, phase 1):** a `bfd` block (`peer` sessions and
+  `profile` timer sets), `neighbor X bfd [profile]` under `router bgp` and
+  `bfd [multi-hop] [source] [profile]` on a static route; `show bfd peers`
+  and `show bfd peer <address>`. Through the API they are text for now:
+  the statements as lines through Edit, the screens through `Show`. Typed BFD reads, typed config and a
+  session-state event are phase 2.
+* **bfdd starts with the routing container:** a box upgraded to this
+  release refuses BFD statements at commit until the routing container
+  restarts (a reboot), and says so.
+* **Lab box:** .166 is on 0.150.7.
+
 ## 0.150.7 - old container images are removed
 
 * **Contract:** unchanged (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).

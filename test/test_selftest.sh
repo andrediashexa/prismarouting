@@ -279,7 +279,7 @@ case "$*" in
   # ospf6d included (#187).
   *"show daemons"*)
     if [ -f "$FAKE/frr_daemons" ]; then cat "$FAKE/frr_daemons"
-    else echo "bgpd ospfd ospf6d isisd zebra staticd mgmtd"; fi ;;
+    else echo "bgpd ospfd ospf6d isisd bfdd zebra staticd mgmtd"; fi ;;
   # RPKI answers in two ways and the difference is the whole check: a
   # module that is NOT loaded makes vtysh exit non-zero on this command,
   # and one that is loaded answers, with or without a connected cache. So
@@ -1131,7 +1131,7 @@ fi
 # Asserted on the WARNING being gone rather than on ospf6d appearing in the
 # "up" line: that line prints vtysh's own answer, so the name is in it whether
 # or not this check looked for it.
-printf 'bgpd ospfd ospf6d isisd zebra staticd mgmtd\n' > "$FAKE/frr_daemons"
+printf 'bgpd ospfd ospf6d isisd bfdd zebra staticd mgmtd\n' > "$FAKE/frr_daemons"
 run
 if said '\[warn\] routing daemons not running'; then
   bad "a complete box was still warned: $(printf '%s\n' "$OUTPUT" | grep -i 'routing daemons' || echo '<nothing>')"

@@ -1,0 +1,39 @@
+=== the wiki's prompt lines were found at all ===
+  [ ok ] 288 prompt line(s) across the wiki and docs
+
+=== the prompt matches the mode the command lives in ===
+  [ ok ] no page shows a command at a prompt this VTY never prints
+
+=== every command shown is in the command tree ===
+  [ ok ] 286 command(s) walked, each as far as the tree enumerates
+
+=== a command the box only has on the medium says so on its page ===
+  [ ok ] 'install' is shown, and the page says why an installed box does not have it
+
+=== every quotation of the unchecked marker is the one the box emits ===
+  [ ok ] 101 lab(s) checked; every quotation matches '<- not checked'
+
+=== the BGP page's table is what the VTY actually checks ===
+  [ ok ] every one of the 12 neighbour statements is on the page
+  [ ok ] and all 10 of the address-family ones are named
+
+=== every statement a block takes is named on that block's page ===
+  [ ok ] all 23 statements a CGNAT pool takes are named on configuracao-de-pool.md
+  [ ok ] all 17 statements an interface takes are named on configuracao-de-interface.md
+
+=== every show command is named somewhere in the wiki ===
+  [ ok ] all 41 show commands are named in the wiki
+
+=== every commit refusal an operator can meet is on the commit page ===
+  [ ok ] all 7 of them are quoted on the page, in the words the box prints
+
+=== a lab the documentation names is the lab that holds the claim ===
+  [ ok ] 7 fixture(s) quoted beside a lab, each present in that lab
+
+=== the wiki names no command from the dataplane's own CLI ===
+  [ ok ] all 95 of them
+
+=== every path these documents send a reader to is in the tree ===
+  [ ok ] all 775 of them
+
+ALL TESTS PASSED

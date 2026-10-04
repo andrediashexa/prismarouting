@@ -77,6 +77,32 @@ version has a chance of seeing it.
 
 ### Added
 
+* **BFD: a BGP neighbour or a static route withdrawn in the time the
+  operator configures, not the hold timer's.**
+  ([#559](https://github.com/andrediashexa/hexarouting/issues/559), phase 1)
+  `bfd` is a level of the VTY, like `rpki`: `peer <address> [multihop]
+  [local-address <address>] [interface <interface>] [vrf <name>]` sessions
+  and `profile <name>` timer sets, each taking `detect-multiplier`,
+  `receive-interval`, `transmit-interval`, `echo-mode`, `echo
+  receive-interval|transmit-interval`, `passive-mode`, `minimum-ttl` and
+  `shutdown`. `neighbor <address> bfd [profile <name>]` in BGP, and `bfd
+  [multi-hop] [source <address>] [profile <name>]` after a static route's
+  next hop. `show bfd peers` (two lines a session, within 79 columns with
+  IPv6 on both ends) and `show bfd peer <address>` (timers both ways,
+  detection time, packets, how often it went up and down). The sessions run
+  in FRR's bfdd behind the linux_cp pair: measured in `lab/bfd-measure.sh`,
+  bfdd holds 50 ms x 3 with no down events idle and at ~260 kpps through the
+  dataplane, while VPP 26.06's own BFD did not hold a session against it at
+  any interval, 300 ms included (docs/bfd.md). `lab/bfd.sh`: a neighbour that
+  stops answering with its link up is seen by bfdd in 252 ms and both routes
+  leave the dataplane's FIB by 325 ms, at 100 ms x 3; without BFD neither
+  leaves in 12 s. bfdd is turned on by the routing container's entrypoint, so
+  a box gets it at the first start of that container on this release - after
+  the reboot, on a box upgraded to it - and until then `commit` refuses BFD
+  statements, naming bfdd and the reboot, rather than committing sessions
+  nothing would bring up. Typed BFD in the API, BFD-STD-MIB and the IGPs in a
+  lab are phase 2.
+
 ### Fixed
 
 ## 0.150.7 - old container images are removed

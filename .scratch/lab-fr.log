@@ -1,0 +1,7 @@
+building the plugin once, so no lab races another to do it... ok
+
+  frr-readback       pass
+
+  pass=1  fail=0  notmeasured=0  novpp=0  ran=0
+  machine: 16 cpu(s)
+  load 2.12 at the start, 2.12 at the highest batch boundary

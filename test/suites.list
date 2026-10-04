@@ -77,6 +77,7 @@ python3 test/test_prismash_units.py
 python3 test/test_prismash_perms.py
 python3 test/test_prismash_confirm.py
 python3 test/test_prismash_igp.py
+python3 test/test_prismash_bfd.py
 python3 test/test_prismash_bgp.py
 python3 test/test_prismash_policy.py
 sh test/test_prismash_login.sh

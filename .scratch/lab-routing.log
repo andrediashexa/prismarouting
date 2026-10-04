@@ -1,0 +1,7 @@
+building the plugin once, so no lab races another to do it... ok
+
+  routing            pass
+
+  pass=1  fail=0  notmeasured=0  novpp=0  ran=0
+  machine: 16 cpu(s)
+  load 1.44 at the start, 1.44 at the highest batch boundary

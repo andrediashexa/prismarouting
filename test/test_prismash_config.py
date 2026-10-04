@@ -2096,6 +2096,99 @@ for typed in ("192.168.0.0/24 next-hop 172.16.0.1 distance 200 tag 100",
     check(config.static_route_words(frr) == typed and config.static_route(config.static_route_words(frr).split())[0] == frr,
           f"typed, stored and shown are one route: {typed!r} {frr!r} {config.static_route_words(frr)!r}")
 
+print("\n=== a static route watched by BFD (#559) ===")
+# FRR 10.7.1 reads `bfd` back LAST, after the distance - `ip route P NH tag 5
+# 10 bfd multi-hop source S`, measured - so that is the spelling produced, or
+# every commit would differ from what FRR holds. Mutation shown red: emitting
+# the bfd words where they are typed (before the distance).
+for words, frr in (
+        ("10.1.0.0/24 next-hop 10.9.0.2 bfd",
+         "ip route 10.1.0.0/24 10.9.0.2 bfd"),
+        ("10.1.0.0/24 next-hop 10.9.0.2 bfd profile fast",
+         "ip route 10.1.0.0/24 10.9.0.2 bfd profile fast"),
+        ("10.2.0.0/24 next-hop 10.9.0.2 bfd multi-hop source 10.9.0.1 "
+         "distance 10 tag 5",
+         "ip route 10.2.0.0/24 10.9.0.2 tag 5 10 bfd multi-hop source "
+         "10.9.0.1"),
+        ("10.2.0.0/24 next-hop 10.9.0.2 distance 10 bfd",
+         "ip route 10.2.0.0/24 10.9.0.2 10 bfd"),
+        ("2001:db8::/32 next-hop 2001:db8::2 bfd source 2001:db8::1",
+         "ipv6 route 2001:db8::/32 2001:db8::2 bfd source 2001:db8::1")):
+    got = config.static_route(words.split())
+    check(got == (frr, None, None), f"{words!r} -> {got!r}")
+_bfd_desc = config.static_route(
+    "10.2.0.0/24 next-hop 10.9.0.2 bfd profile p description to POP".split())
+check(_bfd_desc == ("ip route 10.2.0.0/24 10.9.0.2 bfd profile p", "to POP",
+                    None),
+      f"a description after bfd is still the description: {_bfd_desc!r}")
+for words, needle in (
+        ("10.2.0.0/24 next-hop 10.9.0.2 bfd foo", "a word bfd does not take"),
+        ("10.2.0.0/24 next-hop 10.9.0.2 bfd profile", "no value after it"),
+        ("10.2.0.0/24 next-hop 10.9.0.2 bfd source x", "not an address"),
+        ("10.2.0.0/24 next-hop 10.9.0.2 bfd source 2001::1",
+         "not in the prefix's family"),
+        ("10.2.0.0/24 next-hop 10.9.0.2 bfd bfd", "bfd: given twice")):
+    got = config.static_route(words.split())
+    text = " ".join(got[2] or ())
+    check(got[0] is None and needle in text,
+          f"{words!r} is refused with {needle!r}: {got!r}")
+# The route is its prefix and hop: BFD on it is the same route, watched.
+# Mutation shown red: _bfd_tail not applied in static_route_key - adding
+# `bfd` to a route then added a second route beside it.
+check(config.static_route_key(
+        "ip route 10.2.0.0/24 10.9.0.2 tag 5 10 bfd multi-hop source 10.9.0.1")
+      == "ip route 10.2.0.0/24 10.9.0.2",
+      "a route's key leaves its BFD words out")
+check(config._bfd_tail("ip route 10.2.0.0/24 bfd tag 5 10 bfd profile p".split())
+      == ("ip route 10.2.0.0/24 bfd tag 5 10".split(), ["bfd", "profile", "p"])
+      and config._bfd_tail("ip route 10.0.0.0/8 10.0.0.1".split())
+      == ("ip route 10.0.0.0/8 10.0.0.1".split(), []),
+      "the BFD words are the ones from the first `bfd` after the next hop - "
+      "an interface called bfd is the next hop")
+for typed in ("10.2.0.0/24 next-hop 10.9.0.2 distance 10 tag 5 bfd "
+              "multi-hop source 10.9.0.1",
+              "10.1.0.0/24 next-hop 10.9.0.2 bfd profile fast"):
+    frr = config.static_route(typed.split())[0]
+    check(config.static_route_words(frr) == typed
+          and config.static_route(config.static_route_words(frr).split())[0]
+          == frr,
+          f"typed, stored and shown are one route: {typed!r} {frr!r} "
+          f"{config.static_route_words(frr)!r}")
+
+print("\n=== the bfd block, its sessions and profiles (#559) ===")
+# Both shapes `block_paths` reads, as FRR 10.7.1 writes the block back and
+# as it is typed at the VTY. `profile <name>` is a BLOCK at the bfd level and
+# a STATEMENT inside a peer. Mutation shown red: bfd_uses_profile() always
+# False - the peer's `profile fast` opened a block and the next statement was
+# put inside it.
+_rb = ["bfd", " profile fast", "  transmit-interval 100", " exit", " !",
+       " peer 10.9.0.2 interface dum0", "  profile fast",
+       "  detect-multiplier 5", " exit", " !", "exit", "!",
+       "router bgp 65000", " neighbor 10.9.0.2 bfd", "exit"]
+check(config.block_paths(_rb) == [
+        [], ["bfd"], ["bfd", "profile fast"], None, None, ["bfd"],
+        ["bfd", "peer 10.9.0.2 interface dum0"],
+        ["bfd", "peer 10.9.0.2 interface dum0"], None, None, None, None,
+        [], ["router bgp 65000"], None],
+      f"read back from FRR: {config.block_paths(_rb)!r}")
+_ty = ["bfd", "profile fast", "receive-interval 100", "exit",
+       "peer 10.9.0.2 interface dum0", "profile fast", "detect-multiplier 5",
+       "exit", "peer 10.9.0.3", "exit", "exit", "router bgp 65000",
+       "neighbor 10.9.0.2 bfd", "exit"]
+check(config.block_paths(_ty) == [
+        [], ["bfd"], ["bfd", "profile fast"], None, ["bfd"],
+        ["bfd", "peer 10.9.0.2 interface dum0"],
+        ["bfd", "peer 10.9.0.2 interface dum0"], None, ["bfd"], None, None,
+        [], ["router bgp 65000"], None],
+      f"typed at the VTY: {config.block_paths(_ty)!r}")
+check(config.opens_frr_block("bfd") and config.opens_frr_block("peer 10.0.0.2")
+      and config.opens_frr_block("profile fast"),
+      "bfd, a session and a profile are blocks")
+check(config.bfd_uses_profile("peer 10.0.0.2", "profile fast")
+      and not config.bfd_uses_profile("bfd", "profile fast")
+      and not config.bfd_uses_profile("peer 10.0.0.2", "detect-multiplier 5"),
+      "a profile named inside a session is the session using it")
+
 print("\n=== a saved file carries a description, and refuses what the "
       "prompt refuses (#436) ===")
 _desc_file = parse_nested("""! routing

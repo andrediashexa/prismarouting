@@ -1,0 +1,8 @@
+building the plugin once, so no lab races another to do it... ok
+
+  bfd                pass
+  bfd+off            pass (10 check(s) red, floor 10)
+
+  pass=2  fail=0  notmeasured=0  novpp=0  ran=0
+  machine: 16 cpu(s)
+  load 0.42 at the start, 1.61 at the highest batch boundary

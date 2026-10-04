@@ -203,5 +203,36 @@ ls "$B/etc/frr" | grep -q "\.agentx" \
   || ok "and no scratch file is left behind"
 rm -rf "$B"
 
+echo
+echo "=== bfdd is on from the first start of this image (#559) ==="
+# The installer enables the other routing daemons and a patch cannot change
+# it, so the image that rides every upgrade turns bfdd on before FRR starts.
+B=$(mkbox 1234 5678)
+printf 'bgpd=yes\nbfdd=no\nvtysh_enable=yes\n' > "$B/etc/frr/daemons"
+chmod 0640 "$B/etc/frr/daemons"
+agentx_run "$B"
+grep -qx "bfdd=yes" "$B/etc/frr/daemons" && ! grep -qx "bfdd=no" "$B/etc/frr/daemons" \
+  && ok "Debian's bfdd=no becomes bfdd=yes" \
+  || bad "bfdd is not on: $(cat "$B/etc/frr/daemons")"
+grep -qx "bgpd=yes" "$B/etc/frr/daemons" && grep -qx "vtysh_enable=yes" "$B/etc/frr/daemons" \
+  && ok "and nothing else in the file moved" \
+  || bad "the rest of the daemons file changed: $(cat "$B/etc/frr/daemons")"
+[ "$(stat -c %a "$B/etc/frr/daemons")" = 640 ] \
+  && ok "and the file keeps its mode" \
+  || bad "the daemons file's mode changed to $(stat -c %a "$B/etc/frr/daemons")"
+agentx_run "$B"
+[ "$(grep -c "^bfdd=" "$B/etc/frr/daemons")" = 1 ] \
+  && ok "a second start leaves one bfdd line" \
+  || bad "bfdd appears $(grep -c "^bfdd=" "$B/etc/frr/daemons") times"
+printf 'bgpd=yes\n' > "$B/etc/frr/daemons"
+agentx_run "$B"
+grep -qx "bfdd=yes" "$B/etc/frr/daemons" \
+  && ok "a daemons file with no bfdd line gets one" \
+  || bad "no bfdd line was added: $(cat "$B/etc/frr/daemons")"
+ls "$B/etc/frr" | grep -q "\.bfdd" \
+  && bad "a scratch file was left in /etc/frr" \
+  || ok "and no scratch file is left behind"
+rm -rf "$B"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
