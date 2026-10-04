@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane restart could bring the cards back under other names, and the
+  box with no configuration.** ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
+  Measured on 10.40.200.166 (0.149.30): the restart ran end to end, but the
+  stopped dataplane's Linux ends - linux_cp's TAPs, named enp1s0, enp6s18,
+  enp6s19 and enp1s0.666 - still held the cards' names when the cards were
+  given back, so udev could not rename them ("Failed to rename network
+  interface 18 from 'eth0' to 'enp1s0': File exists"), the tuner wrote eth0,
+  eth1 and eth2 into startup.conf, the saved configuration naming enp1s0 was
+  refused on load, and the box - managed through enp6s18 - was dark until a
+  reset. `system dataplane restart` now records the names the startup.conf
+  gave each card, removes only TUN/TAP devices carrying those names, gives
+  the cards back, waits for udev, gives any card its recorded name back, and
+  only then runs the tuner: it ends with the startup.conf a boot writes. It
+  also checks its own result: a configuration that does not load fails the
+  restart, said in its log and so in the API's answer.
+
 ## 0.149.31 - the VTY's unit suite cleans up after itself
 
 ### Fixed
