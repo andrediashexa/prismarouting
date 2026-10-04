@@ -238,6 +238,14 @@ check(sh.frr.asked == ["show bfd peers json", "show bfd peers counters json"],
       f"bfdd is asked for the sessions and their counters: {sh.frr.asked!r}")
 check(text.count("  session ") == 2,
       "both sessions to the address, single hop and multihop")
+f = sh.bfd_facts()
+check(f["answered"] and not f["garbled"] and len(f["sessions"]) == 3,
+      "bfd_facts: the one reading the screen is drawn from")
+dead = prismash.Shell()
+dead.frr = type("F", (), {"show": lambda self, c: (1, "")})()
+check(dead.bfd_facts() == {"answered": False, "garbled": False,
+                           "sessions": []},
+      "and a bfdd that does not answer is said as such, not as no sessions")
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.show_bfd(["peer", "10.9.0.09"])
