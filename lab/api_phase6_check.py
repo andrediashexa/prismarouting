@@ -80,9 +80,17 @@ def translation():
           and net.subnet_of(ipaddress.ip_network("2001:db8:1200::/40"))
           and t.source == pb.Translation.SOURCE_FORMULA and same(t.text, "translation-v6"))
     result("translation-nat64", ok, f"{t.subscriber} {pb.Translation.Source.Name(t.source)}")
+
+
+def translation_dynamic():
     # A dynamic pool: the block a subscriber holds, as GetSubscriber reads it,
-    # looked up the other way round.
+    # looked up the other way round. GetSubscriber's own blocks first: it read
+    # none from the plugin's screen until this phase.
     sub = op.GetSubscriber(pb.GetSubscriberRequest(address="100.64.16.1"), timeout=T)
+    result("subscriber-blocks", len(sub.blocks) >= 1
+           and all(b.public_address in sub.text and f"{b.first_port}-{b.last_port}" in sub.text
+                   for b in sub.blocks),
+           f"{[(b.public_address, b.first_port, b.last_port) for b in sub.blocks]}")
     b = sub.blocks[0]
     t = op.LookupTranslation(pb.LookupTranslationRequest(public_address=b.public_address,
                                                          port=b.first_port + 1), timeout=T)
@@ -91,6 +99,9 @@ def translation():
            and t.source == pb.Translation.SOURCE_DYNAMIC,
            f"{b.public_address}:{b.first_port + 1} -> {t.subscriber} "
            f"{pb.Translation.Source.Name(t.source)}")
+
+
+def translation_refused():
     # No pool's address, and no address at all.
     try:
         op.LookupTranslation(pb.LookupTranslationRequest(public_address="9.9.9.9",
@@ -227,7 +238,9 @@ def unprivileged():
                f"refused {e.code().name}, as the VTY: {vty.strip()[:80]!r}")
 
 
-for name, fn in (("translation", translation), ("top", top), ("drops", drops),
+for name, fn in (("translation", translation),
+                 ("translation-dynamic", translation_dynamic),
+                 ("translation-refused", translation_refused), ("top", top), ("drops", drops),
                  ("memory", memory), ("blocks", blocks), ("identity", identity),
                  ("history", history), ("algs", algs), ("forwards", forwards),
                  ("ha", ha), ("netview-reads", unprivileged)):

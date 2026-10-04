@@ -676,6 +676,7 @@ expect "a candidate unused past the idle time: NOT_FOUND, CANDIDATE_EXPIRED, and
 t6() { printf '%s\n' "$T6" | grep -q "^RESULT $1 ok"; }
 expect "#558 phase 6: LookupTranslation on a deterministic pool: the formula, for any instant, the VTY's screen" t6 translation-formula
 expect "  on a NAT64 pool: the subscriber's /56, inside the pool's prefix" t6 translation-nat64
+expect "GetSubscriber reads a subscriber's blocks off the plugin's screen" t6 subscriber-blocks
 expect "  a dynamic block GetSubscriber names, looked up back to its holder, for now only" t6 translation-dynamic
 expect "  an address no pool owns: NOT_FOUND, in the dataplane's words" t6 translation-not-found
 expect "  an address that is not one: INVALID_ARGUMENT, before the VTY" t6 translation-refused

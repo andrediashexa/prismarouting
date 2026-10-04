@@ -105,6 +105,15 @@ version has a chance of seeing it.
   `lab/api-grpc.sh`'s phase 2, which 0.150.2 was released without running.
   Every repeated field is converted by its shape now, so the next one added
   cannot do it again.
+* **`GetSubscriber` answered no block for any subscriber.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558)) Its
+  `blocks` were read from `show cgnat subscriber` as `address port-port`,
+  against a test fixture written by hand; the plugin writes `block 0
+  200.150.0.41  ports 1536-2047`, with `ports` between the two, so the list
+  was empty since the API's first release (0.148.4). Found by
+  `lab/api-grpc.sh`'s sixth phase, which looks a subscriber's block up the
+  other way round. The pattern takes the plugin's three forms, and the test
+  holds it to bpa_cli.c's format strings.
 * **`show cgnat top` and `show cgnat drops` cut values longer than their
   column.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
   vppinfra's `format()` truncates any conversion that has a width to that

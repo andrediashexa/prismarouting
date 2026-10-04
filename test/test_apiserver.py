@@ -7,6 +7,7 @@ telemetry arithmetic. lab/api-grpc.sh drives the gRPC half against a box.
 """
 import io
 import os
+import re
 import sys
 import tempfile
 import time
@@ -105,6 +106,30 @@ check(A.subscriber_blocks("blocks: 200.150.0.17 1024-1535, 200.150.0.17:1536-204
       == [{"public_address": "200.150.0.17", "first_port": 1024, "last_port": 1535},
           {"public_address": "200.150.0.17", "first_port": 1536, "last_port": 2047}],
       "the port blocks in a subscriber's screen")
+# In the plugin's own words (bpa_cli.c's show bpa subscriber), which the
+# fixture above is not: GetSubscriber read no block from these until #558's
+# sixth phase looked one up.
+_sub = ("subscriber 100.64.16.1   pool residential-cgnat, index 1, worker thread 1\n"
+        "  block 0  200.150.0.41  ports 1536-2047   1 of 512 in use (0%), 511 free\n"
+        "  block 1  200.150.0.42  ports 2048-2559   0 of 512 in use (0%), 512 free\n"
+        "  sessions 1   refusals: ports 0, session cap 0, rate cap 0\n")
+check(A.subscriber_blocks(_sub)
+      == [{"public_address": "200.150.0.41", "first_port": 1536, "last_port": 2047},
+          {"public_address": "200.150.0.42", "first_port": 2048, "last_port": 2559}],
+      f"a dynamic subscriber's blocks, `ports` between address and range: "
+      f"{A.subscriber_blocks(_sub)}")
+check(A.subscriber_blocks("  the formula gives it 200.150.0.17 ports 1024-1535\n")
+      == [{"public_address": "200.150.0.17", "first_port": 1024, "last_port": 1535}]
+      and A.subscriber_blocks("  holds 200.150.0.17 ports 1024-1535, and has no "
+                              "sessions on this box\n")[0]["last_port"] == 1535,
+      "a deterministic subscriber's block, by the formula or held")
+_cli = re.sub(r'"\s*\n\s*"', "", open(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "src", "plugins", "bpa",
+    "bpa_cli.c")).read())
+check(all(f in _cli for f in ("  block %u  %U  ports %u-%u",
+                              "  the formula gives it %U ports %u-%u",
+                              "  holds %U ports %u-%u")),
+      "and those are the lines bpa_cli.c prints")
 
 
 class R:

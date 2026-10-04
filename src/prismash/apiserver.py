@@ -757,9 +757,20 @@ def enum_name(prefix, value):
 
 
 def subscriber_blocks(text):
-    """The `address port-port` blocks in `show cgnat subscriber`'s screen."""
+    """
+    The port blocks in `show cgnat subscriber`'s screen, which the plugin
+    writes `block 0  200.150.0.41  ports 1536-2047`, `holds <address> ports
+    <lo>-<hi>` or `the formula gives it <address> ports <lo>-<hi>`.
+
+    WITH the word `ports` between the address and the range. This read
+    `address port-port` only, against a fixture written by hand rather than
+    in the plugin's words, so GetSubscriber answered no block for every
+    subscriber since 0.148.4 - measured in lab/api-grpc.sh's sixth phase,
+    whose lookup of a subscriber's block found none to look up.
+    """
     out = []
-    for m in re.finditer(r"(\d+\.\d+\.\d+\.\d+)\s*[: ]\s*(\d+)\s*-\s*(\d+)", text):
+    for m in re.finditer(r"(\d+\.\d+\.\d+\.\d+)(?:\s*:\s*|\s+(?:ports\s+)?)(\d+)\s*-\s*(\d+)",
+                         text):
         out.append({"public_address": m.group(1), "first_port": int(m.group(2)),
                     "last_port": int(m.group(3))})
     return out
