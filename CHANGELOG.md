@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.150.5 - a line FRR refuses fails the VTY batch
+
+### Fixed
+
 * **`prismash -c` exited 0 when FRR refused the line it relayed.**
   ([#568](https://github.com/andrediashexa/hexarouting/issues/568)) A command
   neither the VTY nor the dataplane knows goes to FRR's vtysh, which answers
