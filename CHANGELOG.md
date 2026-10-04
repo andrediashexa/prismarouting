@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.150.7 - old container images are removed
+
+### Fixed
+
 * **Old releases' container images were never removed.**
   ([#569](https://github.com/andrediashexa/hexarouting/issues/569)) Every
   patch upgrade loads a new prisma-mgmt, prisma-vpp, prisma-frr and
