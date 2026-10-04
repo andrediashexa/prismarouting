@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.150.4 - the VTY's exit status trusts good screens
+
+### Fixed
+
 * **`prismash -c` exited 1 on good screens whose first line reads `label:
   text`.** ([#567](https://github.com/andrediashexa/hexarouting/issues/567))
   On 10.40.200.166 (0.150.2) `show cgnat identity` ("no identity table: ...")
