@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.8 - BFD, phase 1
+
+### Added
+
 * **BFD: a BGP neighbour or a static route withdrawn in the time the
   operator configures, not the hold timer's.**
   ([#559](https://github.com/andrediashexa/hexarouting/issues/559), phase 1)
@@ -102,8 +108,6 @@ version has a chance of seeing it.
   statements, naming bfdd and the reboot, rather than committing sessions
   nothing would bring up. Typed BFD in the API, BFD-STD-MIB and the IGPs in a
   lab are phase 2.
-
-### Fixed
 
 ## 0.150.7 - old container images are removed
 
