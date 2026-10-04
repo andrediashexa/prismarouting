@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.28 - the dataplane restart is allowed through the host's door
+
+### Fixed
+
 * **0.149.27's dataplane restart was refused by the host's door.**
   ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
   Measured on 10.95.200.198: RestartDataplane answered FAILED_PRECONDITION,
