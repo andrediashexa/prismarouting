@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.0 - NAT64, and the 0.149.x patches proved by a fresh install
+
+### Added
+
 * **A fresh install from the medium now proves what the 0.149.x patches
   shipped.** A patch release is proved by the suites and an upgrade artifact,
   never by an install, so several 0.149.x behaviours had never run on a box
