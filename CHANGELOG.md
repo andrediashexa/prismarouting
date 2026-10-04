@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **On a freshly rebooted box, RestartDataplane and Upgrade through the API
+  hung for minutes and did nothing.** ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
+  Measured on 10.40.200.166 (0.149.28): the host's door started the unit,
+  but its log's directory, /run/prisma-routing/api, did not exist yet - the
+  API makes it only when it first saves its history - so systemd failed it
+  at STDOUT (status 209) after systemd-run had already returned 0, and the
+  API waited 180 s for a log that never came. Every detached run (the API's
+  upgrade and dataplane restart, the dataplane restart unit) now makes its
+  own log's directory and redirects its own output; a run that has written
+  nothing after 20 s fails at once with the unit to read; and a previous
+  run's finished log is no longer taken for this run's result.
+
 ## 0.149.28 - the dataplane restart is allowed through the host's door
 
 ### Fixed

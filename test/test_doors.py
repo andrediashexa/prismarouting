@@ -722,8 +722,9 @@ with _tmpf.TemporaryDirectory() as _w:
 print("\n=== the API's detached runs (#558, phase 5) ===")
 _a = doors.api_run_argv("upgrade", "0.149.25")
 check(_a[:3] == ("systemd-run", "--collect", "--unit=prisma-routing-api-upgrade")
-      and f"truncate:{doors.api_run_log('upgrade')}" in _a[3]
-      and _a[-1].startswith("/usr/bin/prismash -c 'system upgrade 0.149.25';")
+      and _a[3:5] == ("/bin/sh", "-c")
+      and f"exec >{doors.api_run_log('upgrade')} 2>&1;" in _a[-1]
+      and "/usr/bin/prismash -c 'system upgrade 0.149.25';" in _a[-1]
       and _a[-1].endswith('echo "prisma-api-exit $?"'),
       f"an upgrade: a transient unit, its output in a file the API reads, an exit line: {_a}")
 check(doors.verb_of(list(_a)) == "start 'system upgrade' for the API"
@@ -819,6 +820,32 @@ for _bad in (doors.dataplane_restart_argv(tool="/tmp/evil"),
     _r = doors.answer(json.dumps({"argv": list(_bad)}), 0, execute=_exec)
     check(_r["rc"] == 126 and not _ran,
           f"any other tool, log or command line is no door, root's included: {_bad[-1]!r} {_r}")
+
+print("=== #564: a detached run makes its own log's directory ===")
+# 10.40.200.166, 0.149.28: /run/prisma-routing/api did not exist after a
+# reboot, systemd could not open StandardOutput - status 209 - and the API
+# waited 180 s for a log that never came. The unit's shell now makes the
+# directory and redirects itself: run here, the very command it runs.
+import subprocess as _sp
+_root = tempfile.mkdtemp()
+_logp = os.path.join(_root, "not", "yet", "there.log")
+_cmd = doors.detached("t", _logp, "echo started")[-1]
+_p = _sp.run(["/bin/sh", "-c", _cmd], capture_output=True, text=True)
+with open(_logp) as _f:
+    _got = _f.read()
+check(_p.returncode == 0 and _got == "started\nprisma-api-exit 0\n",
+      f"the directory is made, the output and the exit line are in the log: {_got!r}")
+_cmd = doors.detached("t", _logp, "echo again; false")[-1]
+_sp.run(["/bin/sh", "-c", _cmd])
+with open(_logp) as _f:
+    _got = _f.read()
+check(_got == "again\nprisma-api-exit 1\n",
+      f"a second run truncates the first and keeps its own status: {_got!r}")
+_dp = doors.dataplane_restart_argv()
+check("--property=StandardOutput" not in " ".join(_dp)
+      and "--property=StandardOutput" not in " ".join(doors.api_run_argv("dataplane"))
+      and doors.verb_of(list(_dp)) and doors.operator_door(_dp),
+      "no shape depends on systemd opening a log, and each is still a door")
 
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

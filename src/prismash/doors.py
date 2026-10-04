@@ -118,10 +118,8 @@ def dataplane_restart_argv(tool=HOT_CARD_INSTALLED, log=DATAPLANE_RESTART_LOG):
     restart on a box was refused - "not an operation the VTY is allowed on the
     host" - while the labs, which run it in-line without doors, passed.
     """
-    return ("systemd-run", "--collect", "--unit=prisma-routing-dataplane-restart",
-            f"--property=StandardOutput=truncate:{log}",
-            "--property=StandardError=inherit",
-            "/bin/sh", "-c", f"{tool} restart-dataplane; echo \"prisma-api-exit $?\"")
+    return detached("prisma-routing-dataplane-restart", log,
+                    f"{tool} restart-dataplane")
 
 
 #: A release as `system upgrade` takes it.
@@ -150,11 +148,30 @@ def api_run_argv(kind, version=""):
         stmt = f"{stmt} {version}".strip()
     elif version:
         return None
-    return ("systemd-run", "--collect", f"--unit=prisma-routing-api-{kind}",
-            f"--property=StandardOutput=truncate:{api_run_log(kind)}",
-            "--property=StandardError=inherit",
+    return detached(f"prisma-routing-api-{kind}", api_run_log(kind),
+                    f"/usr/bin/prismash -c '{stmt}'")
+
+
+def detached(unit, log, body):
+    """
+    A transient unit `unit` running `body`, all of its output in `log`, its
+    last line `prisma-api-exit <status>` (#558, #564).
+
+    THE LOG'S DIRECTORY IS MADE BY THE UNIT ITSELF, as its first act, and the
+    output redirected by its shell - not systemd's StandardOutput=truncate:.
+    Measured on 10.40.200.166 (0.149.28): /run/prisma-routing/api did not
+    exist on a freshly rebooted box (the API makes it only when it first
+    saves its history), systemd could not open the log - "Failed at step
+    STDOUT spawning /bin/sh: No such file or directory", status 209 - and
+    systemd-run had already returned 0: the API waited for a log that would
+    never come and the client met DEADLINE_EXCEEDED after 180 s, nothing
+    restarted.
+    """
+    d = os.path.dirname(log)
+    return ("systemd-run", "--collect", f"--unit={unit}",
             "/bin/sh", "-c",
-            f"/usr/bin/prismash -c '{stmt}'; echo \"prisma-api-exit $?\"")
+            f"install -d -m 0755 {d} || exit 1; exec >{log} 2>&1; "
+            f"{body}; echo \"prisma-api-exit $?\"")
 
 
 #: The host's Linux interfaces, read (#540): one line each, with the VRF

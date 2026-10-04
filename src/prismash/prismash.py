@@ -3741,17 +3741,26 @@ def role_name(caps):
 RUN_EXIT = re.compile(r"^prisma-api-exit (\d+)$")
 
 
+#: follow_run_log's answer for a run that never wrote its log (#564).
+RUN_SILENT = -1
+
+
 def follow_run_log(path, started, wait=1800, out=None, sleep=time.sleep,
-                   clock=time.time):
+                   clock=time.time, first_wait=20):
     """
     Print a detached run's log (#563) as it grows, from the run that started
     at `started` on, until its `prisma-api-exit <n>` line; that status, or
     None when it did not finish within `wait` seconds. A log older than the
     start is the previous run's, and is not this one's to print.
+
+    RUN_SILENT when no log of this run appeared within `first_wait` seconds
+    (#564): the unit's shell writes it first, so its absence is a unit that
+    never reached its command - said at once, not after `wait`.
     """
     out = out or sys.stdout
     shown = 0
     deadline = clock() + wait
+    seen = False
     while clock() < deadline:
         try:
             if os.stat(path).st_mtime < started - 1:
@@ -3759,8 +3768,11 @@ def follow_run_log(path, started, wait=1800, out=None, sleep=time.sleep,
             with open(path) as f:
                 text = f.read()
         except OSError:
+            if not seen and clock() - started > first_wait:
+                return RUN_SILENT
             sleep(0.5)
             continue
+        seen = True
         lines = text.splitlines()
         for line in lines[shown:]:
             m = RUN_EXIT.match(line.strip())
@@ -14846,7 +14858,10 @@ class Shell:
             self.err_prose("the host would not start it",
                            *[l for l in out.splitlines() if l.strip()])
             return True
-        follow_run_log(log, started)
+        if follow_run_log(log, started) == RUN_SILENT:
+            unit = f"prisma-routing-api-{kind}"
+            self.err_prose(f"the host started {unit} and it wrote nothing",
+                           f"'journalctl -u {unit}' on the box says why")
         return True
 
     def system_dataplane_restart(self):
@@ -14917,7 +14932,11 @@ class Shell:
                            or [f"systemd-run exited {rc}"])
             return
         status = follow(DATAPLANE_RESTART_LOG, started, wait=600)
-        if status is None:
+        if status == RUN_SILENT:
+            self.err_prose("the dataplane restart started and wrote nothing",
+                           "'journalctl -u prisma-routing-dataplane-restart' "
+                           "on the box says why")
+        elif status is None:
             self.err_prose("the dataplane restart did not finish in 600 s",
                            f"it goes on as a unit; its output is in "
                            f"{DATAPLANE_RESTART_LOG}")

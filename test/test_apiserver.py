@@ -328,6 +328,23 @@ def factory():
     return FakeShell()
 
 
+# #564: a detached run's log is this run's only, and a run that never wrote
+# fails fast instead of waiting out the deadline.
+_rd = tempfile.mkdtemp()
+_rl = os.path.join(_rd, "dataplane.log")
+with open(_rl, "w") as _f:
+    _f.write("an old run\nprisma-api-exit 0\n")
+os.utime(_rl, (100.0, 100.0))
+check(A.run_since(_rl, 1000.0) is None and A.run_since(_rl, 50.0)["done"],
+      "a previous run's finished log is not this run's result")
+check(A.run_silent(None, 1000.0, 1021.0) and not A.run_silent(None, 1000.0, 1010.0)
+      and not A.run_silent({"done": False}, 1000.0, 5000.0),
+      "silent: no log past FIRST_WRITE_WAIT; a log, however slow, is not")
+check("prisma-routing-api-dataplane" in A.silent_reason("prisma-routing-api-dataplane")
+      and "journalctl -u" in A.silent_reason("x"),
+      "and the reason names the unit and where to read why")
+
+
 class W(A.Worker):
     def __init__(self, account):
         super().__init__(account, shell_factory=factory, timeout=20)
