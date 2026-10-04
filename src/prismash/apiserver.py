@@ -51,6 +51,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import cgnatshow  # noqa: E402 - the CGNAT's screens, typed (#558, phase 6)
 import logstate  # noqa: E402 - the CGNAT log export's state (#555)
 import typedcfg  # noqa: E402 - typed configuration (#558, phase 2)
 
@@ -612,10 +613,164 @@ def bundles_of(sh):
     return out
 
 
+# ------------------------------------------- the CGNAT's screens (#558, phase 6)
+
+#: What each typed CGNAT read asks the VTY, and the parser that reads the
+#: answer. The command is the VTY's own spelling: the same Shell runs it, so
+#: the rpc is that screen, never a second reading of the dataplane.
+CGNAT_READS = {
+    "translation": ("show cgnat translation", cgnatshow.parse_translation),
+    "top": ("show cgnat top", cgnatshow.parse_top),
+    "drops": ("show cgnat drops", cgnatshow.parse_drops),
+    "blocks": ("show cgnat blocks", cgnatshow.parse_blocks),
+    "identity": ("show cgnat identity", cgnatshow.parse_identity),
+    "history": ("show cgnat history verify", cgnatshow.parse_history_verify),
+    "alg": ("show cgnat alg", cgnatshow.parse_alg),
+    "forward": ("show cgnat forward", cgnatshow.parse_forward),
+}
+
+
+def cgnat_command(kind, args=None):
+    """
+    The VTY line a typed CGNAT read sends, its arguments checked first. They
+    travel into a VTY line, so an argument that is not the one thing it
+    names - a word with a space, a `|` the VTY reads as a pipe - is refused
+    here (ValueError) rather than handed on.
+    """
+    import ipaddress
+    args = args or {}
+    base = CGNAT_READS[kind][0]
+    if kind == "translation":
+        try:
+            addr = ipaddress.IPv4Address(str(args.get("public_address", "")))
+        except ValueError:
+            raise ValueError(f"'{args.get('public_address', '')}' is not an IPv4 "
+                             "address: a pool's public addresses are IPv4")
+        port = args.get("port", 0)
+        if not isinstance(port, int) or not 0 <= port <= 65535:
+            raise ValueError(f"port {port} is not 0-65535")
+        return f"{base} {addr} {port}"
+    if kind == "top":
+        n = args.get("count", 0)
+        if not isinstance(n, int) or n < 0:
+            raise ValueError(f"count {n} is not a number of rows")
+        return f"{base} {n}" if n else base
+    if kind == "forward":
+        pool = args.get("pool", "")
+        if pool and not re.fullmatch(r"[^\s|]{1,63}", pool):
+            raise ValueError(f"'{pool}' is not a pool's name")
+        return f"{base} {pool}" if pool else base
+    return base
+
+
+def cgnat_read(sh, kind, args=None):
+    """
+    A typed CGNAT read in the worker: the VTY's screen for it, whether it
+    failed - the dataplane not answering, or refusing the command in its own
+    words (cgnatshow.screen_error) - and the screen's fields. A refused
+    argument is {"error": ...}.
+    """
+    try:
+        command = cgnat_command(kind, args)
+    except ValueError as e:
+        return {"error": str(e)}
+    if not sh.dp.reachable():
+        return {"text": "the dataplane is not answering", "failed": True,
+                "fields": {}}
+    text = screen(sh, command)
+    return {"text": text, "failed": bool(cgnatshow.screen_error(text)),
+            "fields": CGNAT_READS[kind][1](text)}
+
+
+def cgnat_memory_read(sh):
+    """
+    `show cgnat memory` in the worker: Shell.cgnat_memory_facts() and the
+    screen drawn from that one reading, so its numbers are the fields'.
+    """
+    f = sh.cgnat_memory_facts()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        sh.show_cgnat_memory(f)
+    return {"facts": f, "text": buf.getvalue()}
+
+
+def memory_fields(facts):
+    """CgnatMemory's fields from Shell.cgnat_memory_facts(); None stays None."""
+    if facts is None:
+        return None
+    return {"heap_bytes": facts["heap_bytes"],
+            "heap_used_bytes": facts["heap_used_bytes"],
+            "sessions": facts["sessions"] or 0,
+            "sessions_known": facts["sessions"] is not None,
+            "sessions_fit": facts["sessions_fit"],
+            "refused_no_memory": facts["refused_no_memory"],
+            "given_gb": facts["given_gb"] or 0,
+            "given": facts["given_gb"] is not None,
+            "given_in_effect": bool(facts["given_in_effect"])}
+
+
+def ha_read(sh):
+    """
+    `show cgnat ha` in the worker: Shell.ha_facts() at the peer copy's
+    default path and the screen drawn from that one reading.
+    """
+    f = sh.ha_facts(None)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        sh.show_ha([], f)
+    return {"facts": f, "text": buf.getvalue()}
+
+
+def ha_fields(facts):
+    """
+    HaStatus's fields from Shell.ha_facts(), the Timestamp aside: the
+    routers as HaRouter, the divergences as HaDivergence, and `agree` - true
+    only when the peer was read and nothing diverges, never on a question
+    left unanswered.
+    """
+    routers = [{"interface": str(r.get("interface", "")),
+                "vr_id": int(r.get("vr_id") or 0),
+                "state": str(r.get("state", "")),
+                "addresses": [str(a) for a in r.get("addresses", [])],
+                "virtual_mac": str(r.get("mac") or ""),
+                "priority_configured": int(r.get("configured") or 0),
+                "priority_advertised": int(r.get("advertising") or 0)}
+               for r in facts["routers"]]
+    return {"dataplane": facts["dataplane"], "fingerprint": facts["fingerprint"],
+            "pools": list(facts["pools"]), "routers": routers,
+            "peer_path": facts["peer_path"], "peer_read": facts["peer_read"],
+            "peer_unread": facts["peer_unread"] or "",
+            "peer_fingerprint": facts["peer_fingerprint"],
+            "peer_pools": list(facts["peer_pools"]),
+            "pair_findings": [str(x) for x in facts["pair_findings"]],
+            "routers_either": facts["routers_either"],
+            "divergences": [{"pool": p, "here": h or "", "there": t or ""}
+                            for p, h, t in facts["divergences"]],
+            "agree": bool(facts["dataplane"] and facts["peer_read"]
+                          and not facts["divergences"])}
+
+
+def enum_name(prefix, value):
+    """A parser's word as its proto enum's name: ("SOURCE", "outside_range")
+    is "SOURCE_OUTSIDE_RANGE"; an empty word is the enum's UNSPECIFIED."""
+    return f"{prefix}_{(value or 'unspecified').upper()}"
+
+
 def subscriber_blocks(text):
-    """The `address port-port` blocks in `show cgnat subscriber`'s screen."""
+    """
+    The port blocks in `show cgnat subscriber`'s screen, which the plugin
+    writes `block 0  200.150.0.41  ports 1536-2047`, `holds <address> ports
+    <lo>-<hi>` or `the formula gives it <address> ports <lo>-<hi>`.
+
+    WITH the word `ports` between the address and the range. This read
+    `address port-port` only, against a fixture written by hand rather than
+    in the plugin's words, so GetSubscriber answered no block for every
+    subscriber since 0.148.4 - measured in lab/api-grpc.sh's sixth phase,
+    whose lookup of a subscriber's block found none to look up.
+    """
     out = []
-    for m in re.finditer(r"(\d+\.\d+\.\d+\.\d+)\s*[: ]\s*(\d+)\s*-\s*(\d+)", text):
+    for m in re.finditer(r"(\d+\.\d+\.\d+\.\d+)(?:\s*:\s*|\s+(?:ports\s+)?)(\d+)\s*-\s*(\d+)",
+                         text):
         out.append({"public_address": m.group(1), "first_port": int(m.group(2)),
                     "last_port": int(m.group(3))})
     return out
@@ -664,6 +819,11 @@ READERS = {
     "whoami": lambda sh, a: whoami(sh),
     "routes": lambda sh, a: routes_page(sh, a or {}),
     "route_summary": lambda sh, a: route_summary(sh, a or ""),
+    # #558, phase 6: the CGNAT's screens, read by the same Shell that prints
+    # them; `a` is {"kind": ..., "args": {...}}.
+    "cgnat": lambda sh, a: cgnat_read(sh, a["kind"], a.get("args")),
+    "cgnat_memory": lambda sh, a: cgnat_memory_read(sh),
+    "ha": lambda sh, a: ha_read(sh),
 }
 
 
@@ -2445,9 +2605,20 @@ def bgp_edit_dict(m):
 
 
 def interface_dict(m):
-    """An InterfaceConfig as typedcfg's dict."""
-    return {k: (list(getattr(m, k)) if k in ("ipv4", "ipv6")
-                else getattr(m, k)) for k in INTERFACE_KEYS}
+    """
+    An InterfaceConfig as typedcfg's dict, every repeated field a list.
+
+    By shape and not by name: the dict crosses a pipe to the account's
+    worker, and a protobuf repeated container does not pickle. 0.150.2 added
+    `pref64` as a repeated field beside ipv4 and ipv6, this listed only those
+    two by name, and every SetConfig on an interface failed with "can't
+    pickle repeated message fields" - found by lab/api-grpc.sh's phase 2.
+    """
+    out = {}
+    for k in INTERFACE_KEYS:
+        v = getattr(m, k)
+        out[k] = v if isinstance(v, (str, bytes, int, float, bool)) else list(v)
+    return out
 
 
 def pool_dict(m):
@@ -3180,6 +3351,108 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 return pb.ShowResponse(text=w.ask("screen", req.command))
             except WorkerError as e:
                 context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh; cgnat_command() and
+        # cgnatshow are what it does, and are tested.
+        def _cgnat(self, context, kind, args=None, not_found=None):
+            """A typed CGNAT read's fields and screen, or the call aborted:
+            INVALID_ARGUMENT for a refused argument, NOT_FOUND when the
+            screen says `not_found`, UNAVAILABLE for any other failure."""
+            got = self._ask(context, "cgnat", {"kind": kind, "args": args or {}})
+            if "error" in got:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, got["error"])
+            if got["failed"]:
+                text = got["text"].strip()
+                if not_found and not_found in text:
+                    context.abort(grpc.StatusCode.NOT_FOUND, text)
+                context.abort(grpc.StatusCode.UNAVAILABLE,
+                              text or "the dataplane did not answer")
+            return got["fields"], got["text"]
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def LookupTranslation(self, req, context):
+            f, text = self._cgnat(context, "translation",
+                                  {"public_address": req.public_address,
+                                   "port": req.port},
+                                  not_found="is not a public address")
+            source = pb.Translation.Source.Value(enum_name("SOURCE", f.pop("source")))
+            return pb.Translation(source=source, text=text, **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListTop(self, req, context):
+            f, text = self._cgnat(context, "top", {"count": req.count})
+            return pb.ListTopResponse(
+                subscribers=[pb.TopSubscriber(**r) for r in f["rows"]],
+                holding_blocks=f["holding"], text=text)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetDrops(self, req, context):
+            f, text = self._cgnat(context, "drops")
+            return pb.DropsReport(text=text, nodes=[
+                pb.DropNode(node=n["node"],
+                            counters=[pb.DropCounter(**c) for c in n["counters"]])
+                for n in f["nodes"]])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh; memory_fields() is
+        # what it does, and is tested.
+        def GetCgnatMemory(self, req, context):
+            got = self._ask(context, "cgnat_memory")
+            f = memory_fields(got["facts"])
+            if f is None:
+                context.abort(grpc.StatusCode.UNAVAILABLE, got["text"].strip())
+            return pb.CgnatMemory(text=got["text"], **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListBlocks(self, req, context):
+            f, text = self._cgnat(context, "blocks")
+            out = pb.ListBlocksResponse(text=text)
+            for p in f["pools"]:
+                threads, total = p.pop("threads"), p.pop("total")
+                pp = out.pools.add(**p)
+                if total:
+                    pp.total.CopyFrom(pb.BlockCounts(**total))
+                for t in threads:
+                    pp.workers.add(thread=t.pop("thread"), lent=t.pop("lent"),
+                                   counts=pb.BlockCounts(**t))
+            return out
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def GetIdentity(self, req, context):
+            f, text = self._cgnat(context, "identity")
+            return pb.IdentityState(text=text, **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def VerifyHistory(self, req, context):
+            f, text = self._cgnat(context, "history")
+            verdict = pb.HistoryVerification.Verdict.Value(
+                enum_name("VERDICT", f.pop("verdict")))
+            return pb.HistoryVerification(verdict=verdict, text=text, **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListAlgs(self, req, context):
+            f, text = self._cgnat(context, "alg")
+            return pb.ListAlgsResponse(text=text, pools=[
+                pb.PoolAlgs(pool=p["pool"], algs=[pb.AlgState(**a) for a in p["algs"]])
+                for p in f["pools"]])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh.
+        def ListForwards(self, req, context):
+            f, text = self._cgnat(context, "forward", {"pool": req.pool})
+            return pb.ListForwardsResponse(
+                text=text, forwards=[pb.Forward(**x) for x in f["forwards"]])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh; ha_fields() is what
+        # it does, and is tested.
+        def GetHaStatus(self, req, context):
+            got = self._ask(context, "ha")
+            f = ha_fields(got["facts"])
+            routers, div = f.pop("routers"), f.pop("divergences")
+            out = pb.HaStatus(text=got["text"],
+                              routers=[pb.HaRouter(**r) for r in routers],
+                              divergences=[pb.HaDivergence(**d) for d in div], **f)
+            if got["facts"]["peer_copied"] is not None:
+                out.peer_copied.CopyFrom(ts(got["facts"]["peer_copied"]))
+            return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh; logging_fields() and
         # logstate are what it does, and are tested.

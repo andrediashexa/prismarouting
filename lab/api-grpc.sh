@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 131
+# OFF-RED-AT-LEAST: 149
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -463,7 +463,55 @@ echo "  a new server on the history file: $HAFTER ($HSAVED saved)"
 # The confirm window phase 1 left open, read by this new server; then a
 # candidate left to expire on its 6 s.
 P2=$(python3 lab/api_phase1_check.py /tmp/apistubs $C 127.0.0.1:50552 after /tmp/p558.json 2>&1)
-printf '%s\n' "$P2" | sed 's/^/  /' 
+printf '%s\n' "$P2" | sed 's/^/  /'
+pkill -f "^sleep 900$"
+echo "=========== #558, phase 6: the CGNAT's screens, typed ==========="
+# Last, and on a server of its own, so nothing the phases above count is
+# moved by these pools. A DYNAMIC pool of SEVENTEEN letters - show bpa top's
+# pool column cut at twelve - with a forward and an ALG turned off, and a
+# NAT64 pool (lab/nat64.sh's) with FTP64 on and a forward to an IPv6 host.
+$HX -c configure -c nat -c cgnat -c "pool residential-cgnat" \
+    -c "prefix-inside 100.64.16.0/22" -c "prefix-outside 200.150.0.40/30" \
+    -c "mode dynamic" -c "alg ftp on" -c "alg rtsp off" \
+    -c "forward tcp 1600 to 100.64.16.5 80" -c exit \
+    -c "pool v6" -c "prefix-inside 2001:db8:1200::/48" -c "subscriber-length 56" \
+    -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 200.150.0.48/29" \
+    -c "block-size 1024" -c "alg ftp on" \
+    -c "forward tcp 22600 to 2001:db8:1200:ab00::10 8080" -c exit \
+    -c top -c commit 2>&1 | grep -vE "^\s*$" | tail -6 | sed 's/^/  pools: /'
+# Five subscribers of it allocate a block each, and the traffic stops before
+# anything is read: the screens and the rpcs are then of one box at rest.
+for h in 1 2 3 4 5; do
+  vppctl packet-generator new "name r6x$h limit 3 node ip4-input interface pg0 size 60-60 \
+      data { UDP: 100.64.16.$h -> 8.8.8.8 UDP: 41000 -> 53 incrementing 8 }" >/dev/null 2>&1
+  vppctl packet-generator enable-stream r6x$h >/dev/null 2>&1
+done
+sleep 2
+for h in 1 2 3 4 5; do vppctl packet-generator delete r6x$h >/dev/null 2>&1; done
+# The VTY's own screens, which the rpcs' text is held to.
+S6=/tmp/screens6; rm -rf $S6; mkdir -p $S6
+$HX -c "show cgnat translation 200.150.0.16 5000" > $S6/translation-nb 2>&1
+$HX -c "show cgnat translation 200.150.0.48 5000" > $S6/translation-v6 2>&1
+$HX -c "show cgnat top" > $S6/top 2>&1
+$HX -c "show cgnat drops" > $S6/drops 2>&1
+$HX -c "show cgnat memory" > $S6/memory 2>&1
+$HX -c "show cgnat blocks" > $S6/blocks 2>&1
+$HX -c "show cgnat identity" > $S6/identity 2>&1
+$HX -c "show cgnat history verify" > $S6/history 2>&1
+$HX -c "show cgnat alg" > $S6/alg 2>&1
+$HX -c "show cgnat forward" > $S6/forward 2>&1
+$HX -c "show cgnat forward v6" > $S6/forward-v6 2>&1
+$HX -c "show cgnat ha" > $S6/ha 2>&1
+# And what the VTY gives an account with no role, which the API's answer to
+# that account is held to.
+runuser -u netview -- $HX -c "show cgnat alg" > $S6/alg-netview 2>&1
+sed 's/^/  vty: /' $S6/top
+sed 's/^/  vty as netview: /' $S6/alg-netview | head -3
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50554 --dir $C/box \
+  --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver6.log 2>&1 &
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver6.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+T6=$(python3 lab/api_phase6_check.py /tmp/apistubs $C 127.0.0.1:50554 $S6 2>&1)
+printf '%s\n' "$T6" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -625,6 +673,28 @@ expect "  read by an account without the role as well" p1 pending-confirm-any-ac
 expect "  and by a server started afterwards: the box's state, not the server's" p1 pending-confirm-restart
 expect "  Confirm closes it" p1 pending-confirm-closed
 expect "a candidate unused past the idle time: NOT_FOUND, CANDIDATE_EXPIRED, and not listed" p1 candidate-expired
+t6() { printf '%s\n' "$T6" | grep -q "^RESULT $1 ok"; }
+expect "#558 phase 6: LookupTranslation on a deterministic pool: the formula, for any instant, the VTY's screen" t6 translation-formula
+expect "  on a NAT64 pool: the subscriber's /56, inside the pool's prefix" t6 translation-nat64
+expect "GetSubscriber reads a subscriber's blocks off the plugin's screen" t6 subscriber-blocks
+expect "  a dynamic block GetSubscriber names, looked up back to its holder, for now only" t6 translation-dynamic
+expect "  an address no pool owns: NOT_FOUND, in the dataplane's words" t6 translation-not-found
+expect "  an address that is not one: INVALID_ARGUMENT, before the VTY" t6 translation-refused
+expect "ListTop: the screen, every subscriber holding a block" t6 top
+expect "  a seventeen-letter pool read whole, not cut at show bpa top's twelve" t6 top-long-pool
+expect "  count limits the rows, not the total" t6 top-count
+expect "GetDrops: both nodes, packets translated counted and not a drop, the screen" t6 drops
+expect "GetCgnatMemory: the heap and the sessions the screen prints, in bytes and counts" t6 memory
+expect "ListBlocks: the dynamic pool's blocks, per worker summing to its total, the screen" t6 blocks
+expect "GetIdentity: no table, said as one, the screen" t6 identity
+expect "VerifyHistory: the verdict the screen gives, with its head digest" t6 history
+expect "ListAlgs: each pool's ALGs as configured, the NAT64 pool's FTP64 on" t6 algs
+expect "ListForwards: the IPv4 forward and the NAT64 pool's to an IPv6 host, the screen" t6 forwards
+expect "  and one pool's alone" t6 forwards-pool
+expect "GetHaStatus: this box read, no peer copy said so, and no agreement claimed" t6 ha
+expect "  an account with no role gets what the VTY gives it, screen or refusal" t6 netview-reads
+TAIL6=$(tail -5 /tmp/apiserver6.log)
+expect_not_in "  and that server raised nothing" "Traceback" "$TAIL6"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

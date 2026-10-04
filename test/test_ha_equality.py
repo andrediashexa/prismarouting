@@ -220,6 +220,26 @@ check(all(len(l) <= config.CONSOLE_COLUMNS for l in _prose),
 print(f"  {len(out.splitlines())} rows, longest prose row "
       f"{max(len(l) for l in _prose)} columns")
 
+# #558: the same comparison as data, which GetHaStatus carries, and the
+# screen drawn from a reading handed to it is the screen above.
+_sh = shell()
+_hf = _sh.ha_facts(_peer)
+check(_hf["dataplane"] and _hf["peer_read"] and _hf["peer_path"] == _peer,
+      f"ha_facts read this box and the peer: {_hf}")
+check([d[0] for d in _hf["divergences"]] == ["residential"]
+      and "block-size 2048" in _hf["divergences"][0][1]
+      and "block-size 1024" in _hf["divergences"][0][2],
+      f"one divergence, the pool with both statements: {_hf['divergences']}")
+check(_hf["fingerprint"] != _hf["peer_fingerprint"] and _hf["pools"]
+      and _hf["peer_copied"] is not None,
+      "the two fingerprints differ, the pools are named, the copy is dated")
+check(said(_sh.show_ha, ["peer", _peer], _hf) == out,
+      "and the screen drawn from that reading is the screen above")
+_hd = shell(up=False).ha_facts(_peer)
+check(not _hd["dataplane"] and not _hd["peer_read"] and not _hd["divergences"]
+      and not _hd["fingerprint"],
+      f"a dataplane that does not answer stops the reading there: {_hd}")
+
 print("\n=== a pool on only one box is reported, in both directions ===")
 _only_peer = peer_file(RUNNING + "cgnat pool guest\n inside 100.66.0.0/24\n"
                        " outside 200.150.18.0/29\n exit\n", "extra.conf")

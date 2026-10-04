@@ -77,7 +77,53 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The rest of `show cgnat` through the management API, typed.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 6)
+  `OperationalService` gains `LookupTranslation` (`show cgnat translation`:
+  who is behind a public address and port, and whether the answer holds for
+  any instant or only for now), `ListTop`, `GetDrops`, `GetCgnatMemory`,
+  `ListBlocks`, `GetIdentity`, `VerifyHistory`, `ListAlgs`, `ListForwards`
+  and `GetHaStatus`, each the VTY's screen of the same name read into fields
+  - IPv4 and NAT64 pools both - with the screen beside them in `text`. They
+  read the screen through the same Shell that prints it, so a typed answer
+  and the screen cannot disagree; `show cgnat memory` and `show cgnat ha` are
+  drawn from data the VTY reads itself, and the rpc takes that data and the
+  screen drawn from that one reading. `show cgnat ha peer <file>`, a path on
+  the box's disk, stays a screen. Additive: `prisma.proto` gains ten rpcs and
+  their messages, nothing moves. `docs/api-coverage.md` counts 649 typed
+  paths and 10 text, from 640 and 19.
+
 ### Fixed
+
+* **`SetConfig` on an interface failed, every time, since 0.150.2.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  0.150.2 added `InterfaceConfig.pref64`, a repeated field, and the server
+  converted the interface's repeated fields to lists by name - `ipv4` and
+  `ipv6` only - before handing the object to the account's process. A
+  protobuf repeated container does not cross that pipe, so the call answered
+  `UNKNOWN`: "can't pickle repeated message fields". Found by
+  `lab/api-grpc.sh`'s phase 2, which 0.150.2 was released without running.
+  Every repeated field is converted by its shape now, so the next one added
+  cannot do it again.
+* **`GetSubscriber` answered no block for any subscriber.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558)) Its
+  `blocks` were read from `show cgnat subscriber` as `address port-port`,
+  against a test fixture written by hand; the plugin writes `block 0
+  200.150.0.41  ports 1536-2047`, with `ports` between the two, so the list
+  was empty since the API's first release (0.148.4). Found by
+  `lab/api-grpc.sh`'s sixth phase, which looks a subscriber's block up the
+  other way round. The pattern takes the plugin's three forms, and the test
+  holds it to bpa_cli.c's format strings.
+* **`show cgnat top` and `show cgnat drops` cut values longer than their
+  column.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  vppinfra's `format()` truncates any conversion that has a width to that
+  width - `justify()` in format.c sets the vector's length to it - so the
+  dataplane printed a pool of thirteen letters as twelve, 131,072 ports
+  (64 blocks of 2048) as 13107, ten digits of refusals as nine and a
+  thirteen-digit counter (`packets translated` reaches 10^12 in about 28
+  hours at 10 Mpps) as its first twelve digits: wrong numbers, with nothing
+  on the screen to say so. Found while typing the screens for the API, which
+  would have carried them. The columns are padded by hand now and never cut.
 
 ## 0.150.2 - PREF64: a subscriber's CLAT learns the NAT64 prefix
 

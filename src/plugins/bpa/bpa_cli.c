@@ -88,6 +88,36 @@ format_bpa_proto (u8 *s, va_list *args)
     }
 }
 
+/*
+ * A column padded to `width` and never cut (#558). vppinfra's format()
+ * TRUNCATES any conversion with a width to that width - justify() in
+ * format.c sets the vector's length to it - so `%-12v` printed a 13-letter
+ * pool as 12 letters, `%5u` printed 131072 ports as 13107 and `%12Lu` a
+ * counter of 10^12 as its first twelve digits: wrong numbers on a screen and
+ * in the typed rpc that reads it. Right-aligned when `right`; the vector is
+ * consumed and returned.
+ */
+/* not a unit: a vppinfra vector, which the standalone harness does not
+ * link; lab/api-grpc.sh reads a 17-letter pool back whole from show bpa top */
+static u8 *
+bpa_column (u8 *v, u32 width, int right)
+{
+  u32 n;
+
+  if (vec_len (v) >= width)
+    return v;
+  n = width - vec_len (v);
+  if (right)
+    {
+      vec_insert (v, n, 0);
+      clib_memset (v, ' ', n);
+    }
+  else
+    while (n--)
+      vec_add1 (v, ' ');
+  return v;
+}
+
 /* The whole mask at once: "ftp on rtsp off pptp on esp on sip on". One line an
  * operator can read, rather than one line per ALG that has to be assembled by
  * eye. */
@@ -1907,17 +1937,24 @@ bpa_show_top_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       bpa_pool_t *p = pool_elt_at_index (bm->pools, rows[i].pool_index);
       u8 *who = format (0, "%U", format_bpa_subscriber, p, rows[i].sub_idx);
+      u8 *pool = bpa_column (format (0, "%v", p->name), 12, 0);
+      u8 *used = bpa_column (format (0, "%u", rows[i].used), 5, 1);
+      u8 *total = bpa_column (format (0, "%u", rows[i].total), 5, 0);
+      u8 *refused = bpa_column (format (0, "%u", rows[i].n_refused), 9, 1);
 
       /* Padded by hand: vppinfra's %-16v also CUTS at 16, which left a
        * NAT64 subscriber as 2001:db8:1200:ab - measured in lab/nat64.sh. An
-       * IPv6 prefix overruns the column instead; the row stays one row. */
-      while (vec_len (who) < 16)
-	vec_add1 (who, ' ');
-      vlib_cli_output (vm, "%v %-12v %5u/%-5u %4u%% %7u %9u", who,
-		       p->name, rows[i].used,
-		       rows[i].total, rows[i].pct, rows[i].n_blocks,
-		       rows[i].n_refused);
+       * IPv6 prefix overruns the column instead; the row stays one row. And
+       * every other column the same way (#558): a 13-letter pool, 131072
+       * ports or ten digits of refusals were cut by their widths too. */
+      who = bpa_column (who, 16, 0);
+      vlib_cli_output (vm, "%v %v %v/%v %4u%% %7u %v", who, pool, used,
+		       total, rows[i].pct, rows[i].n_blocks, refused);
       vec_free (who);
+      vec_free (pool);
+      vec_free (used);
+      vec_free (total);
+      vec_free (refused);
     }
   vlib_cli_output (vm, "%u subscriber(s) holding blocks", vec_len (rows));
   vec_free (rows);
@@ -1988,6 +2025,7 @@ bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
   for (i = 0; i < n->n_errors; i++)
     {
       u64 total;
+      u8 *count;
 
       if (i >= n_is_drop || !is_drop[i])
 	continue;
@@ -1997,10 +2035,14 @@ bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
       if (!dropped++)
 	vlib_cli_output (vm, "  packets that did not get through");
       /* The description lives in the global error heap rather than on the
-       * node: vlib_node_t carries only where its block starts. */
-      vlib_cli_output (vm, "  %12Lu  %s", total,
+       * node: vlib_node_t carries only where its block starts. The count
+       * padded and not cut (#558): `%12Lu` printed a thirteen-digit counter
+       * as its first twelve digits. */
+      count = bpa_column (format (0, "%Lu", total), 12, 1);
+      vlib_cli_output (vm, "  %v  %s", count,
 		       vm->error_main.counters_heap[n->error_heap_index + i]
 			 .desc);
+      vec_free (count);
     }
   if (!dropped)
     vlib_cli_output (vm, "  nothing dropped");
@@ -2008,6 +2050,7 @@ bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
   for (i = 0; i < n->n_errors; i++)
     {
       u64 total;
+      u8 *count;
 
       if (i < n_is_drop && is_drop[i])
 	continue;
@@ -2016,9 +2059,11 @@ bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
 	continue;
       if (!other++)
 	vlib_cli_output (vm, "  everything else it counted");
-      vlib_cli_output (vm, "  %12Lu  %s", total,
+      count = bpa_column (format (0, "%Lu", total), 12, 1);
+      vlib_cli_output (vm, "  %v  %s", count,
 		       vm->error_main.counters_heap[n->error_heap_index + i]
 			 .desc);
+      vec_free (count);
     }
 }
 
