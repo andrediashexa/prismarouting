@@ -15242,7 +15242,7 @@ class Shell:
         An empty answer is named as such rather than left as a verdict with
         nothing under it.
         """
-        rc, out = self.sys._run(["systemctl", verb])
+        rc, out = self.sys._run(list(doors.system_action_argv(verb)))
         said = [" ".join(line.split()) for line in out.splitlines()
                 if line.strip()]
         return rc, said or [f"systemctl exited {rc} and said nothing"]

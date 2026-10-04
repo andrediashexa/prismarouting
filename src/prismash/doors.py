@@ -594,7 +594,17 @@ def peer_uid(conn):
 #: The two FIXED doors a prisma-operator member may open besides root (#563);
 #: the API's detached upgrade and dataplane restart, and the dataplane restart
 #: as a unit of its own (#564), are the others.
-OPERATOR_FIXED = (("systemctl", "reboot"), ("systemctl", "poweroff"))
+def system_action_argv(verb):
+    """
+    `systemctl reboot` / `systemctl poweroff`, as the VTY's ask_systemd()
+    sends it and as OPERATOR_FIXED accepts it - one builder for both (#564):
+    three releases in a row shipped an argv one side built and the other
+    did not know.
+    """
+    return ("systemctl", verb)
+
+
+OPERATOR_FIXED = (system_action_argv("reboot"), system_action_argv("poweroff"))
 
 
 def operator_door(argv):

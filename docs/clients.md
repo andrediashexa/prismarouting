@@ -27,6 +27,22 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.30 - the system actions, proved through the host's door
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **No behaviour change for a client** on a box running one release
+  throughout: 0.149.29's shapes were already the door's. What changes is the
+  proof - the lab now sends Reboot, Shutdown, RestartDataplane and Upgrade
+  through the real doors daemon.
+* **During an upgrade** (#564): between the host's door being upgraded and
+  the management container being recreated - about a minute - the previous
+  release's API may still answer, and its system actions can be refused by
+  the new door (`FAILED_PRECONDITION`, "the host would not start it"),
+  as measured on 10.40.200.166 going to 0.149.29. Nothing is changed by such
+  a refusal; retry once GetVersion reports the new release. A client already
+  shows a maintenance state for that window (UpgradeProgress.api_away_seconds).
+* **Lab box:** .166 is on 0.149.29.
+
 ## 0.149.29 - RestartDataplane and Upgrade run on a freshly rebooted box
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).

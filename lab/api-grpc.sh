@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 129
+# OFF-RED-AT-LEAST: 131
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -380,6 +380,22 @@ rm -rf /run/prisma-routing/api
 # open for writing (fs.protected_regular) - the root checks after it then
 # read a list their own calls never reached.
 for _f in /tmp/fake-systemctl.argv /tmp/fake-systemd-run.argv; do : > $_f; chmod 0666 $_f; done
+# THE REAL DOORS DAEMON (#564), in front of these system actions. With
+# nothing listening on doors.sock the VTY runs a command itself, so no lab
+# ever sent a system action through the door - and 0.149.27, .28 and .29 each
+# met, on a box, a door that refused or broke what the API built. Here the
+# daemon is the box's own (doors.serve), its far end the stand-ins above: a
+# shape the door does not accept is refused here as on a box. MODE=nodoors
+# runs without it, the old way, for comparison.
+DOORS_PID=""
+if [ "$MODE" != nodoors ]; then
+  rm -f /run/prisma-routing/doors.sock
+  PATH=/tmp/fakebin:$PATH python3 -c "import sys; sys.path.insert(0, 'src/prismash'); import doors; doors.serve()" \
+    > /tmp/doors5.log 2>&1 &
+  DOORS_PID=$!
+  n=0; until [ -S /run/prisma-routing/doors.sock ] || [ $n -ge 20 ]; do sleep 0.25; n=$((n+1)); done
+  echo "  the doors daemon: $( [ -S /run/prisma-routing/doors.sock ] && echo listening || echo ABSENT)"
+fi
 rm -f /tmp/api5.fifo; mkfifo /tmp/api5.fifo
 PATH=/tmp/fakebin:$PATH python3 src/prismash/apiserver.py --listen 127.0.0.1:50553 \
   --dir $C/box --stubs /tmp/apistubs --stop-on-eof < /tmp/api5.fifo > /tmp/apiserver5.log 2>&1 &
@@ -388,6 +404,15 @@ n=0; until grep -q "prisma.v1 on" /tmp/apiserver5.log || [ $n -ge 30 ]; do sleep
 T5S=$(python3 lab/api_phase5_check.py /tmp/apistubs $C 127.0.0.1:50553 system 2>&1)
 printf '%s\n' "$T5S" | sed 's/^/  /'
 exec 9>&-
+if [ -n "$DOORS_PID" ]; then
+  kill $DOORS_PID 2>/dev/null; wait $DOORS_PID 2>/dev/null
+  rm -f /run/prisma-routing/doors.sock
+  DOORS_RUNS=$(grep -c "systemd-run --collect --unit=prisma-routing-api-.* -> 0" /tmp/doors5.log)
+  DOORS_REFUSED=$(grep -c "systemd-run.* -> 126" /tmp/doors5.log)
+  DOORS_BOX=$(grep -cE "systemctl (reboot|poweroff) -> 0" /tmp/doors5.log)
+  echo "  through the door: $DOORS_RUNS detached run(s) started, $DOORS_BOX reboot/poweroff, $DOORS_REFUSED systemd-run refused"
+  grep -E "systemd-run|systemctl (reboot|poweroff)" /tmp/doors5.log | cut -c1-150 | sed 's/^/    /'
+fi
 echo "=========== #558, phase 1: why refused, the confirm window, the candidates ==========="
 # Mappings in pool nb for the re-map gate to be about: a few packets from a
 # subscriber, just before.
@@ -573,6 +598,12 @@ expect "  Shutdown with force: systemctl poweroff asked" t5 system-shutdown-forc
 expect "RestartDataplane: run on the host detached, its output when it finished" t5 system-dataplane-restart
 expect "Upgrade streams STARTED, DOWNLOAD, VERIFY, INSTALL, INSTALLED, API_RESTART; GetUpgradeStatus reads it back" t5 system-upgrade-stream
 expect "  the last message says how long the API is away, and ends the stream" t5 system-upgrade-away
+# #564: the system actions above went through the real doors daemon, not
+# around it - a door that refused the API's argv turns these red.
+expect "the system actions went through the host's door: detached runs started there" \
+  sh -c 'test "${0:-0}" -ge 2' "$DOORS_RUNS"
+expect "  and reboot/poweroff too, and no systemd-run the door refused" \
+  sh -c 'test "${0:-0}" -ge 2 && test "${1:-1}" -eq 0' "$DOORS_BOX" "$DOORS_REFUSED"
 expect "  a version that is not a release: INVALID_ARGUMENT" t5 system-upgrade-bad-version
 expect "  an upgrade still running: REASON_BUSY" t5 system-upgrade-busy
 expect "  by an account without the role: PERMISSION_DENIED" t5 system-upgrade-permission

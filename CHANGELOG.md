@@ -79,6 +79,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The system actions are now proved through the host's door, in a lab.**
+  ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
+  0.149.27, .28 and .29 each met, on a box, a door that refused or broke what
+  the API built, and no lab could see it: with nothing listening on
+  doors.sock the VTY runs a command itself. lab/api-grpc.sh now starts the
+  box's own doors daemon in front of SystemService, its far end the
+  systemctl/systemd-run stand-ins, and requires the detached runs and the
+  reboot/poweroff to have gone through it with nothing refused - a shape
+  mismatch turns it red. Every system-action argv is built by a function in
+  doors.py the door's acceptance uses too (`system_action_argv` joins
+  `api_run_argv`, `dataplane_restart_argv`, the upgrade check and the VTY
+  refresh), and test_doors sends each, built as apiserver.py and prismash.py
+  build it, through answer() as root, an operator and a plain account. The
+  refusal measured on 10.40.200.166 at 0.149.29 came from the 0.149.28 API
+  still running in the old management container, 26 s before the upgrade
+  recreated it, against the already upgraded 0.149.29 door.
+
 ## 0.149.29 - a detached system action runs, or says at once why it did not
 
 ### Fixed
