@@ -378,6 +378,8 @@ A porta pública tem de estar no bloco do próprio assinante, como num pool IPv4
 
 **Recusados num pool NAT64:** `bypass`, para sempre — um pacote IPv6 para o prefixo NAT64 só chega ao IPv4 traduzido, então não existe caminho sem tradução —, e os ALGs `rtsp`, `sip`, `pptp` e `esp`, também para sempre, cada um pelo nome: não existe tradução deles entre IPv6 e IPv4 para fazer.
 
+**IPv4 para o assinante só IPv6 (464XLAT).** O programa do assinante que só fala IPv4 passa pelo pool NAT64 através de um CLAT do lado dele, e o CLAT aprende o `nat64-prefix` pelos anúncios de roteador da interface dos assinantes: `ipv6 nd nat64 <prefixo>` naquela interface (veja [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ)). O `commit check` recusa anunciar um prefixo que nenhum pool NAT64 traduz.
+
 **Rotas.** Um pool NAT64 deve ao roteamento dois prefixos: o `prefix-outside`, como qualquer pool, e o `nat64-prefix`, do lado IPv6 — é para ele que os assinantes mandam o tráfego para o IPv4. Com BGP configurado, o `commit check` avisa quando nada anuncia o `nat64-prefix` na família IPv6, e o aviso traz as duas linhas que resolvem: `ipv6 route <prefixo> blackhole` e `network <prefixo>`.
 
 **Par de alta disponibilidade.** A comparação de mapeamento do par cobre o pool NAT64, mas o failover não leva o lado IPv6: esta caixa só cria roteador virtual IPv4, então o gateway dos assinantes IPv6 não acompanha o mestre. O `commit check` avisa sobre todo pool NAT64 numa caixa com VRRP; a rota dos assinantes para o `nat64-prefix` precisa seguir o mestre por outro caminho, por exemplo cada caixa anunciando o prefixo só enquanto está de pé.

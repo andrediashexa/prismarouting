@@ -174,6 +174,30 @@ check(_c.routing == ["router ospf", "exit"],
       f"an empty router block is a statement and was dropped: {_c.routing!r}")
 print("  an empty interface block leaves nothing; one with OSPF in it, and an "
       "empty router, stay")
+# PREF64 (#485, phase 6) is the box's statement, like the one it rides on:
+# typed to FRR as it is, it would be stored and never advertised, because the
+# prompt keeps `no ipv6 nd suppress-ra` for VPP.
+_c = _typed("interface ens19", "no ipv6 nd suppress-ra",
+            "ipv6 nd nat64 64:ff9b:1::/48", "ipv6 nd nat64", "exit")
+check(_c.routing == [] and _c.pref64 == {"ens19": ["64:ff9b::/96",
+                                                   "64:ff9b:1::/48"]},
+      f"ipv6 nd nat64 is staged as the interface's, not FRR's: "
+      f"{_c.routing!r} {_c.pref64!r}")
+check(prismash.frr_lines(_c)[-5:-1] == ["interface ens19",
+                                      " no ipv6 nd suppress-ra",
+                                      " ipv6 nd nat64 64:ff9b::/96",
+                                      " ipv6 nd nat64 64:ff9b:1::/48"],
+      f"and what FRR is handed advertises it: {prismash.frr_lines(_c)}")
+_c = _typed("interface ens19", "ipv6 nd nat64 64:ff9b::/44", "exit")
+check(_c.pref64 == {}, "a length PREF64 cannot carry is refused at the prompt")
+_c = _typed("interface ens19", "ipv6 nd nat64 64:ff9b:1::/48", "ipv6 nd nat64",
+            "no ipv6 nd nat64 64:ff9b::/96", "exit")
+check(_c.pref64 == {"ens19": ["64:ff9b:1::/48"]}, f"no takes one: {_c.pref64}")
+_s = prismash.Shell()
+_s.mode = "config"
+_s.frr_ctx = ["interface ens19"]
+_o = set(_s._options("ipv6 nd ", False)[0])
+check({"suppress-ra", "nat64"} <= _o, f"nat64 offered under nd: {_o}")
 
 print("\n=== the parser rejects an out-of-range mtu, not the device ===")
 # Refusing it here means the operator is told at the point of typing, instead

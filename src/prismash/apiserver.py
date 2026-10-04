@@ -2386,7 +2386,8 @@ def dict_from_msg(m):
 
 INTERFACE_KEYS = ("name", "kind", "description", "mtu", "shutdown", "ipv4",
                   "ipv6", "cgnat_role", "vrf", "linux_name", "vlan_outer",
-                  "vlan_inner", "mac_address", "urpf", "router_advertisements")
+                  "vlan_inner", "mac_address", "urpf", "router_advertisements",
+                  "pref64")
 POOL_SCALARS = ("name", "block_size", "port_first", "port_last", "policy",
                 "mode", "max_blocks", "initial_allocation", "block_stride",
                 "reserve", "utilisation_alarm", "max_sessions",

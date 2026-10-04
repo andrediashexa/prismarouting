@@ -74,6 +74,7 @@ def interface_typed(cfg, name):
         "mac_address": cfg.macs.get(name, ""),
         "urpf": cfg.urpf.get(name, ""),
         "router_advertisements": name in cfg.ra_enabled,
+        "pref64": list(cfg.pref64.get(name, [])),
     }
 
 
@@ -1453,6 +1454,7 @@ def box_owned_lines(cfg):
 
 #: Interface fields a typed edit may set, in the order their lines go.
 INTERFACE_FIELDS = ("linux_name", "mac_address", "router_advertisements",
+                    "pref64",
                     "vrf", "vlan", "description", "ipv4", "ipv6", "shutdown",
                     "mtu", "urpf", "cgnat_role")
 
@@ -1509,6 +1511,9 @@ def interface_lines(current, desired, fields=()):
         if f in ("ipv4", "ipv6"):
             out += _list_lines(f"{f} address", now, list(want or []))
             continue
+        if f == "pref64":
+            out += _list_lines("ipv6 nd nat64", now, list(want or []))
+            continue
         if want == now:
             continue
         if f == "shutdown":
@@ -1530,7 +1535,8 @@ def interface_typed_blank(name):
     return {"name": name, "kind": "port", "description": "", "mtu": 0,
             "shutdown": False, "ipv4": [], "ipv6": [], "cgnat_role": "",
             "vrf": 0, "linux_name": "", "vlan_outer": 0, "vlan_inner": 0,
-            "mac_address": "", "urpf": "", "router_advertisements": False}
+            "mac_address": "", "urpf": "", "router_advertisements": False,
+            "pref64": []}
 
 
 def pool_typed_blank(name):

@@ -432,6 +432,10 @@ message InterfaceConfig {
   string urpf = 14;
   // `no ipv6 nd suppress-ra`: router advertisements are sent.
   bool router_advertisements = 15;
+  // `ipv6 nd nat64 <prefix>`: the NAT64 prefixes the advertisements carry
+  // as PREF64 (RFC 8781), RFC 5952 form, sorted. Each must be a NAT64
+  // pool's nat64-prefix, and router_advertisements must be true.
+  repeated string pref64 = 16;
 }
 
 message PortForwardConfig {

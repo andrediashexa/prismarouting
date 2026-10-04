@@ -4,8 +4,8 @@
 |---|---|
 | **Who** | Whoever builds the NAT64 phases of #485; read by whoever reviews them. |
 | **What** | What a NAT64 pool is in this product, what exists today, and what each phase adds. |
-| **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; FTP64 in `src/plugins/bpa/bpa_ftp.c` and `test/test_bpa_ftp64.c`; the plan is on issue #485. |
-| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) shipped in 0.150.0; phase 5 (FTP64, RFC 6384) is on `cgnat/nat64-alg`. |
+| **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; FTP64 in `src/plugins/bpa/bpa_ftp.c` and `test/test_bpa_ftp64.c`; PREF64 in `src/prismash/config.py` (`with_pref64`, `take_pref64`) and `lab/pref64.sh`; the plan is on issue #485. |
+| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) shipped in 0.150.0; phase 5 (FTP64, RFC 6384) in 0.150.1; phase 6 (PREF64 in the advertisements, a 464XLAT lab) is on `cgnat/nat64-pref64`. |
 | **How** | One release per phase; nothing configurable before the datapath that serves it. |
 
 ## What it is
@@ -235,6 +235,57 @@ relays, not with a translator rewriting the body; PPTP's data is GRE and
 ESP is ESP, neither of which stateful NAT64 (RFC 6146) carries - IPsec
 crosses NAT64 as NAT-T over UDP 4500 with no ALG at all.
 
+## PREF64 and 464XLAT (phase 6)
+
+An IPv6-only subscriber still has IPv4-only software: a game, a VPN client,
+an application that opens an IPv4 socket to a literal address. 464XLAT
+(RFC 6877) gives it IPv4 through a CLAT on the subscriber's side - a
+stateless translator (RFC 7915) that turns the application's IPv4 into IPv6
+addressed into the NAT64 prefix, which this box's NAT64 pool then translates
+back. The CLAT has to know that prefix, and on a box with several pools, or
+a pool on anything but the well-known prefix, it cannot guess it.
+
+**The box tells it, in its router advertisements** - the PREF64 option of
+RFC 8781, typed under the subscriber-facing interface:
+
+```
+interface ens19
+ no ipv6 nd suppress-ra
+ ipv6 nd nat64 64:ff9b:1::/48
+ exit
+```
+
+`ipv6 nd nat64` with no prefix is the well-known `64:ff9b::/96`; the
+statement may repeat, one prefix each. `commit check` refuses it on an
+interface that does not advertise (there is no advertisement to carry it)
+and refuses a prefix no NAT64 pool on the box translates - a CLAT that learns
+it would send its IPv4 to a prefix the box drops. RFC 8781's prefix lengths
+are RFC 6052's, and the scaled lifetime is left to FRR, which writes three
+times the advertising interval as RFC 8781 4.1 asks.
+
+**FRR sends that advertisement, not VPP.** VPP 26.06's router advertisement
+has no PREF64 option (VPP's ip6_ra.c, in vnet's ip6-nd, writes the source address,
+the MTU and the prefixes); FRR 10.7.1's zebra has `ipv6 nd nat64`, and its
+advertisement leaves the box through the interface's linux_cp pair - measured
+by `lab/pref64.sh`. So on an interface with `ipv6 nd nat64` the box writes
+`no ipv6 nd suppress-ra` and the prefixes into FRR, under the pair's Linux
+name, and keeps VPP's own advertisement suppressed there: the subscriber
+hears one router, with the option in every advertisement. Without
+`ipv6 nd nat64` the interface goes back to VPP's advertisement, as before.
+These FRR lines are the box's: `show running-config` prints them as the
+interface's statements and never in the routing section, and they are taken
+back out of what FRR reads back (`config.take_pref64`).
+
+The API carries them as `InterfaceConfig.pref64`, a list beside
+`router_advertisements`.
+
+**What the box does not own: DNS64 and RFC 7050.** A CLAT may also learn the
+prefix by resolving `ipv4only.arpa` through a DNS64 resolver. This box is
+not the subscriber's resolver, so it cannot answer that query; the resolver
+the operator runs must synthesize with the same prefix the box advertises,
+or the two methods disagree and RFC 7050's answer is the one some CLATs
+prefer. The NAT64 pool's prefix is what to configure there.
+
 ## How it is tested
 
 `ref/bpa_model.py` computes the subscriber index and the RFC 6052 embedding
@@ -268,10 +319,24 @@ answers PASV and PORT and refuses EPSV, EPRT and ALGS, and fetches a file
 passive and active through the box, reading what the server was sent off its
 own log.
 
+PREF64's statements - the value, the file, what FRR is handed and what is
+taken back out of its read-back in the order FRR 10.7.1 writes it, the
+delta between VPP's advertisement and FRR's, and the commit check - are held
+by `test/test_prismash_config.py`; the prompt by
+`test/test_prismash_complete.py`, the typed API by `test/test_typedcfg.py`.
+`lab/pref64.sh` is the 464XLAT: tayga as the CLAT in the subscriber's
+namespace, started with the prefix read off the advertisements the
+subscriber hears (option 38, after a router solicitation), and an AF_INET
+application pinging and fetching from an IPv4 server through it and the
+NAT64 pool. The prefix is `2001:db8:64::/48`, so a CLAT falling back to the
+well-known one cannot pass. It also checks that every advertisement carries
+the option, that a prefix no pool translates is refused, and that VPP
+advertises again once the statement is removed; its off run goes red on 8.
+
 ## Phases
 
 The plan, phase by phase from 0.150 on, is on issue #485: the arithmetic;
 the deterministic datapath with the pool's VTY grammar and a lab; dynamic
 mode and the log; every per-pool statement supported or refused (all four on
 this page); the ALGs - FTP64, the one there is (above); PREF64 and a
-464XLAT lab.
+464XLAT lab (above).

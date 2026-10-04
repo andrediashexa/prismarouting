@@ -2363,5 +2363,111 @@ check("alg" not in a and a["vrf_id"] == 4294967295 and a["block_reserve"] == 0,
 check(base_pool().add_message()[0] == "bpa_pool_add_del",
       "an IPv4 pool is created as before")
 
+# PREF64 in the advertisements (#485, phase 6).
+print("=== ipv6 nd nat64: the value, the file, FRR and the commit check ===")
+check(config.pref64_value([]) == (None, "64:ff9b::/96"),
+      "a bare statement is the well-known prefix, as FRR writes it back")
+check(config.pref64_value(["64:FF9B:1:0::/48"]) == (None, "64:ff9b:1::/48"),
+      "the prefix in RFC 5952 form")
+for bad in (["64:ff9b::/44"], ["10.0.0.0/8"], ["64:ff9b::/96", "lifetime"]):
+    check(config.pref64_value(bad)[0] is not None, f"{bad} refused")
+check(config.pref64_sorted(["64:ff9b::/96", "64:ff9b:1::/48", "64:ff9b::/96"])
+      == ["64:ff9b::/96", "64:ff9b:1::/48"],
+      "one order, duplicates once, whatever was typed first")
+_t = ("interface ens19\n no ipv6 nd suppress-ra\n ipv6 nd nat64 64:ff9b:1::/48\n"
+      " ipv6 nd nat64\n exit\ninterface ens20\n ipv6 nd nat64 64:ff9b::/44\n"
+      " exit\n")
+_c = config.Config.parse(_t)
+check(_c.pref64 == {"ens19": ["64:ff9b::/96", "64:ff9b:1::/48"]},
+      f"a saved file's prefixes, sorted: {_c.pref64}")
+check(any("nat64" in u[1] for u in _c.unknown), "a bad length in a file is said")
+check(config.Config.parse(_c.text()).pref64 == _c.pref64,
+      "written and read back the same")
+config.pref64_remove(_c.pref64, "ens19", ["64:ff9b::/96"])
+check(_c.pref64 == {"ens19": ["64:ff9b:1::/48"]}, "no with a prefix takes that one")
+config.pref64_remove(_c.pref64, "ens19", [])
+check(_c.pref64 == {}, "no without one takes them all")
+
+# FRR is handed the advertisement, under the Linux end, merged into a stanza
+# the operator already has; VPP's own is kept off there.
+_c = config.Config()
+_c.ra_enabled = {"host-sub", "ens20"}
+_c.pref64 = {"host-sub": ["64:ff9b:1::/48"]}
+_c.linux_names = {"host-sub": "vppsub0"}
+_c.routing = ["interface vppsub0", "ipv6 nd ra-interval 3", "exit"]
+_r = config.with_pref64(_c.routing, _c)
+check(_r == ["interface vppsub0", " no ipv6 nd suppress-ra",
+             " ipv6 nd nat64 64:ff9b:1::/48", "ipv6 nd ra-interval 3", "exit"],
+      f"merged into the Linux end's stanza: {_r}")
+check(config.with_pref64([], _c) == ["interface vppsub0",
+                                     " no ipv6 nd suppress-ra",
+                                     " ipv6 nd nat64 64:ff9b:1::/48", "exit"],
+      "and opened when there is none")
+check(config.with_pref64(["x"], config.Config()) == ["x"],
+      "nothing added without a PREF64 statement")
+check(_c.ra_by_dataplane() == {"ens20"}, "VPP advertises where FRR does not")
+check(config._pref64_owned("ipv6 nd nat64 64:ff9b::/96")
+      and config._pref64_owned("no ipv6 nd suppress-ra")
+      and not config._pref64_owned("ipv6 nd ra-interval 3"),
+      "the box's own statements, and not the operator's other nd ones")
+# FRR's read-back, in the order FRR 10.7.1 writes it (measured).
+_frr = ["interface vppsub0", " ipv6 nd nat64 64:ff9b:1::/48",
+        " ipv6 nd ra-interval 3", " no ipv6 nd suppress-ra", "exit",
+        "interface ens21", " ipv6 nd nat64 64:ff9b::/96",
+        " no ipv6 nd suppress-ra", "exit", "router ospf",
+        " ospf router-id 1.1.1.1", "exit"]
+_k, _p, _a = config.take_pref64(_frr, _c.linux_names)
+check(_k == ["interface vppsub0", " ipv6 nd ra-interval 3", "exit",
+             "router ospf", " ospf router-id 1.1.1.1", "exit"],
+      f"the operator's routing, the box's stanza gone whole: {_k}")
+check(_p == {"host-sub": ["64:ff9b:1::/48"], "ens21": ["64:ff9b::/96"]},
+      f"the prefixes, under the interface's own name: {_p}")
+check(_a == {"host-sub", "ens21"}, f"and FRR advertising there: {_a}")
+# The delta: moving an interface to PREF64 stops VPP's advertisement and
+# reloads FRR; a running configuration's VPP state is what VPP was read doing.
+_run = config.Config()
+_run.ra_enabled = {"host-sub"}
+_run.ra_dataplane = {"host-sub"}
+_d = _run.delta_to(_c)
+check("host-sub" in _d["ra_off"] and _d["routing_changed"],
+      f"VPP off, FRR reloaded: off={_d['ra_off']} "
+      f"routing={_d['routing_changed']}")
+_run2 = copy.deepcopy(_c)
+_run2.ra_dataplane = {"ens20"}
+_d = _run2.delta_to(_c)
+check(not _d["ra_on"] and not _d["ra_off"] and not _d["routing_changed"],
+      "nothing to do when the box already does it")
+check(_run2.ra_by_dataplane(read=False) == {"ens20"},
+      "and the rule, not the reading, when asked for the target")
+# The candidate is a copy of the running configuration, reading and all
+# (lab/pref64.sh, first run): taking PREF64 away from an interface that
+# still advertises must give the advertisement back to VPP, and with the
+# reading used for the target too, ra_on came out empty.
+_run3 = copy.deepcopy(_c)
+_run3.ra_dataplane = {"ens20"}
+_cand = copy.deepcopy(_run3)
+_cand.pref64 = {}
+_d = _run3.delta_to(_cand)
+check(_d["ra_on"] == ["host-sub"] and _d["routing_changed"],
+      f"PREF64 taken away: VPP advertises again, FRR reloaded: {_d['ra_on']}")
+# The commit check.
+_v6 = config.Pool("v6")
+_v6.inside = ["2001:db8:1200::/40"]
+_v6.outside = ["203.0.113.0/29"]
+_v6.subscriber_length = 56
+_v6.nat64_prefix = "64:ff9b:1::/48"
+_c.pools = {"v6": _v6}
+check(config.pref64_findings(_c) == [], "a pool's prefix on an advertising "
+      f"interface: {config.pref64_findings(_c)}")
+_c.pref64["host-sub"] = ["64:ff9b::/96"]
+_f = config.pref64_findings(_c)
+check(len(_f) == 1 and "no NAT64 pool translates it" in _f[0][0]
+      and "64:ff9b:1::/48" in _f[0][1], f"a prefix no pool translates: {_f}")
+_c.pref64["host-sub"] = ["64:ff9b:1::/48"]
+_c.ra_enabled.discard("host-sub")
+_f = config.pref64_findings(_c)
+check(len(_f) == 1 and "does not advertise" in _f[0][0],
+      f"an interface that does not advertise: {_f}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

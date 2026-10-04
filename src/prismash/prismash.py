@@ -55,6 +55,9 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     _is_bundle, new_bundle, bundle_statement,
                     prefix_error, prefix6_error, nat64_prefix_error,
+                    pref64_value, pref64_remove, pref64_sorted,
+                    with_pref64, take_pref64,
+                    pref64_findings,
                     canonical_prefix, prefix_why, address_error,
                     text_error, text_why,
                     mac_error, mac_normal,
@@ -1014,7 +1017,7 @@ def frr_lines(cfg):
     uses its routing makes, then the routing itself. The one place both are
     joined, so a reload, a check and a commit check hand FRR the same text.
     """
-    return compiled_lines(cfg) + list(cfg.routing)
+    return compiled_lines(cfg) + with_pref64(list(cfg.routing), cfg)
 
 
 def compiled_lines(cfg):
@@ -2204,6 +2207,9 @@ INTERFACE_BLOCK = {
         "address": ("an address on this interface, may repeat", ARG_PREFIX6),
         "nd": ("neighbour discovery", {
             "suppress-ra": ("stop advertising this box as a router", None),
+            "nat64": ("put a NAT64 prefix in the advertisements (PREF64, "
+                      "RFC 8781), for subscribers' CLATs; may repeat",
+                      "[<X:X::X:X/M>]"),
         }),
         "ospf6": ("OSPFv3 on this interface", OSPF6_INTERFACE),
         "router": ("join a routing instance", {
@@ -2265,6 +2271,7 @@ INTERFACE_DATAPLANE = (
     ("load-balance",),
     ("cgnat",),
     ("ipv6", "nd", "suppress-ra"),
+    ("ipv6", "nd", "nat64"),
     ("ipv4", "address"),
     ("ipv6", "address"),
     ("description",),
@@ -9165,6 +9172,14 @@ class Shell:
         # is taken out, and the policy it came from is read back from its own
         # file (#458).
         cfg.routing = strip_compiled(self.frr.running())
+        # What the box wrote into FRR for PREF64 (#485, phase 6) is the
+        # interface's `ipv6 nd nat64`, not routing: taken back out, and the
+        # interfaces FRR advertises on are interfaces that advertise. What
+        # VPP itself was read to be doing is kept beside it, for the delta.
+        cfg.routing, cfg.pref64, _frr_ra = take_pref64(cfg.routing,
+                                                       cfg.linux_names)
+        cfg.ra_dataplane = set(cfg.ra_enabled)
+        cfg.ra_enabled |= _frr_ra
         cfg.policy = self.read_policy()
         cfg.static_descriptions = self.read_static_descriptions(cfg.routing)
         # The Linux end of every linux_cp pair, out. The dataplane reads above
@@ -12096,6 +12111,10 @@ class Shell:
                     self.err_prose(*why)
                     ok = False
 
+            for why in pref64_findings(target):
+                self.err_prose(*why)
+                ok = False
+
             for pool in d["pool_add"] + d["pool_replace"]:
                 if pool.name in nat64_refused:
                     continue
@@ -12656,7 +12675,7 @@ class Shell:
                     return False
 
         # Read once, for set_address() to consult while it applies addresses.
-        self._ra_enabled_now = set(target.ra_enabled)
+        self._ra_enabled_now = target.ra_by_dataplane(read=False)
         for ifname in d["ra_on"]:
             if not self.set_ra_suppress(ifname, False):
                 return False
@@ -12864,7 +12883,7 @@ class Shell:
                 for line in self.frr.diagnostics(out):
                     if not compiled_map_warning(line, handed):
                         print(f"  frr: {line}")
-            elif self.real_routing(target.routing):
+            elif self.real_routing(target.routing) or target.pref64:
                 # The same refusal as the check half above, and the same
                 # object: FRR_SILENT_REFUSED is where it is written.
                 self.err_prose(*FRR_SILENT_REFUSED)
@@ -16046,6 +16065,7 @@ class Shell:
             self.candidate.macs.pop(gone, None)
             self.candidate.vrfs.pop(gone, None)
             self.candidate.ra_enabled.discard(gone)
+            self.candidate.pref64.pop(gone, None)
             self.candidate.declared.discard(gone)
             return True
 
@@ -16293,6 +16313,19 @@ class Shell:
             return True
         if iface and neg and dp == "ipv6 nd suppress-ra":
             self.candidate.ra_enabled.add(iface)
+            return True
+        # PREF64 (#485, phase 6): the box's, like the statement above, and
+        # carried into FRR by with_pref64() - FRR is what can advertise it.
+        if iface and not neg and dp == "ipv6 nd nat64":
+            why, p = pref64_value(w[3:])
+            if why:
+                self.err_prose(*why)
+            else:
+                self.candidate.pref64[iface] = pref64_sorted(
+                    self.candidate.pref64.get(iface, []) + [p])
+            return True
+        if iface and neg and dp == "ipv6 nd nat64":
+            pref64_remove(self.candidate.pref64, iface, w[4:])
             return True
 
         # `vrf` moves the interface between routing tables. The device's, and

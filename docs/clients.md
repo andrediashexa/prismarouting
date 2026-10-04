@@ -27,6 +27,21 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.2 - PREF64: a subscriber's CLAT learns the NAT64 prefix
+
+* **Contract:** additive (`prisma.proto` sha256 `658df1eabeb46a8ea8ce45dc5baab0f238f9266f74dc0eca797c8c20dda96714`).
+* **`InterfaceConfig.pref64`** (field 16, repeated string): the NAT64
+  prefixes the interface's router advertisements carry as PREF64 (RFC 8781),
+  `ipv6 nd nat64 <prefix>` at the VTY, RFC 5952 form, sorted. An empty list
+  is no PREF64. SetConfig refuses one on an interface whose
+  `router_advertisements` is false, and a prefix no NAT64 pool on the box
+  translates, with the VTY's commit-check sentence. GetSchema offers the
+  statement; docs/api-coverage.md lists it.
+* **What the box does with it:** on such an interface FRR sends the
+  advertisements (VPP's own has no PREF64); a UI shows nothing different,
+  and `show running-config` keeps the lines under the interface.
+* **Lab box:** .166 is on 0.150.1.
+
 ## 0.150.1 - FTP through a NAT64 pool
 
 * **Contract:** unchanged (`prisma.proto` sha256 `7905cf993bf993f40ec0d2026697ac216719ff16861cdc41e232d7cbec357ea2`).

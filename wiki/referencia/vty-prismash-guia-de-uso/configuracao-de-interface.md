@@ -33,6 +33,8 @@ Mudar uma interface exige a capacidade de **administrador**. A exceção é o la
 | `no cgnat` |           | tira a interface do CGNAT |
 | `no ipv6 nd suppress-ra` |           | anuncia esta caixa como roteador nesta porta (por padrão não anuncia) |
 | `ipv6 nd suppress-ra` |           | volta ao padrão: não anuncia |
+| `ipv6 nd nat64` | `[<X:X::X:X/M>]` | põe o prefixo NAT64 nos anúncios (PREF64, RFC 8781), para o CLAT do assinante; sem prefixo, `64:ff9b::/96`; pode repetir. Ver *O prefixo NAT64 nos anúncios* abaixo |
+| `no ipv6 nd nat64` | `[<X:X::X:X/M>]` | tira aquele prefixo dos anúncios, ou todos |
 | `urpf`  | `strict\|loose\|off` | descarta pacotes cuja origem não volta por aqui |
 | `vrrp`  | `<1-255> address <A.B.C.D>` | um endereço de serviço que esta caixa disputa com o par (RFC 5798); IPv4, sem máscara; pode repetir |
 | `vrrp`  | `<1-255> priority <1-254>` | quem fica com o endereço quando as duas estão boas; maior ganha |
@@ -291,6 +293,34 @@ Ligado, o anúncio sai a cada 200 segundos com validade de 600 segundos, e mais 
 
 :::
 
+## O prefixo NAT64 nos anúncios (PREF64, 464XLAT)
+
+Num acesso só IPv6 atendido por um pool NAT64, o assinante ainda tem programa que só fala IPv4: um jogo, um cliente de VPN, um aplicativo que abre conexão para um endereço IPv4 escrito por extenso. O 464XLAT (RFC 6877) resolve isso com um **CLAT** do lado do assinante — no roteador dele ou no celular —, que traduz esse IPv4 para IPv6 endereçado ao prefixo NAT64, e o pool NAT64 desta caixa traduz de volta. Para isso o CLAT precisa saber **qual** é o prefixo, e numa rede com mais de um pool, ou com um prefixo que não é o `64:ff9b::/96`, ele não tem como adivinhar.
+
+A caixa diz a ele, nos próprios anúncios de roteador — a opção PREF64 da RFC 8781 —, na interface voltada para os assinantes:
+
+```
+interface ens19
+ no ipv6 nd suppress-ra
+ ipv6 nd nat64 64:ff9b:1::/48
+ exit
+```
+
+O prefixo é o `nat64-prefix` de um pool NAT64 desta caixa (veja [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6)). Sem prefixo, `ipv6 nd nat64` anuncia o `64:ff9b::/96`; a linha pode repetir, um prefixo em cada. Os tamanhos aceitos são os da RFC 6052: `/32`, `/40`, `/48`, `/56`, `/64` ou `/96`.
+
+O `commit check` recusa duas coisas, cada uma dizendo o que fazer:
+
+* `ipv6 nd nat64` numa interface que **não anuncia** — sem `no ipv6 nd suppress-ra` não há anúncio para levar o prefixo;
+* um prefixo que **nenhum pool NAT64 traduz** — o CLAT que aprendesse esse prefixo mandaria o IPv4 do assinante para um destino que a caixa descarta. A recusa lista os prefixos que os pools desta caixa usam.
+
+**Quem manda esse anúncio é o FRR, não o dataplane.** O anúncio do VPP não tem a opção PREF64; o do FRR tem, e sai pela mesma porta. Numa interface com `ipv6 nd nat64` a caixa passa o anúncio para o FRR e desliga o do dataplane, para que o assinante ouça **um** roteador só, com o prefixo em todo anúncio. Tirando o `ipv6 nd nat64`, o anúncio volta para o dataplane. Você não precisa escrever nada no FRR: as linhas são da caixa, `show running-config` as mostra dentro do bloco da interface e nunca na parte de roteamento.
+
+
+:::info
+O CLAT também pode aprender o prefixo perguntando `ipv4only.arpa` a um resolvedor DNS64 (RFC 7050). Esta caixa não é o resolvedor do assinante: o DNS64 que você opera precisa sintetizar com **o mesmo** prefixo que a caixa anuncia, ou os dois métodos discordam.
+
+:::
+
 ## Um par de caixas e o endereço que passa de uma para a outra
 
 Duas caixas, um endereço de serviço, e o assinante apontado para ele em vez de para qualquer uma das duas. É o VRRP da RFC 5798, e aqui ele roda **na interface do dataplane**, que é onde os pacotes chegam:
@@ -420,7 +450,7 @@ O bloco do protocolo (`router ospf`, `router ospf6`, `router isis`) está em [Ro
 
 Tirar um ajuste **não é o mesmo que ajustá-lo para o padrão**: a configuração deixa de dizer aquilo, e a interface fica com o que a caixa já tinha. `mac-address aa:bb:cc:dd:ee:ff` seguido de `no mac-address` devolve a interface ao MAC dela, que é o que se quer de quem digitou e voltou atrás.
 
-A interface carrega dois tipos de linha: as desta caixa - `description`, `shutdown`, `mtu`, `urpf`, `vlan`, `vrf`, `mac-address`, `linux-name`, endereços, `ipv6 nd suppress-ra`, `cgnat`, `vrrp`, `member`, `lacp`, `load-balance` - e as dos protocolos de roteamento - `ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`. `no` funciona nos dois, e em cada caso vai para quem é dono do ajuste.
+A interface carrega dois tipos de linha: as desta caixa - `description`, `shutdown`, `mtu`, `urpf`, `vlan`, `vrf`, `mac-address`, `linux-name`, endereços, `ipv6 nd suppress-ra`, `ipv6 nd nat64`, `cgnat`, `vrrp`, `member`, `lacp`, `load-balance` - e as dos protocolos de roteamento - `ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`. `no` funciona nos dois, e em cada caso vai para quem é dono do ajuste.
 
 ### `no vlan` não existe, e a caixa diz o que fazer no lugar
 
