@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.32 - a dataplane restart keeps the cards' names
+
+### Fixed
+
 * **A dataplane restart could bring the cards back under other names, and the
   box with no configuration.** ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
   Measured on 10.40.200.166 (0.149.30): the restart ran end to end, but the
