@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.31 - the VTY's unit suite cleans up after itself
+
+### Fixed
+
 * **The VTY's unit suite left a temporary directory behind on every run.**
   ([#566](https://github.com/andrediashexa/hexarouting/issues/566))
   1,187 of them had filled 9.8 GB of the build machine's /tmp and a release
