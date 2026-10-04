@@ -790,5 +790,35 @@ _r = doors.answer(json.dumps({"argv": list(doors.UPGRADE_CHECK_ARGV)}), 1000,
 check(_r == {"rc": 0, "out": "newest published: 0.149.26"},
       f"the upgrade CHECK is a question any account may ask (#563): {_r}")
 
+# #564 on 0.149.28: the dataplane restart as a unit of its own is a door, the
+# exact argv the VTY builds. 0.149.27 built it in prismash.py and the door
+# refused it on 10.95.200.198 ("not an operation the VTY is allowed on the
+# host"); the labs, running it in-line, could not see that. The builder and
+# the shape are one function now, and this holds them together through the
+# whole answer() path, the way the request reaches the daemon (a JSON list).
+import prismash as _P
+_dp = list(doors.dataplane_restart_argv())
+check(tuple(_dp) == tuple(_P.dataplane_restart_argv()),
+      "the VTY's dataplane restart argv is the door's own builder")
+_ran = []
+_exec = lambda argv, stdin, timeout: (_ran.append(argv), (0, ""))[1]
+_r = doors.answer(json.dumps({"argv": _dp}), 0, execute=_exec)
+check(_r["rc"] == 0 and _ran, f"root may open the dataplane restart unit: {_r}")
+_ran.clear()
+_r = doors.answer(json.dumps({"argv": _dp}), 1000, execute=_exec, is_operator=lambda u: True)
+check(_r["rc"] == 0 and _ran,
+      f"a prisma-operator member may open it, as the API's account does: {_r}")
+_ran.clear()
+_r = doors.answer(json.dumps({"argv": _dp}), 1000, execute=_exec, is_operator=lambda u: False)
+check(_r["rc"] == 126 and not _ran and "prisma-operator" in _r["out"],
+      f"an account outside prisma-operator is refused, nothing run: {_r}")
+for _bad in (doors.dataplane_restart_argv(tool="/tmp/evil"),
+             doors.dataplane_restart_argv(log="/etc/shadow"),
+             tuple(_dp[:-1]) + (_dp[-1] + "; reboot",)):
+    _ran.clear()
+    _r = doors.answer(json.dumps({"argv": list(_bad)}), 0, execute=_exec)
+    check(_r["rc"] == 126 and not _ran,
+          f"any other tool, log or command line is no door, root's included: {_bad[-1]!r} {_r}")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)
