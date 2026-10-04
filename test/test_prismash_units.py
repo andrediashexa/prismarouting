@@ -1807,8 +1807,8 @@ ok("the record, the notice and the restart that takes them through DPDK")
 _argv = prismash.dataplane_restart_argv("/x/hot", "/x/log")
 check(_argv[:3] == ("systemd-run", "--collect",
                     "--unit=prisma-routing-dataplane-restart")
-      and "--property=StandardOutput=truncate:/x/log" in _argv
-      and _argv[-1] == '/x/hot restart-dataplane; echo "prisma-api-exit $?"',
+      and "exec >/x/log 2>&1;" in _argv[-1]
+      and _argv[-1].endswith('/x/hot restart-dataplane; echo "prisma-api-exit $?"'),
       f"a unit of its own, its output in the log, its exit line last: {_argv!r}")
 check(prismash.detach_dataplane_restart(prismash.HOT_CARD_INSTALLED,
                                         which=lambda c: "/usr/bin/" + c,
@@ -9141,6 +9141,14 @@ check(prismash.follow_run_log(_log, 2000.0, wait=3, out=io.StringIO(),
                               sleep=lambda n: _t.__setitem__(0, _t[0] + n),
                               clock=_clock) is None,
       "and a log older than the start is not this run's: None at the deadline")
+# #564: a run that never writes is said at once, not after the deadline.
+_t[0] = 3000.0
+check(prismash.follow_run_log(os.path.join(_d, "never.log"), 3000.0, wait=600,
+                              out=io.StringIO(),
+                              sleep=lambda n: _t.__setitem__(0, _t[0] + n),
+                              clock=_clock, first_wait=20) == prismash.RUN_SILENT
+      and _t[0] < 3030,
+      f"a log that never appears is RUN_SILENT after first_wait, at {_t[0] - 3000:.0f} s")
 _mg2 = os.environ.pop("PRISMA_IN_MGMT", None)
 _sh = shell()
 _sh.caps = {prismash.CAP_OPERATOR}

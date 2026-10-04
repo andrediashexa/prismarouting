@@ -346,11 +346,12 @@ SH
 cat > /tmp/fakebin/systemd-run <<'SH'
 #!/bin/sh
 echo "$*" >> /tmp/fake-systemd-run.argv
-log=""; last=""
-for a in "$@"; do
-  case "$a" in --property=StandardOutput=truncate:*) log=${a#--property=StandardOutput=truncate:} ;; esac
-  last=$a
-done
+last=""
+for a in "$@"; do last=$a; done
+# The unit's own shell makes the log's directory and redirects itself (#564);
+# the stand-in does what that shell would.
+log=$(printf '%s' "$last" | sed -n 's/.*exec >\([^ ]*\) 2>&1;.*/\1/p')
+mkdir -p "$(dirname "$log")"
 : > "$log"
 case "$last" in
   *"system upgrade "*)
@@ -371,6 +372,9 @@ exit 0
 SH
 chmod +x /tmp/fakebin/systemctl /tmp/fakebin/systemd-run
 rm -f /tmp/fake-systemctl.argv /tmp/fake-systemd-run.argv /run/prisma-routing/api/*.log
+# #564: a box after a reboot has no /run/prisma-routing/api until the API
+# saves its history; the system actions must not depend on it.
+rm -rf /run/prisma-routing/api
 # Made by root, writable by all (#563): opsman, not root, now runs the
 # stand-ins too, and a file it created in sticky /tmp is one root may not
 # open for writing (fs.protected_regular) - the root checks after it then

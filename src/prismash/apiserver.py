@@ -1246,6 +1246,38 @@ def run_log(path):
             "started": started}
 
 
+#: How long a detached run may take to write its first line (#564): its
+#: shell makes the log as its first act, so a log still missing after this
+#: is a unit that never got as far as its command.
+FIRST_WRITE_WAIT = 20
+
+
+def run_since(path, started):
+    """run_log(path), but only the run that started at `started` or later:
+    a previous run's finished log is not this one's result (#564)."""
+    log = run_log(path)
+    if log is None or log["started"] < started - 1:
+        return None
+    return log
+
+
+def run_silent(log, started, now, first=FIRST_WRITE_WAIT):
+    """
+    True when a run started at `started` has written nothing by `now`, past
+    `first` seconds (#564): the unit did not get to its command, and waiting
+    longer would only turn a clear failure into a deadline. Measured on
+    10.40.200.166: the unit failed at STDOUT and the API waited 180 s.
+    """
+    return log is None and now - started > first
+
+
+def silent_reason(unit):
+    """What a client is told when a detached run never wrote (#564)."""
+    return (f"the host started {unit} and it wrote nothing in "
+            f"{FIRST_WRITE_WAIT} s; nothing was changed by it - "
+            f"'journalctl -u {unit}' on the box says why")
+
+
 def run_busy(path, now=None, stale=1800):
     """Is a detached run at `path` still going: a log with no exit line,
     written in the last `stale` seconds (a run that died says nothing)."""
@@ -3366,17 +3398,22 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             if run_busy(path):
                 fail(context, grpc.StatusCode.FAILED_PRECONDITION, "", stage="action",
                      reason="busy", extra="a dataplane restart is already running")
+            started = time.time()
             got = self._worker(context).ask("hostrun", {"kind": "dataplane"})
             if not got["ok"]:
                 why = action_reason(got["output"])
                 fail(context, action_code(grpc, why), got["output"], stage="action",
                      reason=why)
-            deadline = time.time() + RUN_WAIT
+            deadline = started + RUN_WAIT
             log = None
             while time.time() < deadline and context.is_active():
-                log = run_log(path)
+                log = run_since(path, started)
                 if log and log["done"]:
                     break
+                if run_silent(log, started, time.time()):
+                    fail(context, grpc.StatusCode.FAILED_PRECONDITION, "",
+                         stage="action", reason="apply_failed",
+                         extra=silent_reason("prisma-routing-api-dataplane"))
                 time.sleep(0.5)
             if not log or not log["done"]:
                 context.abort(grpc.StatusCode.DEADLINE_EXCEEDED,
@@ -3416,8 +3453,14 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                               started=started)
             sent, deadline = 0, time.time() + UPGRADE_WAIT
             while time.time() < deadline and context.is_active():
-                log = run_log(path)
-                if log is None or log["started"] < started - 1:
+                log = run_since(path, started)
+                if run_silent(log, started, time.time()):
+                    yield progress_pb(pb, {"phase": "failed",
+                                           "message": silent_reason(
+                                               "prisma-routing-api-upgrade")},
+                                      started=started)
+                    return
+                if log is None:
                     time.sleep(0.5)
                     continue
                 steps = upgrade_phases(log["text"])

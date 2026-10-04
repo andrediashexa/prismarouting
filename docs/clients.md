@@ -27,6 +27,21 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.29 - RestartDataplane and Upgrade run on a freshly rebooted box
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **Fixed (#564):** on 0.149.28 a box rebooted since its last API history
+  save had no `/run/prisma-routing/api`; `RestartDataplane` then hung until
+  the deadline (`DEADLINE_EXCEEDED` after 180 s) and `Upgrade` streamed
+  nothing, with nothing changed on the box. From 0.149.29 they run.
+* **Fail fast:** a detached run that has written nothing 20 s after it was
+  started now answers at once - `RestartDataplane` with
+  `FAILED_PRECONDITION`, `REASON_APPLY_FAILED`, and `Upgrade` with a
+  `FAILED` progress - naming the unit whose journal says why.
+* **Client note:** before 0.149.29 a `RestartDataplane` result could be a
+  previous run's; it is now always the run just started.
+* **Lab box:** .166 is on 0.149.28.
+
 ## 0.149.28 - RestartDataplane works on a box
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
