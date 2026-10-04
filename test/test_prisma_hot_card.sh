@@ -71,6 +71,9 @@ echo "systemctl \$*" >> "$S/calls"
 # #564: is-active answers from the stand-in's state; the API's socket exists
 # only when the test says so.
 [ "\$*" = "is-active --quiet prisma-routing-containers.service" ] && { [ -e "$S/stillactive" ]; exit \$?; }
+# A box put back on the units: vpp.service is the dataplane, the containers
+# unit inactive.
+[ "\$*" = "is-active --quiet vpp.service" ] && { [ -e "$S/units" ]; exit \$?; }
 [ "\$*" = "cat prisma-routing-api-proxy.socket" ] && { [ -e "$S/apisocket" ]; exit \$?; }
 # #564: the tuner, standing in - startup.conf from the cards as Linux names
 # them now, which is what the real one writes; and a configuration that names
@@ -203,7 +206,7 @@ echo "=== restart-dataplane: stop, hand the cards back, tune, start ==="
 fresh; HC add eth9 >/dev/null; : > "$S/calls"
 OUT=$(HC restart-dataplane); RC=$?
 _seq=$(grep -E "^systemctl|^giveback|name eth9$" "$S/calls" | tr '\n' '|')
-[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl is-active --quiet prisma-routing.service|systemctl start prisma-routing.service|systemctl cat prisma-routing-api-proxy.socket|" ] \
+[ $RC = 0 ] && [ "$_seq" = "systemctl is-active --quiet prisma-routing-containers.service|systemctl is-active --quiet vpp.service|systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl is-active --quiet prisma-routing.service|systemctl start prisma-routing.service|systemctl cat prisma-routing-api-proxy.socket|" ] \
   && ok "stopped, every claimed card given back, renamed back, tuned, started, replayed" \
   || bad "the sequence (rc=$RC): $_seq"
 ! called "restart prisma-routing-containers" \
@@ -237,6 +240,21 @@ called "reset-failed prisma-routing-api-proxy.socket" \
   && ok "the API's socket is reset and started again after the dataplane" \
   || bad "the API's socket was left as the restart found it: $(cat "$S/calls")"
 rm -f "$S/apisocket"
+
+echo "=== a box on the units restarts vpp.service, never gives a held card back ==="
+# The 0.150.0 install lab: on vpp.service the containers stop was a no-op, the
+# give-back ran with VPP still holding the card through vfio-pci, and the
+# kernel hung waiting for it to let go.
+fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/units"
+OUT=$(HC restart-dataplane); RC=$?
+_seq=$(grep -E "^systemctl (stop|start|restart) |^giveback" "$S/calls" | tr '\n' '|')
+[ $RC = 0 ] && [ "$_seq" = "systemctl stop vpp.service|giveback restart|systemctl restart prisma-routing-tune.service|systemctl start vpp.service|systemctl start prisma-routing.service|" ] \
+  && ok "vpp.service stopped before the give-back and started after the tuner" \
+  || bad "the units sequence (rc=$RC): $_seq"
+! called "start prisma-routing-containers.service" \
+  && ok "and the containers unit, which Conflicts with it, is never started" \
+  || bad "the containers unit was started on a units box: $(cat "$S/calls")"
+rm -f "$S/units"
 
 echo "=== #564: the restart ends with the names a boot gives the cards ==="
 # 10.40.200.166, 0.149.30: the dataplane's Linux ends (TAPs named enp1s0,

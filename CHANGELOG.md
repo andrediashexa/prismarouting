@@ -163,6 +163,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane restart on a box put back on `vpp.service` hung the box
+  (#564).** `prisma-hot-card restart-dataplane` always stopped the containers
+  unit; on a box running the systemd units that stop did nothing, the cards
+  were given back while `vpp.service` still held them through vfio-pci, and
+  the kernel waited on VPP forever - journald blocked, no prompt. Found by
+  0.150.0's first release gate. The restart now stops and starts the
+  dataplane the box runs, `vpp.service` or the containers, and
+  `lab/install-iso.sh` restarts the dataplane on both paths.
+
 * **A fresh install had no `prisma-operator` group.**
   ([#563](https://github.com/andrediashexa/hexarouting/issues/563)) The
   operator capability came in 0.149.26, a patch, which cannot change the
