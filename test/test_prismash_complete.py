@@ -4095,6 +4095,11 @@ with open(_fake, "w") as _f:
              "case \"$*\" in\n"
              "  *unreachable*) echo 'Could not find VPP CLI socket'; exit 1 ;;\n"
              "  *version*) echo 'vpp v26.06-release'; exit 0 ;;\n"
+             # #567: good screens whose first line is `label: text`, as
+             # measured on .166, and a refusal in VPP's own shape.
+             "  *'bpa identity'*) echo \"no identity table: every record says 'unknown'\"; exit 0 ;;\n"
+             "  *'history verify'*) echo 'configuration trail: /var/log/prisma-routing/config-history.log'; exit 0 ;;\n"
+             "  *'bpa pool add'*) echo 'bpa pool add: pool p1 already exists'; exit 0 ;;\n"
              "  *) echo \"unknown input \\`x'\"; exit 0 ;;\n"
              "esac\n")
 os.chmod(_fake, os.stat(_fake).st_mode | _stat.S_IEXEC)
@@ -4102,6 +4107,9 @@ _saved, prismash.VPPCTL = prismash.VPPCTL, _fake
 _vpp = prismash.Vpp()
 _rc_unreach, _out_unreach = _vpp.run("unreachable")
 _rc_refused, _ = _vpp.run("something")
+_rc_identity, _ = _vpp.run("show bpa identity")
+_rc_verify, _ = _vpp.run("show bpa pool history verify")
+_rc_poolerr, _ = _vpp.run("bpa pool add p1 100.64.0.0/24")
 # reachable() asked while the stand-in is STILL in place. Vpp.run reads the
 # module global at call time, so asking after the restore below put the
 # question to the host's own vppctl, which is not installed here - the answer
@@ -4125,6 +4133,33 @@ check("Could not find" in _out_unreach,
       "and the text still reaches the caller, for the operator to read")
 check(_rc_refused == 1,
       "a command VPP itself refused is still an error, by the text")
+# #567: on 10.40.200.166 (0.150.2) these two screens were correct and the VTY
+# exited 1, because any first line shaped `words: text` was taken for a
+# refusal. A refusal's label is the command's own path; a screen's is not.
+check(_rc_identity == 0,
+      f"#567: 'no identity table: ...' is a screen, not a refusal: rc {_rc_identity}")
+check(_rc_verify == 0,
+      f"#567: 'configuration trail: ...' is a screen, not a refusal: rc {_rc_verify}")
+check(_rc_poolerr == 1,
+      f"#567: '<the command's path>: <error>' is still a refusal: rc {_rc_poolerr}")
+check(prismash.vpp_refused("set interface state enp1s0 up",
+                           "set interface state: unknown interface `enp1s0'"),
+      "#567: a refusal labelled with the command's path, the VPP CLI's shape")
+# Every refusal measured on 10.40.200.166 (0.150.2, vppctl in the dataplane
+# container): the label is the registered path, a prefix of what was sent.
+for _cmd, _first in [
+        ("set interface state nosuch0 up", "set interface state: unknown interface `nosuch0 up'"),
+        ("show interface nosuch0", "show interface: unknown input `nosuch0'"),
+        ("set interface mtu 100 nosuch0", "set interface mtu: unknown input `100 nosuch0'"),
+        ("set interface ip address nosuch0 1.2.3.4/24", "set interface ip address: unknown interface `nosuch0 1.2.3.4/24'"),
+        ("bpa pool del nosuch", "bpa pool: no such pool"),
+        ("bpa alg nosuch ftp on", "bpa alg: no such pool 'nosuch'"),
+        ("ip route add 1.2.3.0/24 via nosuch0", "ip route: parse error `via nosuch0'"),
+        ("show bpa nonsense", "show bpa: unknown input `nonsense'")]:
+    check(prismash.vpp_refused(_cmd, _first),
+          f"#567: VPP's own refusal is still one: {_first}")
+check(not prismash.vpp_refused("show bpa summary", "pools: 2"),
+      "#567: a label that is not the command's path is a screen's own")
 check(_reach_answering,
       "a vppctl that answers - even to refuse the command - is a dataplane "
       "that is there")

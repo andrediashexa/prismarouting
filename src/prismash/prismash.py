@@ -1615,6 +1615,27 @@ def version_split(build, mine, source):
 # with the binary API, which has real return codes, is on the roadmap.
 VPP_ERROR = re.compile(r"^(unknown input\b|[a-z][a-z0-9 _-]*: \S)")
 
+
+def vpp_refused(cmd, first):
+    """
+    Did VPP refuse `cmd`, judged on the first line of what it answered?
+
+    VPP_ERROR alone took ANY first line shaped `words: text` for a refusal,
+    and good screens have that shape too: on 10.40.200.166 (0.150.2)
+    `show cgnat identity` ("no identity table: every record says ...") and
+    `show cgnat history verify` ("configuration trail: /var/log/...") printed
+    correct screens and `prismash -c` exited 1 (#567). VPP's CLI writes a
+    command's error as "<the command's path>: <error>", so the label before
+    the colon is the start of the command sent - which "no identity table"
+    is not.
+    """
+    if not VPP_ERROR.match(first):
+        return False
+    if first.startswith("unknown input"):
+        return True
+    label = first.split(":", 1)[0].split()
+    return cmd.split()[:len(label)] == label
+
 # ---------------------------------------------------------------------------
 # Command tree, used for completion and for "?".
 #
@@ -4831,7 +4852,7 @@ class Vpp:
             reached, out = got
             out = out.rstrip()
             first = out.splitlines()[0] if out else ""
-            return (0 if reached and not VPP_ERROR.match(first) else 1), out
+            return (0 if reached and not vpp_refused(cmd, first) else 1), out
         forget = getattr(self.api, "forget_dumps", None)
         if forget and not vppapi.cli_is_question(cmd):
             # A line vppctl sends may change what every cached answer says.
@@ -4851,7 +4872,7 @@ class Vpp:
         # an invisible \r compares unequal to the same value without one, and
         # that is a bug nobody can see in the output.
         first = out.splitlines()[0] if out else ""
-        return (1 if (p.returncode or VPP_ERROR.match(first)) else 0), out
+        return (1 if (p.returncode or vpp_refused(cmd, first)) else 0), out
 
     def reachable(self):
         """
