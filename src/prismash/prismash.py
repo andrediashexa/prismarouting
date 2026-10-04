@@ -1397,6 +1397,42 @@ UPGRADE_WORK = os.environ.get("PRISMA_UPGRADE_WORK", "/var/tmp")
 HOT_CARDS = os.environ.get("PRISMA_HOT_CARDS", "/run/prisma-routing/hot-cards")
 HOT_CARD_TOOL = os.environ.get("PRISMA_HOT_CARD_TOOL",
                                "/usr/lib/prisma-routing/prisma-hot-card")
+#: Where the hot-card tool lives on a box: the dataplane restart is detached
+#: only when it is this one (#564) - a stand-in is a test's, and runs in-line.
+HOT_CARD_INSTALLED = "/usr/lib/prisma-routing/prisma-hot-card"
+#: What a detached dataplane restart prints, in the host's /run (#564).
+DATAPLANE_RESTART_LOG = "/run/prisma-routing/dataplane-restart.log"
+
+
+def dataplane_restart_argv(tool=HOT_CARD_INSTALLED, log=DATAPLANE_RESTART_LOG):
+    """
+    `system dataplane restart` as a unit of its own (#564): the hot-card
+    tool's restart, its output in `log`, its last line `prisma-api-exit <n>`
+    as the API's detached runs end (follow_run_log reads it).
+
+    WHY A UNIT. Run as a child of the VTY, the restart died with whatever ran
+    the VTY: on 10.95.200.198 (0.149.26) the API's run of it stopped the
+    containers and never started them, and the box - whose management is a
+    dataplane interface - was dark until a reboot. A session over SSH on such
+    a box is cut by the very stop it asked for. A unit outlives its caller;
+    the caller only watches.
+    """
+    return ("systemd-run", "--collect", "--unit=prisma-routing-dataplane-restart",
+            f"--property=StandardOutput=truncate:{log}",
+            "--property=StandardError=inherit",
+            "/bin/sh", "-c", f"{tool} restart-dataplane; echo \"prisma-api-exit $?\"")
+
+
+def detach_dataplane_restart(tool=None, which=shutil.which,
+                             isdir=os.path.isdir):
+    """
+    Whether this box runs `system dataplane restart` detached (#564): the
+    installed tool, systemd-run, and a running systemd. Anything else - a lab,
+    a test's stand-in - runs it in-line as before.
+    """
+    tool = HOT_CARD_TOOL if tool is None else tool
+    return (tool == HOT_CARD_INSTALLED and which("systemd-run") is not None
+            and isdir("/run/systemd/system"))
 
 
 def hot_cards(path=None):
@@ -14866,6 +14902,9 @@ class Shell:
         # for - and it is said here the way `system reboot` says it.
         self.say_unsaved()
         self.say_unconfirmed()
+        if detach_dataplane_restart():
+            self.dataplane_restart_detached()
+            return
         try:
             p = subprocess.run([HOT_CARD_TOOL, "restart-dataplane"],
                                capture_output=True, text=True, timeout=300)
@@ -14879,6 +14918,33 @@ class Shell:
             return
         print("the dataplane is starting; 'show interface' says when it "
               "forwards")
+
+    def dataplane_restart_detached(self, follow=None):
+        """
+        The restart as a unit of its own (dataplane_restart_argv, #564), its
+        output followed here to its end. If this session dies on the way -
+        cut by the very stop, on a box managed through the dataplane - the
+        unit goes on and brings the dataplane back.
+        """
+        follow = follow or follow_run_log
+        started = time.time()
+        rc, out = self.sys._run(list(dataplane_restart_argv()))
+        if rc != 0:
+            self.err_prose("the dataplane restart could not be started",
+                           *[l for l in (out or "").splitlines() if l.strip()]
+                           or [f"systemd-run exited {rc}"])
+            return
+        status = follow(DATAPLANE_RESTART_LOG, started, wait=600)
+        if status is None:
+            self.err_prose("the dataplane restart did not finish in 600 s",
+                           f"it goes on as a unit; its output is in "
+                           f"{DATAPLANE_RESTART_LOG}")
+        elif status != 0:
+            self.err_prose("the dataplane could not be restarted",
+                           f"what it said is above and in {DATAPLANE_RESTART_LOG}")
+        else:
+            print("the dataplane is starting; 'show interface' says when it "
+                  "forwards")
 
     def newest_release(self):
         """

@@ -1337,6 +1337,29 @@ def handle(sh, op, args):
 
 
 # -------------------------------------------------------- the account's process
+def account_key(account, getpwnam=None, getgrouplist=None):
+    """
+    What a worker becomes for `account`, read now (#565): its uid, its gid
+    and every group it is in - or None when the account does not exist.
+
+    A worker takes its groups once, when it starts (become()), so a role or
+    `operator` given or taken after that did not reach the account's calls
+    until the server restarted: measured on 10.95.200.198, prisma-web was
+    refused a dataplane restart with prisma-operator already in its groups on
+    the host and in the container. A worker whose key no longer matches is a
+    worker of an account that has changed.
+    """
+    import pwd
+    getpwnam = getpwnam or pwd.getpwnam
+    getgrouplist = getgrouplist or os.getgrouplist
+    try:
+        pw = getpwnam(account)
+    except KeyError:
+        return None
+    return (pw.pw_uid, pw.pw_gid,
+            tuple(sorted(set(getgrouplist(account, pw.pw_gid)))))
+
+
 
 def become(account):
     """Turn this process into `account`: its groups, its gid, its uid, its env."""
@@ -1414,6 +1437,9 @@ class Worker:
     def __init__(self, account, shell_factory=None, timeout=300):
         self.account = account
         self.timeout = timeout
+        # Read before the process becomes the account (#565): the identity
+        # it will hold for as long as it lives.
+        self.key = account_key(account)
         self.lock = threading.Lock()
         self.used = time.monotonic()
         ctx = multiprocessing.get_context(start_method(shell_factory))
@@ -1546,12 +1572,35 @@ class Sessions:
             out.append(row)
         return out
 
+    def current(self, w, account):
+        """
+        Is `w` still a worker of the `account` there is now (#565)? False
+        when the account's uid, gid or groups changed since it started - a
+        role or `operator` given or taken - and the worker must be replaced.
+        A worker that recorded nothing (a test's) is taken as current.
+        """
+        key = getattr(w, "key", None)
+        return key is None or key == account_key(account)
+
     def get(self, account, cid):
-        """The candidate `cid` of `account`; KeyError for anybody else's or none."""
+        """
+        The candidate `cid` of `account`; KeyError for anybody else's or none.
+
+        A candidate opened before the account changed holds the rights it was
+        opened with (#565); it is closed and reads as expired, so a commit
+        never runs with rights the account no longer has - or without ones it
+        has just been given.
+        """
         self.reap()
         with self.lock:
             c = self.candidates.get(cid)
         if c is None or c["account"] != account:
+            raise KeyError(cid)
+        if not self.current(c["worker"], account):
+            with self.lock:
+                self.candidates.pop(cid, None)
+                self.expired[cid] = account
+            c["worker"].close()
             raise KeyError(cid)
         return c
 
@@ -1567,6 +1616,9 @@ class Sessions:
         self.reap()
         with self.lock:
             w = self.ops.get(account)
+        if w is not None and w.proc.is_alive() and not self.current(w, account):
+            w.close()
+            w = None
         if w is None or not w.proc.is_alive():
             w = self.worker(account)
             with self.lock:
@@ -1578,6 +1630,9 @@ class Sessions:
         self.reap()
         with self.lock:
             w = self.consoles.get(account)
+        if w is not None and w.proc.is_alive() and not self.current(w, account):
+            w.close()
+            w = None
         if w is None or not w.proc.is_alive():
             w = self.worker(account)
             with self.lock:
@@ -1589,6 +1644,9 @@ class Sessions:
         self.reap()
         with self.lock:
             w = self.routes.get(account)
+        if w is not None and w.proc.is_alive() and not self.current(w, account):
+            w.close()
+            w = None
         if w is None or not w.proc.is_alive():
             w = self.worker(account)
             with self.lock:

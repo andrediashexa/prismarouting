@@ -350,6 +350,39 @@ try:
 except A.WorkerError as e:
     check("no-such-account-532" in str(e), f"an account the box does not have starts no session: {e}")
 
+# #565: an account's workers follow the account. account_key() is its uid,
+# gid and groups read now; a worker started under another key is replaced
+# on the next call, and a candidate opened under it reads as expired.
+class _Pw:
+    pw_uid, pw_gid = 1000, 1000
+check(A.account_key("x", getpwnam=lambda a: _Pw(),
+                    getgrouplist=lambda a, g: [1000, 994, 997, 994])
+      == (1000, 1000, (994, 997, 1000)),
+      "the key: uid, gid and the sorted set of groups")
+check(A.account_key("x", getpwnam=lambda a: (_ for _ in ()).throw(KeyError(a)))
+      is None, "an account that does not exist has no key")
+_S5 = A.Sessions(worker=W, idle=60, ops_idle=60)
+_w1 = _S5.ops_worker(me)
+check(_S5.ops_worker(me) is _w1 and _S5.current(_w1, me),
+      "an unchanged account keeps its worker, which Sessions.current() says is current")
+_c5, _, _, _ = _S5.open(me)
+_real_key = A.account_key
+A.account_key = lambda a, **k: ("changed",)
+try:
+    _w2 = _S5.ops_worker(me)
+    check(_w2 is not _w1 and not _w1.proc.is_alive(),
+          "a changed account gets a new worker, the old one closed (#565)")
+    try:
+        _S5.get(me, _c5)
+        check(False, "a candidate of a changed account is not handed out")
+    except KeyError:
+        check(_S5.was_expired(me, _c5),
+              "a candidate opened before the change reads as expired")
+finally:
+    A.account_key = _real_key
+for _w in list(_S5.ops.values()):
+    _w.close()
+
 S = A.Sessions(worker=W, idle=60, ops_idle=60)
 cid, base, text, out = S.open(me)
 check(base == "hostname x\n" and text == "hostname x\n" and "fed configure" in out,

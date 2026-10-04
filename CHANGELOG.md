@@ -79,6 +79,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane restart could leave the box with no dataplane at all.**
+  ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
+  Measured on 10.95.200.198 (0.149.26): RestartDataplane, asked through the
+  API, stopped the containers and nothing started them again; the box's
+  management is a dataplane interface, so it was dark until a reboot. The
+  restart ran as a child of whatever asked for it - the API's run, or a
+  session that the stop itself cuts on such a box - and `prisma-hot-card`
+  took a stop that did not report success for "nothing was changed" while
+  the containers were going down. `system dataplane restart` now runs as a
+  unit of its own (prisma-routing-dataplane-restart) that the VTY and the
+  API only follow; a stop that failed with the dataplane on its way down
+  still ends with it started; and the API's socket, which clients knocking
+  during the restart drive to its trigger limit, is reset and started
+  again.
+* **A role or `operator` given or taken did not reach the API until it
+  was restarted.** ([#565](https://github.com/andrediashexa/hexarouting/issues/565))
+  Each account's API process took its groups once, when it started:
+  prisma-web was refused a dataplane restart with prisma-operator already
+  in its groups. A process now records the account's uid, gid and groups
+  and is replaced when they change; a candidate opened before the change
+  reads as expired, so no commit runs with rights the account no longer
+  holds.
+
 ## 0.149.26 - an operator: upgrade, reboot and shutdown without root
 
 ### Added
