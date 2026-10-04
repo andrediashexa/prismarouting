@@ -239,6 +239,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   u32 n_forwarded = 0, n_mss = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
+  u32 n_ftp64 = 0, n_ftp64_untouched = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -551,9 +552,30 @@ VLIB_NODE_FN (bpa_out2in_node)
        * the ALGs, the MSS clamp, the IPv4 rewrite - applies to it. */
       if (PREDICT_FALSE (s->is_nat64))
 	{
-	  int r = proto == BPA_PROTO_ICMP
-		    ? bpa_nat64_out2in_icmp (vm, b[0], pt, s)
-		    : bpa_nat64_out2in (vm, b[0], pt, s);
+	  int r;
+
+	  /* FTP64 (#485 phase 5): the server's reply, and the renumbering of
+	   * a control connection the ALG lengthened, on the IPv4 packet before
+	   * it becomes IPv6. Only an unfragmented segment is rewritten. */
+	  if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0))
+	    switch (bpa_ftp64_out2in (
+	      vm, b[0], s,
+	      !ip4_is_fragment (ip)
+		&& bpa_alg_on (pool_elt_at_index (bm->pools, pool_index)->alg,
+			       BPA_ALG_FTP),
+	      &n_seq_adj))
+	      {
+	      case BPA_FTP_REWRITTEN:
+		n_ftp64++;
+		break;
+	      case BPA_FTP_UNTOUCHED:
+		n_ftp64_untouched++;
+		break;
+	      default:
+		break;
+	      }
+	  r = proto == BPA_PROTO_ICMP ? bpa_nat64_out2in_icmp (vm, b[0], pt, s)
+				      : bpa_nat64_out2in (vm, b[0], pt, s);
 
 	  if (r < 0)
 	    {
@@ -779,6 +801,11 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_PPTP_MALFORMED, n_pptp_bad);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_ESP_TRANSLATED, n_esp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_FTP64_REWRITTEN, n_ftp64);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_FTP64_UNTOUCHED,
+			       n_ftp64_untouched);
   return frame->n_vectors;
 }
 

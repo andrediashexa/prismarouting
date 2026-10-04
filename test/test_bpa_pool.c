@@ -630,8 +630,40 @@ main (void)
     }                                                                         \
   while (0)
       NAT64_REFUSES (t.bypass_src.n_ranges = 1, "a bypass");
-      NAT64_REFUSES (t.alg = 1, "an ALG");
 #undef NAT64_REFUSES
+      /* The ALGs (#485 phase 5): FTP64 runs; every other is refused, by
+       * its own name, alone or beside FTP. */
+      t = c;
+      t.alg = BPA_ALG_FTP;
+      CHECK (bpa_nat64_unsupported (&t) == 0, "alg ftp was refused: %s",
+	     bpa_nat64_unsupported (&t));
+      {
+	static const struct
+	{
+	  u32 bit;
+	  const char *name;
+	} others[] = { { BPA_ALG_RTSP, "RTSP" },
+		       { BPA_ALG_SIP, "SIP" },
+		       { BPA_ALG_PPTP, "PPTP" },
+		       { BPA_ALG_ESP, "ESP" } };
+	u32 k;
+
+	for (k = 0; k < 4; k++)
+	  {
+	    const char *why;
+
+	    t = c;
+	    t.alg = BPA_ALG_FTP | others[k].bit;
+	    why = bpa_nat64_unsupported (&t);
+	    CHECK (why != 0 && strstr (why, others[k].name) != 0,
+		   "alg %s on a NAT64 pool: %s", others[k].name,
+		   why ? why : "accepted");
+	    refused++;
+	  }
+      }
+      CHECK (c.alg == 0 && c.alg_set == ~0u,
+	     "a NAT64 pool is created with every ALG off and decided "
+	     "(alg %x, set %x)", c.alg, c.alg_set);
       /* A forward's subscriber from its host (#485 phase 4). */
       {
 	bpa_static_t f = { 0 };

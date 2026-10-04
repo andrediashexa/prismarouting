@@ -1338,11 +1338,15 @@ class Pool:
         The two masks the dataplane stores: what is enabled, and what the
         operator chose. Anything not chosen is left to bpa_pool_init(), so a
         pool that says nothing about ALGs gets the documented defaults - except
-        a NAT64 pool, on which no ALG runs yet and which says so in both
-        (#485); its creation message carries no ALG at all.
+        a NAT64 pool, whose default is every ALG off and which says so in
+        both (#485): RFC 6384 section 4 has FTP64 on only where it is
+        needed. Its creation message carries no ALG at all; this reaches it
+        through bpa_pool_settings_set.
         """
         if self.is_nat64:
-            return 0, sum(self.ALG_BITS.values())
+            alg = sum(bit for name, bit in self.ALG_BITS.items()
+                      if self.algs.get(name, False))
+            return alg, sum(self.ALG_BITS.values())
         alg = alg_set = 0
         for name, bit in self.ALG_BITS.items():
             if self.algs.get(name, name in self.ALG_DEFAULT_ON):
@@ -1418,14 +1422,27 @@ class Pool:
                 return (f"{n}: forward {f[0]} {f[1]} names an IPv4 host",
                         "a NAT64 pool's forward names an IPv6 host of one "
                         "of its subscribers")
-        unsupported = (
-            (any(self.algs.values()), "alg"),
-        )
-        for present, word in unsupported:
-            if present:
-                return (f"{n}: a NAT64 pool takes no {word} yet",
-                        "the ALGs over NAT64 are the next phase")
+        # The ALGs (#485 phase 5): FTP is translated (RFC 6384); the others
+        # are refused for good, each for its own reason, in
+        # bpa_nat64_unsupported()'s order.
+        for alg in ("rtsp", "sip", "pptp", "esp"):
+            if self.algs.get(alg):
+                return (f"{n}: a NAT64 pool runs no {alg} ALG",
+                        self.NAT64_NO_ALG[alg])
         return None
+
+    # Why each ALG but ftp has nothing to do on a NAT64 pool: the prose of
+    # the refusal, and the dataplane's own sentence in other words.
+    NAT64_NO_ALG = {
+        "rtsp": "RTSP's SDP carries addresses, and no RFC translates RTSP "
+                "between IPv6 and IPv4",
+        "sip": "RFC 6157 has IPv6-IPv4 SIP cross by ICE and relays, not by "
+               "a translator rewriting SDP",
+        "pptp": "stateful NAT64 (RFC 6146) carries TCP, UDP and ICMP, and "
+                "PPTP's data is GRE",
+        "esp": "stateful NAT64 (RFC 6146) carries TCP, UDP and ICMP; IPsec "
+               "crosses it as NAT-T over UDP 4500, with no ALG",
+    }
 
     def nat64_api_args(self) -> dict:
         """

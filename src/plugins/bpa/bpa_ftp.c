@@ -375,6 +375,392 @@ bpa_ftp_keyword_later (const u8 *pl, u32 len, int server_side)
   return 0;
 }
 
+/* ------------------------------------------------------------ FTP64 text */
+
+/*
+ * The first line of a payload: its length with the CRLF, or 0 when the
+ * segment holds no complete line. Only the first line is ever translated, for
+ * the IPv4 ALG's reason (bpa_ftp.h): a later line is where a file name lives.
+ */
+static u32
+bpa_ftp64_line (const u8 *pl, u32 len)
+{
+  u32 i;
+
+  for (i = 0; i + 1 < len; i++)
+    if (pl[i] == '\r' && pl[i + 1] == '\n')
+      return i + 2;
+  return 0;
+}
+
+/* Is `body` (the line without its CRLF) the four-letter command `kw`, alone
+ * or followed by an argument? "EPSVX" is not EPSV. */
+static int
+bpa_ftp64_cmd (const u8 *body, u32 n, const char *kw)
+{
+  return bpa_ftp_starts (body, n, kw) && (n == 4 || body[4] == ' ');
+}
+
+/* The argument after "XXXX ", compared case-insensitively and whole. */
+static int
+bpa_ftp64_arg_is (const u8 *body, u32 n, const char *arg)
+{
+  u32 l = (u32) strlen (arg);
+
+  return n == 5 + l && bpa_ftp_starts (body + 5, l, arg);
+}
+
+static int
+bpa_ftp64_hex (u8 c)
+{
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+/*
+ * An IPv6 address in RFC 4291 text form, all of `len` and nothing else:
+ * groups of one to four hex digits, at most one "::", and a dotted IPv4 tail
+ * in the last 32 bits. 0, or -1 when it is not exactly that. Compared, never
+ * printed: the EPRT is translated only when it names the address the control
+ * connection comes from, and a parser that guesses would compare a guess.
+ */
+static int
+bpa_ftp64_ip6 (const u8 *p, u32 len, u8 out[16])
+{
+  u16 g[8];
+  int n = 0, gap = -1, i, k;
+  u32 off = 0;
+
+  if (len >= 2 && p[0] == ':' && p[1] == ':')
+    {
+      gap = 0;
+      off = 2;
+    }
+  else if (len && p[0] == ':')
+    return -1;
+
+  while (off < len)
+    {
+      u32 e = off, v = 0, d = 0;
+
+      /* A dotted tail: the run up to the next ':' has a '.'. */
+      while (e < len && p[e] != ':' && p[e] != '.')
+	e++;
+      if (e < len && p[e] == '.')
+	{
+	  u32 a;
+
+	  if (n > 6 || bpa_ftp_parse_dotted (p + off, len - off, &a)
+			 != len - off)
+	    return -1;
+	  g[n++] = (u16) (a >> 16);
+	  g[n++] = (u16) a;
+	  off = len;
+	  break;
+	}
+      while (off < len && d < 5 && bpa_ftp64_hex (p[off]) >= 0)
+	{
+	  v = (v << 4) | (u32) bpa_ftp64_hex (p[off]);
+	  off++;
+	  d++;
+	}
+      if (d == 0 || d > 4 || n >= 8)
+	return -1;
+      g[n++] = (u16) v;
+      if (off == len)
+	break;
+      if (p[off] != ':')
+	return -1;
+      off++;
+      if (off < len && p[off] == ':')
+	{
+	  if (gap >= 0)
+	    return -1;
+	  gap = n;
+	  off++;
+	}
+      else if (off == len)
+	return -1; /* a single trailing colon */
+    }
+
+  if (gap < 0 ? n != 8 : n > 7)
+    return -1;
+  memset (out, 0, 16);
+  for (i = 0; i < (gap < 0 ? n : gap); i++)
+    {
+      out[2 * i] = (u8) (g[i] >> 8);
+      out[2 * i + 1] = (u8) g[i];
+    }
+  if (gap >= 0)
+    for (i = gap, k = 8 - (n - gap); i < n; i++, k++)
+      {
+	out[2 * k] = (u8) (g[i] >> 8);
+	out[2 * k + 1] = (u8) g[i];
+      }
+  return 0;
+}
+
+static u32
+bpa_ftp64_put (u8 *dst, const char *s)
+{
+  u32 n = (u32) strlen (s);
+
+  memcpy (dst, s, n);
+  return n;
+}
+
+/* "PORT h1,h2,h3,h4,p1,p2\r\n": what an EPRT goes to the server as. */
+u32
+bpa_ftp64_put_port (u8 *dst, u32 addr, u16 port)
+{
+  u32 n = bpa_ftp64_put (dst, "PORT ");
+
+  n += bpa_ftp_put_hostport (dst + n, addr, port);
+  return n + bpa_ftp64_put (dst + n, "\r\n");
+}
+
+/*
+ * EPRT |2|<address>|<port>|, all of the line's body. 1 and the port when it
+ * names `host6`; 0 when it is well formed and names another address or IPv4
+ * (passed unchanged, RFC 6384 7.2); -1 when it does not parse.
+ */
+static int
+bpa_ftp64_eprt (const u8 *body, u32 n, const u8 host6[16], u16 *port)
+{
+  u8 d, a6[16];
+  u32 off = 6, s, fam, v;
+
+  if (n < 7)
+    return -1;
+  d = body[5];
+  if (d < 33 || d > 126)
+    return -1;
+  if (bpa_ftp_dec (body + off, n - off, 2, &fam) != 1)
+    return -1;
+  off++;
+  if (off >= n || body[off] != d)
+    return -1;
+  s = ++off;
+  while (off < n && body[off] != d)
+    off++;
+  if (off >= n)
+    return -1;
+  if (fam == 2 ? bpa_ftp64_ip6 (body + s, off - s, a6) != 0
+	       : bpa_ftp_parse_dotted (body + s, off - s, &v) != off - s)
+    return -1;
+  off++;
+  s = bpa_ftp_dec (body + off, n - off, 65535, &v);
+  if (s == 0 || v == 0)
+    return -1;
+  off += s;
+  if (off + 1 != n || body[off] != d)
+    return -1;
+  if (fam != 2 || memcmp (a6, host6, 16) != 0)
+    return 0;
+  *port = (u16) v;
+  return 1;
+}
+
+/* A later line starting with a command this ALG would have translated:
+ * counted as untouched, as the IPv4 ALG counts its own (bpa_ftp.h). */
+static int
+bpa_ftp64_later (const u8 *pl, u32 len)
+{
+  u32 i;
+
+  for (i = 0; i + 1 < len; i++)
+    if (pl[i] == '\n'
+	&& (bpa_ftp_starts (pl + i + 1, len - i - 1, "EPSV")
+	    || bpa_ftp_starts (pl + i + 1, len - i - 1, "EPRT")
+	    || bpa_ftp_starts (pl + i + 1, len - i - 1, "ALGS")))
+      return 1;
+  return 0;
+}
+
+/*
+ * The client's command, subscriber -> server. `*state` is the session's
+ * byte and is written only when the answer is not UNTOUCHED; `rep` (room for
+ * BPA_FTP64_MAX_LINE) replaces the first `*line_len` bytes on REPLACE. On
+ * EPRT the caller opens the mapping for `*port` and writes the PORT itself,
+ * with bpa_ftp64_put_port(), because the public port is not known here.
+ */
+bpa_ftp64_action_t
+bpa_ftp64_client (const u8 *pl, u32 len, u8 *state, const u8 host6[16],
+		  u8 *rep, u32 *rep_len, u32 *line_len, u16 *port)
+{
+  u8 st = *state;
+  u32 l = bpa_ftp64_line (pl, len), n;
+
+  *rep_len = 0;
+  *line_len = l;
+  if (st & BPA_FTP64_TRANSPARENT)
+    return BPA_FTP64_PASS;
+  if (l == 0)
+    {
+      /* A command of ours with no CRLF in this segment: split, or not FTP. */
+      if (bpa_ftp_starts (pl, len, "EPSV") || bpa_ftp_starts (pl, len, "EPRT")
+	  || bpa_ftp_starts (pl, len, "ALGS"))
+	return BPA_FTP64_UNTOUCHED;
+      return BPA_FTP64_PASS;
+    }
+  n = l - 2;
+
+  /* ALGS first, and even with translation off: the RFC has the channel
+   * watched for the ALGS that turns it back on (section 11). */
+  if (bpa_ftp64_cmd (pl, n, "ALGS"))
+    {
+      u8 p = BPA_FTP64_P_216;
+
+      if (bpa_ftp64_arg_is (pl, n, "STATUS64"))
+	;
+      else if (bpa_ftp64_arg_is (pl, n, "ENABLE64"))
+	st &= (u8) ~BPA_FTP64_DISABLED;
+      else if (bpa_ftp64_arg_is (pl, n, "DISABLE64"))
+	st |= BPA_FTP64_DISABLED;
+      else
+	p = BPA_FTP64_P_504;
+      *state = (u8) ((st & ~BPA_FTP64_PENDING) | p);
+      *rep_len = bpa_ftp64_put (rep, "NOOP\r\n");
+      return BPA_FTP64_REPLACE;
+    }
+  if (st & BPA_FTP64_DISABLED)
+    return BPA_FTP64_PASS;
+
+  if (bpa_ftp64_cmd (pl, n, "AUTH"))
+    {
+      *state = (u8) ((st & ~BPA_FTP64_PENDING) | BPA_FTP64_P_AUTH);
+      return BPA_FTP64_PASS;
+    }
+
+  if (bpa_ftp64_cmd (pl, n, "EPSV"))
+    {
+      u32 net;
+      u8 p;
+
+      if (n == 4 || bpa_ftp64_arg_is (pl, n, "2"))
+	{
+	  *state = (u8) ((st & ~BPA_FTP64_PENDING) | BPA_FTP64_P_229);
+	  *rep_len = bpa_ftp64_put (rep, "PASV\r\n");
+	  return BPA_FTP64_REPLACE;
+	}
+      if (bpa_ftp64_arg_is (pl, n, "ALL"))
+	p = BPA_FTP64_P_504;
+      else if (bpa_ftp_dec (pl + 5, n - 5, 65535, &net) == n - 5)
+	p = BPA_FTP64_P_522;
+      else
+	return BPA_FTP64_PASS; /* not RFC 2428: the server says so */
+      *state = (u8) ((st & ~BPA_FTP64_PENDING) | p);
+      *rep_len = bpa_ftp64_put (rep, "NOOP\r\n");
+      return BPA_FTP64_REPLACE;
+    }
+
+  if (bpa_ftp64_cmd (pl, n, "EPRT"))
+    switch (bpa_ftp64_eprt (pl, n, host6, port))
+      {
+      case 1:
+	return BPA_FTP64_EPRT;
+      case 0:
+	return BPA_FTP64_PASS;
+      default:
+	return BPA_FTP64_UNTOUCHED;
+      }
+
+  /* From the first line's own LF, so the second line is seen too. */
+  return bpa_ftp64_later (pl + l - 1, len - l + 1) ? BPA_FTP64_UNTOUCHED
+						   : BPA_FTP64_PASS;
+}
+
+/*
+ * The server's reply, server -> subscriber: what the pending translation
+ * turns it into. Only a single-line final reply is translated; a 1xx is
+ * preliminary and the pending answer waits for the final one.
+ *
+ * `is_retx` says this segment starts where the last rewritten one did - the
+ * server sending it again because the first copy was lost. The answer it was
+ * rewritten into is the last-reply bits, and it is rewritten again into the
+ * same: with the pending answer already spent, it would otherwise reach the
+ * client as the 227 the client cannot use, at a length the renumbering does
+ * not expect.
+ */
+bpa_ftp64_action_t
+bpa_ftp64_server (const u8 *pl, u32 len, u8 *state, int is_retx, u8 *rep,
+		  u32 *rep_len, u32 *line_len)
+{
+  u8 st = *state, p = st & BPA_FTP64_PENDING;
+  u32 l = bpa_ftp64_line (pl, len);
+
+  *rep_len = 0;
+  *line_len = l;
+  if (p == 0 && is_retx)
+    p = (u8) (st >> BPA_FTP64_LAST_SHIFT);
+  if (p == 0)
+    return BPA_FTP64_PASS;
+  if (l < 6 || pl[0] < '1' || pl[0] > '5' || pl[1] < '0' || pl[1] > '9'
+      || pl[2] < '0' || pl[2] > '9' || (pl[3] != ' ' && pl[3] != '-'))
+    {
+      /* Not a reply this can read: the pending answer is dropped rather
+       * than applied to whatever comes next. */
+      *state = (u8) (st & ~BPA_FTP64_PENDING);
+      return BPA_FTP64_UNTOUCHED;
+    }
+  if (pl[0] == '1')
+    return BPA_FTP64_PASS;
+  *state = (u8) (st & ~BPA_FTP64_PENDING);
+  if (pl[3] == '-')
+    return BPA_FTP64_UNTOUCHED; /* multi-line: not one of these */
+
+  switch (p)
+    {
+    case BPA_FTP64_P_229:
+      {
+	u32 off = 4, addr, k;
+	u16 port;
+
+	if (memcmp (pl, "227", 3) != 0)
+	  return BPA_FTP64_PASS; /* 425, 500: the client hears it as it is */
+	/* RFC 1123 4.1.2.6: the numbers are the first digits on the line,
+	 * parenthesised or not. */
+	while (off < l - 2 && !(pl[off] >= '0' && pl[off] <= '9'))
+	  off++;
+	k = bpa_ftp_parse_hostport (pl + off, l - 2 - off, &addr, &port);
+	if (k == 0 || port == 0)
+	  return BPA_FTP64_UNTOUCHED;
+	k = bpa_ftp64_put (rep, "229 Entering Extended Passive Mode (|||");
+	k += bpa_ftp_put_dec (rep + k, port);
+	k += bpa_ftp64_put (rep + k, "|)\r\n");
+	*rep_len = k;
+	*state = (u8) ((*state & 0x1f) | (p << BPA_FTP64_LAST_SHIFT));
+	return BPA_FTP64_REPLACE;
+      }
+    case BPA_FTP64_P_522:
+    case BPA_FTP64_P_504:
+    case BPA_FTP64_P_216:
+      if (memcmp (pl, "200", 3) != 0)
+	return BPA_FTP64_PASS;
+      *rep_len = bpa_ftp64_put (
+	rep, p == BPA_FTP64_P_522   ? "522 Network protocol not supported\r\n"
+	     : p == BPA_FTP64_P_504 ? "504 Command not implemented for that "
+				      "parameter\r\n"
+	     : (st & BPA_FTP64_DISABLED) ? "216 NONE\r\n"
+					 : "216 EPSVEPRT\r\n");
+      *state = (u8) ((*state & 0x1f) | (p << BPA_FTP64_LAST_SHIFT));
+      return BPA_FTP64_REPLACE;
+    case BPA_FTP64_P_AUTH:
+      /* Taken (2xx, or 3xx for the security data that follows): the
+       * channel is the client's and the server's from here. */
+      if (pl[0] == '2' || pl[0] == '3')
+	*state |= BPA_FTP64_TRANSPARENT;
+      return BPA_FTP64_PASS;
+    default:
+      return BPA_FTP64_PASS;
+    }
+}
+
 #ifndef BPA_STANDALONE
 
 /* ------------------------------------------------- the data connection */

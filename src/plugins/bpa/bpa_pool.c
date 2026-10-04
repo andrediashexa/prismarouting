@@ -395,9 +395,12 @@ bpa_nat64_cfg_finish (bpa_pool_t *cfg, u8 sub_len)
 
   count = cfg->inside6.count;
   cfg->is_nat64 = 1;
-  /* No ALG runs on a NAT64 pool yet, whatever the default for IPv4 is: each
-   * is its own phase, with its own lab (#485). Stated in both masks, so
-   * bpa_pool_init() does not resolve the IPv4 defaults back in. */
+  /* Every ALG off on a NAT64 pool, whatever the default for IPv4 is: FTP64
+   * is the one there is (#485 phase 5), and RFC 6384 section 4 has it on
+   * only where it is needed - "a set and forget policy on ALGs is not
+   * recommended". Stated in both masks, so bpa_pool_init() does not
+   * resolve the IPv4 defaults back in; `alg ftp on` reaches the pool through
+   * bpa_pool_settings_set. */
   cfg->alg = 0;
   cfg->alg_set = ~0u;
   return bpa_addr_set_build (&cfg->inside, &base, &count, 1);
@@ -423,8 +426,22 @@ bpa_nat64_unsupported (const bpa_pool_t *cfg)
   if (cfg->bypass_src.n_ranges || cfg->bypass_dst.n_ranges)
     return "a NAT64 pool takes no bypass: an IPv6 packet reaches IPv4 only "
 	   "translated";
-  if (cfg->alg)
-    return "a NAT64 pool runs no ALG yet";
+  /* FTP is translated (RFC 6384). The others are refused for good, each for
+   * its own reason: there is no translation of theirs to do. */
+  if (cfg->alg & BPA_ALG_RTSP)
+    return "a NAT64 pool runs no RTSP ALG: its SDP carries addresses, and "
+	   "no RFC translates RTSP between IPv6 and IPv4";
+  if (cfg->alg & BPA_ALG_SIP)
+    return "a NAT64 pool runs no SIP ALG: RFC 6157 has IPv6-IPv4 SIP cross "
+	   "by ICE and relays, not by a translator rewriting SDP";
+  if (cfg->alg & BPA_ALG_PPTP)
+    return "a NAT64 pool runs no PPTP ALG: stateful NAT64 (RFC 6146) "
+	   "carries TCP, UDP and ICMP, and PPTP's data is GRE";
+  if (cfg->alg & BPA_ALG_ESP)
+    return "a NAT64 pool runs no ESP passthrough: stateful NAT64 (RFC 6146) "
+	   "carries TCP, UDP and ICMP; IPsec crosses it as NAT-T over UDP";
+  if (cfg->alg & ~BPA_ALG_FTP)
+    return "a NAT64 pool runs no ALG but ftp";
   return 0;
 }
 

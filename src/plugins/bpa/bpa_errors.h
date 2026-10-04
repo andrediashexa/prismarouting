@@ -86,6 +86,8 @@
   _ (PPTP_MALFORMED, 0, "malformed or split PPTP control message") \
   _ (ESP_TRANSLATED, 0, "ESP passed to a subscriber") \
   _ (ESP_OFF, 1, "ESP dropped: passthrough is off") \
-  _ (ESP_NO_TUNNEL, 1, "ESP from a peer with no tunnel")
+  _ (ESP_NO_TUNNEL, 1, "ESP from a peer with no tunnel") \
+  _ (FTP64_REWRITTEN, 0, "FTP64 replies translated (RFC 6384)") \
+  _ (FTP64_UNTOUCHED, 0, "FTP64 replies left untouched (malformed or split)")
 
 #endif /* __included_bpa_errors_h__ */

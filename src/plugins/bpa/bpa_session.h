@@ -187,6 +187,14 @@ typedef struct
    * it, so a NAT44-only box pays nothing for NAT64.
    */
   u8 is_nat64;
+
+  /*
+   * A NAT64 pool's FTP control connection (#485 phase 5): the reply the next
+   * server message has to be turned into, and whether translation is off
+   * (ALGS DISABLE64) or over (AUTH taken). bpa_ftp.h's BPA_FTP64_* bits. One
+   * byte of what was padding after is_nat64, zero on every other session.
+   */
+  u8 ftp64;
 } bpa_session_t;
 
 /* bpa_subblock_t moved to bpa_subblock.h (#472). */

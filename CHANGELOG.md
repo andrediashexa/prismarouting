@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **NAT64, phase 5: FTP through a NAT64 pool (RFC 6384).**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485), phase 5)
+  An IPv6-only subscriber's FTP client speaks EPSV and EPRT (RFC 2428), and
+  many IPv4 servers answer only PASV and PORT: the control connection works
+  and every listing hangs. With `alg ftp on` a NAT64 pool translates between
+  the two: EPSV goes to the server as PASV and its 227 comes back as 229;
+  EPRT naming the client's own address opens a mapping on a port of the
+  subscriber's block and goes as PORT with the public address; EPSV ALL and
+  EPSV with another protocol are answered 504 and 522 without reaching the
+  server; ALGS STATUS64, ENABLE64 and DISABLE64 are answered 216; after an
+  AUTH the server accepts, nothing more is translated. A command the box does
+  not pass on goes as NOOP, and the 200 to it is rewritten, so the box never
+  builds a packet of its own. Off unless asked, as RFC 6384 section 4 says
+  it should be. The other ALGs stay refused on a NAT64 pool, now for good
+  and each by name: RTSP and SIP carry addresses in SDP that no RFC
+  translates between IPv6 and IPv4, and PPTP's GRE and ESP are not protocols
+  stateful NAT64 carries. `lab/ftp64.sh` fetches a file from an IPv4 server
+  that refuses RFC 2428, passive and active, through the box.
+
 ### Fixed
 
 ## 0.150.0 - NAT64, and the 0.149.x patches proved by a fresh install

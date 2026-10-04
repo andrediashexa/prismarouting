@@ -4,8 +4,8 @@
 |---|---|
 | **Who** | Whoever builds the NAT64 phases of #485; read by whoever reviews them. |
 | **What** | What a NAT64 pool is in this product, what exists today, and what each phase adds. |
-| **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; the plan is on issue #485. |
-| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) are on the branch for 0.150.0. |
+| **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; FTP64 in `src/plugins/bpa/bpa_ftp.c` and `test/test_bpa_ftp64.c`; the plan is on issue #485. |
+| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) shipped in 0.150.0; phase 5 (FTP64, RFC 6384) is on `cgnat/nat64-alg`. |
 | **How** | One release per phase; nothing configurable before the datapath that serves it. |
 
 ## What it is
@@ -67,9 +67,9 @@ The pool is created by its own dataplane message, `bpa_nat64_pool_add`, and
 deleted like any other.
 
 What a NAT64 pool does not take is refused by name at `commit check` - a
-bypass, for good, and an ALG, for now - and refused again by the dataplane at
-creation and on every in-place door, so no route reaches a NAT64 pool with
-one of them set.
+bypass, and every ALG but FTP, for good - and refused again by the dataplane
+at creation and on every in-place door, so no route reaches a NAT64 pool
+with one of them set.
 
 ## The datapath (phase 2)
 
@@ -148,7 +148,7 @@ configuration trail (`show cgnat history`) records the pool's IPv6 inside,
 | `vrf`, `outside-vrf` | The subscribers' IPv6 table, and the IPv4 table translated traffic leaves by. Two tenants' NAT64 pools may share an inside prefix and a NAT64 prefix in different VRFs |
 | `max-sessions`, `max-session-rate`, `utilisation-alarm` | As on an IPv4 pool: they act in the generic session code |
 | `bypass` | **Refused for good**: an IPv6 packet to the NAT64 prefix reaches IPv4 only translated, so there is no untranslated path for a bypass to name |
-| `alg` | Refused until the ALG phase |
+| `alg` | `alg ftp on` is FTP64 (phase 5, below), off unless asked; every other ALG is refused for good |
 
 A forward names a HOST, one /128 of the subscriber's delegated prefix; the
 subscriber is the prefix's index, so the validation, the pin and the reply's
@@ -176,6 +176,65 @@ VRRP pair; it does not refuse, because a pair whose IPv6 side follows the
 master by routing is a correct design this box cannot see. No lab measures a
 NAT64 failover.
 
+## FTP64 (phase 5)
+
+An IPv6-only host's FTP client speaks EPSV and EPRT (RFC 2428) - an IPv6
+client has nothing else to say - and many IPv4 servers answer only PASV and
+PORT. The control connection then works and every transfer hangs. RFC 6384
+is the ALG that bridges the two, and `alg ftp on` on a NAT64 pool is it:
+
+| The client sends | The server is sent | The client gets back |
+|---|---|---|
+| `EPSV`, `EPSV 2` | `PASV` | the server's `227 (h,h,h,h,p,p)` as `229 (\|\|\|p\|)`, its address ignored (section 6 SHOULD) |
+| `EPSV ALL` | `NOOP` | `504`, written over the NOOP's `200` (sections 6 and 12) |
+| `EPSV <other protocol>` | `NOOP` | `522` |
+| `EPRT \|2\|<its own address>\|p\|` | `PORT` with the public address and a port of the subscriber's block, mapped to the host and `p` (section 7.2) | the server's answer |
+| `EPRT` naming another address, or IPv4 | the same, unchanged (7.2 SHOULD NOT translate) | the server's answer |
+| `ALGS STATUS64` / `ENABLE64` / `DISABLE64` | `NOOP` | `216 EPSVEPRT`, or `216 NONE` once disabled (section 11) |
+| `AUTH`, accepted with 2xx or 3xx | `AUTH` | the server's answer; nothing is translated after it (section 5) |
+
+**It is off unless asked**, unlike the IPv4 ALGs: RFC 6384 section 4 has an
+FTP64 ALG deployed only where it is needed, because with it a conforming
+server's EPSV is turned into PASV for nothing. A NAT64 pool is created with
+every ALG off, and `alg ftp on` reaches it through `bpa_pool_settings_set`.
+
+**How it is built.** The client's command is rewritten on the packet
+`bpa-nat64-in2out` has just translated to IPv4, the server's reply in
+`bpa-out2in` on the IPv4 packet before it becomes IPv6 - both with the IPv4
+ALGs' splice (`bpa_alg_splice`), so the length change is recorded in the
+sender's own numbering and `bpa_tcp_seq_adjust` renumbers both directions of
+the rest of the connection. The translation does not touch a TCP sequence
+number, so the two compose. A command the box does not pass on goes to the
+server as `NOOP`, and the server's `200` to it is rewritten into the answer
+the client is owed (section 12's second way): the box never builds a packet
+of its own. What the next reply must become is one byte on the control
+session (`bpa_session_t.ftp64`). The EPRT's mapping is the IPv4 ALG's
+expectation keyed on the IPv6 host: a port of the subscriber's own block, on
+the half-open timer until the server connects. Every segment of a control
+connection the ALG has lengthened has URG cleared (section 5's MUST: keep
+the urgent pointer's meaning or clear it).
+
+**What it does not do**, each allowed by the RFC: section 8's default port
+20 (a MAY); a `NOOP` answered with something other than `200` reaches the
+client as it is rather than tearing the connection down (a SHOULD); and
+Telnet option negotiation is passed through rather than refused, which
+section 5 says MUST be refused - no FTP client was found negotiating Telnet
+options, and refusing one means building packets. Only the first line of a
+segment is translated, the IPv4 ALG's rule: a later line is where a file
+name lives. A command split across segments, or a malformed one, is left
+alone and counted (`FTP64 commands left untouched`). It acts on the client's
+control connection only; a subscriber's own IPv6 FTP server reached from
+IPv4 through a forward is not what RFC 6384 covers. A retransmitted reply
+that was rewritten is renumbered but not rewritten again, the exposure the
+IPv4 ALGs already state for one message.
+
+**The other ALGs are refused for good**, by name, at `commit check` and in
+the dataplane: RTSP and SIP carry addresses in SDP, and no RFC translates
+them between IPv6 and IPv4 - RFC 6157 has SIP cross the families with ICE and
+relays, not with a translator rewriting the body; PPTP's data is GRE and
+ESP is ESP, neither of which stateful NAT64 (RFC 6146) carries - IPsec
+crosses NAT64 as NAT-T over UDP 4500 with no ALG at all.
+
 ## How it is tested
 
 `ref/bpa_model.py` computes the subscriber index and the RFC 6052 embedding
@@ -201,9 +260,18 @@ prefix and a forward reached from IPv4. It passes single-threaded and with
 two workers, and its off run goes red on all 46. `lab/nat64-scale.sh`
 measures the memory and the clocks (docs/architecture.md, "Memory").
 
+FTP64's decisions - every command and reply above, RFC 6384's own examples
+byte for byte, and the malformed inputs - are held by `test/test_bpa_ftp64.c`,
+the refusals by `test/test_bpa_pool.c` and `test/test_prismash_config.py`.
+`lab/ftp64.sh` runs Python's ftplib over IPv6 against an IPv4 server that
+answers PASV and PORT and refuses EPSV, EPRT and ALGS, and fetches a file
+passive and active through the box, reading what the server was sent off its
+own log.
+
 ## Phases
 
 The plan, phase by phase from 0.150 on, is on issue #485: the arithmetic;
 the deterministic datapath with the pool's VTY grammar and a lab; dynamic
 mode and the log; every per-pool statement supported or refused (all four on
-this page); the ALGs; PREF64 and a 464XLAT lab.
+this page); the ALGs - FTP64, the one there is (above); PREF64 and a
+464XLAT lab.

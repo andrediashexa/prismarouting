@@ -374,7 +374,9 @@ forward tcp 12000 to 2001:db8:1200:ab00::10 8080
 
 A porta pública tem de estar no bloco do próprio assinante, como num pool IPv4. Um segundo host do mesmo prefixo com a mesma porta privada é recusado.
 
-**Recusados num pool NAT64:** `bypass`, para sempre — um pacote IPv6 para o prefixo NAT64 só chega ao IPv4 traduzido, então não existe caminho sem tradução —, e os ALGs, por enquanto.
+**ALG num pool NAT64:** só o `ftp`, que traduz o `EPSV` e o `EPRT` de um cliente IPv6 para o `PASV` e o `PORT` de um servidor IPv4 (RFC 6384), e que num pool NAT64 vem **desligado** até você escrever `alg ftp on` (veja [Protocolos e ALGs](/doc/protocolos-e-algs-vZjaCcHaN7)).
+
+**Recusados num pool NAT64:** `bypass`, para sempre — um pacote IPv6 para o prefixo NAT64 só chega ao IPv4 traduzido, então não existe caminho sem tradução —, e os ALGs `rtsp`, `sip`, `pptp` e `esp`, também para sempre, cada um pelo nome: não existe tradução deles entre IPv6 e IPv4 para fazer.
 
 **Rotas.** Um pool NAT64 deve ao roteamento dois prefixos: o `prefix-outside`, como qualquer pool, e o `nat64-prefix`, do lado IPv6 — é para ele que os assinantes mandam o tráfego para o IPv4. Com BGP configurado, o `commit check` avisa quando nada anuncia o `nat64-prefix` na família IPv6, e o aviso traz as duas linhas que resolvem: `ipv6 route <prefixo> blackhole` e `network <prefixo>`.
 

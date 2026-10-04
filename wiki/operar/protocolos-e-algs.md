@@ -42,6 +42,34 @@ Para ver o que o **dataplane** está de fato aplicando — e não o que o arquiv
 show cgnat alg
 ```
 
+## Num pool NAT64: só o FTP, e desligado até você pedir
+
+Num pool NAT64 o assinante só tem IPv6 e o servidor só tem IPv4, e o problema do FTP é outro: o cliente IPv6 fala `EPSV` e `EPRT` — não tem outra coisa para falar — e muito servidor IPv4 antigo só entende `PASV` e `PORT`. O login funciona e toda listagem trava. O `alg ftp` de um pool NAT64 é o ALG da RFC 6384, que traduz entre as duas metades:
+
+| O cliente manda | O servidor recebe | O cliente recebe de volta |
+|-----------------|-------------------|---------------------------|
+| `EPSV` | `PASV` | a resposta `227` do servidor reescrita como `229`, só com a porta |
+| `EPRT` com o próprio endereço IPv6 | `PORT` com o endereço público e uma porta do bloco do assinante | a resposta do servidor |
+| `EPSV ALL`, ou `EPSV` com outro protocolo | um `NOOP`, no lugar | `504` ou `522`, respondidos pela caixa |
+| `ALGS STATUS64`, `ENABLE64`, `DISABLE64` | um `NOOP`, no lugar | `216`, com o estado da tradução |
+
+Depois de um `AUTH` que o servidor aceita, a caixa não traduz mais nada naquela conexão: o canal de controle passou a ser TLS.
+
+**Vem desligado**, ao contrário dos ALGs de um pool IPv4: a própria RFC 6384 recomenda ligar só onde precisa, porque com ele o `EPSV` de um servidor que entenderia o `EPSV` vira `PASV` à toa. Ligue no pool NAT64 que atende assinantes com esse problema:
+
+```
+configure
+ nat
+  cgnat
+   pool v6
+    alg ftp on
+    exit
+   exit
+  exit
+ commit
+```
+
+**Os outros quatro são recusados num pool NAT64**, para sempre e cada um pelo nome no `commit check`: o RTSP e o SIP carregam endereços no SDP e nenhuma RFC traduz isso entre IPv6 e IPv4 — para o SIP a RFC 6157 usa ICE e relay, não um tradutor reescrevendo o corpo —, e o GRE do PPTP e o ESP não são protocolos que o NAT64 com estado carrega. O IPsec atravessa NAT64 como NAT-T, em UDP 4500, sem ALG nenhum.
 
 :::info
 O PPTP tem um problema próprio: GRE não tem portas, então o **Call ID** precisa fazer o papel que a porta faria. A reescrita não muda tamanho algum, nenhum número de sequência se move, e cada mensagem é guardada por um *magic cookie* de 32 bits e pelo próprio campo de comprimento antes de um único byte ser tocado.
