@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.2 - PREF64: a subscriber's CLAT learns the NAT64 prefix
+
+### Added
+
 * **NAT64, phase 6: the NAT64 prefix in the router advertisements (PREF64,
   RFC 8781), for 464XLAT.**
   ([#485](https://github.com/andrediashexa/hexarouting/issues/485), phase 6)
@@ -95,8 +101,6 @@ version has a chance of seeing it.
   application pings and fetches from an IPv4 server through it and the
   NAT64 pool. DNS64 (RFC 7050's `ipv4only.arpa`) is the operator's resolver,
   not this box: docs/nat64.md says what to configure there.
-
-### Fixed
 
 ## 0.150.1 - FTP through a NAT64 pool
 
