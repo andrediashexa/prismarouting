@@ -159,5 +159,111 @@ grep -v '^[[:space:]]*#' "$REPO/appliance/vpp-entrypoint" \
   && ok "and the entrypoint moves the container's vpp group to it" \
   || bad "appliance/vpp-entrypoint does not move group vpp to PRISMA_VPP_GID"
 
+echo
+echo "=== #569: the old releases' images are removed, and only those ==="
+# Measured on 10.40.200.166 on 2026-10-04: `/` at 96 %, 118 images, because
+# every patch loaded four new ones and nothing removed the old. The stand-in
+# docker lists repository:tag, the containers' images, and does what rmi
+# asks - refusing, as the real one does, an image a container uses.
+pbox() { # <images, space separated repo:tag> <containers' images> <stamp>
+  B=$(mktemp -d)
+  mkdir -p "$B/bin" "$B/run" "$B/share"
+  printf '%s\n' "$3" > "$B/share/VERSION"
+  for i in $1; do echo "$i"; done > "$B/images"
+  for i in $2; do echo "$i"; done > "$B/used"
+  : > "$B/rmi"
+  cat > "$B/bin/docker" <<DC
+#!/bin/sh
+case "\$1" in
+  load)   exit 0 ;;
+  images) if [ "\${4:-}" = prisma-vpp ]; then
+            sed -n 's/^prisma-vpp://p' "$B/images" | sort -r -V
+          else cat "$B/images"; fi ;;
+  ps)     [ -f "$B/psfails" ] && exit 1; cat "$B/used" ;;
+  rmi)    echo "\$2" >> "$B/tried"
+          grep -qxF "\$2" "$B/used" && exit 1
+          echo "\$2" >> "$B/rmi"; grep -vxF "\$2" "$B/images" > "$B/i2"; mv "$B/i2" "$B/images" ;;
+esac
+exit 0
+DC
+  chmod +x "$B/bin/docker"
+  echo "$B"
+}
+prun() { PRISMA_DOCKER_ROOT=$1 run "$1"; }
+four() { for r in mgmt vpp frr log; do printf 'prisma-%s:%s ' "$r" "$1"; done; }
+
+# An upgraded box: 0.150.6 installed, the dataplane and FRR still on 0.150.1
+# until the next boot, three older releases besides.
+B=$(pbox "$(four 0.150.6) $(four 0.150.5) $(four 0.150.1) $(four 0.149.33) $(four 0.148.0) nginx:1.25 redis:7.2.4" \
+         "prisma-mgmt:0.150.6 prisma-log:0.150.6 prisma-vpp:0.150.1 prisma-frr:0.150.1" "0.150.6 (d0ce65e8)")
+OUT=$(prun "$B"); RC=$?
+GONE=$(sort "$B/rmi" | tr '\n' ' ')
+WANT="prisma-frr:0.148.0 prisma-frr:0.149.33 prisma-log:0.148.0 prisma-log:0.149.33 prisma-log:0.150.1 prisma-mgmt:0.148.0 prisma-mgmt:0.149.33 prisma-mgmt:0.150.1 prisma-vpp:0.148.0 prisma-vpp:0.149.33 "
+[ "$RC" = 0 ] && [ "$GONE" = "$WANT" ] \
+  && ok "removed exactly the old releases' images no container uses" \
+  || bad "rc $RC, removed '$GONE', expected '$WANT': $OUT"
+for k in $(four 0.150.6) $(four 0.150.5) prisma-vpp:0.150.1 prisma-frr:0.150.1 nginx:1.25 redis:7.2.4; do
+  grep -qxF "$k" "$B/images" || bad "$k was removed and must be kept"
+done
+ok "kept: this release, the one before it (0.150.5), what the containers run, and other repositories' images"
+# Never even ASKED for an image a container uses: docker refusing it is the
+# second guard, not the first.
+TRIED_USED=$(grep -xE "prisma-(vpp|frr):0.150.1|prisma-(mgmt|log):0.150.6" "$B/tried" 2>/dev/null)
+[ -z "$TRIED_USED" ] && ok "and no image a container uses was even asked to be removed" \
+  || bad "rmi was asked for images containers use: $TRIED_USED"
+echo "$OUT" | grep -q "removed 10 image(s)" \
+  && ok "and it says what it removed: $(echo "$OUT" | grep removed | cut -c1-90)..." \
+  || bad "it did not say what it removed: $OUT"
+[ "$(cat "$B/run/compose.env" | head -1)" = "PRISMA_VERSION=0.150.6" ] \
+  && ok "and compose is still told 0.150.6" || bad "compose.env: $(cat "$B/run/compose.env")"
+rm -rf "$B"
+
+# Nothing is removed when the rule cannot be read for sure.
+B=$(pbox "prisma-vpp:abc123 prisma-mgmt:abc123 prisma-vpp:0.149.0" "" "abc123")
+OUT=$(prun "$B")
+[ ! -s "$B/rmi" ] && echo "$OUT" | grep -q "not a release number" \
+  && ok "a source build tagged with its stamp: nothing removed, 'not a release number'" \
+  || bad "a source build's stamp removed '$(cat "$B/rmi")': $OUT"
+rm -rf "$B"
+B=$(pbox "$(four 0.150.6) $(four 0.149.0)" "" "0.150.6-dirty (abc)")
+OUT=$(prun "$B")
+[ ! -s "$B/rmi" ] && echo "$OUT" | grep -q "not removing old images" \
+  && ok "a stamp that is not x.y.z: nothing removed, and it says why" \
+  || bad "a stamp that is not a release removed '$(cat "$B/rmi")': $OUT"
+rm -rf "$B"
+B=$(pbox "$(four 0.150.6) $(four 0.149.0)" "" "0.150.6 (abc)"); touch "$B/psfails"
+OUT=$(prun "$B")
+[ ! -s "$B/rmi" ] && echo "$OUT" | grep -q "did not list the containers" \
+  && ok "a docker that cannot list the containers: nothing removed, and it says why" \
+  || bad "removed '$(cat "$B/rmi")' without knowing what the containers use: $OUT"
+rm -rf "$B"
+B=$(pbox "$(four 0.150.6) $(four 0.149.0)" "" "0.151.0 (abc)")
+OUT=$(prun "$B")
+[ ! -s "$B/rmi" ] && echo "$OUT" | grep -q "not removing old images" \
+  && ok "images from another build than the stamp: nothing removed, and it says why" \
+  || bad "removed '$(cat "$B/rmi")' on a box running another build's images: $OUT"
+rm -rf "$B"
+# A box taken back down: 0.150.4 installed, only newer releases besides. No
+# release before it, so the newer ones are not removed on a guess.
+B=$(pbox "$(four 0.150.4) $(four 0.150.6)" "" "0.150.4 (abc)")
+OUT=$(prun "$B")
+[ ! -s "$B/rmi" ] \
+  && ok "no release before this one: nothing removed, a newer one included" \
+  || bad "removed '$(cat "$B/rmi")' with no earlier release to keep: $OUT"
+rm -rf "$B"
+# Version order, not text order: 0.150.10 is after 0.150.9.
+B=$(pbox "$(four 0.150.10) $(four 0.150.9) $(four 0.150.2)" "" "0.150.10 (abc)")
+OUT=$(prun "$B")
+[ "$(sort "$B/rmi" | tr '\n' ' ')" = "$(for r in frr log mgmt vpp; do printf 'prisma-%s:0.150.2 ' $r; done)" ] \
+  && ok "the release before 0.150.10 is 0.150.9, by version and not by text" \
+  || bad "0.150.10 kept the wrong one: removed '$(sort "$B/rmi" | tr '\n' ' ')'"
+rm -rf "$B"
+# Switched off for the tests and labs that need the old images.
+B=$(pbox "$(four 0.150.6) $(four 0.150.5) $(four 0.149.0)" "" "0.150.6 (abc)")
+OUT=$(PRISMA_PRUNE_IMAGES=0 PRISMA_DOCKER_ROOT=$B run "$B")
+[ ! -s "$B/rmi" ] && ok "PRISMA_PRUNE_IMAGES=0 removes nothing" \
+  || bad "PRISMA_PRUNE_IMAGES=0 removed '$(cat "$B/rmi")'"
+rm -rf "$B"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

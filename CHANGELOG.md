@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Old releases' container images were never removed.**
+  ([#569](https://github.com/andrediashexa/hexarouting/issues/569)) Every
+  patch upgrade loads a new prisma-mgmt, prisma-vpp, prisma-frr and
+  prisma-log image, and nothing removed the old ones: on 10.40.200.166 on
+  2026-10-04 `/` was at 96 % - 358 MB free of 8.3 GB - with 118 images, and
+  the next upgrade would have run out of space part-way. `load-the-images`,
+  which runs at every boot and from `refresh-the-vty` after an upgrade, now
+  removes the `prisma-*:<x.y.z>` images no container references that are
+  neither the release the box is nor the one before it, and says what it
+  removed and how much space came back. It removes nothing when it cannot
+  tell the release for sure. `lab/prune-images.sh` proves the rule against a
+  real dockerd; its off run keeps every old image.
+
 ## 0.150.6 - the rest of the screens typed, the probes streamed
 
 ### Added

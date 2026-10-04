@@ -27,6 +27,15 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.7 - old container images are removed
+
+* **Contract:** unchanged (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).
+* **Nothing changes through the API** (#569). A box now removes the
+  `prisma-*` images no container uses, keeping the release it is and the
+  one before it, after an upgrade and at every boot. The first upgrade to
+  this release on a box with many old images takes a little longer.
+* **Lab box:** .166 is on 0.150.6.
+
 ## 0.150.6 - the rest of the screens typed, the probes streamed
 
 * **Contract:** additive (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).

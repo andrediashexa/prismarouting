@@ -3263,6 +3263,19 @@ skipped it came up wrong:
    saved tagged with the box's version. Without it a box asked a registry for
    `prisma-vpp:latest` - and an appliance has no route to one. It writes the
    box's **`vpp` group id** beside it, for the reason in the next section.
+   And it **removes the old releases' images**
+   ([#569](https://github.com/andrediashexa/hexarouting/issues/569)): every
+   patch upgrade loads four, and nothing removed them - 10.40.200.166 reached
+   96 % of `/` with 118 images. Kept: every image a container references,
+   running or stopped; every image of the release the box is; every image of
+   the release before it (the newest tag below), as a way back. Removed: only
+   `prisma-{mgmt,vpp,frr,log}:<x.y.z>` tags matching none of those, never
+   with `-f`. Nothing at all when the box's stamp is not `x.y.z`, its images
+   came from another build, docker does not answer, or there is no release
+   below this one - and it says which. `PRISMA_PRUNE_IMAGES=0` switches it
+   off. Here because this script runs both at boot and from
+   `refresh-the-vty` after an upgrade; a new script would need `install.sh`,
+   which a patch cannot change.
 2. **`bind-dataplane-nic --compose-devices`** writes the card's device node
    into `/run/prisma-routing/compose-devices.yaml`, which is handed to
    `docker-compose` beside the base file. The driver a box can use decides

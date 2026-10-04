@@ -37,6 +37,8 @@ No fim ele diz `upgraded to <versão>` e lembra do `save`. Vale o que vale para 
 
 A partir da versão 0.148.0, a própria VTY passa para a versão nova logo em seguida, sem reboot: poucos segundos depois do `upgraded to`, o container de gerência é recriado com a imagem nova, a sessão que fez o upgrade cai e o próximo login já é da versão nova. O dataplane e os daemons de roteamento **não** são tocados nesse passo e continuam nas imagens anteriores até o reboot. Antes da 0.148.0, a VTY continuava na versão anterior até o reboot, mesmo com a caixa dizendo a versão nova.
 
+**As imagens das versões antigas são apagadas.** Cada upgrade carrega quatro imagens novas, e antes dessa correção nenhuma era apagada: uma caixa de teste chegou a 96% da raiz depois de uma série de patches. Agora, logo depois do upgrade e a cada boot, a caixa apaga as imagens `prisma-*` que nenhum contêiner usa e que não são nem da versão instalada nem da versão anterior a ela — esta fica, como caminho de volta. O log do boot (e do `refresh-the-vty`) diz o que foi apagado e quanto espaço voltou. Imagens de outros repositórios nunca são tocadas, e se a caixa não consegue dizer com certeza qual versão ela é, não apaga nada e diz por quê.
+
 Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança a internet.
 
 
