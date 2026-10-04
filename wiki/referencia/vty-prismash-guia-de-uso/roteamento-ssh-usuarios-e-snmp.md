@@ -170,7 +170,7 @@ Dentro de `bfd`:
 |---------|-----------|
 | `peer <endereço> [multihop] [local-address <endereço>] [interface <interface>] [vrf <nome>]` | uma sessão com um vizinho; entra no bloco dela |
 | `profile <nome>` | um conjunto de tempos com nome, que sessões e protocolos usam; entra no bloco dele |
-| `exit` | sai do bloco |
+| `exit`  | sai do bloco |
 
 Dentro de um `peer` ou de um `profile`:
 
@@ -184,7 +184,7 @@ Dentro de um `peer` ou de um `profile`:
 | `passive-mode` | espera o vizinho falar primeiro |
 | `minimum-ttl <1-254>` | só multihop: o menor TTL aceito (padrão 254) |
 | `shutdown` | segura a sessão derrubada, mantendo a configuração |
-| `profile <nome>` | **só dentro de um `peer`**: a sessão usa os tempos daquele perfil; o que for configurado na própria sessão vale por cima |
+| `profile <nome>` | só dentro de um `peer`: a sessão usa os tempos daquele perfil; o que for configurado na própria sessão vale por cima |
 
 O mesmo `profile <nome>` quer dizer duas coisas: no nível do `bfd` ele **cria** o perfil, dentro de um `peer` ele **usa** o perfil. O prompt mostra onde você está.
 
@@ -194,6 +194,7 @@ Para ver:
 
 * `show bfd peers` - duas linhas por sessão: onde ela roda (salto único ou multihop, a interface, a origem, o perfil, e se foi pedida por um protocolo), e depois o estado, há quanto tempo, o intervalo, em quanto tempo ela cai, o diagnóstico quando há um e quantas vezes caiu.
 * `show bfd peer <endereço>` - cada sessão com aquele vizinho em detalhe: os tempos desta caixa e os do vizinho, o tempo de detecção, o eco, os pacotes que entraram e saíram, e quantas vezes subiu e caiu.
+
 
 :::warning
 **Numa caixa atualizada por uma versão de correção, o BFD só funciona depois do reboot.** Quem roda as sessões é o `bfdd`, e ele é ligado pelo contêiner de roteamento quando esse contêiner sobe na versão nova - o que, numa atualização de correção, acontece no próximo reboot. Até lá o `commit` recusa qualquer configuração com `bfd`, dizendo que o `bfdd` não está rodando e que o reboot o liga. É de propósito: sem o `bfdd`, o BGP e a rota estática aceitam a palavra `bfd` e nenhuma sessão é criada - o vizinho ficaria vigiado por ninguém.
