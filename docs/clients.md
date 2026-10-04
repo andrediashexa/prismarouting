@@ -27,6 +27,29 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.3 - the rest of show cgnat, typed; SetConfig on an interface works again
+
+* **Contract:** additive (`prisma.proto` sha256 `e872dea7d1a4fa7c9377183ff2be01bef1b2617f6f5369a78a6579a1d2782f5c`).
+* **OperationalService** gains ten reads (#558, phase 6), each the VTY's
+  screen as fields, with the screen in `text`: `LookupTranslation`
+  (public address and port to its subscriber - IPv4, or a NAT64 /56 -
+  pool, block, `source` FORMULA/RESERVE/DYNAMIC/OUTSIDE_RANGE and
+  `now_only`; INVALID_ARGUMENT for a bad address or port, NOT_FOUND for
+  an address no pool owns), `ListTop` (`count`, 0 = 10), `GetDrops`,
+  `GetCgnatMemory` (bytes; `sessions_known`, `given`), `ListBlocks` (per
+  worker and total), `GetIdentity` (never an identity), `VerifyHistory`
+  (a `Verdict` enum), `ListAlgs`, `ListForwards` (`pool` filter) and
+  `GetHaStatus` (`agree` only when the peer copy was read and nothing
+  diverges). Units and counter/gauge per field in the contract. An
+  account gets what the VTY gives it: one that cannot reach the
+  dataplane is UNAVAILABLE, as at the prompt. `show cgnat ha peer <file>`
+  stays text through `Show`: it names a path on the box's disk.
+* **Fixed, both visible to a client:** `SetConfig` with an
+  `interface` failed with UNKNOWN on 0.150.2 (pref64 could not be
+  pickled) - it works again; `GetSubscriber.blocks` was always empty -
+  it now lists the subscriber's blocks.
+* **Lab box:** .166 is on 0.150.2.
+
 ## 0.150.2 - PREF64: a subscriber's CLAT learns the NAT64 prefix
 
 * **Contract:** additive (`prisma.proto` sha256 `658df1eabeb46a8ea8ce45dc5baab0f238f9266f74dc0eca797c8c20dda96714`).
