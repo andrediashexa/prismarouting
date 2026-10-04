@@ -18,7 +18,9 @@
  * <vnet/ip/ip6_to_ip4.h> and <vnet/ip/ip4_to_ip6.h>, and that is reused.
  */
 #include "bpa.h"
+#include "bpa_alg.h"
 #include "bpa_exhaust.h"
+#include "bpa_ftp.h"
 #include "bpa_log.h"
 #include "bpa_mss.h"
 #include <vnet/ip/ip6_to_ip4.h>
@@ -112,6 +114,179 @@ bpa_nat64_find (bpa_per_thread_t *pt, const u8 host[16], u16 port, u8 proto,
 }
 
 /* ------------------------------------------------------------------ */
+/* FTP64 (RFC 6384, #485 phase 5)                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The mapping an EPRT asks for (RFC 6384 7.2): the subscriber's host and the
+ * port it named, on a port of the subscriber's own block, keyed on the host
+ * as every NAT64 session is. Created in BPA_TCP_INIT, so an announcement the
+ * server never answers costs a port for the half-open timer and no longer -
+ * the IPv4 ALG's bpa_ftp_expect(), whose notes all hold here. The same port
+ * announced again reuses its mapping: a second would overwrite the key and
+ * strand the first's port.
+ *
+ * Everything read off the control session is read before the creation,
+ * which may reallocate the session pool and the host vector beside it.
+ */
+/* not a unit: it searches a per-thread bihash and takes a port from the
+ * subscriber's block; lab/ftp64.sh has a real server connect through it. */
+static bpa_session_t *
+bpa_ftp64_expect (bpa_per_thread_t *pt, const bpa_pool_t *p,
+		  const bpa_session_t *ctl, ip6_address_t host, u16 port,
+		  f64 now)
+{
+  u32 pool_index = ctl->pool_index, sub_idx = ctl->sub_idx;
+  u32 fib = ctl->fib_index;
+  bpa_create_why_t why;
+  bpa_block_t blk = { 0 };
+  bpa_session_t *d;
+
+  d = bpa_nat64_find (pt, host.as_u8, port, BPA_PROTO_TCP, fib);
+  if (d)
+    {
+      d->last_heard = now;
+      return d;
+    }
+  /* The control connection is alive, so the subscriber's blocks exist; an
+   * all-zero block would otherwise be built into somebody else's. */
+  if (bpa_sub_n_blocks (pt, pool_index, sub_idx) == 0)
+    return 0;
+  blk.sub_idx = sub_idx;
+  d = bpa_session_create (pt, p, pool_index, &blk, port, BPA_PROTO_TCP, fib,
+			  now, BPA_CREATE_ALG, &why);
+  if (d)
+    bpa_nat64_session_key (pt, d, &host);
+  return d;
+}
+
+/*
+ * The client's command, subscriber -> server, on the packet bpa-nat64-in2out
+ * has just translated to IPv4: the payload is spliced as the IPv4 ALGs
+ * splice theirs (bpa_alg_splice), with the length change recorded against
+ * the subscriber's own sequence numbers - which the translation does not
+ * touch - so bpa_tcp_seq_adjust() renumbers the rest of the stream after it.
+ * `s_index` because the EPRT's mapping may move the session pool.
+ */
+/* not a unit: it rewrites a vlib_buffer_t; its decisions are
+ * bpa_ftp64_client(), held by test/test_bpa_ftp64.c, and lab/ftp64.sh runs
+ * a real client and server through it. */
+static bpa_ftp_result_t
+bpa_ftp64_in2out (vlib_main_t *vm, vlib_buffer_t *b, bpa_per_thread_t *pt,
+		  const bpa_pool_t *p, u32 s_index, f64 now)
+{
+  ip4_header_t *ip = vlib_buffer_get_current (b);
+  tcp_header_t *tcp = (tcp_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
+  bpa_session_t *s = pool_elt_at_index (pt->sessions, s_index);
+  ip6_address_t host = pt->nat64_host[s_index];
+  u8 rep[BPA_FTP64_MAX_LINE], st = s->ftp64, *pl;
+  u32 rep_len, line_len, pl_len;
+  u16 port = 0;
+
+  if (PREDICT_FALSE (b->flags & VLIB_BUFFER_NEXT_PRESENT))
+    return BPA_FTP_NOTHING;
+  if (bpa_tcp_payload (b, ip, tcp, &pl, &pl_len))
+    return BPA_FTP_NOTHING;
+
+  switch (bpa_ftp64_client (pl, pl_len, &st, host.as_u8, rep, &rep_len,
+			    &line_len, &port))
+    {
+    case BPA_FTP64_PASS:
+      s->ftp64 = st;
+      return BPA_FTP_NOTHING;
+    case BPA_FTP64_UNTOUCHED:
+      return BPA_FTP_UNTOUCHED;
+    case BPA_FTP64_EPRT:
+      {
+	bpa_session_t *d = bpa_ftp64_expect (pt, p, s, host, port, now);
+
+	if (PREDICT_FALSE (d == 0))
+	  return BPA_FTP_NO_PORT;
+	/* The PORT names the DATA mapping's address: with extended blocks a
+	 * subscriber can hold blocks on two public addresses. */
+	rep_len = bpa_ftp64_put_port (rep, d->ip_pub, d->port_pub);
+	s = pool_elt_at_index (pt->sessions, s_index);
+      }
+      break;
+    case BPA_FTP64_REPLACE:
+      break;
+    }
+
+  bpa_ftp64_clear_urg (tcp);
+  if (PREDICT_FALSE (bpa_alg_splice (vm, b, ip, tcp, pl, pl_len, 0, line_len,
+				     rep, rep_len, &s->adj[BPA_DIR_OUT])
+		     < 0))
+    return BPA_FTP_UNTOUCHED;
+  s->ftp64 = st;
+  return BPA_FTP_REWRITTEN;
+}
+
+/*
+ * The server's reply, server -> subscriber, in bpa-out2in on the IPv4 packet
+ * before bpa_nat64_out2in() turns it into IPv6: spliced in IPv4 so the full
+ * checksum it recomputes is the one the translation then carries across, and
+ * its length change recorded in the server's numbering. Then every segment
+ * of a connection the ALG lengthened is renumbered, both directions, whether
+ * or not the ALG is still on - the IPv4 rule (bpa-in2out) - and has URG
+ * cleared (bpa_ftp64_clear_urg).
+ */
+/* not a unit: it rewrites a vlib_buffer_t; its decisions are
+ * bpa_ftp64_server(), held by test/test_bpa_ftp64.c, and lab/ftp64.sh runs a
+ * real client and server through it. */
+bpa_ftp_result_t
+bpa_ftp64_out2in (vlib_main_t *vm, vlib_buffer_t *b, bpa_session_t *s,
+		  int alg_on, u32 *n_seq_adj)
+{
+  ip4_header_t *ip = vlib_buffer_get_current (b);
+  tcp_header_t *tcp = (tcp_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
+  bpa_ftp_result_t r = BPA_FTP_NOTHING;
+  u8 rep[BPA_FTP64_MAX_LINE], st = s->ftp64, *pl;
+  u32 rep_len, line_len, pl_len;
+
+  if (alg_on && clib_net_to_host_u16 (tcp->src_port) == BPA_FTP_CONTROL_PORT
+      && !(b->flags & VLIB_BUFFER_NEXT_PRESENT)
+      && bpa_tcp_payload (b, ip, tcp, &pl, &pl_len) == 0)
+    switch (bpa_ftp64_server (
+      pl, pl_len, &st,
+      (s->adj[BPA_DIR_IN].off_after != s->adj[BPA_DIR_IN].off_before)
+	&& clib_net_to_host_u32 (tcp->seq_number)
+	     == s->adj[BPA_DIR_IN].correction_pos,
+      rep, &rep_len, &line_len))
+      {
+      case BPA_FTP64_REPLACE:
+	bpa_ftp64_clear_urg (tcp);
+	if (bpa_alg_splice (vm, b, ip, tcp, pl, pl_len, 0, line_len, rep,
+			    rep_len, &s->adj[BPA_DIR_IN])
+	    < 0)
+	  {
+	    r = BPA_FTP_UNTOUCHED;
+	    break;
+	  }
+	s->ftp64 = st;
+	r = BPA_FTP_REWRITTEN;
+	break;
+      case BPA_FTP64_UNTOUCHED:
+	s->ftp64 = st;
+	r = BPA_FTP_UNTOUCHED;
+	break;
+      default:
+	s->ftp64 = st;
+	break;
+      }
+
+  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
+		     | s->adj[BPA_DIR_OUT].off_before
+		     | s->adj[BPA_DIR_IN].off_after
+		     | s->adj[BPA_DIR_IN].off_before))
+    {
+      bpa_ftp64_clear_urg (tcp);
+      *n_seq_adj +=
+	bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_IN], &s->adj[BPA_DIR_OUT]);
+    }
+  return r;
+}
+
+/* ------------------------------------------------------------------ */
 /* the interfaces                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -171,7 +346,11 @@ bpa_nat64_interfaces_update (void)
   _ (NO_PORT, "subscriber's port block exhausted")                            \
   _ (NO_BLOCK, "no free block for a dynamic subscriber")                      \
   _ (NO_SESSION, "fragment or ICMP error with no session")                    \
-  _ (ICMP_FAILED, "ICMPv6 RFC 7915 does not translate")
+  _ (ICMP_FAILED, "ICMPv6 RFC 7915 does not translate")                      \
+  _ (FTP64_REWRITTEN, "FTP64 commands translated (RFC 6384)")                \
+  _ (FTP64_UNTOUCHED, "FTP64 commands left untouched (malformed or split)")  \
+  _ (FTP64_NO_PORT, "FTP64 EPRT with no port for its data connection")       \
+  _ (SEQ_ADJUSTED, "TCP sequence numbers shifted after FTP64 rewrote one")
 
 typedef enum
 {
@@ -459,6 +638,7 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0, n_not_ours = 0;
+  u32 n_ftp64 = 0, n_ftp64_untouched = 0, n_ftp64_noport = 0, n_seq_adj = 0;
 
   n_left = frame->n_vectors;
   vlib_get_buffers (vm, from, bufs, n_left);
@@ -665,6 +845,50 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 	    }
 	  bpa_nat64_in2out_l4 (b[0], ip6, l4_off, frag_off, l4_proto, s, dst4,
 			       &pt->nat64_ip_id);
+
+	  /* FTP64 (RFC 6384, #485 phase 5), on the packet now IPv4: the
+	   * client's command, then the renumbering of every segment of a
+	   * control connection the ALG has lengthened - the rewrite first,
+	   * because it records its change in the subscriber's own numbering.
+	   * A fragment is never a control command this parses. */
+	  if (l4_proto == IP_PROTOCOL_TCP && !frag_off)
+	    {
+	      u32 s_index = s - pt->sessions;
+	      ip4_header_t *ip4 = vlib_buffer_get_current (b[0]);
+	      tcp_header_t *t4 =
+		(tcp_header_t *) ((u8 *) ip4 + ip4_header_bytes (ip4));
+
+	      if (PREDICT_FALSE (clib_net_to_host_u16 (t4->dst_port)
+				   == BPA_FTP_CONTROL_PORT
+				 && bpa_alg_on (p->alg, BPA_ALG_FTP)))
+		{
+		  switch (bpa_ftp64_in2out (vm, b[0], pt, p, s_index, now))
+		    {
+		    case BPA_FTP_REWRITTEN:
+		      n_ftp64++;
+		      break;
+		    case BPA_FTP_UNTOUCHED:
+		      n_ftp64_untouched++;
+		      break;
+		    case BPA_FTP_NO_PORT:
+		      n_ftp64_noport++;
+		      break;
+		    case BPA_FTP_NOTHING:
+		      break;
+		    }
+		  /* An EPRT's mapping may have moved the session pool. */
+		  s = pool_elt_at_index (pt->sessions, s_index);
+		}
+	      if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
+				 | s->adj[BPA_DIR_OUT].off_before
+				 | s->adj[BPA_DIR_IN].off_after
+				 | s->adj[BPA_DIR_IN].off_before))
+		{
+		  bpa_ftp64_clear_urg (t4);
+		  n_seq_adj += bpa_tcp_seq_adjust (t4, &s->adj[BPA_DIR_OUT],
+						   &s->adj[BPA_DIR_IN]);
+		}
+	    }
 	}
 
       vnet_buffer (b[0])->sw_if_index[VLIB_TX] = s->out_fib_index;
@@ -708,6 +932,16 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 			       BPA_NAT64_IN2OUT_ERROR_NEW_SESSION, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_NAT64_IN2OUT_ERROR_NOT_OURS, n_not_ours);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_NAT64_IN2OUT_ERROR_FTP64_REWRITTEN, n_ftp64);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_NAT64_IN2OUT_ERROR_FTP64_UNTOUCHED,
+			       n_ftp64_untouched);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_NAT64_IN2OUT_ERROR_FTP64_NO_PORT,
+			       n_ftp64_noport);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_NAT64_IN2OUT_ERROR_SEQ_ADJUSTED, n_seq_adj);
   return frame->n_vectors;
 }
 

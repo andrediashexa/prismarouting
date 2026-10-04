@@ -2614,6 +2614,20 @@ bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
     if (vec_len (p->name) == vec_len (name)
 	&& !memcmp (p->name, name, vec_len (name)))
       {
+	/* The door bpa_pool_settings_set() keeps for a NAT64 pool, kept here
+	 * too: an ALG it cannot run is refused by name, not set and inert. */
+	if (on && p->is_nat64)
+	  {
+	    bpa_pool_t probe = *p;
+	    const char *why;
+
+	    probe.alg |= which;
+	    if ((why = bpa_nat64_unsupported (&probe)))
+	      {
+		error = clib_error_return (0, "%v: %s", p->name, why);
+		goto done;
+	      }
+	  }
 	if (on)
 	  p->alg |= which;
 	else
@@ -3538,9 +3552,11 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
       /* Only the departures from the default: emitting a line per ALG per
        * pool would fill every running configuration with lines that say
        * nothing. */
+/* A NAT64 pool's default is every ALG off (bpa_nat64_cfg_finish), so its
+ * departure is an ALG on - `alg ftp on`, the one it can run (#485). */
 #define _(sym, nm, desc)                                                      \
-  if (!p->is_nat64                                                            \
-      && (p->alg & BPA_ALG_##sym) != (BPA_ALG_DEFAULT & BPA_ALG_##sym))       \
+  if ((p->alg & BPA_ALG_##sym)                                                \
+      != ((p->is_nat64 ? 0 : BPA_ALG_DEFAULT) & BPA_ALG_##sym))               \
     s = format (s, " alg %s %s\n", nm, (p->alg & BPA_ALG_##sym) ? "on" : "off");
       foreach_bpa_alg
 #undef _

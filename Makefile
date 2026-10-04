@@ -8,7 +8,8 @@ BUILD  := .build
         model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
-      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
+      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_ftp64 \
+      $(BUILD)/test_bpa_icmp \
       $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite $(BUILD)/test_bpa_l4 \
       $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn \
       $(BUILD)/test_bpa_pptp $(BUILD)/test_bpa_log_tcp \
@@ -237,6 +238,17 @@ $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
                        src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_ftp.c
+
+# FTP64 (RFC 6384, #485 phase 5): the text half of a NAT64 pool's FTP ALG,
+# in bpa_ftp.c beside the IPv4 one whose static parsers it stands on, so
+# included the same way. -Wno-unused-function because the IPv4 half's static
+# parsers are test_bpa_ftp.c's to call, and are compiled here unused.
+$(BUILD)/test_bpa_ftp64: test/test_bpa_ftp64.c src/plugins/bpa/bpa_ftp.h \
+                         src/plugins/bpa/bpa_ftp.c \
+                         test/bpa_shim.h test/bpa_tcp_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_ftp64.c
 
 # The ICMP error parse: the only walk this plugin does through headers a remote
 # wrote inside another packet. Standalone because its REFUSALS are the half

@@ -2279,7 +2279,10 @@ check(" subscriber-length 56" in lines and " nat64-prefix 64:ff9b::/96" in lines
 # Each thing the first release does not do, refused by name.
 for setup, needle in (
         (lambda p: p.bypass_src.append("10.0.0.0/8"), "no bypass"),
-        (lambda p: p.algs.update({"ftp": True}), "no alg"),
+        (lambda p: p.algs.update({"rtsp": True}), "no rtsp ALG"),
+        (lambda p: p.algs.update({"sip": True}), "no sip ALG"),
+        (lambda p: p.algs.update({"pptp": True}), "no pptp ALG"),
+        (lambda p: p.algs.update({"esp": True}), "no esp ALG"),
         (lambda p: p.forwards.append(("tcp", 80, "10.0.0.1", 80)),
          "names an IPv4 host"),
         (lambda p: p.inside.append("100.64.0.0/10"), "not both"),
@@ -2289,6 +2292,28 @@ for setup, needle in (
     r = t.nat64_fits()
     check(r is not None and needle in r[0], f"{needle}: {r}")
     check(len(r[0]) <= 79 if r else True, f"fits a console: {r}")
+# Phase 5: FTP64 (RFC 6384) is the ALG a NAT64 pool runs, off unless asked;
+# the masks go whole, every ALG decided, so the dataplane resolves no IPv4
+# default back in.
+t = copy.deepcopy(v6)
+check(t.alg_masks() == (0, sum(config.Pool.ALG_BITS.values())),
+      f"a NAT64 pool that says nothing runs no ALG: {t.alg_masks()}")
+t.algs.update({"ftp": True})
+check(t.nat64_fits() is None, f"alg ftp on fits a NAT64 pool: {t.nat64_fits()}")
+check(t.alg_masks() == (config.Pool.ALG_BITS["ftp"],
+                        sum(config.Pool.ALG_BITS.values())),
+      f"and reaches the dataplane as the FTP bit alone: {t.alg_masks()}")
+check(" alg ftp on" in t.lines(in_place=True) and
+      t.settings_api_args()["alg"] == config.Pool.ALG_BITS["ftp"],
+      "written into the configuration and onto bpa_pool_settings_set")
+t.algs.update({"rtsp": False, "sip": False})
+check(t.nat64_fits() is None, "an ALG turned off is no refusal")
+for _a in ("rtsp", "sip", "pptp", "esp"):
+    t = copy.deepcopy(v6)
+    t.algs[_a] = True
+    r = t.nat64_fits()
+    check(r is not None and r[1] == config.Pool.NAT64_NO_ALG[_a],
+          f"{_a}: refused with its own reason: {r}")
 # Phase 3: a dynamic NAT64 pool, and what its allocation takes.
 t = copy.deepcopy(v6)
 t.mode, t.max_blocks, t.initial_ports, t.block_stride = "dynamic", 4, 1024, 1
