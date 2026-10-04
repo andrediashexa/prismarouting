@@ -3,7 +3,7 @@
 A read-only copy of <https://prismarouting.com.br>, so the pages can
 be read, searched and diffed from inside the repository.
 
-Snapshot taken 2026-10-03T06:55Z, 39 pages.
+Snapshot taken 2026-10-04T01:53Z, 39 pages.
 
 Refresh it with `WIKI_TOKEN=... sh tools/wiki-pull.sh`. No address or
 credential is kept here — `PADRAO-DOCUMENTACAO.md` says those never go into the

@@ -85,7 +85,7 @@ Duas capacidades, mapeadas em **grupos do sistema** — não num banco de contas
 
 `root` tem as duas, porque root fala com o socket do dataplane diretamente e fingir o contrário seria teatro.
 
-Uma coisa que nenhum papel faz: reiniciar ou desligar a caixa, aplicar uma versão nova ou reiniciar o dataplane. Essas quatro ações — `system reboot`, `system shutdown`, `system upgrade <versão>` e `system dataplane restart` — são do `root` e de quem tem **`operator`** (desde a 0.149.26). Veja [O operador: reinício e atualização sem root](#o-operador-reinicio-e-atualizacao-sem-root).
+Uma coisa que nenhum papel faz: reiniciar ou desligar a caixa, aplicar uma versão nova ou reiniciar o dataplane. Essas quatro ações — `system reboot`, `system shutdown`, `system upgrade <versão>` e `system dataplane restart` — são do `root` e de quem tem `**operator**` (desde a 0.149.26). Veja [O operador: reinício e atualização sem root](#o-operador-reinicio-e-atualizacao-sem-root).
 
 ### O operador: reinício e atualização sem root
 
@@ -178,7 +178,7 @@ Mídias anteriores à **0.37.0** não instalavam o componente que atende essa ch
 |-----------------|--------------------|
 | Pools, `cgnat inside`/`cgnat outside` nas interfaces, timeouts, limites, bypass, forwards, logging | `prisma-cgnat`     |
 | Todo o resto: roteamento, endereços e demais ajustes de interface, SSH, contas, SNMP, DNS, `system` (placas, núcleos, memória) e a memória do CGNAT (`nat` > `cgnat` > `memory`), que é um ajuste da máquina | `prisma-admin`     |
-| `start shell`, `install` | `prisma-admin` |
+| `start shell`, `install` | `prisma-admin`     |
 | `system reboot`, `system shutdown`, `system upgrade <versão>`, `system dataplane restart` | `root` ou `operator` (`prisma-operator`), qualquer que seja o papel |
 | `system upgrade` sem versão (a consulta) | qualquer conta, inclusive somente leitura |
 | `show`, `ping`, `traceroute`, `mtr` | qualquer conta, inclusive somente leitura |
