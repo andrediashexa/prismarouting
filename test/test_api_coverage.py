@@ -55,9 +55,11 @@ check(by.get(("operational", "show hardware"), (0, 0, 0, ""))[3] == "typed",
 check(by.get(("operational", "ping"), (0, 0, 0, ""))[3] == "typed",
       "ping is typed, a stream (Ping, #558 phase 7)")
 _text = [" ".join(r[1]) for r in rows if r[3] == "text"]
-check(_text == ["show cgnat ha peer"],
-      "and the one screen left as text is the peer copy named by a path on the "
-      f"box's disk: {_text}")
+# `show bfd` is text through Show for BFD's phase 1 (#559); its typed read is
+# that issue's phase 2, and this list shrinks again when it lands.
+check(_text == ["show cgnat ha peer", "show bfd peers", "show bfd peer"],
+      "and the screens left as text are the peer copy named by a path on the "
+      f"box's disk, and BFD's until its phase 2: {_text}")
 check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "typed",
       "system reboot is typed (SystemService.Reboot, #558 phase 5)")
 check(not [r for r in rows if r[3] == "none"],

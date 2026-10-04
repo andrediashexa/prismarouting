@@ -123,6 +123,9 @@ OPERATIONAL_RULES = [
      "path"),
     (["show", "cgnat", "ha"], "typed", "OperationalService.GetHaStatus",
      "the peer copy at its default path"),
+    # #559 phase 1: the screens; a typed read of the sessions is phase 2.
+    (["show", "bfd"], "text", "OperationalService.Show",
+     "BFD phase 1 (#559); typed sessions are its phase 2"),
     (["show", "bgp"], "typed", "OperationalService.ListBgpNeighbors",
      "per-neighbor detail beyond the summary is text (phase 6)"),
     (["show", "ospf", "neighbor"], "typed", "OperationalService.ListOspfNeighbors", ""),
@@ -312,7 +315,8 @@ PHASE4_LINES_WHY = {
 #: The words that ENTER a block rather than state anything (#558 phase 4):
 #: a client reaches each through EditRequest.path, and what is inside is
 #: classified line by line under the block's own level.
-BLOCK_ENTRIES = {"config": ("nat", "rpki", "router", "interface", "system",
+BLOCK_ENTRIES = {"config": ("nat", "rpki", "bfd", "router", "interface",
+                            "system",
                             "policy-options", "user", "snmp-user",
                             "route-map"),
                  # `vrf <name>` (FRR's block) vs `vrf <name> table <id>`:

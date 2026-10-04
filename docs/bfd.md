@@ -159,11 +159,13 @@ never would.
   ran bfdd. They now reach a running bfdd and the commit check counts them,
   but no lab has brought an OSPF or IS-IS adjacency down through BFD yet, and
   their `bfd profile` form is not offered. Unproven until it has.
-* **The API.** Typed BFD configuration in `ConfigService`, typed `show bfd`
-  reads, and an event when a session changes state (#558). Not done in phase
-  1 because a BFD session is a block with nested blocks, which the typed
-  configuration has no shape for yet; the text form reaches it today through
-  `Edit` and `Show`.
+* **The API.** A typed read of the sessions (`ListBfdSessions`, drawn from
+  `Shell.bfd_facts()`, which `show bfd` already prints from), typed BFD
+  configuration in `GetConfig` (a `bfd` area: peers, profiles, their timers),
+  and an event when a session changes state (#558). In phase 1 the API
+  reaches all of it as text: the `bfd` block through `Edit` (with
+  `EditRequest.path ["bfd"]`), and both screens through `Show` -
+  docs/api-coverage.md lists `show bfd` as `text` for that reason.
 * **SNMP.** BFD-STD-MIB (RFC 7331) and a trap on a session going down. FRR
   10.7.1 ships no `bfdd_snmp` module - `ls /usr/lib/*/frr/modules` has one for
   bgpd, ospfd, ospf6d, isisd, ldpd, ripd and zebra, and none for bfdd - so the

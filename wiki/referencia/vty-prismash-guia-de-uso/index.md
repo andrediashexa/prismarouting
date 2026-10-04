@@ -138,6 +138,7 @@ Quando o comando já está completo, o `?` e o TAB duplo mostram uma linha `<Ent
 
 ```
 prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?
+  bfd          optional
   description  optional
   distance     optional
   tag          optional

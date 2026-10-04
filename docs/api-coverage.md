@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 658 |
-| text | 1 |
+| typed | 659 |
+| text | 3 |
 | n/a | 27 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -159,6 +159,8 @@ reachable in the phase their note names.
 | `show ospf interface` | typed | OperationalService.ListOspfInterfaces | every account | both MTUs and the stall |
 | `show isis adjacency` | typed | OperationalService.ListIsisAdjacencies | every account |  |
 | `show isis interface` | typed | OperationalService.ListIsisInterfaces | every account | the circuits and the dataplane's IS-IS punt |
+| `show bfd peers` | text | OperationalService.Show | every account | BFD phase 1 (#559); typed sessions are its phase 2 |
+| `show bfd peer <address>` | text | OperationalService.Show | every account | BFD phase 1 (#559); typed sessions are its phase 2 |
 | `show interface terse` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface description` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface utilization interval <seconds>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
@@ -219,6 +221,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `bgp community-list [standard\|expanded] <community-list> [seq <1-4294967295>] permit\|deny <community>...` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `bgp large-community-list [standard\|expanded] <community-list> [seq <1-4294967295>] permit\|deny <community>...` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `rpki` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
+| `bfd` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `router static` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `router bgp <AS>` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `router ospf [vrf <name>]` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
@@ -783,8 +786,8 @@ Entered with `router static`; `EditRequest.path` = `["router static"]`; changed 
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `<prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [description <text>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
-| `no <prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [description <text>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
+| `<prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [bfd] [description <text>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
+| `no <prefix> next-hop <next-hop> [distance <1-255>] [tag <1-4294967295>] [bfd] [description <text>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: rpki
@@ -839,7 +842,7 @@ Entered with `router bgp <asn>: neighbor <address> ...`; `EditRequest.path` = `[
 | `neighbor <address> timers <keepalive> <hold>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
 | `neighbor <address> maximum-prefix <n> [<percent>] [restart <minutes>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as a key/value in the block's `settings` since 0.149.24; written as lines |
 | `neighbor <address> next-hop-self` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as a key/value in the block's `settings` since 0.149.24; written as lines |
-| `neighbor <address> bfd` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
+| `neighbor <address> bfd [profile <name>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
 | `neighbor <address> shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
 | `neighbor <address> peer-group <peer-group>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.22) |
 | `neighbor <address> capability extended-nexthop` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as a key/value in the block's `settings` since 0.149.24; written as lines |
