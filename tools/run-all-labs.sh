@@ -412,6 +412,7 @@ fi
 NEEDS_NETWORK="
 bng:apt-get for five -dev packages, and a git clone of accel-ppp-ng from GitHub, on every run
 pref64:apt-get for tayga, the CLAT's translator, on every run
+api-grpc:apt-get for traceroute and mtr-tiny, the probes the API streams (#558 phase 7), on every run
 "
 # No pipe into `while`: that runs in a subshell and the list would come back
 # empty, which is this section saying nothing on a run that needs the network.

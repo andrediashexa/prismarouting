@@ -27,6 +27,38 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.6 - the rest of the screens typed, the probes streamed
+
+* **Contract:** additive (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).
+* **OperationalService** gains (#558, phase 7), each with the VTY's screen
+  in `text`: `ListOspfInterfaces` (`show ospf interface`: area, state,
+  cost, neighbours, the MTU ospfd advertises beside the dataplane's -
+  `dataplane_mtu_known` false for an interface the dataplane has none for -
+  and `mtu_stall`), `ListIsisInterfaces` (the circuits, `silent` ones, and
+  `punt_known`/`punting`/`osi_drops`), `GetHardware` (the NICs Linux has,
+  `default_route` marked, `dataplane_holds`; `dataplane_answered` false
+  when that could not be asked), `GetRoutingLogging` (`show logging`: FRR's
+  logging per daemon - not GetLogging, the CGNAT log export) and
+  `GetSnmpFile` (`KIND_MIB` / `KIND_ZABBIX_TEMPLATE`: the file with the
+  box's enterprise number in it, a filename and media type to save it as;
+  FAILED_PRECONDITION with the VTY's words when it cannot be made).
+  `answered` false is the daemon not answering, never an empty box; FRR's
+  `-` reads -1 for a cost or metric and 0 for an MTU.
+* **`Ping`, `Traceroute`, `Mtr`** (`ProbeRequest {host, count, source}`)
+  stream a `ProbeEvent` per line the tool prints: `line` verbatim, with
+  `reply`, `hop` or `mtr_hop` when the line is one (mtr prints its report
+  at the end of the run), then a last event with `end` (exit status,
+  `stopped_at_deadline`, ping's summary). The VTY's own rules: a host,
+  count or source it refuses is INVALID_ARGUMENT in its words; a tool the
+  box lacks is FAILED_PRECONDITION naming the package; count 1-100, 0 is
+  5; the box stops a tool after 300 s. Cancelling the call stops the probe.
+  One probe at a time per account; the other reads answer while it runs.
+  `Show` still answers the three as text.
+* **Coverage:** `show cgnat ha peer <file>` is the only screen left as
+  text (it names a file on the box); docs/api-coverage.md counts 658
+  typed and 1 text.
+* **Lab box:** .166 is on 0.150.5.
+
 ## 0.150.5 - a line FRR refuses fails the VTY batch
 
 * **Contract:** unchanged (`prisma.proto` sha256 `e872dea7d1a4fa7c9377183ff2be01bef1b2617f6f5369a78a6579a1d2782f5c`).

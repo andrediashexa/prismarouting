@@ -100,6 +100,8 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `Clear` | `clear ...` (#558, phase 5): interface counters (one or every), a CGNAT subscriber's sessions, a BGP session (hard, soft, soft in or out), OSPF's process or one adjacency, IS-IS adjacencies; the VTY's line run, its output returned. See [Actions and the box](#actions-and-the-box) |
 | | `LookupTranslation` | `show cgnat translation <public> <port>` (#558, phase 6): the subscriber behind it - an IPv4 address, or a NAT64 subscriber's prefix - its pool and block, and whether the answer holds for any instant (`SOURCE_FORMULA`) or only now (`SOURCE_RESERVE`, `SOURCE_DYNAMIC`). See [The CGNAT's screens](#the-cgnats-screens) |
 | | `ListTop`, `GetDrops`, `GetCgnatMemory`, `ListBlocks`, `GetIdentity`, `VerifyHistory`, `ListAlgs`, `ListForwards`, `GetHaStatus` | `show cgnat top`, `drops`, `memory`, `blocks`, `identity`, `history verify`, `alg`, `forward` and `ha` (#558, phase 6), each as fields and its screen in `text`. See [The CGNAT's screens](#the-cgnats-screens) |
+| | `ListOspfInterfaces`, `ListIsisInterfaces`, `GetHardware`, `GetRoutingLogging`, `GetSnmpFile` | `show ospf interface`, `show isis interface`, `show hardware`, `show logging` (FRR's, per daemon), `show snmp mib` and `show snmp zabbix-template` (#558, phase 7), each as fields and its screen in `text`; `GetSnmpFile` returns the file itself. See [The rest of the screens](#the-rest-of-the-screens) |
+| | `Ping`, `Traceroute`, `Mtr` | `ping`, `traceroute`, `mtr` (#558, phase 7), streamed: a `ProbeEvent` per line the tool prints, with its reply, hop or report row read, then `end`. See [The probes](#the-probes) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) - and, with `logging_events`, the log export's `log-...` events (#555) |
 | | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
 | | `WatchLogging` | `monitor cgnat logging` (#558, phase 5): each block event the box exports, as a stream of `LogEvent`, with the monitor's filters and its delivery lines |
@@ -273,6 +275,55 @@ carries the screen, verbatim, in `text`.
   twelve letters, more than 99,999 ports, a counter of thirteen digits. The
   dataplane pads those columns now and never cuts them, so neither the
   screen nor the fields carry a truncated value.
+
+### The rest of the screens
+
+`show ospf interface`, `show isis interface` and `show hardware` (#558,
+phase 7) are drawn by the VTY from one reading of the box - the Shell's
+`ospf_interface_facts()`, `isis_interface_facts()` and `hardware_facts()` -
+and the rpc carries that reading as fields and the screen drawn from it in
+`text`, so the two cannot disagree. `show logging` is FRR's own screen,
+which the VTY passes through; `GetRoutingLogging` reads it back per daemon.
+
+* **"Not answered" is not "nothing".** `answered` false on
+  `ListOspfInterfaces` and `ListIsisInterfaces` is the daemon not answering;
+  an empty list with `answered` true is a box running the protocol on no
+  interface. `GetHardware`'s `dataplane_answered` false means a card the
+  dataplane took is missing from `nics` with nothing to say so.
+* **Sentinels.** FRR's `-` reads as `-1` for a cost or a metric and as `0`
+  for an MTU; `dataplane_mtu_known` false is an interface the dataplane has
+  no MTU for (the management port), not an MTU of 0. `punt_known` false is
+  a dataplane that could not be asked whether it punts IS-IS.
+* **`GetSnmpFile`** returns the MIB or the Zabbix template with the
+  enterprise number the agent serves under filled in, the bytes `show snmp
+  mib` prints, a file name and a media type to save it as. With no number
+  yet, or the file missing from the box, it is `FAILED_PRECONDITION` with
+  the VTY's words.
+
+### The probes
+
+`Ping`, `Traceroute` and `Mtr` (#558, phase 7) run the probe the VTY runs -
+from the management plane, through the host's door on a box - and stream it:
+one `ProbeEvent` per line the tool prints, `line` verbatim, with `reply`
+(ping), `hop` (traceroute) or `mtr_hop` (a row of mtr's report, which mtr
+prints at the end of its run) when the line is one, and a last event with
+`end`: the tool's exit status, `stopped_at_deadline`, and ping's summary.
+
+* **The VTY decides.** The request is handed to the VTY's own `ping`,
+  `traceroute` or `mtr` statement in the account's process: a host, count or
+  source it refuses is `INVALID_ARGUMENT` with its words, a tool the box
+  lacks `FAILED_PRECONDITION` naming the package. `count` is 1-100, 0 the
+  VTY's default of 5; the box stops a tool still running after 300 s
+  (`stopped_at_deadline`, exit status 124).
+* **Cancelling the call stops the probe.** The account's process is told,
+  closes the tool, and the server reads the stream to its end before the
+  process takes another call.
+* **One at a time per account**, as at its console: a probe holds the
+  account's console process, not its operational one, so `GetVersion` and
+  the other reads answer while it runs.
+* **Exit status.** ping exits 1 when no reply came; `end.received` and
+  `end.loss_percent` say how many did. `exit_status` -1 is a status nobody
+  saw, never a success.
 
 ### Why a change was refused
 

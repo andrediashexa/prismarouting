@@ -2618,7 +2618,15 @@ OVER_AT_MOST = 22
 # whose widths were already measured off the box - were never foldable either.
 # AND 47 SINCE #531: the half-a-pool refusal put a pool's name in front of
 # the VTY's own words through err(); it is a verdict and a prose row now.
-UNSAFE_AT_MOST = 47
+# AND 48 SINCE #558's seventh phase, the shape #390 had: `show isis
+# interface`'s table row (area tag, circuit, state and level before the
+# neighbour count) had never been produced by any suite, so this reader could
+# not count it; test_prismash_igp.py drives it now, to hold the screen to the
+# facts the API's ListIsisInterfaces carries. The row's shape is the one the
+# wiki quotes and lab/igp.sh reads by column; measured by running this file
+# on the tree without that test section and with it, 47 and 48. Folding it -
+# the area tag is an operator's word with no widest - is follow-up work.
+UNSAFE_AT_MOST = 48
 
 
 def ceiling(found, allowed, what, detail):

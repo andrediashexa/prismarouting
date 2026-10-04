@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 649 |
-| text | 10 |
+| typed | 658 |
+| text | 1 |
 | n/a | 27 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -87,20 +87,27 @@ grouping rule (#533).
    `ListForwards`, `GetHaStatus`. Each reads the VTY's own screen through
    the same Shell and carries it verbatim beside the fields. `show cgnat ha
    peer <file>` - a path on the box's disk - stays text.
-6. **Routing detail.** BGP neighbor detail (prefixes received/accepted,
-   timers, capabilities, last error), OSPF and IS-IS interfaces, verbose
-   routes.
-7. **System detail.** `show hardware` (NICs, PCI, NUMA, queues), per-core
-   CPU, `show logging` as a stream of the box's own log, `show snmp mib` and
-   the Zabbix template as downloads.
+6. **Routing detail.** OSPF and IS-IS interfaces - *delivered as #558's
+   seventh phase*: `ListOspfInterfaces` (both MTUs and the stall between
+   them) and `ListIsisInterfaces` (the circuits and the dataplane's IS-IS
+   punt). Still to come: BGP neighbor detail (prefixes received/accepted,
+   timers, capabilities, last error) and verbose routes.
+7. **System detail** - *delivered as #558's seventh phase*: `GetHardware`
+   (the NICs Linux has, PCI, driver, link, the default route's card, what
+   the dataplane holds), `GetRoutingLogging` (`show logging`: FRR's logging
+   configuration per daemon) and `GetSnmpFile` (`show snmp mib` and the
+   Zabbix template as files to download). Per-core CPU is still to come.
 8. **Accounts and SNMP users**, typed reads (accounts, roles, whether a key
    or password is set, SNMP users and their levels); edits stay lines.
 9. **Routing configuration typed reads**: static routes, BGP neighbors and
    address families, OSPF, IS-IS, RPKI.
 10. **Policy configuration typed reads**: prefix-lists, policy-statements
     and terms as structure (ListPolicies already returns what is compiled).
-11. **Probes as streams**: ping, traceroute, mtr as `ProbeService` with one
-    message per reply/hop, instead of the finished screen through Show.
+11. **Probes as streams** - *delivered as #558's seventh phase*, on
+    OperationalService rather than a service of their own: `Ping`,
+    `Traceroute` and `Mtr` stream a `ProbeEvent` per line the tool prints,
+    with its reply or hop read, then `end`; the VTY's own validation, its
+    count ceiling and its deadline. `Show` still answers them as text.
 
 Every row this table marks `text` is reachable today; `none` rows become
 reachable in the phase their note names.
@@ -112,9 +119,9 @@ reachable in the phase their note names.
 | `configure` | typed | ConfigService.OpenCandidate | every account |  |
 | `test policy <policy> [route|rib] <prefix>` | typed | OperationalService.TestPolicy | every account |  |
 | `start shell` | n/a | - | administrator | never through the API: a shell is every capability at once |
-| `ping <host>` | text | OperationalService.Show | every account | a typed probe is phase 11 |
-| `traceroute <host>` | text | OperationalService.Show | every account | a typed probe is phase 11 |
-| `mtr <host>` | text | OperationalService.Show | every account | a typed probe is phase 11 |
+| `ping <host>` | typed | OperationalService.Ping (a stream) | every account | a reply per message, then the summary |
+| `traceroute <host>` | typed | OperationalService.Traceroute (a stream) | every account | a hop per message |
+| `mtr <host>` | typed | OperationalService.Mtr (a stream) | every account | the report's hops, at the end of the run |
 | `monitor interface interval <seconds>` | typed | TelemetryService.Subscribe | every account | interface counters as a stream; GetHistory for the past day |
 | `monitor interface <interface>` | typed | TelemetryService.Subscribe | every account | interface counters as a stream; GetHistory for the past day |
 | `monitor cgnat logging raw` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
@@ -149,25 +156,25 @@ reachable in the phase their note names.
 | `show bgp summary` | typed | OperationalService.ListBgpNeighbors | every account | per-neighbor detail beyond the summary is text (phase 6) |
 | `show bgp neighbor <neighbour>` | typed | OperationalService.ListBgpNeighbors | every account | per-neighbor detail beyond the summary is text (phase 6) |
 | `show ospf neighbor` | typed | OperationalService.ListOspfNeighbors | every account |  |
-| `show ospf interface` | text | OperationalService.Show | every account |  |
+| `show ospf interface` | typed | OperationalService.ListOspfInterfaces | every account | both MTUs and the stall |
 | `show isis adjacency` | typed | OperationalService.ListIsisAdjacencies | every account |  |
-| `show isis interface` | text | OperationalService.Show | every account |  |
+| `show isis interface` | typed | OperationalService.ListIsisInterfaces | every account | the circuits and the dataplane's IS-IS punt |
 | `show interface terse` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface description` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface utilization interval <seconds>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
 | `show interface utilization count <count>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
 | `show interface utilization <interface>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
 | `show interface <interface>` | typed | OperationalService.ListInterfaces | every account |  |
-| `show hardware` | text | OperationalService.Show | every account |  |
+| `show hardware` | typed | OperationalService.GetHardware | every account |  |
 | `show version` | typed | OperationalService.GetVersion | every account |  |
-| `show snmp mib` | text | OperationalService.Show | every account |  |
-| `show snmp zabbix-template` | text | OperationalService.Show | every account |  |
+| `show snmp mib` | typed | OperationalService.GetSnmpFile (KIND_MIB) | every account | the file, with the enterprise number in it |
+| `show snmp zabbix-template` | typed | OperationalService.GetSnmpFile (KIND_ZABBIX_TEMPLATE) | every account | the JSON Zabbix 7.0 imports |
 | `show lacp` | typed | OperationalService.ListBundles | every account |  |
 | `show policy [<policy> | route <prefix>]` | typed | OperationalService.ListPolicies / GetPolicyCounters / TestPolicy | every account |  |
 | `show system cpu` | typed | OperationalService.GetSystem | every account | worker_load per worker; per-core figures are text (phase 7) |
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times |
-| `show logging` | text | OperationalService.Show | every account |  |
+| `show logging` | typed | OperationalService.GetRoutingLogging | every account | FRR's logging per daemon |
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear interface counters [<interface>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear cgnat subscriber <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |

@@ -20068,7 +20068,23 @@ class Shell:
         return ("a driver DPDK can use, chosen at boot from whether this box "
                 "has an IOMMU; this VTY could not ask")
 
-    def show_hardware(self, args):
+    def hardware_facts(self):
+        """
+        What `show hardware` reads, as data (#558, phase 7): what the
+        dataplane holds (None when it could not be asked, which is not []),
+        the NICs Linux has (host_nics()) and the one carrying the default
+        route (None when none does). The screen is drawn from this one reading
+        and so is OperationalService.GetHardware.
+        """
+        rc, out = self.dp.run("show interface")
+        held = None
+        if rc == 0 and out.strip():
+            held = sorted(n for n in routes.parse_interfaces(out)
+                          if n != "local0")
+        return {"held": held, "nics": self.host_nics(),
+                "mgmt": self.default_route_nic()}
+
+    def show_hardware(self, args, facts=None):
         """
         The physical NICs of this box, from Linux, with the one that must not
         be given to the dataplane marked.
@@ -20088,21 +20104,20 @@ class Shell:
         if args:
             self.err("show hardware: takes no arguments")
             return
+        f = self.hardware_facts() if facts is None else facts
 
         # What the dataplane holds, said ONCE and before the list, because a
         # NIC VPP owns is not under /sys/class/net and a list that quietly
         # omits it reads as a missing NIC.
-        rc, out = self.dp.run("show interface")
         # KEPT, because the empty-table sentence below is about this answer
         # and used to assert one of its three values on all three boxes.
         # None is "the dataplane could not be asked", which is not [].
-        held = None
-        if rc != 0 or not out.strip():
+        held = f["held"]
+        if held is None:
             print_prose("the dataplane is not answering, so what it already "
                         "holds is not known: a NIC it owns would be missing "
                         "from the list below.", indent="  ")
         else:
-            held = [n for n in routes.parse_interfaces(out) if n != "local0"]
             if held:
                 # The path this was read from is deliberately NOT in the
                 # sentence. It is a seam, so on a box under test it would
@@ -20127,7 +20142,7 @@ class Shell:
                                 "on.", indent="  ")
         print()
 
-        nics = self.host_nics()
+        nics = f["nics"]
         if not nics:
             # NOT an empty table. "nothing to show" and "nothing is wrong"
             # look the same on a screen, and this screen is read on a box that
@@ -20171,7 +20186,7 @@ class Shell:
                         "is missing from Linux too.", indent="  ")
             return
 
-        mgmt = self.default_route_nic()
+        mgmt = f["mgmt"]
         # The Link column is as wide as the widest thing it can hold, and the
         # width is ONE NAME used by the header and the rows so the two cannot
         # drift. It was 7, and `unknown` is seven characters: on a card whose
@@ -21210,7 +21225,46 @@ class Shell:
         print(f"  no OSPF adjacency, on {len(running) - len(quiet)} "
               "interface(s) that are sending hellos")
 
-    def show_ospf_interfaces(self):
+    def ospf_interface_facts(self):
+        """
+        What `show ospf interface` reads, as data (#558, phase 7): whether
+        ospfd answered, and per interface FRR's row beside the dataplane's
+        MTU and the stall the two MTUs make. The screen is drawn from this one
+        reading and so is OperationalService.ListOspfInterfaces.
+
+        Each row keeps FRR's own values ("area", "cost", "mtu" may be "-"
+        when FRR did not say), the dataplane's MTU as None when it has none
+        for the interface - the management port - and `stall` as
+        [dataplane name, this end's MTU, the dataplane's] or None.
+        """
+        data = self.frr_json("show ip ospf interface json")
+        if data is None:
+            return {"answered": False, "interfaces": []}
+        ifaces = data.get("interfaces") or {}
+        if not ifaces:
+            return {"answered": True, "interfaces": []}
+        mtus = self.device_mtus()
+        rc, lcp = self.dp.run("show lcp")
+        pairs = routes.lcp_pairs(lcp) if rc == 0 else {}
+        stalls = self.ospf_mtu_stalls()
+        rows = []
+        for name in sorted(ifaces):
+            e = ifaces[name]
+            dp = self.dataplane_name(name, pairs, mtus)
+            stall = stalls.get(name)
+            rows.append({"name": name, "area": str(e.get("area", "-")),
+                         "state": str(e.get("state", "?")),
+                         "passive": bool(e.get("timerPassiveIface")),
+                         "cost": e.get("cost", "-"),
+                         "adjacent": int(e.get("nbrAdjacentCount", 0) or 0),
+                         "neighbors": int(e.get("nbrCount", 0) or 0),
+                         "mtu": e.get("mtuBytes", "-"),
+                         "dataplane": dp or "",
+                         "dataplane_mtu": mtus.get(dp),
+                         "stall": list(stall) if stall else None})
+        return {"answered": True, "interfaces": rows}
+
+    def show_ospf_interfaces(self, facts=None):
         """
         What OSPF believes about each interface, beside what the dataplane has.
 
@@ -21220,46 +21274,39 @@ class Shell:
         runs at the dataplane's - and when the two differ the adjacency stops
         in Exchange with no log line on either side. Until now no command on
         this box put those two numbers on one screen.
+
+        Drawn from ospf_interface_facts(), the reading the API's
+        ListOspfInterfaces carries, so the screen and the fields are one.
         """
-        data = self.frr_json("show ip ospf interface json")
-        if data is None:
+        f = self.ospf_interface_facts() if facts is None else facts
+        if not f["answered"]:
             self.err("OSPF is not answering")
             print("    ospfd may not be running; 'show version' says which "
                   "daemons are up")
             return
-        ifaces = data.get("interfaces") or {}
-        if not ifaces:
+        rows = f["interfaces"]
+        if not rows:
             print("  no interface is running OSPF")
             return
-        mtus = self.device_mtus()
-        rc, lcp = self.dp.run("show lcp")
-        pairs = routes.lcp_pairs(lcp) if rc == 0 else {}
-        stalls = self.ospf_mtu_stalls()
-
         print(f"  {'Interface':<14} {'Area':<10} {'State':<18} {'Cost':<6} "
               f"{'Adjacent':<10} {'OSPF MTU':<9} Dataplane")
-        for name in sorted(ifaces):
-            e = ifaces[name]
-            dp = self.dataplane_name(name, pairs, mtus)
+        for r in rows:
             # "-" and 0 are different answers. An interface the dataplane does
             # not have - the management port, which is kept away from VPP on
             # purpose - has no MTU here, and printing one would be inventing
             # the number this column exists to compare against.
-            there = mtus.get(dp)
-            state = str(e.get("state", "?"))
-            if e.get("timerPassiveIface"):
-                state += " (passive)"
-            adjacent = f"{e.get('nbrAdjacentCount', 0)} of " \
-                       f"{e.get('nbrCount', 0)}"
-            print(f"  {name:<14} {str(e.get('area', '-')):<10} {state:<18} "
-                  f"{str(e.get('cost', '-')):<6} {adjacent:<10} "
-                  f"{str(e.get('mtuBytes', '-')):<9} "
+            there = r["dataplane_mtu"]
+            state = r["state"] + (" (passive)" if r["passive"] else "")
+            adjacent = f"{r['adjacent']} of {r['neighbors']}"
+            print(f"  {r['name']:<14} {r['area']:<10} {state:<18} "
+                  f"{str(r['cost']):<6} {adjacent:<10} "
+                  f"{str(r['mtu']):<9} "
                   f"{'-' if there is None else there}"
-                  + (f"  ({dp})" if dp else ""))
-        for iface in sorted(stalls):
-            if iface in ifaces:
-                ifname, here, there = stalls[iface]
-                for line in mtu_stall_lines(ifname, iface, here, there):
+                  + (f"  ({r['dataplane']})" if r["dataplane"] else ""))
+        for r in rows:
+            if r["stall"]:
+                ifname, here, there = r["stall"]
+                for line in mtu_stall_lines(ifname, r["name"], here, there):
                     print("  " + line)
 
     # ---------------------------------------------------------------- IS-IS
@@ -21315,7 +21362,7 @@ class Shell:
         return (None if have is None else self.OSI_ISIS in have,
                 osi_input_drops(out) if rc == 0 else 0)
 
-    def report_isis_punt(self, silent_circuits):
+    def report_isis_punt(self, silent_circuits, punt=None):
         """
         Why there is no adjacency on a circuit that looks perfectly healthy.
 
@@ -21324,7 +21371,9 @@ class Shell:
         second one is what stops them chasing the trap this box is known for
         and sends them to the neighbour instead.
         """
-        punting, drops = self.isis_punt_state()
+        # `punt`: (punting, drops) already read by the caller, so a screen
+        # drawn from facts reports the reading its fields carry.
+        punting, drops = self.isis_punt_state() if punt is None else punt
         if punting is None:
             print_prose("the dataplane is not answering, so whether it is "
                         "punting IS-IS to the kernel is unknown", indent="  ")
@@ -21415,11 +21464,52 @@ class Shell:
                     "is what 'set-overload-bit' is for and what it looks like "
                     "when it was left on")
 
-    def show_isis_interfaces(self):
-        circuits = self.isis_circuits()
-        if not circuits:
-            data = self.frr_json("show isis interface detail json")
-            if data is None:
+    def isis_interface_facts(self):
+        """
+        What `show isis interface` reads, as data (#558, phase 7): whether
+        isisd answered, each circuit as a row, and - when there is a circuit
+        - the dataplane's IS-IS punt and its osi-input drops, which the screen
+        reports under the table. The screen is drawn from this one reading and
+        so is OperationalService.ListIsisInterfaces.
+
+        A circuit's "silent" is the screen's own test: active (not passive),
+        Up, and no neighbour - the shape of the trap report_isis_punt() is
+        about. `punting` is None when the dataplane could not be asked.
+        """
+        data = self.frr_json("show isis interface detail json")
+        rows = []
+        for area in (data or {}).get("areas") or []:
+            for circuit in area.get("circuits") or []:
+                i = circuit.get("interface")
+                if not isinstance(i, dict):
+                    continue
+                levels = i.get("levels") or []
+                active = sum(l.get("active-neighbors", 0) for l in levels)
+                passive = i.get("is-passive") != "active"
+                state = str(i.get("state", "?"))
+                rows.append({"name": str(i.get("name", "?")),
+                             "area": str(area.get("area", "?")),
+                             "circuit_id": i.get("circuit-id", "-"),
+                             "state": state, "passive": passive,
+                             "level": str(i.get("level", "-")),
+                             "metric": levels[0].get("metric", "-") if levels else "-",
+                             "active_neighbors": int(active or 0),
+                             "silent": (not passive and state == "Up"
+                                        and not active)})
+        punting, drops = self.isis_punt_state() if rows else (None, 0)
+        return {"answered": data is not None, "circuits": rows,
+                "punting": punting, "drops": int(drops or 0)}
+
+    def show_isis_interfaces(self, facts=None):
+        """
+        Each IS-IS circuit, and why a healthy-looking one has no neighbour.
+        Drawn from isis_interface_facts(), the reading the API's
+        ListIsisInterfaces carries.
+        """
+        f = self.isis_interface_facts() if facts is None else facts
+        rows = f["circuits"]
+        if not rows:
+            if not f["answered"]:
                 self.err("IS-IS is not answering")
                 print("    isisd may not be running; 'show version' says "
                       "which daemons are up")
@@ -21428,20 +21518,13 @@ class Shell:
             return
         print(f"  {'Interface':<14} {'Area':<10} {'Circuit':<9} {'State':<10} "
               f"{'Level':<7} {'Metric':<8} Neighbours")
-        silent = []
-        for area, i in circuits:
-            levels = i.get("levels") or []
-            active = sum(l.get("active-neighbors", 0) for l in levels)
-            state = str(i.get("state", "?"))
-            if i.get("is-passive") != "active":
-                state += " (passive)"
-            elif state == "Up" and not active:
-                silent.append((area, i))
-            metric = levels[0].get("metric", "-") if levels else "-"
-            print(f"  {str(i.get('name', '?')):<14} {str(area):<10} "
-                  f"{str(i.get('circuit-id', '-')):<9} {state:<10} "
-                  f"{str(i.get('level', '-')):<7} {str(metric):<8} {active}")
-        self.report_isis_punt(silent)
+        for r in rows:
+            state = r["state"] + (" (passive)" if r["passive"] else "")
+            print(f"  {r['name']:<14} {r['area']:<10} "
+                  f"{str(r['circuit_id']):<9} {state:<10} "
+                  f"{r['level']:<7} {str(r['metric']):<8} {r['active_neighbors']}")
+        self.report_isis_punt([r for r in rows if r["silent"]],
+                              (f["punting"], f["drops"]))
 
     def do_clear(self, line):
         """

@@ -53,6 +53,7 @@ if HERE not in sys.path:
 
 import cgnatshow  # noqa: E402 - the CGNAT's screens, typed (#558, phase 6)
 import logstate  # noqa: E402 - the CGNAT log export's state (#555)
+import opshow  # noqa: E402 - the rest of the screens, typed (#558, phase 7)
 import typedcfg  # noqa: E402 - typed configuration (#558, phase 2)
 
 #: Where the server listens inside the management container: the backplane
@@ -750,6 +751,152 @@ def ha_fields(facts):
                           and not facts["divergences"])}
 
 
+def facts_screen(sh, read, draw):
+    """
+    A screen drawn from facts (#558, phase 7): `read()` once, the screen
+    `draw(facts)` prints from that reading, and both back - so an rpc's
+    fields and the text it carries are one reading, as phase 6's memory and
+    HA screens are.
+    """
+    f = read()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        draw(f)
+    return {"facts": f, "text": buf.getvalue()}
+
+
+#: `show snmp mib` and `show snmp zabbix-template` (#558, phase 7): the
+#: VTY's command, the file it reads, and how the file is handed out.
+SNMP_FILES = {
+    "mib": ("show snmp mib", "SNMP_MIB_TEMPLATE", "PRISMA-ROUTING-MIB.txt",
+            "text/plain"),
+    "zabbix": ("show snmp zabbix-template", "ZABBIX_TEMPLATE",
+               "prisma-routing-zabbix.json", "application/json"),
+}
+
+
+def snmp_file_read(sh, kind):
+    """
+    The MIB or the Zabbix template as the VTY prints it: the file with the
+    running enterprise number in it, or the VTY's own refusal - no number
+    yet, or the file missing. {"ok", "content" | "refusal", "pen"}.
+    """
+    import prismash as P
+    command, attr, _, _ = SNMP_FILES[kind]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        content = sh.text_with_pen(getattr(P, attr))
+    pen = sh.running_config().snmp.get("enterprise-number", "")
+    if content:
+        return {"ok": True, "content": content, "pen": str(pen)}
+    return {"ok": False, "refusal": screen(sh, command).strip(), "pen": str(pen)}
+
+
+#: The probes the API runs (#558, phase 7), the VTY's three.
+PROBES = ("ping", "traceroute", "mtr")
+
+
+def probe_stream(sh, args):
+    """
+    A probe for the API, in the account's process: the VTY's own statement
+    decides it - Shell.do_probe() reads the host, the count and the source
+    and refuses what it would refuse at the prompt - and builds the argv;
+    the argv is then run here or through the host's door, as the VTY runs
+    it, and its output yielded as it comes.
+
+    Yields {"refused": text, "absent": bool} once when the VTY refuses it,
+    else {"out": chunk} per chunk, {"tick": True} while the tool is quiet,
+    and {"rc": status, "refusal": text} last.
+    """
+    import doors
+    tool = args["tool"]
+    if tool not in PROBES:
+        yield {"refused": f"'{tool}' is not a probe", "absent": False}
+        return
+    words = [args["host"]] if args.get("host") else []
+    if args.get("count"):
+        words += ["count", str(args["count"])]
+    if args.get("source"):
+        words += ["source", args["source"]]
+    got = {}
+    # THE VTY'S DECISION, AND ONLY ITS ARGV KEPT: do_probe validates exactly
+    # as at the prompt and hands run_probe() what it would run; this
+    # instance's run_probe keeps it instead of running it to the console.
+    sh.run_probe = lambda _tool, argv: got.setdefault("argv", list(argv))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            sh.do_probe(tool, words)
+    finally:
+        del sh.run_probe
+    if "argv" not in got:
+        text = buf.getvalue().strip()
+        yield {"refused": text, "absent": f"this box has no {tool}" in text}
+        return
+    if os.environ.get("PRISMA_IN_MGMT"):
+        chunks = doors.probe_chunks(got["argv"], ticks=True)
+    else:
+        chunks = doors.run_chunks(got["argv"], ticks=True)
+    try:
+        for m in chunks:
+            if m[0] == "out":
+                yield {"out": m[1]}
+            elif m[0] == "tick":
+                yield {"tick": True}
+            else:
+                yield {"rc": m[1], "refusal": m[2] if len(m) > 2 else ""}
+    finally:
+        chunks.close()
+
+
+#: Worker operations that answer in parts (#558, phase 7): a generator
+#: whose items go back one by one.
+STREAMS = {
+    "probe": probe_stream,
+}
+
+
+def stream_to(conn, items):
+    """
+    Send a stream's items down the worker's pipe as ("part", item), then
+    ("ok", None) - or ("err", why). Between items the parent may say
+    "cancel" (its caller went away: the generator is closed, which stops the
+    probe) or None (the worker is closing). Returns False when the worker
+    must stop.
+    """
+    try:
+        for item in items:
+            conn.send(("part", item))
+            if conn.poll(0):
+                msg = conn.recv()
+                if msg == "cancel" or msg is None:
+                    items.close()
+                    conn.send(("ok", None))
+                    return msg is not None
+        conn.send(("ok", None))
+    except Exception as e:  # noqa: BLE001 - the request fails, not the worker
+        items.close()
+        conn.send(("err", f"{type(e).__name__}: {e}"))
+    return True
+
+
+#: How long a probe's stream may go without a part (#558, phase 7): the
+#: tool's deadline - its quiet stretches send ticks - with room to end.
+PROBE_WAIT = 330
+
+
+def probe_event_pb(pb, tool, line):
+    """One line a probe printed as a ProbeEvent, with its reply or hop."""
+    kind, fields = opshow.probe_line(tool, line)
+    if kind == "reply":
+        return pb.ProbeEvent(line=line, reply=pb.PingReply(**fields))
+    if kind == "hop":
+        return pb.ProbeEvent(line=line, hop=pb.TraceHop(**fields))
+    if kind == "mtr_hop":
+        return pb.ProbeEvent(line=line, mtr_hop=pb.MtrHop(**fields))
+    return pb.ProbeEvent(line=line)
+
+
 def enum_name(prefix, value):
     """A parser's word as its proto enum's name: ("SOURCE", "outside_range")
     is "SOURCE_OUTSIDE_RANGE"; an empty word is the enum's UNSPECIFIED."""
@@ -824,6 +971,16 @@ READERS = {
     "cgnat": lambda sh, a: cgnat_read(sh, a["kind"], a.get("args")),
     "cgnat_memory": lambda sh, a: cgnat_memory_read(sh),
     "ha": lambda sh, a: ha_read(sh),
+    # #558, phase 7: the rest of the screens, each drawn from the facts the
+    # rpc carries, or (show logging, FRR's own screen) read from its text.
+    "ospf_interfaces": lambda sh, a: facts_screen(
+        sh, sh.ospf_interface_facts, sh.show_ospf_interfaces),
+    "isis_interfaces": lambda sh, a: facts_screen(
+        sh, sh.isis_interface_facts, sh.show_isis_interfaces),
+    "hardware": lambda sh, a: facts_screen(
+        sh, sh.hardware_facts, lambda f: sh.show_hardware([], f)),
+    "routing_logging": lambda sh, a: screen(sh, "show logging"),
+    "snmp_file": lambda sh, a: snmp_file_read(sh, a),
 }
 
 
@@ -1594,7 +1751,15 @@ def _worker_main(conn, account, shell_factory):
             return
         if msg is None:
             return
+        # A cancel that crossed a stream's own end (#558, phase 7): the
+        # stream it was for is over, and the parent's drain read its end.
+        if msg == "cancel":
+            continue
         op, args = msg
+        if op in STREAMS:
+            if not stream_to(conn, STREAMS[op](sh, args)):
+                return
+            continue
         try:
             conn.send(("ok", handle(sh, op, args)))
         except Exception as e:  # noqa: BLE001 - the request fails, not the worker
@@ -1662,6 +1827,62 @@ class Worker:
         if state != "ok":
             raise WorkerError(value)
         return value
+
+    def ask_stream(self, op, args=None, timeout=None):
+        """
+        `op` answered in parts by the account's Shell (#558, phase 7): yields
+        each part as it comes. The process is held for the whole stream, as
+        the console is held for a probe. A caller that stops early - its
+        client cancelled - closes this generator: the process is told
+        "cancel", which stops the probe, and a thread reads what is still in
+        flight so the next request starts on a clean pipe.
+        """
+        wait = self.timeout if timeout is None else timeout
+        self.lock.acquire()
+        done = False
+        try:
+            self.used = time.monotonic()
+            self.conn.send((op, args))
+            while True:
+                if not self.conn.poll(wait):
+                    raise WorkerError(f"{op}: nothing in {wait}s")
+                state, value = self.conn.recv()
+                if state == "part":
+                    yield value
+                    continue
+                done = True
+                if state != "ok":
+                    raise WorkerError(value)
+                return
+        except (EOFError, OSError, BrokenPipeError) as e:
+            done = True
+            self.close()
+            raise WorkerError(f"{op}: the session ended ({e})")
+        finally:
+            if done:
+                self.lock.release()
+            else:
+                try:
+                    self.conn.send("cancel")
+                except (OSError, BrokenPipeError):
+                    pass
+                threading.Thread(target=self._drain, args=(wait,),
+                                 daemon=True).start()
+
+    def _drain(self, wait):
+        """After a cancel: read until the stream's end, then free the process
+        for the next request; a process that never ends it is stopped."""
+        try:
+            while self.conn.poll(wait):
+                state, _ = self.conn.recv()
+                if state != "part":
+                    return
+            self.close()
+        except (EOFError, OSError, BrokenPipeError):
+            pass
+        finally:
+            self.used = time.monotonic()
+            self.lock.release()
 
     def close(self):
         """Stop the process."""
@@ -3453,6 +3674,113 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             if got["facts"]["peer_copied"] is not None:
                 out.peer_copied.CopyFrom(ts(got["facts"]["peer_copied"]))
             return out
+
+        # not a unit: rpcs, driven by lab/api-grpc.sh's seventh phase; the
+        # Shell's *_facts(), opshow's readers and probe_stream() are what
+        # they do, and are tested.
+        def ListOspfInterfaces(self, req, context):
+            got = self._ask(context, "ospf_interfaces")
+            f = opshow.ospf_fields(got["facts"])
+            return pb.OspfInterfaces(
+                answered=f["answered"], text=got["text"],
+                interfaces=[pb.OspfInterface(**r) for r in f["interfaces"]])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def ListIsisInterfaces(self, req, context):
+            got = self._ask(context, "isis_interfaces")
+            f = opshow.isis_fields(got["facts"])
+            rows = f.pop("circuits")
+            return pb.IsisInterfaces(
+                text=got["text"], circuits=[pb.IsisInterface(**r) for r in rows],
+                **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def GetHardware(self, req, context):
+            got = self._ask(context, "hardware")
+            f = opshow.hardware_fields(got["facts"])
+            nics = f.pop("nics")
+            return pb.Hardware(text=got["text"],
+                               nics=[pb.HardwareNic(**n) for n in nics], **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def GetRoutingLogging(self, req, context):
+            text = self._ask(context, "routing_logging")
+            daemons = []
+            for d in opshow.parse_routing_logging(text):
+                daemons.append(pb.DaemonLogging(
+                    syslog=pb.LoggingTarget(**d.pop("syslog")),
+                    stdout=pb.LoggingTarget(**d.pop("stdout")),
+                    file=pb.LoggingTarget(**d.pop("file")), **d))
+            return pb.RoutingLogging(daemons=daemons, text=text)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def GetSnmpFile(self, req, context):
+            kind = {pb.GetSnmpFileRequest.KIND_MIB: "mib",
+                    pb.GetSnmpFileRequest.KIND_ZABBIX_TEMPLATE: "zabbix"}.get(req.kind)
+            if kind is None:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                              "kind: KIND_MIB or KIND_ZABBIX_TEMPLATE")
+            got = self._ask(context, "snmp_file", kind)
+            if not got["ok"]:
+                context.abort(grpc.StatusCode.FAILED_PRECONDITION, got["refusal"])
+            _, _, filename, media = SNMP_FILES[kind]
+            return pb.SnmpFile(filename=filename, media_type=media,
+                               enterprise_number=got["pen"], content=got["content"])
+
+        # not a unit: the rpcs' body, driven by lab/api-grpc.sh's seventh
+        # phase; probe_stream(), probe_event_pb() and opshow are what it
+        # does, and are tested.
+        def _probe(self, tool, req, context):
+            """A probe streamed as ProbeEvents: one per line the tool
+            prints, read where the line is a reply or a hop, then `end`."""
+            acct = account(context)
+            try:
+                w = sessions.console_worker(acct)
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            args = {"tool": tool, "host": req.host, "count": int(req.count),
+                    "source": req.source}
+            lines = opshow.LineSplitter()
+            seen = []
+            parts = w.ask_stream("probe", args, timeout=PROBE_WAIT)
+            try:
+                for part in parts:
+                    if not context.is_active():
+                        return
+                    if "refused" in part:
+                        context.abort(grpc.StatusCode.FAILED_PRECONDITION
+                                      if part["absent"] else
+                                      grpc.StatusCode.INVALID_ARGUMENT,
+                                      part["refused"])
+                    if "out" in part:
+                        for line in lines.feed(part["out"]):
+                            seen.append(line)
+                            yield probe_event_pb(pb, tool, line)
+                    elif "rc" in part:
+                        for line in lines.rest():
+                            seen.append(line)
+                            yield probe_event_pb(pb, tool, line)
+                        if part.get("refusal"):
+                            context.abort(grpc.StatusCode.FAILED_PRECONDITION,
+                                          part["refusal"])
+                        yield pb.ProbeEvent(end=pb.ProbeEnd(**opshow.probe_end(
+                            tool, "\n".join(seen), part["rc"])))
+            except WorkerError as e:
+                context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
+            finally:
+                parts.close()
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def Ping(self, req, context):
+            yield from self._probe("ping", req, context)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def Traceroute(self, req, context):
+            yield from self._probe("traceroute", req, context)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
+        def Mtr(self, req, context):
+            yield from self._probe("mtr", req, context)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh; logging_fields() and
         # logstate are what it does, and are tested.

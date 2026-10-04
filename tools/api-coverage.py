@@ -60,9 +60,14 @@ OPERATIONAL_RULES = [
     (["test", "policy"], "typed", "OperationalService.TestPolicy", ""),
     (["start", "shell"], "n/a", "-",
      "never through the API: a shell is every capability at once"),
-    (["ping"], "text", "OperationalService.Show", "a typed probe is phase 11"),
-    (["traceroute"], "text", "OperationalService.Show", "a typed probe is phase 11"),
-    (["mtr"], "text", "OperationalService.Show", "a typed probe is phase 11"),
+    # #558, phase 7: the probes, streamed - a ProbeEvent per line the tool
+    # prints, its reply or hop read, then its end.
+    (["ping"], "typed", "OperationalService.Ping (a stream)",
+     "a reply per message, then the summary"),
+    (["traceroute"], "typed", "OperationalService.Traceroute (a stream)",
+     "a hop per message"),
+    (["mtr"], "typed", "OperationalService.Mtr (a stream)",
+     "the report's hops, at the end of the run"),
     (["monitor", "interface"], "typed", "TelemetryService.Subscribe",
      "interface counters as a stream; GetHistory for the past day"),
     (["monitor", "cgnat", "logging"], "typed", "TelemetryService.WatchLogging",
@@ -121,6 +126,20 @@ OPERATIONAL_RULES = [
     (["show", "bgp"], "typed", "OperationalService.ListBgpNeighbors",
      "per-neighbor detail beyond the summary is text (phase 6)"),
     (["show", "ospf", "neighbor"], "typed", "OperationalService.ListOspfNeighbors", ""),
+    # #558, phase 7: the rest of the screens, each drawn from the facts the
+    # rpc carries, the screen verbatim beside them.
+    (["show", "ospf", "interface"], "typed", "OperationalService.ListOspfInterfaces",
+     "both MTUs and the stall"),
+    (["show", "isis", "interface"], "typed", "OperationalService.ListIsisInterfaces",
+     "the circuits and the dataplane's IS-IS punt"),
+    (["show", "hardware"], "typed", "OperationalService.GetHardware", ""),
+    (["show", "logging"], "typed", "OperationalService.GetRoutingLogging",
+     "FRR's logging per daemon"),
+    (["show", "snmp", "mib"], "typed", "OperationalService.GetSnmpFile (KIND_MIB)",
+     "the file, with the enterprise number in it"),
+    (["show", "snmp", "zabbix-template"], "typed",
+     "OperationalService.GetSnmpFile (KIND_ZABBIX_TEMPLATE)",
+     "the JSON Zabbix 7.0 imports"),
     (["show", "isis", "adjacency"], "typed",
      "OperationalService.ListIsisAdjacencies", ""),
     (["show", "lacp"], "typed", "OperationalService.ListBundles", ""),
@@ -477,20 +496,27 @@ grouping rule (#533).
    `ListForwards`, `GetHaStatus`. Each reads the VTY's own screen through
    the same Shell and carries it verbatim beside the fields. `show cgnat ha
    peer <file>` - a path on the box's disk - stays text.
-6. **Routing detail.** BGP neighbor detail (prefixes received/accepted,
-   timers, capabilities, last error), OSPF and IS-IS interfaces, verbose
-   routes.
-7. **System detail.** `show hardware` (NICs, PCI, NUMA, queues), per-core
-   CPU, `show logging` as a stream of the box's own log, `show snmp mib` and
-   the Zabbix template as downloads.
+6. **Routing detail.** OSPF and IS-IS interfaces - *delivered as #558's
+   seventh phase*: `ListOspfInterfaces` (both MTUs and the stall between
+   them) and `ListIsisInterfaces` (the circuits and the dataplane's IS-IS
+   punt). Still to come: BGP neighbor detail (prefixes received/accepted,
+   timers, capabilities, last error) and verbose routes.
+7. **System detail** - *delivered as #558's seventh phase*: `GetHardware`
+   (the NICs Linux has, PCI, driver, link, the default route's card, what
+   the dataplane holds), `GetRoutingLogging` (`show logging`: FRR's logging
+   configuration per daemon) and `GetSnmpFile` (`show snmp mib` and the
+   Zabbix template as files to download). Per-core CPU is still to come.
 8. **Accounts and SNMP users**, typed reads (accounts, roles, whether a key
    or password is set, SNMP users and their levels); edits stay lines.
 9. **Routing configuration typed reads**: static routes, BGP neighbors and
    address families, OSPF, IS-IS, RPKI.
 10. **Policy configuration typed reads**: prefix-lists, policy-statements
     and terms as structure (ListPolicies already returns what is compiled).
-11. **Probes as streams**: ping, traceroute, mtr as `ProbeService` with one
-    message per reply/hop, instead of the finished screen through Show.
+11. **Probes as streams** - *delivered as #558's seventh phase*, on
+    OperationalService rather than a service of their own: `Ping`,
+    `Traceroute` and `Mtr` stream a `ProbeEvent` per line the tool prints,
+    with its reply or hop read, then `end`; the VTY's own validation, its
+    count ceiling and its deadline. `Show` still answers them as text.
 
 Every row this table marks `text` is reachable today; `none` rows become
 reachable in the phase their note names.

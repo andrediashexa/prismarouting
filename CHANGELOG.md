@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The rest of the VTY's screens through the management API, typed, and
+  the probes streamed.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 7)
+  `OperationalService` gains `ListOspfInterfaces` (`show ospf interface`:
+  each interface's area, state, cost and neighbours, the MTU ospfd
+  advertises beside the dataplane's, and the stall the two make),
+  `ListIsisInterfaces` (`show isis interface`: the circuits, the silent ones,
+  and whether the dataplane punts IS-IS to the kernel), `GetHardware` (`show
+  hardware`: the NICs Linux has, which one carries the default route, what
+  the dataplane holds), `GetRoutingLogging` (`show logging`: FRR's logging
+  per daemon) and `GetSnmpFile` (`show snmp mib` and `show snmp
+  zabbix-template` as files to hand to an NMS). Each carries the VTY's screen
+  in `text`; the OSPF, IS-IS and hardware screens are now drawn by the Shell
+  from one reading (`ospf_interface_facts()`, `isis_interface_facts()`,
+  `hardware_facts()`) that the rpc carries too, so the fields and the screen
+  cannot disagree. `Ping`, `Traceroute` and `Mtr` stream a `ProbeEvent` per
+  line the tool prints - a reply, a hop or a report row read into fields -
+  then its `end` (exit status, the box's deadline, ping's summary). The VTY's
+  own statement decides each probe: the same host, count and source checks,
+  the same ceiling of 100 and deadline of 300 s, and a tool the box lacks
+  refused with the package to install. Cancelling the call stops the probe:
+  the account's process is told, closes it, and is read back to the end so
+  the next call starts clean. `docs/api-coverage.md` now counts every `show`
+  as typed but `show cgnat ha peer <file>`, a path on the box's disk.
+
 ### Fixed
 
 ## 0.150.5 - a line FRR refuses fails the VTY batch

@@ -885,16 +885,20 @@ def probe_ok(argv):
     return len(tail) == 1 and probe_host_ok(tail[0])
 
 
-def stream_probe(conn, argv, popen=subprocess.Popen, deadline=None):
+def run_chunks(argv, popen=subprocess.Popen, deadline=None, ticks=False):
     """
-    Run a probe and send its output down `conn` as it comes, one JSON line
-    per chunk ({"out": ...}), then {"rc": ...}. A probe's value is arriving
-    row by row, which is why this door streams and the others do not.
+    Run a probe here and yield its output as it comes: ("out", text) per
+    chunk, then ("rc", status) - 124 when the deadline stopped it. Closing
+    the generator early kills the probe, which is how a caller that went away
+    stops it. stream_probe() sends these down the door's socket; the API's
+    Ping/Traceroute/Mtr (#558, phase 7) read them directly on a box with no
+    door between the account and the tool.
 
-    A caller that goes away - Ctrl-C at the VTY closes the socket - stops
-    the probe: the write fails and the process is killed. So does the
-    deadline, the one prismash gives a probe run here.
+    `ticks`: also ("tick", None) every half second the tool is quiet, so a
+    caller can notice it was cancelled while ping waits on a host that does
+    not answer.
     """
+    import select
     import time
     deadline = PROBE_DEADLINE if deadline is None else deadline
     p = popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -906,25 +910,83 @@ def stream_probe(conn, argv, popen=subprocess.Popen, deadline=None):
                 p.kill()
                 rc = 124
                 break
-            r, _, _ = __import__("select").select([p.stdout], [], [], 0.5)
+            r, _, _ = select.select([p.stdout], [], [], 0.5)
             if r:
                 chunk = os.read(p.stdout.fileno(), 4096)
                 if not chunk:
                     rc = p.wait()
                     break
-                conn.sendall(json.dumps(
-                    {"out": chunk.decode(errors="replace")}).encode() + b"\n")
+                yield ("out", chunk.decode(errors="replace"))
             elif p.poll() is not None:
                 continue
-        conn.sendall(json.dumps({"rc": rc}).encode() + b"\n")
-    except OSError:
-        p.kill()
-        rc = 130
+            elif ticks:
+                yield ("tick", None)
+        yield ("rc", rc)
     finally:
         if p.poll() is None:
             p.kill()
         p.wait()
+
+
+def stream_probe(conn, argv, popen=subprocess.Popen, deadline=None):
+    """
+    Run a probe and send its output down `conn` as it comes, one JSON line
+    per chunk ({"out": ...}), then {"rc": ...}. A probe's value is arriving
+    row by row, which is why this door streams and the others do not.
+
+    A caller that goes away - Ctrl-C at the VTY closes the socket - stops
+    the probe: the write fails and the process is killed. So does the
+    deadline, the one prismash gives a probe run here.
+    """
+    rc = None
+    chunks = run_chunks(argv, popen=popen, deadline=deadline)
+    try:
+        for kind, value in chunks:
+            if kind == "out":
+                conn.sendall(json.dumps({"out": value}).encode() + b"\n")
+            else:
+                rc = value
+        conn.sendall(json.dumps({"rc": rc}).encode() + b"\n")
+    except OSError:
+        chunks.close()
+        rc = 130
     return rc
+
+
+def probe_chunks(argv, path=SOCKET, ticks=False):
+    """
+    A probe through the host's door, as it arrives: ("out", text) per chunk,
+    then ("rc", status, refusal) - refusal the door's words when it would not
+    run the probe, else "". Closing the generator closes the connection,
+    which is what stops the probe on the host. `ticks` as run_chunks().
+    """
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(path)
+        s.sendall(json.dumps({"probe": list(argv)}).encode() + b"\n")
+        if ticks:
+            s.settimeout(0.5)
+        buf = b""
+        while True:
+            try:
+                chunk = s.recv(65536)
+            except socket.timeout:
+                yield ("tick", None)
+                continue
+            if not chunk:
+                yield ("rc", 125, "the host's door went away")
+                return
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                m = json.loads(line)
+                if "out" in m and "rc" not in m:
+                    yield ("out", m["out"])
+                elif "rc" in m:
+                    yield ("rc", m["rc"], m.get("out", "") if m["rc"] == 126 else "")
+                    return
+    finally:
+        s.close()
 
 
 def probe(argv, path=SOCKET, out=None):
@@ -935,26 +997,17 @@ def probe(argv, path=SOCKET, out=None):
     stops the probe on the host.
     """
     out = out or sys.stdout
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    chunks = probe_chunks(argv, path)
     try:
-        s.connect(path)
-        s.sendall(json.dumps({"probe": list(argv)}).encode() + b"\n")
-        buf = b""
-        while True:
-            chunk = s.recv(65536)
-            if not chunk:
-                return 125, "the host's door went away"
-            buf += chunk
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                m = json.loads(line)
-                if "out" in m and "rc" not in m:
-                    out.write(m["out"])
-                    out.flush()
-                elif "rc" in m:
-                    return m["rc"], m.get("out", "") if m["rc"] == 126 else ""
+        for m in chunks:
+            if m[0] == "out":
+                out.write(m[1])
+                out.flush()
+            else:
+                return m[1], m[2]
     finally:
-        s.close()
+        chunks.close()
+    return 125, "the host's door went away"
 
 
 def handle(conn, allowed_uids=(0,), execute=run_locally):
