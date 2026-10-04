@@ -315,6 +315,7 @@ O `commit check` recusa duas coisas, cada uma dizendo o que fazer:
 
 **Quem manda esse anúncio é o FRR, não o dataplane.** O anúncio do VPP não tem a opção PREF64; o do FRR tem, e sai pela mesma porta. Numa interface com `ipv6 nd nat64` a caixa passa o anúncio para o FRR e desliga o do dataplane, para que o assinante ouça **um** roteador só, com o prefixo em todo anúncio. Tirando o `ipv6 nd nat64`, o anúncio volta para o dataplane. Você não precisa escrever nada no FRR: as linhas são da caixa, `show running-config` as mostra dentro do bloco da interface e nunca na parte de roteamento.
 
+
 :::info
 O CLAT também pode aprender o prefixo perguntando `ipv4only.arpa` a um resolvedor DNS64 (RFC 7050). Esta caixa não é o resolvedor do assinante: o DNS64 que você opera precisa sintetizar com **o mesmo** prefixo que a caixa anuncia, ou os dois métodos discordam.
 
