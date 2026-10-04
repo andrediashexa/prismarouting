@@ -1801,6 +1801,48 @@ finally:
     prismash.HOT_CARD_TOOL, prismash.HOT_CARDS = _saved
 ok("the record, the notice and the restart that takes them through DPDK")
 
+# #564: on a box the restart runs as a unit of its own and the VTY only
+# follows it - on 10.95.200.198 the API's run of it died with the containers
+# it stopped, and nothing started them again.
+_argv = prismash.dataplane_restart_argv("/x/hot", "/x/log")
+check(_argv[:3] == ("systemd-run", "--collect",
+                    "--unit=prisma-routing-dataplane-restart")
+      and "--property=StandardOutput=truncate:/x/log" in _argv
+      and _argv[-1] == '/x/hot restart-dataplane; echo "prisma-api-exit $?"',
+      f"a unit of its own, its output in the log, its exit line last: {_argv!r}")
+check(prismash.detach_dataplane_restart(prismash.HOT_CARD_INSTALLED,
+                                        which=lambda c: "/usr/bin/" + c,
+                                        isdir=lambda d: True)
+      and not prismash.detach_dataplane_restart("/tmp/stand-in",
+                                                which=lambda c: "/usr/bin/" + c,
+                                                isdir=lambda d: True)
+      and not prismash.detach_dataplane_restart(prismash.HOT_CARD_INSTALLED,
+                                                which=lambda c: None,
+                                                isdir=lambda d: True)
+      and not prismash.detach_dataplane_restart(prismash.HOT_CARD_INSTALLED,
+                                                which=lambda c: "/usr/bin/" + c,
+                                                isdir=lambda d: False),
+      "detached only with the installed tool, systemd-run and a running systemd")
+sh = shell()
+_ran = []
+sh.sys._run = lambda argv, **k: (_ran.append(argv), (0, ""))[1]
+rv, text = driven(lambda: sh.dataplane_restart_detached(
+    follow=lambda path, started, wait: 0))
+check(_ran and _ran[0][0] == "systemd-run" and "the dataplane is starting" in text,
+      f"it starts the unit and says the dataplane is starting: {_ran!r} {text!r}")
+rv, text = driven(lambda: sh.dataplane_restart_detached(
+    follow=lambda path, started, wait: 1))
+check("could not be restarted" in text, f"a unit that failed is said: {text!r}")
+rv, text = driven(lambda: sh.dataplane_restart_detached(
+    follow=lambda path, started, wait: None))
+check("did not finish" in text and "goes on as a unit" in text,
+      f"a unit still running past the wait is said, not called failed: {text!r}")
+sh.sys._run = lambda argv, **k: (1, "Unit prisma-routing-dataplane-restart.service was already loaded")
+rv, text = driven(lambda: sh.dataplane_restart_detached(follow=lambda *a, **k: 0))
+check("could not be started" in text and "already loaded" in text,
+      f"a restart already running is refused with systemd's words: {text!r}")
+ok("the dataplane restart runs as a unit of its own and is followed (#564)")
+
 # The advice names a command that can be followed (#453): on the containers
 # `systemctl restart prisma-routing-containers` is refused by systemd, so the
 # screens send the operator to the VTY's own command there.

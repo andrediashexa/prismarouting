@@ -27,6 +27,23 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.27 - a dataplane restart that always comes back, and rights that follow the account
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **Unsafe on 0.149.25 and 0.149.26 (#564):** `SystemService.RestartDataplane`
+  could stop the containers and never start them - measured on
+  10.95.200.198, dark until a reboot because its management is a dataplane
+  interface. **Do not call RestartDataplane on those releases.** From 0.149.27
+  the restart runs as a host unit of its own; the call returns its output
+  as before. While the dataplane is down the API is away too; it comes back
+  with the containers (its socket is reset after the restart).
+* **Rights follow the account (#565):** a role or `operator` given or taken
+  reaches the account's API calls at once - WhoAmI's `can_operate` and the
+  calls it gates included - with no API restart. A candidate opened before
+  such a change is closed and answers `NOT_FOUND` / `CANDIDATE_EXPIRED`;
+  open a new one.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.26 - an operator may upgrade and reboot without root (#563)
 
 * **Contract:** additive. `prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`.

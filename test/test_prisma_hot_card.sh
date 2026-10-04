@@ -65,6 +65,10 @@ cat > "$T/systemctl" <<EOF
 #!/bin/sh
 echo "systemctl \$*" >> "$S/calls"
 [ "\$*" = "stop prisma-routing-containers.service" ] && [ -e "$S/nostop" ] && exit 1
+# #564: is-active answers from the stand-in's state; the API's socket exists
+# only when the test says so.
+[ "\$*" = "is-active --quiet prisma-routing-containers.service" ] && { [ -e "$S/stillactive" ]; exit \$?; }
+[ "\$*" = "cat prisma-routing-api-proxy.socket" ] && { [ -e "$S/apisocket" ]; exit \$?; }
 exit 0
 EOF
 cat > "$T/giveback" <<EOF
@@ -170,7 +174,7 @@ echo "=== restart-dataplane: stop, hand the cards back, tune, start ==="
 fresh; HC add eth9 >/dev/null; : > "$S/calls"
 OUT=$(HC restart-dataplane); RC=$?
 _seq=$(grep -E "^systemctl|^giveback|name eth9$" "$S/calls" | tr '\n' '|')
-[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl start prisma-routing.service|" ] \
+[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl start prisma-routing.service|systemctl cat prisma-routing-api-proxy.socket|" ] \
   && ok "stopped, every claimed card given back, renamed back, tuned, started, replayed" \
   || bad "the sequence (rc=$RC): $_seq"
 ! called "restart prisma-routing-containers" \
@@ -178,12 +182,32 @@ _seq=$(grep -E "^systemctl|^giveback|name eth9$" "$S/calls" | tr '\n' '|')
   || bad "a restart of the containers unit was asked"
 [ ! -e "$R/run/prisma-routing/hot-cards" ] && ok "and the record is cleared" \
   || bad "the record outlived the dataplane that knew it"
-fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/nostop"
+fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/nostop" "$S/stillactive"
 OUT=$(HC restart-dataplane); RC=$?
 [ $RC = 1 ] && ! called "name eth9$" && ! called "prisma-routing-tune" && ! called "giveback" \
   && [ -s "$R/run/prisma-routing/hot-cards" ] && said "nothing was changed" \
-  && ok "a dataplane that would not stop is left exactly as it was" \
+  && ok "a dataplane that would not stop, and still runs, is left exactly as it was" \
   || bad "a failed stop (rc=$RC): $(cat "$S/calls")"
+rm -f "$S/nostop" "$S/stillactive"
+
+echo "=== #564: a stop that failed with the dataplane down still ends started ==="
+# 10.95.200.198, 0.149.26: the containers went down, the stop did not report
+# success, and this returned "nothing was changed" - leaving the box with no
+# dataplane until a reboot.
+fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/nostop"
+OUT=$(HC restart-dataplane); RC=$?
+called "start prisma-routing-containers.service" && called "start prisma-routing.service" \
+  && ! said "nothing was changed" \
+  && ok "the containers and the configuration are started again" \
+  || bad "a stop that failed on a dataplane going down (rc=$RC): $(cat "$S/calls")"
+rm -f "$S/nostop"
+fresh; : > "$S/calls"; touch "$S/apisocket"
+OUT=$(HC restart-dataplane); RC=$?
+called "reset-failed prisma-routing-api-proxy.socket" \
+  && called "start prisma-routing-api-proxy.socket" \
+  && ok "the API's socket is reset and started again after the dataplane" \
+  || bad "the API's socket was left as the restart found it: $(cat "$S/calls")"
+rm -f "$S/apisocket"
 
 echo "=== the paths it runs are the paths install.sh writes ==="
 # Measured on a KVM guest: the default pointed at /usr/lib/prisma-routing/

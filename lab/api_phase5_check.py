@@ -219,6 +219,30 @@ def system_checks():
             lambda: list(netview.Upgrade(pb.UpgradeRequest(version="0.149.99"),
                                          timeout=60)),
             grpc.StatusCode.PERMISSION_DENIED, "REASON_PERMISSION")
+    # #565: a capability given or taken reaches the API with the server
+    # never restarted. netview already has a worker (the calls above); it is
+    # put into prisma-operator, asks a reboot (allowed), is taken out, asks
+    # again (refused). Before #565 its worker kept the groups it started
+    # with: on 10.95.200.198 prisma-web was refused with prisma-operator in
+    # its groups until the API was restarted.
+    def operator_follows_the_account():
+        import subprocess
+        subprocess.run(["usermod", "-aG", "prisma-operator", "netview"], check=True)
+        try:
+            r = netview.Reboot(A(force=True), timeout=60)
+            granted = "restarting the box" in r.output
+        except grpc.RpcError as e:
+            granted, r = False, e
+        subprocess.run(["gpasswd", "-d", "netview", "prisma-operator"],
+                       check=True, capture_output=True)
+        try:
+            netview.Reboot(A(force=True), timeout=60)
+            revoked = False
+        except grpc.RpcError as e:
+            revoked = e.code() == grpc.StatusCode.PERMISSION_DENIED
+        result("operator-follows-the-account", granted and revoked,
+               f"granted={granted} revoked={revoked}")
+    run("operator-follows-the-account", operator_follows_the_account)
     refused("system-reboot-unsaved", lambda: root.Reboot(A(), timeout=60),
             grpc.StatusCode.FAILED_PRECONDITION, "REASON_UNSAVED")
     refused("system-reboot-permission", lambda: netview.Reboot(A(force=True), timeout=60),

@@ -177,9 +177,22 @@ list() {
 # uio under the name xdp-ens20, and VPP was left on a card the kernel no
 # longer had.
 restart_dataplane() {
+  # A STOP THAT DID NOT REPORT SUCCESS IS NOT A DATAPLANE STILL RUNNING (#564).
+  # On 10.95.200.198 (0.149.26) the containers went down and this function
+  # returned "could not be stopped; nothing was changed" - whatever made
+  # `systemctl stop` return early (a job another client replaced, an
+  # interrupted client), the unit was deactivating, and nothing started it
+  # again: no dataplane, no containers, and on a box whose management is a
+  # dataplane interface, no way in until a reboot. So the unit's own state
+  # decides: still active is a refusal and nothing changed; anything else is
+  # a dataplane on its way down, and it is brought back.
   if ! $SYSTEMCTL stop prisma-routing-containers.service; then
-    say "the dataplane could not be stopped; nothing was changed"
-    return 1
+    if $SYSTEMCTL is-active --quiet prisma-routing-containers.service; then
+      say "the dataplane could not be stopped; nothing was changed"
+      return 1
+    fi
+    say "the stop did not report success and the dataplane is down;"
+    say "    it is started again"
   fi
   # EVERY CLAIMED CARD BACK TO ITS KERNEL DRIVER, as at boot, before the tuner
   # runs. The tuner sees only the cards Linux holds: measured on a KVM guest,
@@ -208,7 +221,23 @@ restart_dataplane() {
   # PartOf stopped it with the containers and nothing starts it again: it is
   # what replays the saved configuration onto the dataplane.
   $SYSTEMCTL start prisma-routing.service || rc=1
+  api_socket_back
   return $rc
+}
+
+# THE API'S SOCKET, BACK (#564). While the containers are down every client
+# connecting to the API triggers prisma-routing-api-proxy.socket, whose
+# service needs the API, which needs the containers: each attempt fails, and
+# systemd stops the socket for good once its trigger limit is hit - measured
+# on 10.95.200.198, "Trigger limit hit, refusing further activation". The
+# containers came back to an API nobody could reach. A box with the API off
+# has no such socket, and this does nothing there.
+api_socket_back() {
+  $SYSTEMCTL cat prisma-routing-api-proxy.socket >/dev/null 2>&1 || return 0
+  $SYSTEMCTL reset-failed prisma-routing-api-proxy.socket \
+      prisma-routing-api-proxy.service prisma-routing-api.service 2>/dev/null
+  $SYSTEMCTL start prisma-routing-api-proxy.socket 2>/dev/null || \
+    say "the management API's socket could not be started again"
 }
 
 case "${1:-}" in
