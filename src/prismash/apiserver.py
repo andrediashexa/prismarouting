@@ -665,17 +665,20 @@ def cgnat_command(kind, args=None):
 
 def cgnat_read(sh, kind, args=None):
     """
-    A typed CGNAT read in the worker: the VTY's screen for it, whether the
-    VTY counted the command as failed, and the screen's fields. A refused
+    A typed CGNAT read in the worker: the VTY's screen for it, whether it
+    failed - the dataplane not answering, or refusing the command in its own
+    words (cgnatshow.screen_error) - and the screen's fields. A refused
     argument is {"error": ...}.
     """
     try:
         command = cgnat_command(kind, args)
     except ValueError as e:
         return {"error": str(e)}
-    before = sh.failed
+    if not sh.dp.reachable():
+        return {"text": "the dataplane is not answering", "failed": True,
+                "fields": {}}
     text = screen(sh, command)
-    return {"text": text, "failed": sh.failed > before,
+    return {"text": text, "failed": bool(cgnatshow.screen_error(text)),
             "fields": CGNAT_READS[kind][1](text)}
 
 
@@ -2591,9 +2594,20 @@ def bgp_edit_dict(m):
 
 
 def interface_dict(m):
-    """An InterfaceConfig as typedcfg's dict."""
-    return {k: (list(getattr(m, k)) if k in ("ipv4", "ipv6")
-                else getattr(m, k)) for k in INTERFACE_KEYS}
+    """
+    An InterfaceConfig as typedcfg's dict, every repeated field a list.
+
+    By shape and not by name: the dict crosses a pipe to the account's
+    worker, and a protobuf repeated container does not pickle. 0.150.2 added
+    `pref64` as a repeated field beside ipv4 and ipv6, this listed only those
+    two by name, and every SetConfig on an interface failed with "can't
+    pickle repeated message fields" - found by lab/api-grpc.sh's phase 2.
+    """
+    out = {}
+    for k in INTERFACE_KEYS:
+        v = getattr(m, k)
+        out[k] = v if isinstance(v, (str, bytes, int, float, bool)) else list(v)
+    return out
 
 
 def pool_dict(m):

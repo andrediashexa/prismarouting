@@ -134,11 +134,15 @@ def drops():
 def memory():
     m = op.GetCgnatMemory(pb.GetCgnatMemoryRequest(), timeout=T)
     s = screen("memory")
-    result("memory", m.heap_bytes > 0 and m.sessions_known and m.sessions_fit > 0
-           and f"{m.heap_bytes / (1 << 30):.2f}" in s
-           and f"{m.sessions_fit:,}" in s and f"{m.sessions:,}" in s,
+    # The sessions row is on the screen exactly when the count is known.
+    sessions_ok = ((f"sessions now          {m.sessions:,}" in s) if m.sessions_known
+                   else "sessions now" not in s)
+    result("memory", m.heap_bytes > 0 and m.sessions_fit > 0 and sessions_ok
+           and f"main heap GB          {m.heap_bytes / (1 << 30):.2f}" in s
+           and f"in use GB             {m.heap_used_bytes / (1 << 30):.2f}" in s
+           and f"sessions that fit     {m.sessions_fit:,}" in s,
            f"heap {m.heap_bytes} used {m.heap_used_bytes} sessions {m.sessions} "
-           f"fit {m.sessions_fit}")
+           f"(known {m.sessions_known}) fit {m.sessions_fit}")
 
 
 def blocks():
@@ -200,10 +204,21 @@ def ha():
 
 
 def unprivileged():
-    # Every account may read them, as every account may type the screens.
+    # An account with no role gets from the API what the VTY gives it: the
+    # screen, when the VTY can read the dataplane for it, and a refusal when
+    # it cannot - measured here, where netview is in no group and the VTY's
+    # own `show cgnat alg` as netview cannot open the dataplane's socket.
+    vty = screen("alg-netview")
     o = rpc.OperationalServiceStub(channel("netview"))
-    r = o.ListAlgs(pb.ListAlgsRequest(), timeout=T)
-    result("netview-reads", any(p.pool == LONG for p in r.pools), "ListAlgs as netview")
+    try:
+        r = o.ListAlgs(pb.ListAlgsRequest(), timeout=T)
+        result("netview-reads", same(r.text, "alg-netview")
+               and any(p.pool == LONG for p in r.pools), "ListAlgs as netview: the screen")
+    except grpc.RpcError as e:
+        result("netview-reads", e.code() == grpc.StatusCode.UNAVAILABLE
+               and LONG not in vty and ("ermission" in vty or "not answering" in vty
+                                        or "denied" in vty),
+               f"refused {e.code().name}, as the VTY: {vty.strip()[:80]!r}")
 
 
 for name, fn in (("translation", translation), ("top", top), ("drops", drops),

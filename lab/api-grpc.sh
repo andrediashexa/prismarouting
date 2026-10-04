@@ -474,11 +474,11 @@ $HX -c configure -c nat -c cgnat -c "pool residential-cgnat" \
     -c "prefix-inside 100.64.16.0/22" -c "prefix-outside 200.150.0.40/30" \
     -c "mode dynamic" -c "alg ftp on" -c "alg rtsp off" \
     -c "forward tcp 8080 to 100.64.16.5 80" -c exit \
-    -c "pool v6" -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
+    -c "pool v6" -c "prefix-inside 2001:db8:1200::/48" -c "subscriber-length 56" \
     -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 200.150.0.48/29" \
-    -c "block-size 2048" -c "alg ftp on" \
+    -c "block-size 1024" -c "alg ftp on" \
     -c "forward tcp 12000 to 2001:db8:1200:ab00::10 8080" -c exit \
-    -c top -c commit 2>&1 | tail -1 | sed 's/^/  pools: /'
+    -c top -c commit 2>&1 | grep -vE "^\s*$" | tail -6 | sed 's/^/  pools: /'
 # Five subscribers of it allocate a block each, and the traffic stops before
 # anything is read: the screens and the rpcs are then of one box at rest.
 for h in 1 2 3 4 5; do
@@ -502,7 +502,11 @@ $HX -c "show cgnat alg" > $S6/alg 2>&1
 $HX -c "show cgnat forward" > $S6/forward 2>&1
 $HX -c "show cgnat forward v6" > $S6/forward-v6 2>&1
 $HX -c "show cgnat ha" > $S6/ha 2>&1
+# And what the VTY gives an account with no role, which the API's answer to
+# that account is held to.
+runuser -u netview -- $HX -c "show cgnat alg" > $S6/alg-netview 2>&1
 sed 's/^/  vty: /' $S6/top
+sed 's/^/  vty as netview: /' $S6/alg-netview | head -3
 sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50554 --dir $C/box \
   --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver6.log 2>&1 &
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver6.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
@@ -687,7 +691,7 @@ expect "ListAlgs: each pool's ALGs as configured, the NAT64 pool's FTP64 on" t6 
 expect "ListForwards: the IPv4 forward and the NAT64 pool's to an IPv6 host, the screen" t6 forwards
 expect "  and one pool's alone" t6 forwards-pool
 expect "GetHaStatus: this box read, no peer copy said so, and no agreement claimed" t6 ha
-expect "  an account without the role reads them, as it types the screens" t6 netview-reads
+expect "  an account with no role gets what the VTY gives it, screen or refusal" t6 netview-reads
 TAIL6=$(tail -5 /tmp/apiserver6.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL6"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

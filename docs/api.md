@@ -243,9 +243,11 @@ typed answer and the screen an operator reads are one reading, never two.
 takes that data and the screen drawn from that one reading. Every response
 carries the screen, verbatim, in `text`.
 
-* **Who may call them.** Every account, as every account may type the
-  screens. A dataplane that does not answer is `UNAVAILABLE`, with what the
-  VTY printed.
+* **Who may call them.** Any account, with the access the VTY gives it:
+  the read runs in the account's own process, so an account that cannot
+  open the dataplane's socket at the prompt is refused here too, as
+  `UNAVAILABLE`. A dataplane that does not answer is `UNAVAILABLE`; one that
+  refuses the command does so in its own words, which the call carries.
 * **`LookupTranslation`** checks its arguments before anything runs: an
   address that is not IPv4 or a port over 65535 is `INVALID_ARGUMENT`; an
   address no pool owns is `NOT_FOUND`, with the dataplane's sentence. Its

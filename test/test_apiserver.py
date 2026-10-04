@@ -1228,6 +1228,27 @@ _im = _Msg(**{k: "" for k in A.INTERFACE_KEYS})
 _im.ipv4, _im.ipv6, _im.name = ["10.0.0.9/24"], [], "x"
 check(A.interface_dict(_im)["ipv4"] == ["10.0.0.9/24"] and A.interface_dict(_im)["name"] == "x",
       "interface_dict")
+
+
+class _Repeated:
+    """A protobuf repeated container as pickle meets it: iterable, and refused."""
+
+    def __init__(self, items):
+        self.items = list(items)
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def __reduce__(self):
+        raise TypeError("can't pickle repeated message fields, convert to list first")
+
+
+import pickle  # noqa: E402
+_im.pref64 = _Repeated(["64:ff9b::/96"])
+_id = A.interface_dict(_im)
+check(_id["pref64"] == ["64:ff9b::/96"] and pickle.loads(pickle.dumps(_id)) == _id,
+      "interface_dict: every repeated field a list, pref64 too, so it crosses the "
+      "worker's pipe (0.150.2's SetConfig on an interface could not)")
 _cm = _Msg(has={"severity"}, transport="syslog", configured=True, collector="c", port=0,
            source="", enterprise=67033, facility=0, severity=6)
 _ld = A.logging_dict(_Msg(enabled=True, collectors=[_cm]))

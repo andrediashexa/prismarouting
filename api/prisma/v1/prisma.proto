@@ -1286,8 +1286,9 @@ service OperationalService {
   // The CGNAT's reads, typed (#558, phase 6). Each is the VTY's screen of
   // the same name read into fields - the same Shell, the same dataplane
   // command, so a typed answer and the screen cannot disagree - and each
-  // carries that screen verbatim in `text`. Every account may call them, as
-  // every account may type the screens. A dataplane that does not answer is
+  // carries that screen verbatim in `text`. Any account may call them, with
+  // the access the VTY gives it: one that cannot reach the dataplane at the
+  // prompt is refused here too. A dataplane that does not answer is
   // UNAVAILABLE.
   //
   // `show cgnat translation <public> <port>`: who is behind a public address

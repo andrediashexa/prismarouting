@@ -95,6 +95,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`SetConfig` on an interface failed, every time, since 0.150.2.**
+  ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  0.150.2 added `InterfaceConfig.pref64`, a repeated field, and the server
+  converted the interface's repeated fields to lists by name - `ipv4` and
+  `ipv6` only - before handing the object to the account's process. A
+  protobuf repeated container does not cross that pipe, so the call answered
+  `UNKNOWN`: "can't pickle repeated message fields". Found by
+  `lab/api-grpc.sh`'s phase 2, which 0.150.2 was released without running.
+  Every repeated field is converted by its shape now, so the next one added
+  cannot do it again.
 * **`show cgnat top` and `show cgnat drops` cut values longer than their
   column.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
   vppinfra's `format()` truncates any conversion that has a width to that

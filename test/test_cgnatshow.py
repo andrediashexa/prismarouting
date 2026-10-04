@@ -265,17 +265,37 @@ check(A.enum_name("SOURCE", "outside_range") == "SOURCE_OUTSIDE_RANGE"
       and A.enum_name("VERDICT", "") == "VERDICT_UNSPECIFIED", "enum names")
 
 
-class FakeShell:
-    """The VTY as cgnat_read sees it: feed() prints a screen, and a failed
-    command counts in `failed`, as Shell.vpp() counts one."""
+print("=== a refusal is the dataplane's, not a line shaped like one ===")
+check(C.screen_error("show bpa translation: 9.9.9.9 is not a public address of any "
+                     "pool\n").startswith("show bpa translation: 9.9.9.9")
+      and C.screen_error("unknown input `bogus'\n") == "unknown input `bogus'",
+      "the command's path before the colon, or VPP's parser")
+for good in ("no identity table: every record says 'unknown'\n",
+             "configuration trail: /var/log/prisma-routing/config-history.log\n  "
+             "3 entries checked, chain intact\n",
+             "identity table: 2 entry(s), read 2026/10/04 12:34:56:123\n",
+             drops, top, ""):
+    check(C.screen_error(good) == "",
+          f"a screen whose first line is `words: text` is not a refusal: {good[:40]!r}")
 
-    def __init__(self, screens, fails=()):
-        self.screens, self.fails, self.failed, self.fed = screens, fails, 0, []
+
+class FakeDp:
+    def __init__(self, up):
+        self.up = up
+
+    def reachable(self):
+        return self.up
+
+
+class FakeShell:
+    """The VTY as cgnat_read sees it: feed() prints a screen, the dataplane
+    answers or does not."""
+
+    def __init__(self, screens, up=True):
+        self.screens, self.fed, self.dp = screens, [], FakeDp(up)
 
     def feed(self, line):
         self.fed.append(line)
-        if line in self.fails:
-            self.failed += 1
         print(self.screens.get(line, ""), end="")
 
     def cgnat_memory_facts(self):
@@ -292,18 +312,26 @@ class FakeShell:
         print(f"ha screen {args} of {sorted(facts)}")
 
 
-sh = FakeShell({"show cgnat drops": drops, "show cgnat top 5": top},
-               fails=("show cgnat top 5",))
+_nf = "show bpa translation: 9.9.9.9 is not a public address of any pool\n"
+sh = FakeShell({"show cgnat drops": drops,
+                "show cgnat identity": "no identity table: every record says 'unknown'\n",
+                "show cgnat translation 9.9.9.9 1": _nf})
 got = A.cgnat_read(sh, "drops")
 check(got["text"] == drops and not got["failed"]
       and got["fields"] == C.parse_drops(drops),
       "cgnat_read: the VTY's screen, not failed, and its fields")
-got = A.cgnat_read(sh, "top", {"count": 5})
-check(got["failed"] and sh.fed[-1] == "show cgnat top 5",
-      "a command the VTY counted as failed is said")
+got = A.cgnat_read(sh, "identity")
+check(not got["failed"] and got["fields"]["loaded"] is False,
+      "a good screen that reads `words: text` is not failed (the lab's GetIdentity)")
+got = A.cgnat_read(sh, "translation", {"public_address": "9.9.9.9", "port": 1})
+check(got["failed"] and got["text"] == _nf and sh.fed[-1] == "show cgnat translation 9.9.9.9 1",
+      "the dataplane's refusal is a failed read, its words kept")
 got = A.cgnat_read(sh, "forward", {"pool": "a b"})
-check("error" in got and sh.fed[-1] == "show cgnat top 5",
+check("error" in got and sh.fed[-1] == "show cgnat translation 9.9.9.9 1",
       "a refused argument reaches no VTY")
+got = A.cgnat_read(FakeShell({"show cgnat drops": drops}, up=False), "drops")
+check(got["failed"] and "not answering" in got["text"],
+      "a dataplane that does not answer is a failed read, before any screen")
 
 sh.mem = {"heap_bytes": 4 << 30, "heap_used_bytes": 1 << 30, "sessions": None,
           "sessions_fit": 5, "refused_no_memory": 0, "given_gb": None,

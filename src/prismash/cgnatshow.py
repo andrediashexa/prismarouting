@@ -21,6 +21,27 @@ import re
 #: A pool's name as the dataplane prints it: one word.
 _POOL = r"[^\s,]+"
 
+#: How the dataplane refuses a CLI command: the command's path, a colon, the
+#: reason - "show bpa translation: 9.9.9.9 is not a public address of any
+#: pool" - or VPP's own parser's "unknown input".
+_REFUSAL = re.compile(r"^(show bpa [a-z ]+: \S.*|unknown input\b.*)$")
+
+
+def screen_error(text):
+    """
+    The dataplane's refusal, when the screen is one; "" otherwise.
+
+    NOT the VTY's VPP_ERROR, which takes any first line shaped `words: text`
+    for an error and so counts "no identity table: every record says
+    'unknown'" and "configuration trail: /var/log/..." as failures - measured
+    in lab/api-grpc.sh, where GetIdentity and VerifyHistory answered
+    UNAVAILABLE on two good screens. A refusal here is the command's own path
+    before the colon.
+    """
+    first = next((l for l in text.splitlines() if l.strip()), "")
+    return first.strip() if _REFUSAL.match(first.strip()) else ""
+
+
 #: TranslationSource's names, by what the screen says.
 SOURCE_FORMULA = "formula"
 SOURCE_RESERVE = "reserve"
