@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 636 |
+| typed | 640 |
 | text | 19 |
 | n/a | 27 |
 
@@ -575,6 +575,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 ospf6 area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -624,6 +625,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 ospf6 area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -690,6 +692,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 ospf6 area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -747,6 +750,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `no isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 ospf6 area <area>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 cost <1-65535>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |

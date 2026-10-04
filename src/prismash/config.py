@@ -2123,6 +2123,177 @@ def nat64_prefix_error(value: str):
     return None
 
 
+#: What FRR advertises for a bare `ipv6 nd nat64` (RFC 6052's well-known
+#: prefix), and what it writes back for it - measured on FRR 10.7.1.
+PREF64_DEFAULT = "64:ff9b::/96"
+
+
+def pref64_value(words):
+    """
+    `ipv6 nd nat64 [<prefix>]`'s argument as (why, prefix): why is None and
+    prefix the RFC 5952 form when it is one RFC 8781's PLC can carry (the
+    RFC 6052 lengths), else why is the refusal. A bare statement is the
+    well-known prefix, which is what FRR writes back for it; `lifetime` is
+    not taken - FRR's own, three times the advertising interval, is what
+    RFC 8781 4.1 asks for.
+    """
+    if len(words) > 1:
+        return (("ipv6 nd nat64 takes one prefix",
+                 "type the statement once per prefix to advertise several"),
+                "")
+    value = words[0] if words else PREF64_DEFAULT
+    why = prefix6_error("ipv6 nd nat64", value)
+    if why:
+        return why, ""
+    net = ipaddress.IPv6Network(value)
+    if net.prefixlen not in NAT64_LENGTHS:
+        return ((f"ipv6 nd nat64 '{value}': not a length PREF64 carries",
+                 "RFC 8781 takes /32, /40, /48, /56, /64 or /96"), "")
+    return None, str(net)
+
+
+def pref64_sorted(prefixes) -> list:
+    """Prefixes in one order, by address then length, so the prompt's list
+    and FRR's read-back cannot differ by the order they were typed in."""
+    nets = sorted({ipaddress.IPv6Network(p) for p in prefixes},
+                  key=lambda n: (int(n.network_address), n.prefixlen))
+    return [str(n) for n in nets]
+
+
+def pref64_remove(pref64: dict, iface: str, words):
+    """`no ipv6 nd nat64 [<prefix>]`: the one prefix, or every one."""
+    if words:
+        _, p = pref64_value(words)
+        left = [x for x in pref64.get(iface, []) if x != p]
+    else:
+        left = []
+    if left:
+        pref64[iface] = left
+    else:
+        pref64.pop(iface, None)
+
+
+#: The statements the box writes into FRR for PREF64 and takes back out of
+#: what FRR reads back (#485, phase 6): they are the box's, made from the
+#: dataplane-side `ipv6 nd nat64` and `no ipv6 nd suppress-ra`, never routing
+#: an operator typed into FRR.
+PREF64_FRR = ("ipv6 nd nat64", "no ipv6 nd suppress-ra", "ipv6 nd suppress-ra")
+
+
+def _pref64_owned(stmt: str) -> bool:
+    return any(stmt == k or stmt.startswith(k + " ") for k in PREF64_FRR)
+
+
+def with_pref64(routing: list, cfg) -> list:
+    """
+    `routing` with what makes FRR advertise PREF64 on each interface that has
+    `ipv6 nd nat64` (#485, phase 6): `no ipv6 nd suppress-ra` and one
+    `ipv6 nd nat64 <prefix>` per prefix, in the stanza of the pair's Linux
+    end - the netdev FRR sees - opened if the routing has none.
+
+    FRR and not VPP because VPP 26.06's advertisement has no PREF64 option
+    (src/vnet/ip6-nd/ip6_ra.c writes the source address, the MTU and the
+    prefixes, nothing else); FRR 10.7's does, and its advertisement leaves
+    the box through the pair - measured, lab/pref64.sh. VPP's own is kept
+    suppressed on that interface (Config.ra_by_dataplane), so the subscriber
+    hears one router, not two.
+    """
+    pref64 = getattr(cfg, "pref64", None)
+    if not pref64:
+        return list(routing)
+    out = list(routing)
+    for iface in sorted(pref64):
+        name = cfg.linux_names.get(iface, iface)
+        body = ["no ipv6 nd suppress-ra"] + [f"ipv6 nd nat64 {p}"
+                                             for p in pref64[iface]]
+        at = None
+        for i, (path, line) in enumerate(zip(block_paths(out), out)):
+            if path == [] and line.split() == ["interface", name]:
+                at = i
+                break
+        if at is None:
+            out += [f"interface {name}"] + [f" {b}" for b in body] + ["exit"]
+        else:
+            out[at + 1:at + 1] = [f" {b}" for b in body]
+    return out
+
+
+def take_pref64(routing: list, linux_names: dict):
+    """
+    FRR's running routing split into what the operator typed and what
+    with_pref64() wrote: (routing, pref64, advertising). `pref64` is keyed
+    by the interface's own name, mapped back from the Linux end the stanza
+    is written under; `advertising` the interfaces FRR advertises on. A
+    stanza left with nothing in it once those lines are out was the box's
+    alone, and goes with them.
+    """
+    back = {v: k for k, v in linux_names.items()}
+    pref64, advertising = {}, set()
+    kept, stanza, took = [], None, False
+    paths = block_paths(routing)
+    for path, line in zip(paths, routing):
+        stmt = line.strip()
+        w = stmt.split()
+        if path == [] and len(w) == 2 and w[0] == "interface":
+            stanza, took = (len(kept), w[1]), False
+            kept.append(line)
+            continue
+        if stanza and path is not None and path[:1] \
+                and path[0].split() == ["interface", stanza[1]] \
+                and _pref64_owned(stmt):
+            iface = back.get(stanza[1], stanza[1])
+            if w[:3] == ["ipv6", "nd", "nat64"]:
+                p = w[3] if len(w) > 3 else PREF64_DEFAULT
+                pref64.setdefault(iface, []).append(canonical_prefix(p))
+            elif stmt == "no ipv6 nd suppress-ra":
+                advertising.add(iface)
+            took = True
+            continue
+        if stanza and path is None and stmt in FRR_BLOCK_CLOSERS:
+            if took and len(kept) == stanza[0] + 1:
+                del kept[stanza[0]:]            # the box's stanza alone
+            else:
+                kept.append(line)
+            stanza = None
+            continue
+        if stanza and path == []:
+            stanza = None
+        kept.append(line)
+    return kept, {k: pref64_sorted(v) for k, v in pref64.items()}, advertising
+
+
+def pref64_findings(cfg) -> list:
+    """
+    Why `cfg`'s PREF64 statements cannot be committed (#485, phase 6), as
+    (verdict, prose) pairs: an interface that does not advertise has no
+    advertisement to carry the option, and a prefix no NAT64 pool here
+    translates sends every subscriber's CLAT into nothing - its IPv4 would
+    leave for a prefix the box drops.
+    """
+    out = []
+    pools = {}
+    for pool in cfg.pools.values():
+        if pool.is_nat64:
+            pools.setdefault(canonical_prefix(pool.nat64_prefix_eff),
+                             []).append(pool.name)
+    for iface in sorted(cfg.pref64):
+        if iface not in cfg.ra_enabled:
+            out.append((f"ipv6 nd nat64 on {iface}: the interface does not "
+                        "advertise",
+                        "PREF64 rides in router advertisements; add 'no ipv6 "
+                        "nd suppress-ra' to the interface"))
+        for p in cfg.pref64[iface]:
+            if p in pools:
+                continue
+            have = ", ".join(sorted(pools)) or "none"
+            out.append((f"ipv6 nd nat64 {p} on {iface}: no NAT64 pool "
+                        "translates it",
+                        "a CLAT that learns it sends its IPv4 to a prefix "
+                        "this box drops; advertise a NAT64 pool's "
+                        f"nat64-prefix (here: {have})"))
+    return out
+
+
 def canonical_prefix(value: str) -> str:
     """
     An IPv6 prefix in RFC 5952's form - the form the dataplane prints it
@@ -2836,6 +3007,12 @@ class Config:
         # interface would put a line under every port on every box, and the
         # configuration would stop being readable.
         self.ra_enabled: set = set()
+        # PREF64 (RFC 8781) in this interface's router advertisements, the
+        # NAT64 prefixes a subscriber's CLAT learns (#485, phase 6), in the
+        # order typed, each in RFC 5952 form. VPP's own advertisements carry
+        # no such option, so an interface with one is advertised by FRR
+        # instead - see pref64_frr_lines().
+        self.pref64: dict[str, list] = {}
         # Present means shut down. Absent means up, which is the default and
         # the state of every interface nobody has touched, so recording the
         # absence would make every box look configured.
@@ -2925,6 +3102,19 @@ class Config:
         # the case this number exists to identify. See is_empty().
         self.n_statements: int = 0
 
+    def ra_by_dataplane(self, read=True) -> set:
+        """
+        The interfaces VPP itself advertises on: every one with `no ipv6 nd
+        suppress-ra` except those with `ipv6 nd nat64`, which FRR advertises
+        (with_pref64). A running configuration carries what VPP was READ to
+        be doing, `ra_dataplane`, so a VPP left advertising beside FRR is a
+        difference to undo, not one hidden by the rule.
+        """
+        seen = getattr(self, "ra_dataplane", None) if read else None
+        if seen is not None:
+            return set(seen)
+        return set(self.ra_enabled) - set(self.pref64)
+
     def is_empty(self) -> bool:
         """
         True when the file held no statements at all - only comments, or
@@ -2984,6 +3174,8 @@ class Config:
             out.append(f" mac-address {self.macs[ifname]}")
         if ifname in self.ra_enabled:
             out.append(" no ipv6 nd suppress-ra")
+        for p in self.pref64.get(ifname, []):
+            out.append(f" ipv6 nd nat64 {p}")
         if ifname in self.vrfs:
             out.append(f" vrf {self.vrfs[ifname]}")
         if ifname in self.vlans:
@@ -3162,7 +3354,7 @@ class Config:
                 | set(self.admin_down) | set(self.addresses) | set(self.vlans)
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
                 | set(self.loopbacks) | set(self.bundles)
-                | set(self.ra_enabled)
+                | set(self.ra_enabled) | set(self.pref64)
                 | set(self.vrrp) | set(self.interfaces) | self.declared)
 
     def connected_prefixes(self) -> dict:
@@ -3301,6 +3493,8 @@ class Config:
                 del d[name]
         self.admin_down -= taps
         self.ra_enabled -= taps
+        for name in [n for n in self.pref64 if n in taps]:
+            del self.pref64[name]
         self.declared -= taps
 
     @classmethod
@@ -3629,6 +3823,7 @@ class Config:
                 cfg.macs.pop(gone, None)
                 cfg.vrfs.pop(gone, None)
                 cfg.ra_enabled.discard(gone)
+                cfg.pref64.pop(gone, None)
                 cfg.declared.discard(gone)
                 cfg.vrrp.pop(gone, None)
             elif s.startswith("interface "):
@@ -3718,6 +3913,15 @@ class Config:
                     cfg.ra_enabled.discard(iface)
                 elif s == "no ipv6 nd suppress-ra":
                     cfg.ra_enabled.add(iface)
+                elif w[:3] == ["ipv6", "nd", "nat64"]:
+                    why, p = pref64_value(w[3:])
+                    if why:
+                        cfg.unknown.append((lineno, s, why[0]))
+                    else:
+                        cfg.pref64[iface] = pref64_sorted(
+                            cfg.pref64.get(iface, []) + [p])
+                elif w[:4] == ["no", "ipv6", "nd", "nat64"]:
+                    pref64_remove(cfg.pref64, iface, w[4:])
                 elif w[0] == "vrf" and len(w) > 1 and is_number(w[1]):
                     # Bounded here for the reason `mtu` above is: an
                     # interface's VRF is filled from `device_vrfs()` and not
@@ -4392,8 +4596,10 @@ class Config:
         # the advertisements, not for which flag moves, because the flag is
         # "suppress" and reading `ra_on` as "suppression on" is exactly the
         # confusion that inverting this default invites.
-        ra_on = sorted(other.ra_enabled - self.ra_enabled)
-        ra_off = sorted(self.ra_enabled - other.ra_enabled)
+        ra_on = sorted(other.ra_by_dataplane(read=False)
+                       - self.ra_by_dataplane())
+        ra_off = sorted(self.ra_by_dataplane()
+                        - other.ra_by_dataplane(read=False))
         desc_set = {k: v for k, v in other.descriptions.items()
                     if self.descriptions.get(k) != v}
         desc_del = [k for k in self.descriptions if k not in other.descriptions]
@@ -4510,7 +4716,9 @@ class Config:
             # A policy is routing: it is compiled into what FRR is handed,
             # so a change to it is a reload like any other (#458).
             "routing_changed": (self.routing != other.routing
-                                or self.policy != other.policy),
+                                or self.policy != other.policy
+                                or with_pref64([], self)
+                                != with_pref64([], other)),
             "route_desc_changed": (self.static_descriptions
                                    != other.static_descriptions),
         }

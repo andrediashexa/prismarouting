@@ -122,6 +122,21 @@ new = T.interface_lines(None, dict(T.interface_typed_blank("ens20"),
                                    description="new", ipv4=["192.0.2.1/24"]))
 check(new == ["description new", "ipv4 address 192.0.2.1/24"],
       f"a new interface: only what is set: {new}")
+# PREF64 (#485, phase 6): advertising first, then the prefixes, as a list.
+check(e["pref64"] == [], "no PREF64 is an empty list")
+ra = T.interface_lines(e, dict(e, router_advertisements=True,
+                               pref64=["64:ff9b:1::/48"]))
+check(ra == ["no ipv6 nd suppress-ra", "ipv6 nd nat64 64:ff9b:1::/48"],
+      f"the advertisement, then what it carries: {ra}")
+cfg.ra_enabled.add("ens18")
+cfg.pref64["ens18"] = ["64:ff9b:1::/48"]
+e2 = T.interface_typed(cfg, "ens18")
+check(e2["pref64"] == ["64:ff9b:1::/48"] and e2["router_advertisements"],
+      f"read back as fields: {e2}")
+check(T.interface_lines(e2, dict(e2, pref64=[])) == [
+      "no ipv6 nd nat64 64:ff9b:1::/48"], "and removed one at a time")
+cfg.ra_enabled.discard("ens18")
+del cfg.pref64["ens18"]
 try:
     T.interface_lines(e, want, ["bogus"])
     check(False, "an unknown field is refused")

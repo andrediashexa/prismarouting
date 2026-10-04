@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Added
 
+* **NAT64, phase 6: the NAT64 prefix in the router advertisements (PREF64,
+  RFC 8781), for 464XLAT.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485), phase 6)
+  An IPv6-only subscriber's CLAT gives its IPv4-only software IPv4 by
+  translating it into the NAT64 prefix, and has to learn that prefix.
+  `ipv6 nd nat64 [<prefix>]` under an interface that advertises (`no ipv6 nd
+  suppress-ra`) puts it in every advertisement; with no prefix it is the
+  well-known `64:ff9b::/96`, and it may repeat. `commit check` refuses it on
+  an interface that does not advertise and refuses a prefix no NAT64 pool
+  translates. VPP's advertisement has no PREF64 option, so on such an
+  interface the box has FRR advertise instead - through the linux_cp pair,
+  with VPP's own kept off, so the subscriber hears one router - and gives the
+  advertisement back to VPP when the statement is removed. The API carries
+  it as `InterfaceConfig.pref64`. `lab/pref64.sh` runs tayga as the CLAT,
+  started with the prefix read off the advertisements, and an IPv4-only
+  application pings and fetches from an IPv4 server through it and the
+  NAT64 pool. DNS64 (RFC 7050's `ipv4only.arpa`) is the operator's resolver,
+  not this box: docs/nat64.md says what to configure there.
+
 ### Fixed
 
 ## 0.150.1 - FTP through a NAT64 pool
