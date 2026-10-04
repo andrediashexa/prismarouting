@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 149
+# OFF-RED-AT-LEAST: 166
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -512,6 +512,46 @@ sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50554 --dir $C/
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver6.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
 T6=$(python3 lab/api_phase6_check.py /tmp/apistubs $C 127.0.0.1:50554 $S6 2>&1)
 printf '%s\n' "$T6" | sed 's/^/  /'
+echo "=========== #558, phase 7: the rest of the screens, typed, and the probes ==========="
+# OSPF and an IS-IS circuit on d0 - a Linux interface with no dataplane end,
+# the management port's shape - and FRR's logging set, all straight into FRR:
+# pg0 has no Linux end for either protocol (see phase 3), and `log` is FRR's
+# own, which the VTY's `show logging` passes through. The MIB and the
+# template carry the enterprise number the box serves under, the product's
+# own (67033) when nobody gave it another: a box has no state without one, so
+# the refusal for it is the unit suite's (test_opshow.py), not this lab's.
+vtysh -c "conf t" -c "router ospf" -c "network 192.0.2.0/24 area 0" -c exit \
+  -c "interface d0" -c "ip router isis HEXA" -c exit \
+  -c "log syslog warnings" -c "log file /tmp/frr-api7.log informational" \
+  2>&1 | sed 's/^/  frr: /'
+export PRISMA_SNMP_MIB=/src/appliance/PRISMA-ROUTING-MIB.in
+export PRISMA_ZABBIX_TEMPLATE=/src/appliance/prisma-routing-zabbix.json.in
+sleep 3
+# The VTY's own screens, which the rpcs' text is held to.
+S7=/tmp/screens7; rm -rf $S7; mkdir -p $S7
+$HX -c "show ospf interface" > $S7/ospf-interface 2>&1
+$HX -c "show isis interface" > $S7/isis-interface 2>&1
+$HX -c "show hardware" > $S7/hardware 2>&1
+$HX -c "show logging" > $S7/logging 2>&1
+$HX -c "show snmp mib" > $S7/snmp-mib 2>&1
+$HX -c "show snmp zabbix-template" > $S7/snmp-zabbix 2>&1
+$HX -c "ping 127.0.0.1 count 3" > $S7/ping 2>&1
+runuser -u netview -- $HX -c "show logging" > $S7/logging-netview 2>&1
+runuser -u netview -- $HX -c "ping 127.0.0.1 count 1" > $S7/ping-netview 2>&1
+sed 's/^/  vty: /' $S7/ospf-interface
+sed 's/^/  vty: /' $S7/isis-interface | head -4
+sed 's/^/  vty as netview: /' $S7/ping-netview | head -3
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50555 --dir $C/box \
+  --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver7.log 2>&1 &
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver7.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+T7=$(python3 lab/api_phase7_check.py /tmp/apistubs $C 127.0.0.1:50555 $S7 reads 2>&1)
+printf '%s\n' "$T7" | sed 's/^/  /'
+# traceroute and mtr, installed only now: Mtr above was refused for want of
+# it, as the VTY refuses `mtr` on a box without the package.
+apt-get install -y -qq traceroute mtr-tiny >/dev/null 2>&1
+echo "  probes now: $(ls /usr/bin/traceroute /usr/bin/mtr 2>&1 | tr '\n' ' ')"
+T7T=$(python3 lab/api_phase7_check.py /tmp/apistubs $C 127.0.0.1:50555 $S7 tools 2>&1)
+printf '%s\n' "$T7T" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -695,6 +735,26 @@ expect "GetHaStatus: this box read, no peer copy said so, and no agreement claim
 expect "  an account with no role gets what the VTY gives it, screen or refusal" t6 netview-reads
 TAIL6=$(tail -5 /tmp/apiserver6.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL6"
+t7() { printf '%s\n' "$T7" "$T7T" | grep -q "^RESULT $1 ok"; }
+expect "#558 phase 7: ListOspfInterfaces: d0 in area 0, its MTU, no dataplane MTU for it, the screen" t7 ospf-interfaces
+expect "ListIsisInterfaces: d0's circuit in HEXA, the punt read, the screen" t7 isis-interfaces
+expect "GetHardware: what the dataplane holds, pg0 and not local0, the screen" t7 hardware
+expect "GetRoutingLogging: zebra's syslog level and log file as set in FRR, every daemon, the screen" t7 routing-logging
+expect "GetSnmpFile: the MIB with the box's enterprise number in it, exactly the screen" t7 snmp-mib
+expect "  the Zabbix template, JSON, exactly the screen" t7 snmp-zabbix
+expect "  no kind: INVALID_ARGUMENT" t7 snmp-kind-refused
+expect "Ping streams each reply, then the summary, as many lines as the VTY's ping" t7 ping
+expect "  the replies arrive as ping prints them, not at the end" t7 ping-streams
+expect "  a host that does not answer: 100% loss, no round trip, a non-zero status" t7 ping-no-reply
+expect "  a host, count or source the VTY refuses: INVALID_ARGUMENT, in its words" t7 probe-refused
+expect "  a tool the box lacks: FAILED_PRECONDITION, naming the package" t7 probe-absent
+expect "  cancelled: the box's ping stops, and the next probe answers" t7 probe-cancel
+expect "  a probe does not hold GetVersion behind it" t7 probe-apart
+expect "  an account with no role gets the probe and the screen the VTY gives it" t7 netview-probes
+expect "Traceroute streams its hops, 127.0.0.1 at hop 1" t7 traceroute
+expect "Mtr streams its report's hops, sent and loss read" t7 mtr
+TAIL7=$(tail -5 /tmp/apiserver7.log)
+expect_not_in "  and that server raised nothing" "Traceback" "$TAIL7"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

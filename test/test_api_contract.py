@@ -91,7 +91,12 @@ want = {
                            "LookupTranslation", "ListTop", "GetDrops",
                            "GetCgnatMemory", "ListBlocks", "GetIdentity",
                            "VerifyHistory", "ListAlgs", "ListForwards",
-                           "GetHaStatus"],
+                           "GetHaStatus",
+                           # #558 phase 7: the rest of the screens, and the
+                           # probes streamed.
+                           "ListOspfInterfaces", "ListIsisInterfaces",
+                           "GetHardware", "GetRoutingLogging", "GetSnmpFile",
+                           "Ping", "Traceroute", "Mtr"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

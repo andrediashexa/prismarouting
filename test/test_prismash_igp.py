@@ -1017,5 +1017,61 @@ check("9000/0/0/0" not in _quiet.split("counters", 1)[-1],
       f"one: {_quiet!r}")
 print("  every counter the dataplane printed, and none of the identity")
 
+
+# ------------------------------------- the interface screens as facts (#558)
+# Phase 7 types `show ospf interface` and `show isis interface` for the API:
+# the Shell reads the facts once and the screen is drawn from them, so the
+# rpc's fields and the text it carries are one reading.
+import apiserver  # noqa: E402
+import opshow  # noqa: E402
+
+print("\n=== show ospf interface, as facts and as the screen drawn from them ===")
+sh = shell({"show ip ospf interface json": OSPF_IF_STALLED}, DP_STALLED,
+           routing=OSPF_ROUTING)
+_of = sh.ospf_interface_facts()
+_row = (_of["interfaces"] or [{}])[0]
+check(_of["answered"] and _row.get("name") == "vppwan0" and _row.get("stall"),
+      f"ospf_interface_facts: the interface, with the MTU stall: {_of}")
+_ofl = opshow.ospf_fields(_of)["interfaces"][0]
+check(_ofl["mtu_stall"] and _ofl["dataplane_mtu_known"]
+      and _ofl["ospf_mtu"] == int(_row["mtu"])
+      and _ofl["dataplane_mtu"] == _row["dataplane_mtu"],
+      f"and its fields carry the two MTUs and the stall: {_ofl}")
+_got = apiserver.facts_screen(sh, sh.ospf_interface_facts, sh.show_ospf_interfaces)
+check(_got["facts"] == _of and _got["text"] == out_of(sh.show_ospf_interfaces),
+      "facts_screen: the rpc's facts and text are the VTY's own screen")
+_fake = {"answered": True, "interfaces": [dict(_row, name="drawnfromfacts",
+                                               mtu=1234, stall=None)]}
+_t = out_of(sh.show_ospf_interfaces, _fake)
+check("drawnfromfacts" in _t and "1234" in _t and "vppwan0" not in _t,
+      f"the screen is drawn from the facts it is given, not a second reading: {_t!r}")
+_nof = shell({}, DP_STALLED).ospf_interface_facts()
+check(_nof == {"answered": False, "interfaces": []}
+      and not opshow.ospf_fields(_nof)["answered"],
+      f"ospfd not answering is answered: False, not an empty box: {_nof}")
+
+print("\n=== show isis interface, as facts: the silent circuit and the punt ===")
+sh = shell({"show isis interface detail json": ISIS_IF_SILENT},
+           dict(DP_STALLED, **{"show errors": VPP_ERRORS_OSI}))
+sh.osi_protos_enabled = lambda: []
+_if = sh.isis_interface_facts()
+_c = (_if["circuits"] or [{}])[0]
+check(_if["answered"] and _c.get("name") == "vppwan0" and _c.get("silent")
+      and _if["punting"] is False and _if["drops"] == 34,
+      f"isis_interface_facts: a silent circuit, the punt off, 34 drops: {_if}")
+_ifl = opshow.isis_fields(_if)
+check(_ifl["punt_known"] and not _ifl["punting"] and _ifl["osi_drops"] == 34
+      and _ifl["circuits"][0]["silent"],
+      f"and its fields say the same: {_ifl}")
+_t = out_of(sh.show_isis_interfaces, _if)
+check("NOT punting IS-IS" in _t and "34 frame(s)" in _t,
+      "the screen drawn from those facts reports the punt they carry")
+_t = out_of(sh.show_isis_interfaces, dict(_if, punting=True, drops=0))
+check("IS punting IS-IS" in _t and "NOT punting" not in _t,
+      f"and only those: given the punt on, it says so without asking again: {_t!r}")
+_nif = shell({}, DP_STALLED).isis_interface_facts()
+check(not _nif["answered"] and _nif["circuits"] == [] and _nif["punting"] is None,
+      f"isisd not answering: answered False, the punt not asked: {_nif}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

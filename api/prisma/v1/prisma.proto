@@ -1320,6 +1320,43 @@ service OperationalService {
   // way, from the peer's copy at its default path. `peer <file>` - a path
   // on the box's own disk - stays a screen, through Show.
   rpc GetHaStatus(GetHaStatusRequest) returns (HaStatus);
+
+  // #558, phase 7: the rest of the VTY's screens, typed. Same convention as
+  // phase 6: each is the VTY's own screen of the same name read into fields
+  // by the same Shell, and carries the screen verbatim in `text`. Any
+  // account may call them, as any account may type them.
+  //
+  // `show ospf interface`: what ospfd believes about each interface beside
+  // the dataplane's MTU, and the MTU stall that stops an adjacency in
+  // Exchange with no log line on either side.
+  rpc ListOspfInterfaces(ListOspfInterfacesRequest) returns (OspfInterfaces);
+  // `show isis interface`: each IS-IS circuit, and whether the dataplane is
+  // punting IS-IS to the kernel - the trap a healthy-looking circuit with
+  // no neighbour usually is.
+  rpc ListIsisInterfaces(ListIsisInterfacesRequest) returns (IsisInterfaces);
+  // `show hardware`: the NICs Linux has, which one carries the default route,
+  // and what the dataplane already holds.
+  rpc GetHardware(GetHardwareRequest) returns (Hardware);
+  // `show logging`: each routing daemon's logging configuration, as FRR
+  // reports it.
+  rpc GetRoutingLogging(GetRoutingLoggingRequest) returns (RoutingLogging);
+  // `show snmp mib` and `show snmp zabbix-template`: the file, with the
+  // enterprise number this box serves filled in, to hand to an NMS.
+  // FAILED_PRECONDITION when the agent serves no enterprise subtree yet, or
+  // the file is not on the box, with the VTY's words.
+  rpc GetSnmpFile(GetSnmpFileRequest) returns (SnmpFile);
+  // `ping`, `traceroute` and `mtr`, run from the box's management plane as
+  // the VTY runs them, streamed: one ProbeEvent per line the tool prints,
+  // each read into a reply or a hop where the line is one, and a last one
+  // with `end` set. Bounded as at the prompt: `count` is 1-100 (0 is the
+  // VTY's default, 5), and the box stops a tool still running after 300 s.
+  // INVALID_ARGUMENT, with the VTY's words, for a host, count or source the
+  // VTY refuses; FAILED_PRECONDITION when the box has no such tool.
+  // Cancelling the call stops the probe. One account's probes run one at a
+  // time, as at its console.
+  rpc Ping(ProbeRequest) returns (stream ProbeEvent);
+  rpc Traceroute(ProbeRequest) returns (stream ProbeEvent);
+  rpc Mtr(ProbeRequest) returns (stream ProbeEvent);
 }
 
 // ------------------------------------------------- the CGNAT's reads (#558)
@@ -1671,6 +1708,252 @@ message HaStatus {
   bool agree = 14;
   // `show cgnat ha`, verbatim.
   string text = 15;
+}
+
+// ------------------------------------------- the rest of the screens (#558)
+
+message ListOspfInterfacesRequest {}
+
+message OspfInterface {
+  // FRR's name for the interface: the Linux end of the dataplane's pair.
+  string name = 1;
+  // The area, as ospfd writes it ("0.0.0.0"); "-" when it did not say.
+  string area = 2;
+  // ospfd's interface state ("DR", "Backup", "DROther", "Point-To-Point",
+  // "Waiting", "Down", ...).
+  string state = 3;
+  // True when the interface sends no hello.
+  bool passive = 4;
+  // The OSPF cost; -1 when ospfd did not say.
+  int32 cost = 5;
+  // Gauge: neighbours Full, of `neighbors` known on the interface.
+  uint32 adjacent = 6;
+  uint32 neighbors = 7;
+  // Bytes: the MTU ospfd advertises in its Database Description packets
+  // (the TAP's); 0 when ospfd did not say.
+  uint32 ospf_mtu = 8;
+  // The dataplane's own name for the interface, and its MTU in bytes;
+  // dataplane_mtu_known false when the dataplane has no MTU for it - the
+  // management port, kept away from the dataplane, has none.
+  string dataplane = 9;
+  uint32 dataplane_mtu = 10;
+  bool dataplane_mtu_known = 11;
+  // True when the two MTUs differ the way that stops an adjacency in
+  // Exchange; the screen says what to do about it.
+  bool mtu_stall = 12;
+}
+
+message OspfInterfaces {
+  // False when ospfd did not answer: nothing below was read.
+  bool answered = 1;
+  repeated OspfInterface interfaces = 2;
+  // `show ospf interface`, verbatim.
+  string text = 3;
+}
+
+message ListIsisInterfacesRequest {}
+
+message IsisInterface {
+  string name = 1;
+  // The IS-IS instance's area tag.
+  string area = 2;
+  // isisd's circuit id, as it writes it; "-" when it did not say.
+  string circuit_id = 3;
+  // isisd's circuit state ("Up", "Down", ...).
+  string state = 4;
+  bool passive = 5;
+  // The circuit type as isisd writes it: "L1", "L2", "L1L2".
+  string level = 6;
+  // The first level's metric; -1 when isisd did not say.
+  int32 metric = 7;
+  // Gauge: neighbours up on the circuit, every level summed.
+  uint32 active_neighbors = 8;
+  // True for an active circuit that is Up with no neighbour: the shape the
+  // punt below explains, or a far end not answering.
+  bool silent = 9;
+}
+
+message IsisInterfaces {
+  // False when isisd did not answer.
+  bool answered = 1;
+  repeated IsisInterface circuits = 2;
+  // Read only when there is a circuit. punt_known false when the dataplane
+  // could not be asked; otherwise punting says whether it passes IS-IS
+  // (NLPID 0x83) to the kernel, without which no hello reaches isisd.
+  bool punt_known = 3;
+  bool punting = 4;
+  // Counter: frames osi-input dropped as an unknown OSI protocol since the
+  // dataplane started - hellos arriving with nobody to receive them.
+  uint64 osi_drops = 5;
+  // `show isis interface`, verbatim.
+  string text = 6;
+}
+
+message GetHardwareRequest {}
+
+message HardwareNic {
+  // Linux's name for the card.
+  string name = 1;
+  // PCI address, "0000:06:12.0".
+  string pci = 2;
+  // The kernel driver bound to it; "" when none is.
+  string driver = 3;
+  // True when that driver is one DPDK can use (vfio-pci, uio_pci_generic).
+  bool dpdk_driver = 4;
+  // RFC 2863 operstate as Linux has it ("up", "down", "unknown", ...).
+  string link = 5;
+  // Megabits per second; 0 when the kernel does not say (a link that is down).
+  uint32 speed_mbps = 6;
+  string mac = 7;
+  // True for the card that carries the default route: handing it to the
+  // dataplane moves how this box is reached.
+  bool default_route = 8;
+}
+
+message Hardware {
+  // False when the dataplane could not be asked what it holds: a card it
+  // took is then missing from `nics` with nothing to say so.
+  bool dataplane_answered = 1;
+  // The interfaces the dataplane holds (local0 aside). A card the dataplane
+  // owns is no longer Linux's, so it is here and not in `nics`.
+  repeated string dataplane_holds = 2;
+  repeated HardwareNic nics = 3;
+  // The card carrying the default route; "" when none does.
+  string default_route_interface = 4;
+  // `show hardware`, verbatim.
+  string text = 5;
+}
+
+message GetRoutingLoggingRequest {}
+
+message LoggingTarget {
+  // False for "disabled".
+  bool enabled = 1;
+  // The lowest severity logged ("debugging", "informational", "warnings",
+  // "errors", ...); "" when disabled.
+  string level = 2;
+  // syslog's facility and ident; the file's filename. "" where not written.
+  string facility = 3;
+  string ident = 4;
+  string filename = 5;
+}
+
+message DaemonLogging {
+  // "zebra", "bgpd", "ospfd", ...
+  string daemon = 1;
+  LoggingTarget syslog = 2;
+  LoggingTarget stdout = 3;
+  LoggingTarget file = 4;
+  // FRR's protocol name ("ZEBRA", "OSPF").
+  string protocol = 5;
+  bool record_priority = 6;
+  bool record_severity = 7;
+  // Digits after the second in each record's timestamp, 0-6.
+  uint32 timestamp_precision = 8;
+}
+
+message RoutingLogging {
+  // One per daemon running, in FRR's order; empty when FRR did not answer.
+  repeated DaemonLogging daemons = 1;
+  // `show logging`, verbatim.
+  string text = 2;
+}
+
+message GetSnmpFileRequest {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // PRISMA-ROUTING-MIB (`show snmp mib`).
+    KIND_MIB = 1;
+    // The Zabbix 7.0 template (`show snmp zabbix-template`).
+    KIND_ZABBIX_TEMPLATE = 2;
+  }
+  Kind kind = 1;
+}
+
+message SnmpFile {
+  // A name to save it under: "PRISMA-ROUTING-MIB.txt" or
+  // "prisma-routing-zabbix.json".
+  string filename = 1;
+  // "text/plain" for the MIB, "application/json" for the template (Zabbix
+  // 7.0 imports it as is).
+  string media_type = 2;
+  // The enterprise number filled in, the one the agent serves under.
+  string enterprise_number = 3;
+  // The file itself, exactly what the VTY prints.
+  string content = 4;
+}
+
+message ProbeRequest {
+  // An address or a hostname, as the VTY takes it.
+  string host = 1;
+  // ping: packets; traceroute: the hop ceiling; mtr: report cycles. 1-100;
+  // 0 is the VTY's default, 5.
+  uint32 count = 2;
+  // An address this box holds to send from; "" lets the kernel choose.
+  string source = 3;
+}
+
+message PingReply {
+  // icmp_seq, the reply's TTL, and the round trip in milliseconds.
+  uint32 sequence = 1;
+  string from_address = 2;
+  uint32 ttl = 3;
+  double rtt_ms = 4;
+}
+
+message TraceHop {
+  // traceroute: the hop number, the address that answered ("" for "*",
+  // answered false) and the round trip in milliseconds.
+  uint32 hop = 1;
+  string address = 2;
+  bool answered = 3;
+  double rtt_ms = 4;
+}
+
+message MtrHop {
+  // mtr --report: one per hop, all at the end of the run. "???" is an
+  // address that never answered, written as "" with answered false.
+  uint32 hop = 1;
+  string address = 2;
+  bool answered = 3;
+  // Percent, 0-100.
+  double loss_percent = 4;
+  uint32 sent = 5;
+  // Milliseconds.
+  double last_ms = 6;
+  double avg_ms = 7;
+  double best_ms = 8;
+  double worst_ms = 9;
+  double stdev_ms = 10;
+}
+
+message ProbeEnd {
+  // The tool's exit status: ping exits 1 when no reply came, and 124 is the
+  // box stopping a tool still running after 300 s.
+  int32 exit_status = 1;
+  bool stopped_at_deadline = 2;
+  // ping's summary, when it printed one: packets sent and received, loss
+  // in percent, and the round trips' min/avg/max/mdev in milliseconds
+  // (rtt_known false when there was no reply to measure).
+  uint32 transmitted = 3;
+  uint32 received = 4;
+  double loss_percent = 5;
+  bool rtt_known = 6;
+  double rtt_min_ms = 7;
+  double rtt_avg_ms = 8;
+  double rtt_max_ms = 9;
+  double rtt_mdev_ms = 10;
+}
+
+message ProbeEvent {
+  // The line the tool printed, as the VTY shows it; empty on `end`.
+  string line = 1;
+  oneof kind {
+    PingReply reply = 2;
+    TraceHop hop = 3;
+    MtrHop mtr_hop = 4;
+    ProbeEnd end = 5;
+  }
 }
 
 message ClearRequest {
