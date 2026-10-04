@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.6 - the rest of the screens typed, the probes streamed
+
+### Added
+
 * **The rest of the VTY's screens through the management API, typed, and
   the probes streamed.**
   ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 7)
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   the account's process is told, closes it, and is read back to the end so
   the next call starts clean. `docs/api-coverage.md` now counts every `show`
   as typed but `show cgnat ha peer <file>`, a path on the box's disk.
-
-### Fixed
 
 ## 0.150.5 - a line FRR refuses fails the VTY batch
 
