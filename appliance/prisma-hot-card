@@ -256,6 +256,15 @@ restart_dataplane() {
      && $SYSTEMCTL is-active --quiet vpp.service; then
     dp=vpp.service
   fi
+  # AND THE LOADER WITH IT, by name. Its PartOf=vpp.service is a drop-in
+  # install.sh writes only on a box without images; a box that has them and
+  # was put back on the units by hand has no drop-in, so the loader stayed
+  # `active (exited)` through the stop, config_loaded found it active, and
+  # the new VPP ran with nothing configured - every interface down (the
+  # 0.150.0 install lab, second gate).
+  if [ "$dp" = vpp.service ]; then
+    $SYSTEMCTL stop prisma-routing.service
+  fi
   if ! $SYSTEMCTL stop "$dp"; then
     if $SYSTEMCTL is-active --quiet "$dp"; then
       say "the dataplane could not be stopped; nothing was changed"

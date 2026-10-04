@@ -99,6 +99,7 @@ if [ "\$*" = "start prisma-routing.service" ]; then
   fi
   : > "$S/loaded"; exit 0
 fi
+[ "\$*" = "stop prisma-routing.service" ] && { rm -f "$S/loaded"; exit 0; }
 [ "\$*" = "is-active --quiet prisma-routing.service" ] && { [ -e "$S/loaded" ]; exit \$?; }
 exit 0
 EOF
@@ -245,16 +246,18 @@ echo "=== a box on the units restarts vpp.service, never gives a held card back 
 # The 0.150.0 install lab: on vpp.service the containers stop was a no-op, the
 # give-back ran with VPP still holding the card through vfio-pci, and the
 # kernel hung waiting for it to let go.
-fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/units"
+# The loader is active before it, as on any running box, and without the
+# PartOf drop-in nothing but this restart stops it.
+fresh; HC add eth9 >/dev/null; : > "$S/calls"; touch "$S/units" "$S/loaded"
 OUT=$(HC restart-dataplane); RC=$?
 _seq=$(grep -E "^systemctl (stop|start|restart) |^giveback" "$S/calls" | tr '\n' '|')
-[ $RC = 0 ] && [ "$_seq" = "systemctl stop vpp.service|giveback restart|systemctl restart prisma-routing-tune.service|systemctl start vpp.service|systemctl start prisma-routing.service|" ] \
-  && ok "vpp.service stopped before the give-back and started after the tuner" \
+[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing.service|systemctl stop vpp.service|giveback restart|systemctl restart prisma-routing-tune.service|systemctl start vpp.service|systemctl start prisma-routing.service|" ] \
+  && ok "the loader and vpp.service stopped before the give-back, started after the tuner" \
   || bad "the units sequence (rc=$RC): $_seq"
 ! called "start prisma-routing-containers.service" \
   && ok "and the containers unit, which Conflicts with it, is never started" \
   || bad "the containers unit was started on a units box: $(cat "$S/calls")"
-rm -f "$S/units"
+rm -f "$S/units" "$S/loaded"
 
 echo "=== #564: the restart ends with the names a boot gives the cards ==="
 # 10.40.200.166, 0.149.30: the dataplane's Linux ends (TAPs named enp1s0,

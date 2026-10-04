@@ -1122,7 +1122,12 @@ dp_restart_check() {  # <which path, for the report>
   else
     echo "  [FAIL] a dataplane restart $1 did not come back whole (#564)"
     echo "         before '${_dr_b:-<no answer>}'; after '${_dr_a:-<no answer>}'"
-    send 'cat /tmp/dprestart.log; tail -20 /run/prisma-routing/dataplane-restart.log'
+    # Read back before the caller powers the box off, as a field: sent bare,
+    # the power button's monitor escape interleaved with it and the log was
+    # lost (0.150.0's second gate).
+    send 'echo "HX""LAB dr-why=$({ cat /tmp/dprestart.log; tail -20 /run/prisma-routing/dataplane-restart.log; vppctl show interface; } 2>&1 | tr -d "\r" | tr "\n" "|" | cut -c1-1500)"'
+    wait_for "HXLAB dr-why=" 60 "the box to say what the restart did" || fail=1
+    echo "         what it did: $(live_field dr-why)"
     fail=1
   fi
 }

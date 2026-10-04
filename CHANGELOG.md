@@ -170,7 +170,11 @@ version has a chance of seeing it.
   the kernel waited on VPP forever - journald blocked, no prompt. Found by
   0.150.0's first release gate. The restart now stops and starts the
   dataplane the box runs, `vpp.service` or the containers, and
-  `lab/install-iso.sh` restarts the dataplane on both paths.
+  `lab/install-iso.sh` restarts the dataplane on both paths. On the units it
+  also stops the loader by name: a box with images put back on the units
+  has no `PartOf=vpp.service` drop-in, so the loader stayed active through
+  the stop and the new VPP came up with nothing configured (the second
+  gate).
 
 * **A fresh install had no `prisma-operator` group.**
   ([#563](https://github.com/andrediashexa/hexarouting/issues/563)) The
