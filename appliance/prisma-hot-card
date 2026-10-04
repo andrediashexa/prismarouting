@@ -176,7 +176,65 @@ list() {
 # through AF_XDP, the rename did not take, the tuner then bound the card to
 # uio under the name xdp-ens20, and VPP was left on a card the kernel no
 # longer had.
+# THE NAMES THE DATAPLANE KNEW ITS CARDS BY (#564): "pci name", one per line,
+# from the startup.conf the tuner wrote at boot - `dev <pci> { ... name <n> }`.
+startup_names() {
+  [ -f "$STARTUP" ] || return 0
+  awk '
+    $1 == "dev" && $2 ~ /^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+\.[0-9a-f]+$/ { pci = $2 }
+    pci != "" && $1 == "name" { print pci, $2; pci = "" }
+    $1 == "}" { pci = "" }' "$STARTUP"
+}
+
+# The netdev a PCI address carries now, or nothing.
+netdev_of() {
+  for d in "$SYSNET"/*; do
+    [ -e "$d/device" ] || continue
+    case "$(readlink "$d/device")" in */"$1") echo "${d##*/}"; return 0 ;; esac
+  done
+  return 0
+}
+
+# THE DEAD DATAPLANE'S LINUX ENDS (#564). linux_cp's pairs are TAPs carrying
+# the cards' names - enp1s0, and enp1s0.666 for a sub-interface. Left in the
+# kernel past the stop, they hold those names: measured on 10.40.200.166
+# (0.149.30), udev's rename of the given-back card failed - "Failed to rename
+# network interface 18 from 'eth0' to 'enp1s0': File exists" - the tuner
+# wrote eth0, eth1, eth2 into startup.conf, the saved configuration naming
+# enp1s0 was refused on load, and the box, managed through enp6s18, was dark
+# until a reset. Only TUN/TAP devices named for a card are removed: a real
+# card never has tun_flags.
+stale_ends() {
+  startup_names | while read -r _pci n; do
+    for d in "$SYSNET/$n" "$SYSNET/$n".*; do
+      [ -e "$d/tun_flags" ] || continue
+      if $IP link del dev "${d##*/}" 2>/dev/null; then
+        say "${d##*/}: the stopped dataplane's Linux end, removed"
+      fi
+    done
+  done
+}
+
+# EACH CARD UNDER THE NAME THE DATAPLANE KNEW IT BY (#564), whatever the
+# kernel gave it back as, so the tuner writes the startup.conf a boot writes
+# and the saved configuration finds its interfaces.
+names_back() {
+  while read -r pci n; do
+    cur=$(netdev_of "$pci")
+    [ -n "$cur" ] && [ "$cur" != "$n" ] || continue
+    $IP link set dev "$cur" down 2>/dev/null
+    if $IP link set dev "$cur" name "$n" 2>/dev/null; then
+      say "$n: came back as $cur, given its name back"
+    else
+      say "$n: came back as $cur and could not be renamed; the tuner sees $cur"
+    fi
+  done < "$1"
+}
+
 restart_dataplane() {
+  # What the cards were called, before anything changes (#564).
+  names=$(mktemp)
+  startup_names > "$names"
   # A STOP THAT DID NOT REPORT SUCCESS IS NOT A DATAPLANE STILL RUNNING (#564).
   # On 10.95.200.198 (0.149.26) the containers went down and this function
   # returned "could not be stopped; nothing was changed" - whatever made
@@ -189,6 +247,7 @@ restart_dataplane() {
   if ! $SYSTEMCTL stop prisma-routing-containers.service; then
     if $SYSTEMCTL is-active --quiet prisma-routing-containers.service; then
       say "the dataplane could not be stopped; nothing was changed"
+      rm -f "$names"
       return 1
     fi
     say "the stop did not report success and the dataplane is down;"
@@ -199,7 +258,13 @@ restart_dataplane() {
   # a restart that left ens19 on uio_pci_generic came back "claiming 1 of this
   # box's 2 cards" - ens20 alone - and ens19 was gone from the dataplane, with
   # the saved configuration that named it refused on replay.
+  stale_ends
   $GIVE_BACK restart 2>&1 | sed 's/^/    /'
+  # udev names a card given back asynchronously; the tuner must see the
+  # result, not a moment before it.
+  $UDEVADM settle --timeout=10 2>/dev/null
+  names_back "$names"
+  rm -f "$names"
   # The dataplane that knew those interfaces is gone from here on.
   if [ -f "$STATE" ]; then
     while read -r n _pci k; do
@@ -220,7 +285,13 @@ restart_dataplane() {
   $SYSTEMCTL start prisma-routing-containers.service || rc=1
   # PartOf stopped it with the containers and nothing starts it again: it is
   # what replays the saved configuration onto the dataplane.
-  $SYSTEMCTL start prisma-routing.service || rc=1
+  # The restart checks its own result (#564): the saved configuration has to
+  # load onto the dataplane it started, or the box is up with nothing on it.
+  if ! $SYSTEMCTL start prisma-routing.service; then
+    rc=1
+    say "error: the saved configuration did not load onto the restarted dataplane;"
+    say "    'journalctl -u prisma-routing' on the box says why"
+  fi
   api_socket_back
   return $rc
 }

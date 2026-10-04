@@ -27,6 +27,20 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.32 - a dataplane restart keeps the cards' names
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **Fixed (#564):** on 0.149.30, `RestartDataplane` ran to the end but could
+  bring the cards back under kernel names (eth0...), leaving the box with no
+  configuration - unreachable when it is managed through a dataplane
+  interface. From 0.149.32 the cards keep their names across the restart.
+* **The answer says when the configuration did not load:** a restart whose
+  saved configuration is refused afterwards now ends `FAILED_PRECONDITION`,
+  `REASON_APPLY_FAILED`, its output naming it ("the saved configuration did
+  not load onto the restarted dataplane"), instead of success.
+* **Do not call RestartDataplane before 0.149.32** on a box managed through a
+  dataplane interface.
+
 ## 0.149.31 - a test suite cleans up after itself
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc...68c8`).

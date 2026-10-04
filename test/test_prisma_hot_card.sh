@@ -36,8 +36,11 @@ case "\$*" in
   "-d link show dev "*) for a in \$(cat "$S/alts"); do echo "    altname \$a"; done ;;
   "link property del dev "*) sed -i "s/\$7//" "$S/alts" ;;
   "link show dev "*) grep -qx "\$4" "$S/names"; exit \$? ;;
-  "link set dev "*" name "*) grep -qx "\$4" "$S/names" || exit 1
+  "link set dev "*" name "*) if ! grep -qx "\$4" "$S/names" && [ -e "$R/sys/class/net/\$4" ]; then
+                             mv "$R/sys/class/net/\$4" "$R/sys/class/net/\$6"; exit 0; fi
+                           grep -qx "\$4" "$S/names" || exit 1
                            sed -i "s/^\$4\$/\$6/" "$S/names" ;;
+  "link del dev "*) rm -rf "$R/sys/class/net/\$4" ;;
 esac
 exit 0
 EOF
@@ -69,6 +72,22 @@ echo "systemctl \$*" >> "$S/calls"
 # only when the test says so.
 [ "\$*" = "is-active --quiet prisma-routing-containers.service" ] && { [ -e "$S/stillactive" ]; exit \$?; }
 [ "\$*" = "cat prisma-routing-api-proxy.socket" ] && { [ -e "$S/apisocket" ]; exit \$?; }
+# #564: the tuner, standing in - startup.conf from the cards as Linux names
+# them now, which is what the real one writes; and a configuration that names
+# an interface the dataplane does not have is refused, as --load refuses it.
+if [ "\$*" = "restart prisma-routing-tune.service" ] && [ -e "$S/tunewrites" ]; then
+  { echo "dpdk {"
+    for d in "$R"/sys/class/net/*; do
+      [ -e "\$d/device" ] || continue
+      echo "  dev \$(basename "\$(readlink "\$d/device")") {"
+      echo "    name \${d##*/}"
+      echo "  }"
+    done
+    echo "}"; } > "$R/etc/vpp/startup.conf"
+fi
+if [ "\$*" = "start prisma-routing.service" ] && [ -e "$S/loadneeds" ]; then
+  grep -q "name \$(cat "$S/loadneeds")\$" "$R/etc/vpp/startup.conf" || exit 1
+fi
 exit 0
 EOF
 cat > "$T/giveback" <<EOF
@@ -208,6 +227,42 @@ called "reset-failed prisma-routing-api-proxy.socket" \
   && ok "the API's socket is reset and started again after the dataplane" \
   || bad "the API's socket was left as the restart found it: $(cat "$S/calls")"
 rm -f "$S/apisocket"
+
+echo "=== #564: the restart ends with the names a boot gives the cards ==="
+# 10.40.200.166, 0.149.30: the dataplane's Linux ends (TAPs named enp1s0,
+# enp1s0.666) outlived the stop, udev could not rename the given-back card
+# from eth0 ("File exists"), the tuner wrote eth0 into startup.conf, and the
+# saved configuration naming enp1s0 was refused - the box went dark.
+fresh
+printf 'dpdk {\n  dev 0000:00:14.0 {\n    num-rx-queues 1\n    name ens20\n  }\n}\n' > "$R/etc/vpp/startup.conf"
+cp "$R/etc/vpp/startup.conf" "$S/startup.before"
+rm -rf "$R/sys/class/net/eth9"
+mkdir -p "$R/sys/class/net/eth0" "$R/sys/class/net/ens20" "$R/sys/class/net/ens20.666"
+ln -s "../../../devices/pci0000:00/0000:00:14.0" "$R/sys/class/net/eth0/device"
+: > "$R/sys/class/net/ens20/tun_flags"; : > "$R/sys/class/net/ens20.666/tun_flags"
+mkdir -p "$R/sys/class/net/ens21"; : > "$R/sys/class/net/ens21/tun_flags"
+: > "$S/calls"; touch "$S/tunewrites"; echo ens20 > "$S/loadneeds"
+OUT=$(HC restart-dataplane); RC=$?
+_order=$(grep -nE "^ip link del dev ens20$|^ip link del dev ens20.666$|^giveback|^udevadm settle|^ip link set dev eth0 name ens20$|^systemctl restart prisma-routing-tune|^systemctl start prisma-routing-containers" "$S/calls" | cut -d: -f2- | tr '\n' '|')
+[ "$_order" = "ip link del dev ens20|ip link del dev ens20.666|giveback restart|udevadm settle --timeout=10|ip link set dev eth0 name ens20|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|" ] \
+  && ok "stale Linux ends removed, cards given back, udev settled, names restored, then the tuner, then the dataplane" \
+  || bad "the order (rc=$RC): $_order"
+_names_after=$(grep -o "name [a-z0-9.]*" "$R/etc/vpp/startup.conf" | tr '\n' ' ')
+[ "$_names_after" = "name ens20 " ] \
+  && ok "the startup.conf the restart ends with names the card ens20, as before it" \
+  || bad "startup.conf names after the restart: $_names_after"
+[ $RC = 0 ] && ! called "link del dev ens21$" \
+  && ok "the saved configuration loads, and a TAP not named for a card is left alone" \
+  || bad "rc=$RC, or ens21 was removed: $(grep ens21 "$S/calls")"
+rm -f "$S/tunewrites" "$S/loadneeds"
+
+echo "=== #564: a configuration that does not load is said, and fails the restart ==="
+fresh; : > "$S/calls"; echo enp1s0 > "$S/loadneeds"
+OUT=$(HC restart-dataplane); RC=$?
+[ $RC = 1 ] && said "did not load onto the restarted dataplane" \
+  && ok "the restart unit checks its own result: rc 1 and the reason in its log" \
+  || bad "a configuration that did not load (rc=$RC): $OUT"
+rm -f "$S/loadneeds"
 
 echo "=== the paths it runs are the paths install.sh writes ==="
 # Measured on a KVM guest: the default pointed at /usr/lib/prisma-routing/
