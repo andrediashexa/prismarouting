@@ -537,12 +537,19 @@ say "configuration"
 # world-readable copy hands every local account an offline cracking target.
 # The group is a role group, so seeing them requires being trusted to change
 # the configuration in the first place (#35).
-# The two roles the VTY understands. Created here rather than documented as a
-# step somebody must remember: an authorization model whose groups do not exist
-# is one where every account falls back to read-only and the operator concludes
-# the box is broken. Empty until somebody is added to them; root always has
-# both.
-for g in prisma-admin prisma-cgnat; do
+# The two roles the VTY understands, and the operator capability beside them
+# (#563). Created here rather than documented as a step somebody must
+# remember: an authorization model whose groups do not exist is one where every
+# account falls back to read-only and the operator concludes the box is broken.
+# Empty until somebody is added to them; root always has all three.
+#
+# prisma-operator came in a patch (0.149.26), which cannot change this file, so
+# until 0.150.0 the group was made by the first commit granting `operator`,
+# through a door of its own. That door stays, for a box upgraded by patches
+# from before 0.149.26 that never re-ran this; a fresh install has the group
+# from the start. test/test_install_groups.py holds this list to the VTY's
+# GROUP_* constants.
+for g in prisma-admin prisma-cgnat prisma-operator; do
   if [ -z "${DESTDIR:-}" ]; then
     getent group "$g" >/dev/null 2>&1 || groupadd --system "$g" 2>/dev/null || true
   fi

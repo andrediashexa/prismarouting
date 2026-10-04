@@ -27,6 +27,19 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## Next (0.150.0)
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **`operator` on a fresh install:** a box installed from the 0.150.0 medium
+  has the `prisma-operator` group from the start, so granting `operator`
+  works the same on a new box as on one upgraded by patches. Nothing for a
+  client to change.
+* **Proved on a fresh install:** the 0.150.0 gate installs from the ISO and
+  checks that `system dataplane restart` (the same path as
+  `RestartDataplane`) and a killed dataplane both come back configured, and
+  that the log container runs.
+* **Lab box:** .166 is on 0.149.33.
+
 ## 0.149.33 - a restart that came back is reported as one
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).

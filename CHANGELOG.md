@@ -77,7 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A fresh install from the medium now proves what the 0.149.x patches
+  shipped.** A patch release is proved by the suites and an upgrade artifact,
+  never by an install, so several 0.149.x behaviours had never run on a box
+  installed from the ISO. `lab/install-iso.sh`, which only a minor (Y) gate
+  runs, now checks on the installed box that the log container runs and
+  carries the TCP log streams
+  ([#550](https://github.com/andrediashexa/hexarouting/issues/550)), that
+  `prisma-operator` exists
+  ([#563](https://github.com/andrediashexa/hexarouting/issues/563)), that the
+  API's units are installed and the configuring one did not fail, and that a
+  `system dataplane restart` comes back by itself - as many interfaces up as
+  before, the same card names in startup.conf, the configuration loaded and
+  no prisma unit failed
+  ([#564](https://github.com/andrediashexa/hexarouting/issues/564)). It sits
+  beside the existing check that a killed dataplane comes back configured
+  ([#548](https://github.com/andrediashexa/hexarouting/issues/548)), which
+  no gate had run since it was added in 0.149.5.
+
 ### Fixed
+
+* **A fresh install had no `prisma-operator` group.**
+  ([#563](https://github.com/andrediashexa/hexarouting/issues/563)) The
+  operator capability came in 0.149.26, a patch, which cannot change the
+  installer, so the group was made by the first commit granting `operator`.
+  The installer now makes it beside `prisma-admin` and `prisma-cgnat`; the
+  commit's door stays for a box upgraded by patches from before 0.149.26.
+  `test/test_install_groups.py` holds the installer's groups to the VTY's
+  `GROUP_*` constants.
 
 ## 0.149.33 - a dataplane restart reports what really happened
 
