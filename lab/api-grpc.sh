@@ -473,11 +473,11 @@ echo "=========== #558, phase 6: the CGNAT's screens, typed ==========="
 $HX -c configure -c nat -c cgnat -c "pool residential-cgnat" \
     -c "prefix-inside 100.64.16.0/22" -c "prefix-outside 200.150.0.40/30" \
     -c "mode dynamic" -c "alg ftp on" -c "alg rtsp off" \
-    -c "forward tcp 8080 to 100.64.16.5 80" -c exit \
+    -c "forward tcp 1600 to 100.64.16.5 80" -c exit \
     -c "pool v6" -c "prefix-inside 2001:db8:1200::/48" -c "subscriber-length 56" \
     -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 200.150.0.48/29" \
     -c "block-size 1024" -c "alg ftp on" \
-    -c "forward tcp 12000 to 2001:db8:1200:ab00::10 8080" -c exit \
+    -c "forward tcp 22600 to 2001:db8:1200:ab00::10 8080" -c exit \
     -c top -c commit 2>&1 | grep -vE "^\s*$" | tail -6 | sed 's/^/  pools: /'
 # Five subscribers of it allocate a block each, and the traffic stops before
 # anything is read: the screens and the rpcs are then of one box at rest.

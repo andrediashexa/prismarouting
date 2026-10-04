@@ -110,12 +110,18 @@ def translation():
 
 def top():
     r = op.ListTop(pb.ListTopRequest(), timeout=T)
-    mine = [s for s in r.subscribers if s.pool == LONG]
-    result("top", same(r.text, "top") and r.holding_blocks >= 5 and len(mine) >= 1
+    result("top", same(r.text, "top") and r.holding_blocks >= 5
+           and len(r.subscribers) == min(10, r.holding_blocks)
            and all(s.ports_total > 0 and s.blocks >= 1 for s in r.subscribers),
-           f"{r.holding_blocks} holding, rows {[(s.subscriber, s.pool) for s in r.subscribers]}")
-    result("top-long-pool", bool(mine) and all(s.pool == LONG for s in mine),
-           f"the 17-letter pool read whole: {[s.pool for s in mine]}")
+           f"{r.holding_blocks} holding, {len(r.subscribers)} rows")
+    # Every row, so the five subscribers of the long pool are among them
+    # whatever the order: pool lg holds sixty of its own by now.
+    every = op.ListTop(pb.ListTopRequest(count=1000), timeout=T)
+    mine = {s.subscriber: s.pool for s in every.subscribers
+            if s.subscriber.startswith("100.64.16.")}
+    result("top-long-pool", len(mine) >= 5 and set(mine.values()) == {LONG}
+           and len(every.subscribers) == every.holding_blocks,
+           f"the 17-letter pool read whole: {sorted(mine.items())}")
     r2 = op.ListTop(pb.ListTopRequest(count=2), timeout=T)
     result("top-count", len(r2.subscribers) == 2
            and r2.holding_blocks == r.holding_blocks, f"{len(r2.subscribers)} rows")
@@ -187,8 +193,8 @@ def forwards():
     r = op.ListForwards(pb.ListForwardsRequest(), timeout=T)
     got = {(f.pool, f.protocol, f.public_port, f.private_address, f.private_port)
            for f in r.forwards}
-    want = {(LONG, "tcp", 8080, "100.64.16.5", 80),
-            ("v6", "tcp", 12000, "2001:db8:1200:ab00::10", 8080)}
+    want = {(LONG, "tcp", 1600, "100.64.16.5", 80),
+            ("v6", "tcp", 22600, "2001:db8:1200:ab00::10", 8080)}
     result("forwards", same(r.text, "forward") and want <= got
            and all(f.public_address for f in r.forwards), f"{sorted(got)}")
     r = op.ListForwards(pb.ListForwardsRequest(pool="v6"), timeout=T)
