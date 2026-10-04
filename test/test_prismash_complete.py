@@ -7990,6 +7990,45 @@ for _l, _want in (("member ae1", "a bundle's member is a port, not a bundle"),
           f"{_l!r} is refused at the prompt: {out.getvalue().strip()!r}")
 print("  a bundle as a member, and an unknown lacp mode: refused at the prompt")
 
+# ---------------------------------------------------------------------------
+# #568: FRR's refusal of a line the VTY relays is a failure of the batch.
+# Measured on 10.40.200.166 (0.150.4): `vtysh -c "show bpa nonsense"` prints
+# `% Unknown command: show bpa nonsense` and exits 1, and `prismash -c` exited
+# 0. Driven through the REAL Frr.show with a stand-in vtysh, at the -c entry
+# (feed_batch), so dropping the status anywhere on the way turns this red.
+_vdir = _tf.mkdtemp()
+_fake_vtysh = os.path.join(_vdir, "vtysh")
+with open(_fake_vtysh, "w") as _f:
+    _f.write("#!/bin/sh\n"
+             "case \"$*\" in\n"
+             "  *nonsense*) echo '% Unknown command: show bpa nonsense'; exit 1 ;;\n"
+             "  *) echo 'FRRouting 10.7.1'; exit 0 ;;\n"
+             "esac\n")
+os.chmod(_fake_vtysh, os.stat(_fake_vtysh).st_mode | _stat.S_IEXEC)
+_saved_vtysh, prismash.VTYSH = prismash.VTYSH, _fake_vtysh
+try:
+    # A plain Shell, as `prismash -c` builds one: shell_with_box() hands
+    # `show bpa` to its stand-in dataplane, which fails the batch on its own
+    # and made this pass with the fix removed.
+    _sh568 = prismash.Shell()
+    _sh568.caps = {prismash.CAP_ALL}
+    _sh568.frr = prismash.Frr()
+    with contextlib.redirect_stdout(io.StringIO()) as _o568:
+        _rc_typo = _sh568.feed_batch(["show bpa nonsense"])
+    _sh568b = prismash.Shell()
+    _sh568b.caps = {prismash.CAP_ALL}
+    _sh568b.frr = prismash.Frr()
+    with contextlib.redirect_stdout(io.StringIO()):
+        _rc_good = _sh568b.feed_batch(["show version frr"])
+finally:
+    prismash.VTYSH = _saved_vtysh
+    shutil.rmtree(_vdir, True)
+check(_rc_typo != 0 and "Unknown command" in _o568.getvalue(),
+      f"#568: FRR's '% Unknown command' fails the -c batch and is still "
+      f"printed: rc {_rc_typo}, {_o568.getvalue()!r}")
+check(_rc_good == 0,
+      f"#568: a line FRR answers still exits 0: rc {_rc_good}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
 
@@ -8142,3 +8181,4 @@ check(sh._dataplane_neighbours().get("10.0.0.7") == "host-veth-vpp",
 check("10.0.0.7" in sh.dyn_next_hops(), "dyn_next_hops")
 check(sh._cached("k", lambda: 1) == 1 and sh._cached("k", lambda: 2) == 1,
       "_cached reuses an answer")
+
