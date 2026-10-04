@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.29 - a detached system action runs, or says at once why it did not
+
+### Fixed
+
 * **On a freshly rebooted box, RestartDataplane and Upgrade through the API
   hung for minutes and did nothing.** ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
   Measured on 10.40.200.166 (0.149.28): the host's door started the unit,
