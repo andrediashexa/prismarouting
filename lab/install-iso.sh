@@ -1105,11 +1105,11 @@ live_field() {  # <name>
 # RestartDataplane does. Saved first: the restart reloads the SAVED
 # configuration, and this is about coming back, not about what was unsaved.
 dp_restart_check() {  # <which path, for the report>
-  send 'echo "HX""LAB dr-before=up:$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l) pid:$(pgrep -x vpp_main | head -1) $(grep -o "name [a-z0-9]*" /etc/vpp/startup.conf | sort | tr " \n" "=,")"'
+  send 'echo "HX""LAB dr-before=up:$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l) pid:$(pgrep -x vpp_main | head -1) $(grep -o "name [a-z0-9]*" /etc/vpp/startup.conf | sort | tr " \n" "=,")"'
   wait_for "HXLAB dr-before=" 60 "the box to read its dataplane before the restart" || fail=1
   _dr_b=$(live_field dr-before)
   _dr_upb=$(echo "$_dr_b" | sed -n 's/^up:\([0-9]*\) .*/\1/p')
-  send '_p0=$(pgrep -x vpp_main | head -1); prismash -c "save" >/dev/null 2>&1; prismash -c "system dataplane restart" > /tmp/dprestart.log 2>&1; _rc=$?; _t=0; _up=0; while [ $_t -lt 240 ]; do sleep 2; _t=$((_t + 2)); _up=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l); [ "$_up" -ge "'"${_dr_upb:-1}"'" ] && systemctl is-active --quiet prisma-routing.service && break; done; _p1=$(pgrep -x vpp_main | head -1); echo "HX""LAB dr-after=rc:$_rc up:$_up after:${_t}s new:$([ -n "$_p1" ] && [ "$_p0" != "$_p1" ] && echo yes || echo no) cfg:$(systemctl is-active prisma-routing.service) failed:$(systemctl --failed --no-legend 2>/dev/null | grep -c prisma) $(grep -o "name [a-z0-9]*" /etc/vpp/startup.conf | sort | tr " \n" "=,")"'
+  send '_p0=$(pgrep -x vpp_main | head -1); prismash -c "save" >/dev/null 2>&1; prismash -c "system dataplane restart" > /tmp/dprestart.log 2>&1; _rc=$?; _t=0; _up=0; while [ $_t -lt 240 ]; do sleep 2; _t=$((_t + 2)); _up=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l); [ "$_up" -ge "'"${_dr_upb:-1}"'" ] && systemctl is-active --quiet prisma-routing.service && break; done; _p1=$(pgrep -x vpp_main | head -1); echo "HX""LAB dr-after=rc:$_rc up:$_up after:${_t}s new:$([ -n "$_p1" ] && [ "$_p0" != "$_p1" ] && echo yes || echo no) cfg:$(systemctl is-active prisma-routing.service) failed:$(systemctl --failed --no-legend 2>/dev/null | grep -c prisma) $(grep -o "name [a-z0-9]*" /etc/vpp/startup.conf | sort | tr " \n" "=,")"'
   wait_for "HXLAB dr-after=" 600 "the dataplane restart to come back $1" || fail=1
   _dr_a=$(live_field dr-after)
   _dr_up=$(echo "$_dr_a" | sed -n 's/.* up:\([0-9]*\) .*/\1/p; s/^rc:[0-9]* up:\([0-9]*\) .*/\1/p' | head -1)
