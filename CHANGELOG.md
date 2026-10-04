@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.27 - a dataplane restart always comes back, and account changes reach the API
+
+### Fixed
+
 * **A dataplane restart could leave the box with no dataplane at all.**
   ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
   Measured on 10.95.200.198 (0.149.26): RestartDataplane, asked through the
