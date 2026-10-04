@@ -1248,6 +1248,10 @@ class OrderedFrr:
         self.trace.append(("routing", "check" if check_only else "reload"))
         return 0, ""
 
+    def drop_empty_bfd(self, _handed):
+        # #570: after a successful reload, nothing for this trace to order.
+        pass
+
 
 _trace = []
 _sh = shell_with(OrderedApi(_trace))
