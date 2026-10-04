@@ -79,6 +79,14 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`prismash -c` exited 0 when FRR refused the line it relayed.**
+  ([#568](https://github.com/andrediashexa/hexarouting/issues/568)) A command
+  neither the VTY nor the dataplane knows goes to FRR's vtysh, which answers
+  `% Unknown command` and exits 1 (measured on 10.40.200.166, 0.150.4); the VTY
+  printed the answer and dropped the status, so a typo in a script read as
+  success. The relay now fails the batch on FRR's status, and so do `clear
+  ospf` and `clear isis` when FRR refuses them.
+
 ## 0.150.4 - the VTY's exit status trusts good screens
 
 ### Fixed

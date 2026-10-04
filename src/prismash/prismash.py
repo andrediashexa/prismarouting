@@ -18739,6 +18739,11 @@ class Shell:
         rc, out = self.frr.show(line)
         if out:
             print(out)
+        # FRR'S REFUSAL IS A FAILURE (#568). vtysh exits 1 on `% Unknown
+        # command` (measured on 10.40.200.166, 0.150.4) and this dropped the
+        # status, so `prismash -c "show bpa nonsense"` exited 0 for a typo.
+        if rc:
+            self.failed += 1
 
     @staticmethod
     def print_config(cfg):
@@ -21591,6 +21596,8 @@ class Shell:
             print(out)
         if rc == 0:
             print(f"cleared: {' '.join(rest)}")
+        else:
+            self.failed += 1
 
     def clear_isis(self, rest):
         """
@@ -21615,6 +21622,8 @@ class Shell:
         if rc == 0:
             print("cleared: isis adjacency"
                   + (" " + rest[1] if len(rest) == 2 else ""))
+        else:
+            self.failed += 1
 
     def soft_reconfiguration_on(self, neighbour):
         """

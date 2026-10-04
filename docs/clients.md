@@ -27,6 +27,15 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.5 - a line FRR refuses fails the VTY batch
+
+* **Contract:** unchanged (`prisma.proto` sha256 `e872dea7d1a4fa7c9377183ff2be01bef1b2617f6f5369a78a6579a1d2782f5c`).
+* **Nothing changes through the API** (#568): `prismash -c` on the box now
+  exits non-zero when FRR refuses the line it relays (`% Unknown command`),
+  which matters only to a client running the VTY over ssh and trusting the
+  exit status.
+* **Lab box:** .166 is on 0.150.4.
+
 ## 0.150.4 - the VTY's exit status trusts good screens
 
 * **Contract:** unchanged (`prisma.proto` sha256 `e872dea7d1a4fa7c9377183ff2be01bef1b2617f6f5369a78a6579a1d2782f5c`).
