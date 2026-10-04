@@ -50,6 +50,30 @@ push (u8 *base, u8 kind, u8 event, u32 priv, const char *ident)
   bpa_log_ring_publish (x);
 }
 
+/* A NAT64 subscriber's event (#485): its index as ip_priv, and the prefix. */
+static void
+push6 (u8 *base, u32 idx)
+{
+  bpa_log_ring_t *x = bpa_log_seg_xring (base);
+  bpa_log_xev_t *v =
+    bpa_log_ring_reserve (x, BPA_LOG_XRING_SLOTS, BPA_LOG_XEV_BYTES);
+  static const u8 pfx[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab };
+
+  if (!v)
+    return;
+  memset (v, 0, sizeof (*v));
+  v->kind = BPA_LOG_XEV_RECORD;
+  v->wall = 1790000000.25;
+  v->ev.event = BPA_NAT_EVENT_BLOCK_ALLOC;
+  v->ev.ip_priv = idx;
+  v->ev.ip_pub = htonl (0xcb007100);
+  v->ev.port_lo = 1024;
+  v->ev.port_hi = 1087;
+  memcpy (v->ev.sub6.addr, pfx, 16);
+  v->ev.sub6.len = 56;
+  bpa_log_ring_publish (x);
+}
+
 /* Reads what the collector got within ms milliseconds. */
 static int
 collect (int c, char *buf, int size, int ms)
@@ -77,7 +101,7 @@ main (void)
   bpa_log_seg_hdr_t *h;
   u8 *base;
   logd_t l = { 0 };
-  int fd, lis, c = -1, i;
+  int fd, lis, c = -1, i, j;
   struct sockaddr_in a = { .sin_family = AF_INET };
   socklen_t al = sizeof (a);
   char buf[65536];
@@ -110,10 +134,12 @@ main (void)
 	   "a segment with no header yet is refused (VPP still laying it out)");
     bpa_log_seg_init (base, 2, 64, sizeof (bpa_log_event_t), 9);
     h->boot_wall = 1789999000.0;
-    h->version = 2;
+    /* The version before this build's: since 4 (#485) that is a writer
+     * whose events are 16 bytes shorter, every one read askew if taken. */
+    h->version = BPA_LOG_SEG_VERSION - 1;
     CHECK (logd_attach (&l, p) == -1,
 	   "a layout version this build does not read is refused");
-    h->version = 3;
+    h->version = BPA_LOG_SEG_VERSION;
     CHECK (logd_attach (&l, p) == 0 && l.generation == 9,
 	   "VPP's segment is attached, its generation remembered");
     logd_detach (&l);
@@ -229,6 +255,7 @@ main (void)
   printf ("=== the UDP export (#550 step 3) ===\n");
   {
     int r = socket (AF_INET, SOCK_DGRAM, 0), got, nrec = 0, ntpl = 0, nmark = 0;
+    int n64 = 0;
     struct sockaddr_in ra = { .sin_family = AF_INET }, from;
     socklen_t fl;
     bpa_log_seg_udp_cfg_t u = { 0 };
@@ -249,6 +276,7 @@ main (void)
     u.path_mtu = 512;
     u.block_template_id = 256;
     u.marker_template_id = 257;
+    u.nat64_template_id = 258;
     u.template_interval = 20;
     u.domain_id = 1;
     u.seq = 7;
@@ -262,9 +290,17 @@ main (void)
     bpa_log_seg_udp_cfg_write (&h->udp_cfg, &u);
 
     h->tcp_owner = BPA_LOG_OWNER_LOGGER;
+    /* Three NAT64 records in the middle of the IPv4 ones: each kind has its
+     * own set, so the message open on one kind is sent before the other's
+     * record goes in (#485). */
     for (i = 0; i < 40; i++)
-      push (base, BPA_LOG_XEV_RECORD, BPA_NAT_EVENT_BLOCK_ALLOC,
-	    0x64400000 + i, 0);
+      {
+	if (i == 20)
+	  for (j = 0; j < 3; j++)
+	    push6 (base, 171 + j);
+	push (base, BPA_LOG_XEV_RECORD, BPA_NAT_EVENT_BLOCK_ALLOC,
+	      0x64400000 + i, 0);
+      }
     push (base, BPA_LOG_XEV_MARKER, 0, 0, 0);
     logd_pass (&l, 9000000000ULL);
     CHECK (l.udp_on && l.udp.st.bound,
@@ -297,10 +333,26 @@ main (void)
 		       && ((m[28] << 8) | m[29]) == 230
 		       && ((m[48] << 8) | m[49]) == 283,
 		     "the block template is RFC 8158 Table 21's seven fields");
+	    else if (((m[20] << 8) | m[21]) == 258)
+	      CHECK (((m[22] << 8) | m[23]) == 8
+		       && ((m[32] << 8) | m[33]) == 27
+		       && ((m[34] << 8) | m[35]) == 16
+		       && ((m[36] << 8) | m[37]) == 29,
+		     "the NAT64 template: sourceIPv6Address(16) and its "
+		     "prefix length where sourceIPv4Address was");
 	    else
 	      CHECK (((m[20] << 8) | m[21]) == 257 && ((m[22] << 8) | m[23]) == 2
 		       && ((m[28] << 8) | m[29]) == 160,
 		     "and the marker's: observation time, system init time");
+	    break;
+	  case 258:
+	    CHECK ((got - 20) % 38 == 0 && m[20 + 8] == 16
+		     && m[20 + 9] == 0x20 && m[20 + 15] == 0xab
+		     && m[20 + 25] == 56
+		     && ntohs (*(u16 *) (m + 20 + 30)) == 1024,
+		   "a NAT64 record: 38 bytes, the prefix and its length, the "
+		   "block's ports");
+	    n64 += (got - 20) / 38;
 	    break;
 	  case 256:
 	    CHECK ((got - 20) % 25 == 0, "data records of 25 bytes");
@@ -317,12 +369,14 @@ main (void)
 	    break;
 	  }
       }
-    CHECK (ntpl == 2, "both templates went out before the data: %d", ntpl);
+    CHECK (ntpl == 3, "all three templates went out before the data: %d",
+	   ntpl);
+    CHECK (n64 == 3, "the three NAT64 records, in their own set: %d", n64);
     CHECK (nrec == 40 && seen_lo == 0x64400000,
 	   "all 40 records arrived, the first subscriber first: %d", nrec);
     CHECK (nmark == 1, "and one marker: %d", nmark);
     CHECK (maxlen <= 512, "no datagram exceeds the path MTU: %u", maxlen);
-    CHECK (h->udp_stats.n_records == 40 && h->udp_stats.n_packets >= 4,
+    CHECK (h->udp_stats.n_records == 43 && h->udp_stats.n_packets >= 4,
 	   "the counters VPP's screen reads: %llu records, %llu packets",
 	   (unsigned long long) h->udp_stats.n_records,
 	   (unsigned long long) h->udp_stats.n_packets);

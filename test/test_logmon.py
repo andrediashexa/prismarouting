@@ -11,6 +11,7 @@ the writer does - slot first, head after - and read it as the monitor would:
 behind, lapped, and torn mid-copy.
 """
 import os
+import ipaddress
 import struct
 import subprocess
 import sys
@@ -145,14 +146,49 @@ check(lost >= 1 and all(e["priv"] != "100.64.3.3" for e in evs),
       "a slot the writer lapped while it was copied is counted, not printed "
       "torn")
 
-raw = bytearray(52)
+raw = bytearray(M.EVENT_BYTES)
 struct.pack_into("<IIIHHB", raw, 0, ipn("100.64.0.7"), ipn("200.150.0.17"), 3,
                  2048, 4095, 17)
 raw[17:17 + 6] = b"joao-7"
 check(M.decode_event(bytes(raw)) == {"event": 17, "priv": "100.64.0.7",
                                      "pub": "200.150.0.17", "pool": 3, "lo": 2048,
-                                     "hi": 4095, "identity": "joao-7"},
-      "one 52-byte event decodes field by field")
+                                     "hi": 4095, "sub6": False,
+                                     "identity": "joao-7"},
+      "one 68-byte event decodes field by field")
+
+# A NAT64 subscriber (#485): its prefix at 49, its length at 65, and its
+# ip_priv - the index in the pool - never shown.
+raw6 = bytearray(M.EVENT_BYTES)
+struct.pack_into("<IIIHHB", raw6, 0, 171, ipn("203.0.113.3"), 0, 1024, 1087, 16)
+raw6[M.SUB6_OFF:M.SUB6_OFF + 16] = ipaddress.IPv6Address(
+    "2001:db8:1200:ab00::").packed
+raw6[M.SUB6_OFF + 16] = 56
+ev6 = M.decode_event(bytes(raw6))
+check(ev6["priv"] == "2001:db8:1200:ab00::/56" and ev6["sub6"]
+      and ev6["pub"] == "203.0.113.3",
+      f"a NAT64 event is its subscriber's prefix: {ev6['priv']}")
+o6, why = M.parse_args(["subscriber", "2001:db8:1200:ab00::10"])
+check(why is None and M.matches(ev6, o6, {}),
+      "an address inside the prefix picks its subscriber's events")
+o6b, _ = M.parse_args(["subscriber", "2001:db8:1200:ac00::10"])
+check(not M.matches(ev6, o6b, {}) and not M.matches(
+          M.decode_event(bytes(raw)), o6, {}),
+      "and not a neighbour's, nor an IPv4 subscriber's")
+check(M.subscriber_is(ev6, "2001:db8:1200:ab00::1")
+      and not M.subscriber_is(ev6, "2001:db8:1200:ac00::1")
+      and not M.subscriber_is(ev6, "potato")
+      and M.subscriber_is(M.decode_event(bytes(raw)), "100.64.0.7"),
+      "subscriber_is: inside the prefix, not a neighbour or a word; IPv4 by "
+      "address")
+check(M.parse_args(["public", "2001:db8::1"])[1] is not None,
+      "a public address stays IPv4")
+check(" 27=2001:db8:1200:ab00:: 29=56 " in M.raw_lines(
+          ev6, 1_790_000_000, {"syslog": {"enabled": False}})[0],
+      "its IPFIX form carries IE 27 and 29, as the record does")
+wide = dict(ev6, priv="ffff:ffff:ffff:ffff:ffff:ffff:ffff:ff00/120",
+            identity="x" * 20)
+check(all(len(l) <= 79 for l in M.event_lines(wide, 1_790_000_000, {})),
+      "the widest prefix still prints within 79 columns")
 check(M.lost_line(t0 := 1_790_000_000, 5).endswith("5 event(s) not shown: this "
                                                    "monitor fell behind")
       and len(M.lost_line(t0, 4294967295)) <= 79, "what was lost is said, in 79")
@@ -170,8 +206,8 @@ def wpush(buf, kind=1, ev=17, priv="100.64.0.5", wall=1_790_000_050.5, who=b""):
     struct.pack_into("<IIIHHB", buf, off, ipn(priv), ipn("200.150.0.16"), 1,
                      2048, 4095, ev)
     buf[off + 17:off + 17 + M.IDENTITY_MAX] = who.ljust(M.IDENTITY_MAX, b"\0")
-    buf[off + 52] = kind
-    struct.pack_into("<d", buf, off + 56, wall)
+    buf[off + M.EVENT_BYTES] = kind
+    struct.pack_into("<d", buf, off + M.EVENT_BYTES + 4, wall)
     struct.pack_into("<I", buf, base, (head + 1) & 0xFFFFFFFF)
 
 
@@ -188,13 +224,13 @@ evs, lost = w.poll(seg)
 check(lost == 0 and [e["kind"] for e in evs] == [2, 1] and evs[1]["event"] == 17
       and evs[1]["identity"] == "ana" and evs[1]["wall"] == 1_790_000_050.5,
       "a marker and a release, with the wall clock the record carries")
-raw = bytearray(64)
+raw = bytearray(M.XEV_BYTES)
 struct.pack_into("<IIIHHB", raw, 0, ipn("100.64.0.8"), ipn("200.150.0.18"), 2,
                  1, 2, 16)
-raw[52] = 1
-struct.pack_into("<d", raw, 56, 12.5)
+raw[M.EVENT_BYTES] = 1
+struct.pack_into("<d", raw, M.EVENT_BYTES + 4, 12.5)
 check(M.decode_xev(bytes(raw))["wall"] == 12.5 and M.decode_xev(bytes(raw))["priv"]
-      == "100.64.0.8", "one 64-byte slot decodes")
+      == "100.64.0.8", "one 80-byte slot decodes")
 for k in range(20):
     wpush(seg, priv=f"100.64.4.{k}")
 evs, lost = w.poll(seg)
@@ -228,7 +264,8 @@ check(why is None and o["raw"] and o["subscriber"] == "100.64.0.5"
       and o["seconds"] == 30, "every option at once")
 for words, want in ((["sideways"], "does not take"),
                     (["subscriber"], "needs a value"),
-                    (["subscriber", "100.64.0"], "IPv4 address"),
+                    (["subscriber", "100.64.0"], "IPv4 or IPv6 address"),
+                    (["public", "2001:db8::1"], "IPv4 address"),
                     (["public", "200.150.0.16:70000"], "1 to 65535"),
                     (["event", "all"], "alloc, release"),
                     (["seconds", "0"], "seconds is 1 to")):
@@ -390,9 +427,10 @@ with tempfile.TemporaryDirectory() as tmp:
                 M.OFF["ring_head"], M.RING_HDR_BYTES, M.VERSION]
         check(got == want, f"every offset logmon reads is bpa_log_ring.h's: {got}")
 ev_h = open(os.path.join(src, "bpa_log.h")).read()
-check("sizeof (bpa_log_event_t) == 52" in ev_h and "identity) == 17" in ev_h
-      and M.EVENT_BYTES == 52, "the event is 52 bytes, identity at 17, as bpa_log.h "
-      "pins it")
+check("sizeof (bpa_log_event_t) == 68" in ev_h and "identity) == 17" in ev_h
+      and "sub6) == 49" in ev_h and M.EVENT_BYTES == 68 and M.SUB6_OFF == 49,
+      "the event is 68 bytes, identity at 17 and the NAT64 prefix at 49, as "
+      "bpa_log.h pins it")
 check(time.time() > 0 and M.POLL <= 0.5, "polled often enough to say 'within 0.2 s'")
 
 print("=== the API's stream (#558, phase 5) ===")

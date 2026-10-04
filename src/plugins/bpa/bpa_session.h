@@ -574,8 +574,10 @@ void bpa_static_install (u32 pool_index, const bpa_static_t *sf);
 void bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf);
 
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
-/* Every session of one subscriber (host order) ended, under the barrier. */
-u32 bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now);
+/* Every session of one subscriber - by its pool and index - ended, under
+ * the barrier. */
+u32 bpa_subscriber_clear (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+			  f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);
 /*

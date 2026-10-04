@@ -2259,9 +2259,7 @@ check(" subscriber-length 56" in lines and " nat64-prefix 64:ff9b::/96" in lines
       f"the statements are rendered, the prefix with it: {lines}")
 # Each thing the first release does not do, refused by name.
 for setup, needle in (
-        (lambda p: setattr(p, "mode", "dynamic"), "deterministic only"),
         (lambda p: setattr(p, "block_reserve", 1), "no reserve"),
-        (lambda p: setattr(p, "max_blocks", 2), "no max-blocks"),
         (lambda p: p.bypass_src.append("10.0.0.0/8"), "no bypass"),
         (lambda p: setattr(p, "tcp_mss", "1400"), "no tcp-mss"),
         (lambda p: setattr(p, "vrf", "1"), "no vrf"),
@@ -2274,6 +2272,10 @@ for setup, needle in (
     r = t.nat64_fits()
     check(r is not None and needle in r[0], f"{needle}: {r}")
     check(len(r[0]) <= 79 if r else True, f"fits a console: {r}")
+# Phase 3: a dynamic NAT64 pool, and what its allocation takes.
+t = copy.deepcopy(v6)
+t.mode, t.max_blocks, t.initial_ports, t.block_stride = "dynamic", 4, 1024, 1
+check(t.nat64_fits() is None, f"a dynamic NAT64 pool: {t.nat64_fits()}")
 t = base_pool()
 t.subscriber_length = 56
 check(t.nat64_fits() is not None, "subscriber-length on an IPv4 pool is refused")

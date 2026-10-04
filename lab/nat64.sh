@@ -1,7 +1,9 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 19
+# OFF-RED-AT-LEAST: 32
 # (the floor: what the off run of 2026-10-04 measured red, every check)
-# NAT64, deterministic: an IPv6-only subscriber reaches an IPv4 server (#485).
+# NAT64: an IPv6-only subscriber reaches an IPv4 server (#485), through a
+# deterministic pool (sections 1-12) and then a dynamic one whose blocks are
+# logged (13-14).
 #
 #   sh tools/lab.sh nat64          -> LAB PASSED
 #   sh tools/lab.sh nat64 off      -> LAB FAILED (no NAT64 pool: nothing crosses)
@@ -19,6 +21,13 @@
 # datagram with no checksum from the IPv4 side, ICMP echo, an ICMP error
 # from the IPv4 side with its quoted packet, Packet Too Big, and a
 # fragmented UDP datagram in both directions.
+#
+# Sections 13 and 14 turn the pool dynamic and read its log off collectors:
+# IPFIX and syslog naming the subscriber by its delegated prefix, RADIUS's
+# Delegated-IPv6-Prefix giving its name, one exhaustion record for a
+# subscriber's many refused flows, releases after the hold-down and at the
+# pool's drain - once with VPP carrying the log and once with the log
+# container (prisma-logd) carrying it.
 #
 # OFF MODE adds no NAT64 pool. The same traffic must then cross nothing: the
 # checks that say a packet arrived go red, which is what makes them mean
@@ -293,7 +302,7 @@ if [ "$MODE" != off ]; then
   $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" -c "timeout udp 600" \
       -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
   REFUSED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
-      -c "mode dynamic" -c "exit" -c "commit" 2>&1)
+      -c "reserve 2" -c "exit" -c "commit" 2>&1)
   echo "$REFUSED" | sed 's/^/  /'
 else
   REFUSED=""
@@ -311,6 +320,161 @@ $HX -c "show cgnat translation 203.0.113.3 44100" > /tmp/n64-xlt.txt 2>&1
 $HX -c "show cgnat subscriber 2001:db8:1200:ab00::10" > /tmp/n64-sub.txt 2>&1
 $HX -c "show cgnat top" > /tmp/n64-top.txt 2>&1
 cat /tmp/n64-xlt.txt /tmp/n64-sub.txt /tmp/n64-top.txt | sed 's/^/  /'
+
+# ======================================================================
+# PHASE 3 (#485): the pool turned dynamic, and what it logs.
+#
+# The pool is cut down to two blocks in all - ports 1024-1151 in blocks of
+# 64 on one public address - so that one subscriber can take both (its
+# block, then an extension under max-blocks 2) and a second finds the pool
+# exhausted. RFC 8158 natEvent 12 is a POOL with no free block, which is
+# when this box records it, and it is recorded once per subscriber per
+# interval however many packets are refused (#549). Then A's sessions are
+# cleared and its blocks come back after the hold-down, through the reap;
+# B is given one; and removing the pool drains B's - every allocation with
+# its release, each naming the subscriber by its delegated prefix and, for
+# A, by the name RADIUS's Delegated-IPv6-Prefix gave it.
+#
+# Twice: once with VPP carrying the log, once with the log container
+# (prisma-logd, #550) carrying it - the dataplane is the fallback and the
+# container the normal path, and a record shape that works on one of them
+# only is a log that depends on which process happened to be up.
+# ======================================================================
+# B on A's worker, whatever the worker count: a subscriber's worker is its
+# index modulo the workers (bpa_owner_worker), A's index is 171 (0xab), so
+# B is 171 + workers. And each worker's slice of a dynamic pool holds two
+# blocks: 2 x workers in all. Measured with two workers and a fixed two-block
+# pool: one block per slice, A and B on different workers, A's extension
+# refused by its empty slice and nothing exhausted - the box right, the lab's
+# arithmetic single-threaded.
+NW=$(box_workers); [ "$NW" -ge 1 ] || NW=1
+B_HEX=$(printf %x $((171 + NW)))
+B_PFX="2001:db8:1200:${B_HEX}00::/56"
+B_ADDR="2001:db8:1200:${B_HEX}00::10"
+PORT_HI=$((1024 + 128 * NW - 1))
+echo "  workers $NW: B is $B_PFX, the pool ports 1024-$PORT_HI"
+ip netns exec sub ip -6 addr add $B_ADDR/56 dev v-sub nodad
+# The log container's collectors, reached the way the appliance's logger
+# reaches them: through the host's own stack. 192.0.2.2 is behind VPP, which
+# is where the dataplane sends from and the logger cannot - measured, every
+# record the logger sent there was lost.
+ip netns add logc 2>/dev/null
+ip link add v-logc type veth peer name h-logc 2>/dev/null
+ip link set v-logc netns logc
+ip addr add 10.99.0.1/24 dev h-logc 2>/dev/null
+ip link set h-logc up
+ip netns exec logc ip addr add 10.99.0.2/24 dev v-logc
+ip netns exec logc ip link set v-logc up
+ip netns exec logc ip link set lo up
+vppctl ip route add $B_PFX via 2001:db8:1200:ab00::10 host-host-sub >/dev/null
+
+flows() {  # <source> <first port> <count>: one UDP datagram per source port
+  ip netns exec sub python3 - "$@" <<'PY'
+import socket, sys
+src, first, n = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+for p in range(first, first + n):
+    s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    s.bind((src, p))
+    s.sendto(b"x", ("64:ff9b:1:c000:2:200::", 7000))
+    s.close()
+PY
+}
+
+cfg_dyn() {  # <collector> <source> <the pool's own lines>
+  _col=$1 _src=$2; shift 2
+  $HX -c "configure" -c "nat" -c "cgnat" \
+      -c "logging udp $_col src $_src port 4739" \
+      -c "logging enable" \
+      -c "logging syslog 10.99.0.2 enterprise 44444 port 601" \
+      -c "identity radius secret lab-s3cr3t port 1813" \
+      -c "pool v6" "$@" -c "prefix-outside 203.0.113.3/32" \
+      -c "block-size 64" -c "ports 1024 $PORT_HI" -c "mode dynamic" \
+      -c "max-blocks 2" -c "exit" -c "commit remap"
+}
+
+dyn_phase() {  # <A|B> <netns> <IPFIX collector> <source>: one cycle
+  _p=$1 _ns=$2 _col=$3 _src=$4
+  rm -f /tmp/n64-ipfix-$_p.stop
+  ip netns exec $_ns python3 /src/tools/ipfix_collector.py 4739 120 \
+    /tmp/n64-ipfix-$_p.stop > /tmp/n64-ipfix-$_p.out 2>&1 &
+  _ipfix=$!
+  # Syslog in logc in both phases: the TCP streams leave through a Linux
+  # socket whichever process carries them, VPP's included - measured, the
+  # dataplane's syslog to 192.0.2.2 (behind VPP) went to its spill and was
+  # replayed to the next collector configured. Only UDP IPFIX goes out
+  # through VPP's own stack.
+  ip netns exec logc python3 /src/tools/syslog_collector.py 601 45 \
+    /tmp/n64-sys-$_p.rep /tmp/n64-sys-$_p.lines > /dev/null 2>&1 &
+  _sys=$!
+  sleep 2
+  if [ "$MODE" != off ]; then
+    # A turns the deterministic pool of sections 1-12 dynamic; B defines
+    # it again, A's drain having removed it.
+    if [ $_p = A ]; then
+      cfg_dyn $_col $_src -c "no prefix-outside 203.0.113.0/29"
+    else
+      cfg_dyn $_col $_src -c "prefix-inside 2001:db8:1200::/40" \
+              -c "subscriber-length 56" \
+              -c "nat64-prefix 64:ff9b:1::/48"
+    fi 2>&1 | grep -E "error|refus|complete" | sed 's/^/  /'
+    vppctl bpa block-holddown 4 >/dev/null
+    sleep 1
+    python3 /src/tools/radius_nas.py 127.0.0.1 1813 lab-s3cr3t start \
+      2001:db8:1200:ab00::/56 ana@isp 2>&1 | sed 's/^/  radius: /'
+  fi
+  vppctl show bpa logging | tr -d '\r' | grep -m1 'TCP streams carried by' \
+    > /tmp/n64-carrier-$_p.txt
+  sed 's/^/  /' /tmp/n64-carrier-$_p.txt
+  flows 2001:db8:1200:ab00::10 20000 130          # A: a block, an extension
+  flows $B_ADDR 20000 40                           # B: its slice is empty
+  sleep 2
+  # A's first block, from the box: which port of the pool it got depends on
+  # which worker's slice it came from.
+  A_LO=$($HX -c "show cgnat subscriber 2001:db8:1200:ab00::10" 2>&1 \
+         | sed -n 's/.*block 0 .* ports \([0-9]*\)-.*/\1/p' | head -1)
+  echo "$A_LO" > /tmp/n64-alo-$_p.txt
+  $HX -c "show cgnat translation 203.0.113.3 ${A_LO:-1024}" \
+    > /tmp/n64-dxlt-$_p.txt 2>&1
+  sed 's/^/  /' /tmp/n64-dxlt-$_p.txt
+  vppctl show bpa drops 2>/dev/null | tr -d '\r' | grep -iE "block" | sed 's/^/  /'
+  $HX -c "clear cgnat subscriber 2001:db8:1200:ab00::10" 2>&1 | sed 's/^/  /'
+  sleep 8                                         # the hold-down, then the reap
+  flows $B_ADDR 21000 5                            # B, now there is a block
+  sleep 2
+  if [ "$MODE" != off ]; then
+    $HX -c "configure" -c "nat" -c "cgnat" -c "no pool v6" -c "commit" \
+      2>&1 | grep -E "error" | sed 's/^/  /'
+  fi
+  sleep 3
+  touch /tmp/n64-ipfix-$_p.stop
+  wait $_ipfix 2>/dev/null
+  wait $_sys 2>/dev/null
+  grep -E "ALLOCATION|EXHAUSTION|RESUMO" /tmp/n64-ipfix-$_p.out | sed 's/^/  ipfix: /'
+  grep -E "2001:db8" /tmp/n64-sys-$_p.lines 2>/dev/null | cut -c1-220 \
+    | sed 's/^/  syslog: /'
+}
+
+n64_count() {  # <phase> <event word> <subscriber>
+  grep -E "^ +[0-9:]+ $2 +$3 " /tmp/n64-ipfix-$1.out | grep -vc reprocessed
+}
+
+echo
+echo "=========== 13. dynamic, logged - VPP carries the log ==========="
+dyn_phase A srv 192.0.2.2 192.0.2.1
+
+echo
+echo "=========== 14. dynamic, logged - the log container carries it ==========="
+LOGD=
+if [ "$MODE" != off ]; then
+  cc -O2 -Wall -Wextra -Werror -DBPA_STANDALONE -I /src/test -I /src/src/plugins/bpa \
+     -o /tmp/prisma-logd /src/src/logger/prisma_logd.c \
+     /src/src/plugins/bpa/bpa_log_syslog.c /src/src/plugins/bpa/bpa_identity.c -lrt
+  /tmp/prisma-logd > /tmp/logd.log 2>&1 &
+  LOGD=$!
+  sleep 3
+fi
+dyn_phase B logc 10.99.0.2 10.99.0.1
+[ -n "$LOGD" ] && kill $LOGD 2>/dev/null
 
 echo
 echo "=========== 12. the box ==========="
@@ -336,8 +500,8 @@ expect "an unsolicited datagram was dropped, counted, not delivered" \
   sh -c "[ '$UNSOL' = nothing ] && [ '${NS1:-0}' -gt '${NS0:-0}' ]"
 expect "a timeout changed in place: the pool was not rebuilt" \
   sh -c "[ -n '$SESS1' ] && [ '$SESS1' -gt 0 ] && [ '$SESS1' = '$SESS0' ] && grep -q 'timeout udp 600' /tmp/n64-config2.txt"
-expect "the VTY refuses a dynamic NAT64 pool at commit" \
-  grep -q "a NAT64 pool is deterministic only" /tmp/n64-refused.txt
+expect "the VTY refuses what a NAT64 pool does not take yet: reserve" \
+  grep -q "a NAT64 pool takes no reserve yet" /tmp/n64-refused.txt
 expect "show cgnat translation names the subscriber's IPv6 prefix" \
   grep -q "203.0.113.3:44100  ->  2001:db8:1200:ab00::/56" /tmp/n64-xlt.txt
 expect "  and says it is the formula's answer, for any instant" \
@@ -346,6 +510,24 @@ expect "show cgnat subscriber takes an IPv6 address and gives the block" \
   grep -q "the formula gives it 203.0.113.3 ports 44032-46079" /tmp/n64-sub.txt
 expect "show cgnat top names the subscriber by its prefix" \
   grep -q "^2001:db8:1200:ab00::/56 " /tmp/n64-top.txt
+for _p in A B; do
+  [ $_p = A ] && _who="VPP" || _who="the log container"
+  expect "$_who: IPFIX names A by its prefix, block and extension (2 allocations)" \
+    test "$(n64_count $_p ALLOCATION 2001:db8:1200:ab00::/56)" = 2
+  expect "$_who: the pool's exhaustion recorded once for B's 40 refused flows" \
+    test "$(n64_count $_p EXHAUSTION $B_PFX)" = 1
+  expect "$_who: A's two blocks released after the hold-down, in the log" \
+    test "$(n64_count $_p DEALLOCATION 2001:db8:1200:ab00::/56)" = 2
+  expect "$_who: B's block allocated, and released by the pool's drain" \
+    sh -c "[ \$(grep -cE ' ALLOCATION +$B_PFX ' /tmp/n64-ipfix-$_p.out) = 1 ] && [ \$(grep -cE ' DEALLOCATION +$B_PFX ' /tmp/n64-ipfix-$_p.out) = 1 ]"
+  expect "$_who: syslog names A by prefix and by RADIUS's ana@isp" \
+    grep -q 'subscriber="2001:db8:1200:ab00::/56" .*subscriberId="ana@isp"' \
+      /tmp/n64-sys-$_p.lines
+  expect "$_who: translation answers a dynamic port with A's prefix, now" \
+    sh -c "grep -q \"203.0.113.3:\$(cat /tmp/n64-alo-$_p.txt)  ->  2001:db8:1200:ab00::/56\" /tmp/n64-dxlt-$_p.txt && grep -q 'DYNAMIC' /tmp/n64-dxlt-$_p.txt"
+done
+expect "the log was carried by the dataplane, then by the log container" \
+  sh -c "grep -q 'carried by the dataplane' /tmp/n64-carrier-A.txt && grep -q 'carried by the log container' /tmp/n64-carrier-B.txt"
 expect "show bpa config gives the pool back as configured" \
   sh -c "grep -q 'inside 2001:db8:1200::/40' /tmp/n64-config.txt && grep -q 'subscriber-length 56' /tmp/n64-config.txt && grep -q 'nat64-prefix 64:ff9b:1::/48' /tmp/n64-config.txt"
 verdict

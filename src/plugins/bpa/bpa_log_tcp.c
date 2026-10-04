@@ -57,6 +57,9 @@
 #define BPA_TCP_TEMPLATE_ID  258
 /* The boot marker's template. See bpa_log.h for what it carries and why. */
 #define BPA_TCP_MARKER_TEMPLATE_ID 257
+/* A NAT64 subscriber's block (#485): its own template, since IPFIX has no
+ * field that is "an IPv4 or an IPv6 address". */
+#define BPA_TCP_NAT64_TEMPLATE_ID 259
 #define BPA_TCP_DOMAIN	     1
 #define BPA_TCP_RETRY_SECS   5.0
 #define BPA_TCP_TEMPLATE_IVL 60.0
@@ -120,6 +123,19 @@ bpa_log_streams_init (void)
 static const u16 bpa_tcp_ies[][2] = {
   { 323, 8 }, { 230, 1 }, { 8, 4 }, { 225, 4 }, { 361, 2 }, { 362, 2 },
   { 283, 4 }, { 371, BPA_IPFIX_VARLEN },
+};
+
+/*
+ * The NAT64 block (#485): RFC 8158's NAT44 template with sourceIPv6Address
+ * (27) where sourceIPv4Address was, as its section 4.6.10 says - plus
+ * sourceIPv6PrefixLength (29), which the RFC does not list and this box
+ * needs: the subscriber is a delegated prefix, and an address with no length
+ * names one /128 of it. A template describes itself, so a collector decoding
+ * by template reads the extra octet like any other field.
+ */
+static const u16 bpa_tcp_nat64_ies[][2] = {
+  { 323, 8 }, { 230, 1 }, { 27, 16 }, { 29, 1 }, { 225, 4 }, { 361, 2 },
+  { 362, 2 }, { 283, 4 }, { 371, BPA_IPFIX_VARLEN },
 };
 
 /* observationTimeMilliseconds, systemInitTimeMilliseconds. */
@@ -217,6 +233,13 @@ bpa_tcp_prepend_template (bpa_log_stream_t *s, f64 now)
       bpa_tcp_put_u16 (b, bpa_tcp_ies[i][0]);
       bpa_tcp_put_u16 (b, bpa_tcp_ies[i][1]);
     }
+  bpa_tcp_put_u16 (b, BPA_TCP_NAT64_TEMPLATE_ID);
+  bpa_tcp_put_u16 (b, ARRAY_LEN (bpa_tcp_nat64_ies));
+  for (i = 0; i < ARRAY_LEN (bpa_tcp_nat64_ies); i++)
+    {
+      bpa_tcp_put_u16 (b, bpa_tcp_nat64_ies[i][0]);
+      bpa_tcp_put_u16 (b, bpa_tcp_nat64_ies[i][1]);
+    }
   bpa_tcp_put_u16 (b, BPA_TCP_MARKER_TEMPLATE_ID);
   bpa_tcp_put_u16 (b, ARRAY_LEN (bpa_tcp_marker_ies));
   for (i = 0; i < ARRAY_LEN (bpa_tcp_marker_ies); i++)
@@ -243,8 +266,9 @@ bpa_tcp_prepend_template (bpa_log_stream_t *s, f64 now)
 void
 bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
 		       u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
-		       const char *identity)
+		       const char *identity, const bpa_log_sub6_t *v6)
 {
+  int is6 = v6 && v6->len;
   u8 **b = &s->outbuf;
   u32 at, set_at;
   u64 ms;
@@ -279,7 +303,7 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
       u32 n = bpa_syslog_line (line, sizeof (line), wall, event, ip_priv,
 			       ip_pub, port_lo, port_hi, pool_id,
 			       s->hostname ? (const char *) s->hostname : "-",
-			       s->pen, s->pri, identity);
+			       s->pen, s->pri, identity, v6);
       int hn;
 
       if (!n)
@@ -299,7 +323,7 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
    * header per event, and block events are rare by definition. */
   at = bpa_tcp_msg_start (s, b);
   set_at = vec_len (*b);
-  bpa_tcp_put_u16 (b, BPA_TCP_TEMPLATE_ID);
+  bpa_tcp_put_u16 (b, is6 ? BPA_TCP_NAT64_TEMPLATE_ID : BPA_TCP_TEMPLATE_ID);
   bpa_tcp_put_u16 (b, 0);
 
   /* wall, not vlib_time_now(): this is the instant the event happened, and it
@@ -308,7 +332,13 @@ bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event, u32 ip_priv,
   ms = clib_host_to_net_u64 ((u64) (wall * 1e3));
   bpa_tcp_put (b, &ms, 8);
   bpa_tcp_put (b, &event, 1);
-  bpa_tcp_put_u32 (b, ip_priv);
+  if (is6)
+    {
+      bpa_tcp_put (b, v6->addr, 16);
+      bpa_tcp_put (b, &v6->len, 1);
+    }
+  else
+    bpa_tcp_put_u32 (b, ip_priv);
   bpa_tcp_put_u32 (b, ip_pub);
   bpa_tcp_put_u16 (b, port_lo);
   bpa_tcp_put_u16 (b, port_hi);
@@ -1241,14 +1271,14 @@ bpa_log_stream_enable (bpa_log_stream_t *s, ip4_address_t *collector, u16 port, 
  */
 void
 bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
-		    u16 port_hi, u32 pool_id)
+		    u16 port_hi, u32 pool_id, const bpa_log_sub6_t *v6)
 {
   /* The IPFIX record carries no identity field yet - the element has to be
    * chosen rather than guessed at, and a wrong one is worse than none (#21
    * step 4). The stream takes the parameter all the same, so the two wires
    * differ in what they can express and not in what they are given. */
   bpa_log_stream_record (&bpa_log_tcp, wall, event, ip_priv, ip_pub, port_lo,
-			 port_hi, pool_id, 0);
+			 port_hi, pool_id, 0, v6);
 }
 
 void

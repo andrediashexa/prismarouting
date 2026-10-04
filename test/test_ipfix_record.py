@@ -81,7 +81,7 @@ def c_list(path, name):
 
 
 print("=== the block record: three copies, one list ===")
-DOC_BLOCK = doc_table("RFC 8158", "boot marker")
+DOC_BLOCK = doc_table("RFC 8158", "A NAT64 subscriber has a template")
 check(len(DOC_BLOCK) >= 5,
       f"docs/logging.md no longer has a readable block table: {DOC_BLOCK}. "
       f"Nothing below this is comparing anything")
@@ -109,6 +109,30 @@ if DOC_BLOCK and TCP and UDP:
     if got_udp == want_name:
         ok("and the UDP template is the same list by name, so the two "
            "transports export the same record")
+
+print("\n=== the NAT64 block, a third template (#485) ===")
+# Its own table in the docs, its own template on each transport, and its own
+# size in bpa_log.h: the same three-way agreement as the IPv4 block's. A
+# NAT64 record that drifted from its table would name the subscriber with a
+# prefix length read from the wrong octet.
+DOC_N64 = doc_table("A NAT64 subscriber has a template", "boot marker")
+TCP6 = c_list("src/plugins/bpa/bpa_log_tcp.c", "bpa_tcp_nat64_ies")
+UDP6 = c_list("src/plugins/bpa/bpa_log.c", "bpa_nat64_elements")
+check(len(DOC_N64) == 8,
+      f"the NAT64 table in docs/logging.md is not eight rows: {DOC_N64}")
+check(TCP6 is not None and UDP6 is not None,
+      "bpa_tcp_nat64_ies or bpa_nat64_elements is gone")
+if len(DOC_N64) == 8 and TCP6 and UDP6:
+    check([(int(a), int(b)) for a, b in TCP6] == [(n, w) for n, _, w in DOC_N64],
+          f"the TCP NAT64 template is not the documented record: {TCP6}")
+    check([(a, int(b)) for a, b in UDP6] == [(nm, w) for _, nm, w in DOC_N64],
+          f"the UDP NAT64 template is not the documented record: {UDP6}")
+    m6 = re.search(r"The NAT64 block \(#485\): ([0-9 +]+)\.",
+                   read("src/plugins/bpa/bpa_log.h"))
+    check(m6 is not None and [int(x) for x in m6.group(1).split("+")]
+          == [w for _, _, w in DOC_N64],
+          "bpa_log.h's NAT64 size is not the documented widths")
+    ok("both NAT64 templates and the record size are the documented eight")
 
 print("\n=== the boot marker, which is a record of its own ===")
 # Its own table, and its own pair of templates. The marker is what lets a

@@ -77,7 +77,11 @@ int main (int argc, char **argv)
       n++;
     }
   rc = bpa_radius_acct_parse (pkt, n, argv[2], &a);
-  printf ("%d %u %08x %s\n", rc, a.status, a.framed_ip, a.user);
+  printf ("%d %u %08x %s %u", rc, a.status, a.framed_ip, a.user,
+	  a.have_deleg6 ? a.deleg6_len : 0);
+  for (n = 0; n < 16; n++)
+    printf ("%s%02x", n ? "" : " ", a.deleg6[n]);
+  printf ("\n");
   return 0;
 }
 '''
@@ -104,6 +108,18 @@ with tempfile.TemporaryDirectory() as d:
               f"and refuses it under a secret that is not the one it was "
               f"signed with: {out}")
         ok("two implementations of RFC 2866 that agree, which is evidence")
+        # Delegated-IPv6-Prefix (RFC 4818, #485): the NAS sends only the
+        # octets a /56 needs, and the C parser reads the prefix back whole.
+        p6, _ = nas.acct_request(9, "s3cr3t", 1, "2001:db8:1200:ab00::/56",
+                                 "ana@isp")
+        check(bytes([123, 11, 0, 56]) in p6,
+              "the Python NAS sends attribute 123 with seven prefix octets")
+        out = subprocess.run([exe, p6.hex(), "s3cr3t"],
+                             capture_output=True, text=True).stdout.split()
+        check(out[:3] == ["0", "1", "00000000"] and out[3] == "ana@isp"
+              and out[4] == "56"
+              and out[5] == "20010db81200ab000000000000000000",
+              f"and the C parser reads the delegation from it: {out}")
 
 print("\n=== the response check refuses what is not this request's answer ===")
 import hashlib                                                   # noqa: E402

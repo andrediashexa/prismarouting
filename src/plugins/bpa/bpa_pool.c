@@ -415,16 +415,11 @@ bpa_nat64_unsupported (const bpa_pool_t *cfg)
 {
   if (!cfg->is_nat64)
     return 0;
-  if (cfg->mode != BPA_MODE_DETERMINISTIC)
-    return "a NAT64 pool is deterministic only for now";
+  /* Dynamic mode, with max-blocks, initial-allocation and block-stride,
+   * since phase 3: bpa_in2out's allocator on the subscriber's index. A
+   * reserve is a deterministic pool's extension, and stays refused. */
   if (cfg->block_reserve)
     return "a NAT64 pool takes no reserve yet";
-  if (cfg->max_blocks > 1)
-    return "a NAT64 pool takes no max-blocks yet";
-  if (cfg->initial_blocks > 1)
-    return "a NAT64 pool takes no initial-allocation yet";
-  if (cfg->block_stride)
-    return "a NAT64 pool takes no block-stride yet";
   if (cfg->statics)
     return "a NAT64 pool takes no forward yet";
   if (cfg->bypass_src.n_ranges || cfg->bypass_dst.n_ranges)

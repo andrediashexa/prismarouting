@@ -364,7 +364,7 @@ Cada /56 de `2001:db8:1200::/40` recebe um bloco de 2048 portas pela mesma fórm
 
 `subscriber-length` e `nat64-prefix` são campos de **mapeamento**: mudar qualquer um reconstrói o pool.
 
-**Por enquanto, só determinístico.** Num pool NAT64, o `commit check` recusa pelo nome `mode dynamic`, `reserve`, `max-blocks`, `initial-allocation`, `block-stride`, `forward`, `bypass`, `vrf`, `tcp-mss` e os ALGs: são as próximas fases do NAT64. Timeouts e `filter` valem como num pool IPv4.
+**Determinístico ou dinâmico.** Em `mode dynamic`, com `max-blocks`, `initial-allocation` e `block-stride`, o pool NAT64 aloca blocos sob demanda como um pool IPv4, e cada alocação e liberação sai no log nomeando o assinante pelo prefixo delegado (veja [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq)). O `commit check` ainda recusa pelo nome `reserve`, `forward`, `bypass`, `vrf`, `tcp-mss` e os ALGs num pool NAT64: são as próximas fases. Timeouts e `filter` valem como num pool IPv4.
 
 Quem estava atrás de uma porta pública: `show cgnat translation 203.0.113.3 44100` responde com o prefixo IPv6 do assinante, pela fórmula. O inverso: `show cgnat subscriber 2001:db8:1200:ab00::10` dá o bloco do assinante, e `show cgnat top` lista os assinantes pelo prefixo.
 

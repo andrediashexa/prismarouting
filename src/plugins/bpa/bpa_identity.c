@@ -282,3 +282,73 @@ bpa_identity_lookup (const bpa_identity_table_t *t, u32 ip, char *out, u32 cap)
   }
   snprintf (out, cap, "%s", bpa_identity_unknown);
 }
+
+/*
+ * NAT64 (#485): the first delegation whose prefix starts AFTER addr, so
+ * the one before it is the only one that can cover addr - the entries never
+ * overlap (bpa_identity6_upsert keeps them so). Compared as bytes, which for
+ * a network-order address is compared as a number.
+ */
+u32
+bpa_identity6_at (const bpa_identity_table_t *t, const u8 addr[16])
+{
+  u32 lo = 0, hi;
+
+  if (!t || !t->n6 || !t->e6)
+    return 0;
+  hi = t->n6;
+  while (lo < hi)
+    {
+      u32 mid = lo + (hi - lo) / 2;
+
+      if (memcmp (t->e6[mid].prefix, addr, 16) <= 0)
+	lo = mid + 1;
+      else
+	hi = mid;
+    }
+  return lo;
+}
+
+/* Whether a/alen lies inside b/blen. */
+static int
+bpa_identity6_covers (const u8 b[16], u8 blen, const u8 a[16], u8 alen)
+{
+  u32 i, full = blen / 8, rem = blen % 8;
+
+  if (alen < blen)
+    return 0;
+  for (i = 0; i < full; i++)
+    if (a[i] != b[i])
+      return 0;
+  if (rem && ((a[full] ^ b[full]) & (u8) (0xff << (8 - rem))))
+    return 0;
+  return 1;
+}
+
+/*
+ * Who was delegated the prefix that covers a NAT64 subscriber's, or the
+ * unknown marker. COVERS and not equals: a BNG delegating a /56 to each
+ * customer of a pool cut into /56s gives one entry per subscriber, and one
+ * entry for a /48 names every /56 inside it. A delegation LONGER than the
+ * subscriber - a /60 inside a /56 - covers part of it, and the rest may be
+ * somebody else's or nobody's: that is no answer to "who was this", so it
+ * gives none, and the record says unknown.
+ */
+void
+bpa_identity_lookup6 (const bpa_identity_table_t *t, const u8 addr[16],
+		      u8 len, char *out, u32 cap)
+{
+  u32 at;
+
+  if (!cap)
+    return;
+  at = bpa_identity6_at (t, addr);
+  if (at > 0
+      && bpa_identity6_covers (t->e6[at - 1].prefix, t->e6[at - 1].len, addr,
+			       len))
+    {
+      snprintf (out, cap, "%s", t->e6[at - 1].name);
+      return;
+    }
+  snprintf (out, cap, "%s", bpa_identity_unknown);
+}

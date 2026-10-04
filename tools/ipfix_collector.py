@@ -6,10 +6,14 @@ Decodes the template and the data records and prints the RFC 8158 block events
 as text. It is not a product: it exists so the tests can prove that what leaves
 VPP conforms to the standard, not merely that "some packet went out".
 """
-import os, select, socket, struct, sys, time
+import ipaddress, os, select, socket, struct, sys, time
 
 IE = {
     8:   ("sourceIPv4Address", "ip"),
+    # A NAT64 subscriber (#485): RFC 8158 4.6.10's address, and the
+    # delegated prefix's length beside it.
+    27:  ("sourceIPv6Address", "ip6"),
+    29:  ("sourceIPv6PrefixLength", "u8"),
     160: ("systemInitTimeMilliseconds", "u64"),
     225: ("postNATSourceIPv4Address", "ip"),
     230: ("natEvent", "u8"),
@@ -38,6 +42,8 @@ def decode(kind, raw):
         return raw.decode("utf-8", "replace")
     if kind == "ip":
         return ".".join(str(b) for b in raw)
+    if kind == "ip6":
+        return str(ipaddress.IPv6Address(bytes(raw)))
     v = int.from_bytes(raw, "big")
     return v
 
@@ -96,8 +102,13 @@ def emit(tid, body, late=False):
         # not one; the lab needs a number it can subtract from the box's own
         # clock to tell the two apart.
         print(f"  skew={time.time() - ts:+.0f}s")
+        # The subscriber: an IPv4 address, or a NAT64 one's prefix.
+        who = rec.get("sourceIPv4Address")
+        if "sourceIPv6Address" in rec:
+            who = (f"{rec['sourceIPv6Address']}/"
+                   f"{rec.get('sourceIPv6PrefixLength', 128)}")
         print(f"  {time.strftime('%H:%M:%S', time.gmtime(ts))} "
-              f"{ev:11} {rec.get('sourceIPv4Address')} -> "
+              f"{ev:11} {who} -> "
               f"{rec.get('postNATSourceIPv4Address')} "
               f"portas {rec.get('portRangeStart')}-"
               f"{rec.get('portRangeEnd')} pool {rec.get('natPoolId')}{tag}")
@@ -173,7 +184,8 @@ def report_open():
     which is the reading that names a subscriber who had already gone. This
     function exists so the difference is printed rather than argued about.
     """
-    key = lambda r: (r.get("sourceIPv4Address"), r.get("postNATSourceIPv4Address"),
+    key = lambda r: (r.get("sourceIPv4Address") or r.get("sourceIPv6Address"),
+                     r.get("postNATSourceIPv4Address"),
                      r.get("portRangeStart"), r.get("portRangeEnd"))
     markers = sorted(r["observationTimeMilliseconds"] / 1000.0
                      for r in records if "systemInitTimeMilliseconds" in r)

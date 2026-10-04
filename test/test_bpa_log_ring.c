@@ -105,7 +105,7 @@ main (void)
 	 "the export ring starts where the worker rings end");
   CHECK (bpa_log_ring_bytes (64, 52) == 192 + 64 * 52,
 	 "one ring is its 192-byte header and its slots");
-  CHECK (size == 1024 + 3 * (192 + 64 * 52) + (192 + 65536 * 64),
+  CHECK (size == 1024 + 3 * (192 + 64 * 52) + (192 + 65536 * BPA_LOG_XEV_BYTES),
 	 "a segment is its header, each worker ring's header and slots, and "
 	 "the export ring: %llu",
 	 (unsigned long long) size);
@@ -116,13 +116,13 @@ main (void)
 	 "a ring that is not a power of two is refused (the mask needs it)");
   CHECK (bpa_log_seg_init (seg, N_RINGS, SLOTS, sizeof (ev_t), 77) == 0,
 	 "a power-of-two ring is laid out");
-  CHECK (!memcmp (h->magic, "PRBALOG1", 8) && h->version == 3
+  CHECK (!memcmp (h->magic, "PRBALOG1", 8) && h->version == BPA_LOG_SEG_VERSION
 	   && h->n_rings == N_RINGS && h->generation == 77
 	   && h->consumer == BPA_LOG_CONSUMER_VPP,
 	 "the header carries the magic, version, sizes and generation, and "
 	 "VPP is the consumer until the log container takes over");
   CHECK (h->tcp_owner == BPA_LOG_OWNER_VPP && h->xring_slots == 65536
-	   && h->xev_bytes == 64
+	   && h->xev_bytes == BPA_LOG_XEV_BYTES
 	   && (u8 *) bpa_log_seg_xring (seg)
 		== seg + 1024 + 3 * (192 + 64 * 52),
 	 "VPP carries the TCP streams until a log container says it is alive, "
@@ -137,10 +137,12 @@ main (void)
 	 "a segment cut short of its last ring: refused");
   CHECK (bpa_log_seg_check (seg, size, 60) == -4,
 	 "events of another size (another build's layout): refused");
-  h->version = 2;
+  /* The version before this build's: since 4 (#485), a writer whose
+   * events are 16 bytes shorter. */
+  h->version = BPA_LOG_SEG_VERSION - 1;
   CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -3,
-	 "a layout version this build does not know (step 2's): refused");
-  h->version = 3;
+	 "a layout version this build does not know (the one before): refused");
+  h->version = BPA_LOG_SEG_VERSION;
   h->xring_slots = 1024;
   CHECK (bpa_log_seg_check (seg, size, sizeof (ev_t)) == -7,
 	 "an export ring of another size: refused");
@@ -359,8 +361,8 @@ main (void)
     bpa_log_ring_t *m;
     u32 k, seen_wrong = 0;
 
-    CHECK (watched == base_bytes + 192 + 4096 * 64,
-	   "the watch ring is 4096 slots of 64 bytes after the export ring");
+    CHECK (watched == base_bytes + 192 + 4096 * BPA_LOG_XEV_BYTES,
+	   "the watch ring is 4096 slots of BPA_LOG_XEV_BYTES after the export ring");
     CHECK (bpa_log_seg_init (w, 2, 64, 52, 9) == 0, "a watched segment lays out");
     CHECK (bpa_log_seg_mring (w) == 0,
 	   "before bpa_log_seg_watch() the segment has no watch ring");
@@ -382,7 +384,7 @@ main (void)
     CHECK (m->head == 4106 && m->written == 4106 && m->tail == 0,
 	   "4106 written into 4096 slots: head moved, nobody's tail did");
     for (k = 4106 - 4096; k < 4106; k++)
-      if (*(u32 *) ((u8 *) m + 192 + (k & 4095) * 64) != k)
+      if (*(u32 *) ((u8 *) m + 192 + (k & 4095) * BPA_LOG_XEV_BYTES) != k)
 	seen_wrong++;
     CHECK (seen_wrong == 0,
 	   "the last 4096 are there, the oldest 10 written over, nothing refused");

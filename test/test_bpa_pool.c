@@ -630,11 +630,7 @@ main (void)
       refused++;                                                              \
     }                                                                         \
   while (0)
-      NAT64_REFUSES (t.mode = BPA_MODE_DYNAMIC, "dynamic mode");
       NAT64_REFUSES (t.block_reserve = 1, "a reserve");
-      NAT64_REFUSES (t.max_blocks = 2, "max-blocks");
-      NAT64_REFUSES (t.initial_blocks = 2, "initial-allocation");
-      NAT64_REFUSES (t.block_stride = 1, "block-stride");
       NAT64_REFUSES (t.statics = &one, "a forward");
       NAT64_REFUSES (t.bypass_src.n_ranges = 1, "a bypass");
       NAT64_REFUSES (t.tcp_mss = 1400, "tcp-mss");
@@ -643,6 +639,15 @@ main (void)
       NAT64_REFUSES (t.out_vrf_id = 5, "an outside vrf");
       NAT64_REFUSES (t.alg = 1, "an ALG");
 #undef NAT64_REFUSES
+      /* Phase 3: dynamic, and what a dynamic pool's allocation takes. */
+      t = c;
+      t.mode = BPA_MODE_DYNAMIC;
+      t.max_blocks = 4;
+      t.initial_blocks = 2;
+      t.block_stride = 1;
+      CHECK (bpa_nat64_unsupported (&t) == 0,
+	     "a dynamic NAT64 pool with max-blocks, initial-allocation and "
+	     "block-stride was refused: %s", bpa_nat64_unsupported (&t));
       t = c;
       t.is_nat64 = 0;
       t.mode = BPA_MODE_DYNAMIC;

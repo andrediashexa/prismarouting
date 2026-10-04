@@ -287,6 +287,10 @@ Nenhuma outra tela desta caixa carrega identidade. A presença dela no log é a 
 
 O exportador **UDP** não mudou: ele continua com os sete campos da RFC 8158 e sem identidade.
 
+**Assinante só IPv6, de um pool NAT64:** quem o nomeia é o `Delegated-IPv6-Prefix` (atributo 123 da RFC 4818), o prefixo que o BNG delegou. O registro leva o nome da delegação que **cobre** o prefixo do assinante: um /56 delegado a cada cliente de um pool cortado em /56, ou um /48 que cobre todos os /56 de uma empresa. Uma delegação mais longa que o assinante — um /60 dentro de um /56 — cobre só parte dele, e o registro diz `unknown`. Uma delegação nova substitui qualquer outra que ela sobreponha: o prefixo delegado agora é daquele cliente, e a entrada antiga é um `Stop` que não chegou.
+
+**A contabilidade é lida a cada segundo, com ou sem exportação ligada.** Antes ela só era lida depois que o primeiro template IPFIX saía — até um intervalo de template depois do `logging enable` —, e todo bloco alocado nesse meio-tempo saía `unknown` mesmo com o BNG já tendo dito quem era.
+
 # Quando o seu coletor só fala syslog
 
 A maioria dos coletores de ISP lê syslog e mais nada. Os mesmos eventos saem como linhas **RFC 5424**, sem mudar o que é registrado: um registro por alocação e por liberação, nunca por fluxo.
@@ -370,6 +374,15 @@ Três consequências, e a terceira é a que importa para guarda legal:
 Corrigido na **0.35.0**. Um log já coletado por TCP pode ser reparado se a hora de boot da caixa for conhecida; **nada recupera a ordenação entre reinícios**. Se você opera modo dinâmico e coletou por TCP em versão anterior, trate isso como um problema de retenção, não de cosmética.
 
 :::
+
+**Assinante de um pool NAT64** tem um template próprio, porque o IPFIX não tem campo que seja "um endereço IPv4 ou IPv6". É a mesma tabela com o endereço IPv6 no lugar do IPv4, como manda a seção 4.6.10 da RFC 8158 — mais o tamanho do prefixo, que a RFC não lista e esta caixa precisa: o assinante é o prefixo delegado, e só o endereço nomearia um /128 dele.
+
+| IE  | Nome | Bits | Conteúdo |
+|----:|------|-----:|----------|
+| 27  | `sourceIPv6Address` | 128  | o prefixo delegado do assinante, endereço de rede |
+| 29  | `sourceIPv6PrefixLength` | 8    | o tamanho dele, o `subscriber-length` do pool |
+
+Os outros campos são os mesmos e na mesma ordem. No syslog o assinante sai como prefixo, `subscriber="2001:db8:1200:ab00::/56"`. Um pool NAT64 determinístico não registra bloco nenhum, como o IPv4: a trilha de configuração guarda o prefixo IPv6 interno, o `subscriber-length` e o `nat64-prefix`, e com eles a fórmula responde por qualquer instante.
 
 Os três valores de `natEvent` usados:
 

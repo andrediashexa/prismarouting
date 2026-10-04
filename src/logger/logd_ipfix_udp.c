@@ -47,11 +47,14 @@
 #define LOGD_IE_PORT_RANGE_END	    362
 #define LOGD_IE_NAT_POOL_ID	    283
 #define LOGD_IE_SYSTEM_INIT_TIME_MS 160
+#define LOGD_IE_SOURCE_IPV6	    27
+#define LOGD_IE_SOURCE_IPV6_PREFIX_LEN 29
 #define LOGD_IPFIX_SRC_PORT	    4739
 #define LOGD_IP_UDP_HDR		    28 /* IPv4 + UDP: in VPP's path MTU */
 #define LOGD_IPFIX_HDR		    16
 #define LOGD_SET_HDR		    4
 #define LOGD_BLOCK_RECORD	    25
+#define LOGD_NAT64_RECORD	    38 /* bpa_log.h's BPA_LOG_NAT64_RECORD_SIZE */
 #define LOGD_MARKER_RECORD	    16
 
 typedef struct
@@ -61,6 +64,7 @@ typedef struct
   u8 buf[1500];
   u32 len;			/* bytes in buf: 0 = no message open */
   u32 n_in_buf;
+  u8 open6;			/* the open message's set is the NAT64 one */
   f64 last_template;		/* 0 = never sent on this socket */
   bpa_log_seg_udp_stats_t st;
 } logd_udp_t;
@@ -114,7 +118,7 @@ logd_udp_headers (u8 *m, u32 len, u16 set_id, u32 export_time, u32 seq,
 /* A template message for the block report (marker = 0) or the marker's
  * (marker = 1), into m; returns its length. */
 u32
-logd_udp_template (const bpa_log_seg_udp_cfg_t *c, int marker, u32 now, u8 *m)
+logd_udp_template (const bpa_log_seg_udp_cfg_t *c, int kind, u32 now, u8 *m)
 {
   static const u16 block[][2] = {
     { LOGD_IE_OBSERVATION_TIME_MS, 8 }, { LOGD_IE_NAT_EVENT, 1 },
@@ -124,11 +128,20 @@ logd_udp_template (const bpa_log_seg_udp_cfg_t *c, int marker, u32 now, u8 *m)
   };
   static const u16 mark[][2] = { { LOGD_IE_OBSERVATION_TIME_MS, 8 },
 				 { LOGD_IE_SYSTEM_INIT_TIME_MS, 8 } };
-  const u16 (*f)[2] = marker ? mark : block;
-  u32 n = marker ? 2 : 7, i, len;
+  /* kind 2 (#485): VPP's bpa_nat64_elements, the same eight in order. */
+  static const u16 nat64[][2] = {
+    { LOGD_IE_OBSERVATION_TIME_MS, 8 },	 { LOGD_IE_NAT_EVENT, 1 },
+    { LOGD_IE_SOURCE_IPV6, 16 },	 { LOGD_IE_SOURCE_IPV6_PREFIX_LEN, 1 },
+    { LOGD_IE_POST_NAT_SOURCE_IPV4, 4 }, { LOGD_IE_PORT_RANGE_START, 2 },
+    { LOGD_IE_PORT_RANGE_END, 2 },	 { LOGD_IE_NAT_POOL_ID, 4 },
+  };
+  const u16 (*f)[2] = kind == 1 ? mark : kind == 2 ? nat64 : block;
+  u32 n = kind == 1 ? 2 : kind == 2 ? 8 : 7, i, len;
   u8 *p = m + LOGD_IPFIX_HDR + LOGD_SET_HDR;
 
-  logd_put16 (p, marker ? c->marker_template_id : c->block_template_id);
+  logd_put16 (p, kind == 1   ? c->marker_template_id
+		 : kind == 2 ? c->nat64_template_id
+			     : c->block_template_id);
   logd_put16 (p + 2, (u16) n);
   p += 4;
   for (i = 0; i < n; i++, p += 4)
@@ -142,17 +155,31 @@ logd_udp_template (const bpa_log_seg_udp_cfg_t *c, int marker, u32 now, u8 *m)
 }
 
 /* One block record, in VPP's byte order and field order, at p. */
-void
+u32
 logd_udp_block_record (u8 *p, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
-		       u16 port_lo, u16 port_hi, u32 pool_id)
+		       u16 port_lo, u16 port_hi, u32 pool_id,
+		       const bpa_log_sub6_t *v6)
 {
+  u32 a = 9;
+
   logd_put64 (p, (u64) (wall * 1e3));
   p[8] = event;
-  logd_put32 (p + 9, ip_priv);
-  logd_put32 (p + 13, ip_pub);
-  logd_put16 (p + 17, port_lo);
-  logd_put16 (p + 19, port_hi);
-  logd_put32 (p + 21, pool_id);
+  if (v6 && v6->len)
+    {
+      memcpy (p + a, v6->addr, 16);
+      p[a + 16] = v6->len;
+      a += 17;
+    }
+  else
+    {
+      logd_put32 (p + a, ip_priv);
+      a += 4;
+    }
+  logd_put32 (p + a, ip_pub);
+  logd_put16 (p + a + 4, port_lo);
+  logd_put16 (p + a + 6, port_hi);
+  logd_put32 (p + a + 8, pool_id);
+  return a + 12;
 }
 
 static int
@@ -230,8 +257,10 @@ logd_udp_flush (logd_udp_t *u, u32 now)
 {
   if (!u->n_in_buf)
     return;
-  logd_udp_headers (u->buf, u->len, u->cfg.block_template_id, now,
-		    u->cfg.seq, u->cfg.domain_id);
+  logd_udp_headers (u->buf, u->len,
+		    u->open6 ? u->cfg.nat64_template_id
+			     : u->cfg.block_template_id,
+		    now, u->cfg.seq, u->cfg.domain_id);
   if (logd_udp_send (u, u->buf, u->len))
     u->st.n_dropped += u->n_in_buf;
   u->len = u->n_in_buf = 0;
@@ -254,6 +283,13 @@ logd_udp_templates (logd_udp_t *u, f64 now)
   n = logd_udp_template (&u->cfg, 1, (u32) now, m);
   if (!logd_udp_send (u, m, n))
     u->st.n_templates++;
+  /* The NAT64 block's, when VPP has one to name (#485). */
+  if (u->cfg.nat64_template_id)
+    {
+      n = logd_udp_template (&u->cfg, 2, (u32) now, m);
+      if (!logd_udp_send (u, m, n))
+	u->st.n_templates++;
+    }
   u->last_template = now;
 }
 
@@ -261,17 +297,24 @@ logd_udp_templates (logd_udp_t *u, f64 now)
  * record would not fit the path MTU. */
 void
 logd_udp_record (logd_udp_t *u, f64 now, f64 wall, u8 event, u32 ip_priv,
-		 u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id)
+		 u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
+		 const bpa_log_sub6_t *v6)
 {
   u32 room = u->cfg.path_mtu - LOGD_IP_UDP_HDR;
+  u8 is6 = v6 && v6->len;
+  u32 rec = is6 ? LOGD_NAT64_RECORD : LOGD_BLOCK_RECORD;
 
-  if (u->len && u->len + LOGD_BLOCK_RECORD > room)
+  /* A set carries one template's records: a record of the other kind
+   * closes the open message first (#485). */
+  if (u->len && (u->len + rec > room || u->open6 != is6))
     logd_udp_flush (u, (u32) now);
   if (!u->len)
-    u->len = LOGD_IPFIX_HDR + LOGD_SET_HDR;
-  logd_udp_block_record (u->buf + u->len, wall, event, ip_priv, ip_pub,
-			 port_lo, port_hi, pool_id);
-  u->len += LOGD_BLOCK_RECORD;
+    {
+      u->len = LOGD_IPFIX_HDR + LOGD_SET_HDR;
+      u->open6 = is6;
+    }
+  u->len += logd_udp_block_record (u->buf + u->len, wall, event, ip_priv,
+				   ip_pub, port_lo, port_hi, pool_id, v6);
   u->n_in_buf++;
   u->st.n_records++;
 }

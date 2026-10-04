@@ -18,6 +18,8 @@
  * <vnet/ip/ip6_to_ip4.h> and <vnet/ip/ip4_to_ip6.h>, and that is reused.
  */
 #include "bpa.h"
+#include "bpa_exhaust.h"
+#include "bpa_log.h"
 #include <vnet/ip/ip6_to_ip4.h>
 #include <vnet/ip/ip4_to_ip6.h>
 #include <vnet/ip/reass/ip6_sv_reass.h>
@@ -160,6 +162,7 @@ bpa_nat64_interfaces_update (void)
   _ (NONGLOBAL, "Well-Known Prefix to a non-global IPv4 (RFC 6052 3.1)")      \
   _ (OVER_CAPACITY, "subscriber beyond the pool's capacity")                  \
   _ (NO_PORT, "subscriber's port block exhausted")                            \
+  _ (NO_BLOCK, "no free block for a dynamic subscriber")                      \
   _ (NO_SESSION, "fragment or ICMP error with no session")                    \
   _ (ICMP_FAILED, "ICMPv6 RFC 7915 does not translate")
 
@@ -514,14 +517,80 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 	      b[0]->error = node->errors[BPA_NAT64_IN2OUT_ERROR_NO_SESSION];
 	      goto trace;
 	    }
-	  if (bpa_forward (p, sub_idx, &blk))
+	  if (p->mode == BPA_MODE_DETERMINISTIC)
 	    {
-	      b[0]->error = node->errors[BPA_NAT64_IN2OUT_ERROR_OVER_CAPACITY];
-	      goto trace;
+	      if (bpa_forward (p, sub_idx, &blk))
+		{
+		  b[0]->error =
+		    node->errors[BPA_NAT64_IN2OUT_ERROR_OVER_CAPACITY];
+		  goto trace;
+		}
+	    }
+	  else
+	    {
+	      /* Dynamic (#485 phase 3): bpa_in2out's allocator, on the
+	       * subscriber's index. The events carry that index as ip_priv
+	       * - the pool's pseudo inside address IS the index - and
+	       * bpa_log_queue_event() names the prefix from it. */
+	      u32 w, nw;
+	      int is_new = 0;
+
+	      bpa_worker_id (bm, vm->thread_index, &w, &nw);
+	      if (PREDICT_FALSE (
+		    pool_index >= vec_len (pt->dyn)
+		    || bpa_dyn_acquire (vec_elt_at_index (pt->dyn, pool_index),
+					p, sub_idx, w, nw, &blk, &is_new)))
+		{
+		  /* Once per subscriber per BPA_EXHAUST_IVL, as for IPv4
+		   * (#549). Keyed in 240.0.0.0/4, which no IPv4 subscriber
+		   * holds and which the 2^28 indices fit: two NAT64 pools'
+		   * subscribers of one index share a suppression slot, so the
+		   * second's report can wait out the first's interval. */
+		  if (bpa_exhaust_report (pt->exhaust, 0xF0000000u | sub_idx,
+					  now))
+		    bpa_log_queue_event (pt, BPA_NAT_EVENT_PORTS_EXHAUSTED,
+					 sub_idx, 0, 0, 0, pool_index);
+		  b[0]->error = node->errors[BPA_NAT64_IN2OUT_ERROR_NO_BLOCK];
+		  goto trace;
+		}
+	      if (is_new)
+		bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_ALLOC, sub_idx,
+				     blk.ip_pub, blk.port_lo, blk.port_hi,
+				     pool_index);
 	    }
 	  s = bpa_session_create (pt, p, pool_index, &blk, port,
 				  (u8) bpa_proto_of ((u8) key_proto), fib, now,
 				  BPA_CREATE_TRAFFIC, &why);
+	  /* Every block the subscriber holds is full: another, when the pool
+	   * allows more - bpa_in2out's extension, the same allocator and the
+	   * same record. Only after a port refusal: after a cap refusal it
+	   * would give a block to the subscriber the operator bounded. */
+	  if (PREDICT_FALSE (!s && why == BPA_CREATE_NO_PORT
+			     && p->mode == BPA_MODE_DYNAMIC
+			     && bpa_sub_n_blocks (pt, pool_index, sub_idx)
+				  < p->max_blocks))
+	    {
+	      u32 w, nw, primary = BPA_NO_BLOCK, held;
+	      int is_new = 0;
+	      bpa_block_t ext;
+
+	      bpa_worker_id (bm, vm->thread_index, &w, &nw);
+	      held = bpa_sub_n_blocks (pt, pool_index, sub_idx);
+	      bpa_dyn_block_of (vec_elt_at_index (pt->dyn, pool_index), sub_idx,
+				w, nw, &primary);
+	      if (bpa_dyn_acquire_extra (vec_elt_at_index (pt->dyn, pool_index),
+					 p, sub_idx, w, nw, primary, held, &ext,
+					 &is_new) == 0)
+		{
+		  bpa_sub_extend (pt, p, pool_index, sub_idx, &ext);
+		  bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_ALLOC, sub_idx,
+				       ext.ip_pub, ext.port_lo, ext.port_hi,
+				       pool_index);
+		  s = bpa_session_create (pt, p, pool_index, &ext, port,
+					  (u8) bpa_proto_of ((u8) key_proto),
+					  fib, now, BPA_CREATE_TRAFFIC, &why);
+		}
+	    }
 	  if (!s)
 	    {
 	      b[0]->error = node->errors[BPA_NAT64_IN2OUT_ERROR_NO_PORT];

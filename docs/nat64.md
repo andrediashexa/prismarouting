@@ -5,7 +5,7 @@
 | **Who** | Whoever builds the NAT64 phases of #485; read by whoever reviews them. |
 | **What** | What a NAT64 pool is in this product, what exists today, and what each phase adds. |
 | **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; the plan is on issue #485. |
-| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic) and 2 (the deterministic datapath, the grammar, the lab) are on the branch for 0.150.0. |
+| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab) and 3 (dynamic mode and the log) are on the branch for 0.150.0. |
 | **How** | One release per phase; nothing configurable before the datapath that serves it. |
 
 ## What it is
@@ -66,11 +66,10 @@ family, never both. Without `nat64-prefix` the pool takes `64:ff9b::/96`.
 The pool is created by its own dataplane message, `bpa_nat64_pool_add`, and
 deleted like any other.
 
-What phase 2 does not do is refused by name at `commit check` - dynamic mode,
-reserve, max-blocks, initial-allocation, block-stride, forwards, bypass, VRF,
-tcp-mss, an ALG - and refused again by the dataplane at creation and on every
-in-place door (settings, bypass, forwards), so no route reaches a NAT64 pool
-with one of them set.
+What a NAT64 pool does not take yet is refused by name at `commit check` -
+reserve, forwards, bypass, VRF, tcp-mss, an ALG - and refused again by the
+dataplane at creation and on every in-place door (settings, bypass,
+forwards), so no route reaches a NAT64 pool with one of them set.
 
 ## The datapath (phase 2)
 
@@ -104,6 +103,41 @@ RFC 7915, as built and as `lab/nat64.sh` reads it off the wire:
 prefix, from the formula; `show cgnat subscriber <IPv6 address>` gives its
 block; `show cgnat top` names it by its prefix.
 
+## Dynamic mode and the log (phase 3)
+
+`mode dynamic` with `max-blocks`, `initial-allocation` and `block-stride`, as
+on an IPv4 pool: bpa-in2out's allocator, run on the subscriber's index - the
+pool's pseudo inside address IS the index, so the allocator, the hold-down,
+the slices per worker and the lending between them are the IPv4 ones,
+unchanged. A subscriber that finds no free block records RFC 8158 natEvent
+12 once per interval however many packets are refused (#549).
+
+Every record names the subscriber by its delegated prefix
+(docs/logging.md, "Record format"): IPFIX's sourceIPv6Address and
+sourceIPv6PrefixLength in a template of their own, syslog's
+`subscriber="2001:db8:1200:ab00::/56"`. The prefix is copied into the queued
+event at the instant of the event, as the identity is, from the pool's IPv6
+set - and on a NAT64 pool the identity is looked up by that prefix, never by
+the index, which as an IPv4 address would name an unrelated customer.
+RADIUS's Delegated-IPv6-Prefix names a NAT64 subscriber (docs/logging.md,
+"Who held the address").
+
+The log container carries NAT64 records like any other: the shared ring's
+event grew from 52 to 68 bytes for the prefix (segment version 4), and the
+container sends the NAT64 template and records itself.
+
+Releases come from the hold-down's reap, from a pool's drain and from
+`bpa stop-drain`, through the one walk every IPv4 release takes. `clear
+cgnat subscriber` takes an IPv6 address, and clears by pool and index: it
+matched the private address alone, across pools, and a NAT64 subscriber's
+index read as an IPv4 address is somebody's.
+
+`show cgnat translation` answers a dynamic NAT64 port with the subscriber's
+prefix, now; for a past instant the log is the answer, as for IPv4. For a
+deterministic NAT64 pool the formula answers any instant, and the
+configuration trail (`show cgnat history`) records the pool's IPv6 inside,
+`subscriber-length` and `nat64-prefix`, which is what lets it be recomputed.
+
 ## How it is tested
 
 `ref/bpa_model.py` computes the subscriber index and the RFC 6052 embedding
@@ -113,17 +147,23 @@ header to them, RFC 6052's own section 2.4 table included, plus the rules no
 vector shows: the u octet, the Well-Known Prefix's refusals and the key's
 packing. `test/test_bpa_pool.c` holds what the configuration step builds and
 refuses; `test/test_prismash_config.py` the VTY's statements and refusals.
+The log's NAT64 shapes are held byte by byte by `test/test_bpa_log_tcp.c`,
+`test/test_bpa_log_syslog.c` and `test/test_prisma_logd.c`, the identity
+table's delegations by `test/test_bpa_identity.c`, the RADIUS attribute by
+`test/test_bpa_radius.c`, the monitor's decoding by `test/test_logmon.py`.
 
 `lab/nat64.sh` puts an IPv6-only subscriber in one network namespace and an
-IPv4 server in another, builds the pool through the VTY, and checks nineteen
-things on both sides of the box, the subscriber's block against
-`ref/bpa_model.py` among them; it passes single-threaded and with two
-workers, and its off run goes red on all nineteen. `lab/nat64-scale.sh`
+IPv4 server in another, builds the pool through the VTY, and checks 32
+things on both sides of the box: the deterministic datapath, the
+subscriber's block against `ref/bpa_model.py`, and then the dynamic pool's
+log read off IPFIX and syslog collectors - once with VPP carrying it and once
+with the log container. It passes single-threaded and with two workers, and
+its off run goes red on all 32. `lab/nat64-scale.sh`
 measures the memory and the clocks (docs/architecture.md, "Memory").
 
 ## Phases
 
 The plan, phase by phase from 0.150 on, is on issue #485: the arithmetic;
-the deterministic datapath with the pool's VTY grammar and a lab (both on
-this page); dynamic mode and the log; every per-pool statement supported or
-refused; the ALGs; PREF64 and a 464XLAT lab.
+the deterministic datapath with the pool's VTY grammar and a lab; dynamic
+mode and the log (all three on this page); every per-pool statement
+supported or refused; the ALGs; PREF64 and a 464XLAT lab.

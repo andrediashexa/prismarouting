@@ -108,6 +108,19 @@ bpa_radius_acct_parse (const u8 *pkt, u32 len, const char *secret,
 	      out->have_ip = 1;
 	    }
 	  break;
+	case 123: /* Delegated-IPv6-Prefix, RFC 4818 (#485) */
+	  /* Reserved, Prefix-Length, then only the octets the length needs -
+	   * 2 to 18 of them. Anything else is a malformed attribute, and a
+	   * prefix read out of one would name somebody. */
+	  if (vlen >= 2 && val[1] <= 128 && vlen - 2 >= (u32) (val[1] + 7) / 8
+	      && vlen <= 18)
+	    {
+	      memset (out->deleg6, 0, 16);
+	      memcpy (out->deleg6, val + 2, vlen - 2);
+	      out->deleg6_len = val[1];
+	      out->have_deleg6 = out->deleg6_len > 0;
+	    }
+	  break;
 	case 40: /* Acct-Status-Type */
 	  if (vlen == 4)
 	    {
@@ -308,6 +321,28 @@ bpa_radius_service (void)
 	  continue;
 	}
 
+      /* The delegation, on its own: an IPv6-only subscriber's accounting
+       * carries no Framed-IP-Address at all (#485). */
+      if (acct.have_deleg6)
+	{
+	  int ch;
+
+	  vlib_worker_thread_barrier_sync (bm->vlib_main);
+	  if (acct.status == BPA_ACCT_STOP)
+	    ch = bpa_identity6_remove (&bm->identity, acct.deleg6,
+				       acct.deleg6_len);
+	  else
+	    ch = acct.user[0] && bpa_identity6_upsert (&bm->identity,
+						       acct.deleg6,
+						       acct.deleg6_len,
+						       acct.user);
+	  vlib_worker_thread_barrier_release (bm->vlib_main);
+	  if (ch)
+	    {
+	      bm->identity.read_at = unix_time_now ();
+	      r->n_applied++;
+	    }
+	}
       if (acct.have_ip)
 	{
 	  vlib_worker_thread_barrier_sync (bm->vlib_main);

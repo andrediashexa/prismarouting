@@ -1585,26 +1585,39 @@ bpa_clear_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
 {
   bpa_main_t *bm = &bpa_main;
   ip4_address_t addr;
+  ip6_address_t addr6;
   u32 i, freed = 0, host, pool_index, sub_idx;
+  bpa_pool_t *p;
   f64 now;
 
-  if (!unformat (input, "%U", unformat_ip4_address, &addr))
+  if (unformat (input, "%U", unformat_ip4_address, &addr))
+    {
+      host = clib_net_to_host_u32 (addr.as_u32);
+      if (bpa_subscriber_pool (bm, host, &pool_index, &sub_idx))
+	return clib_error_return (0, "%U is not inside any configured pool",
+				  format_ip4_address, &addr);
+    }
+  /* A NAT64 subscriber by any address in its prefix (#485). */
+  else if (unformat (input, "%U", unformat_ip6_address, &addr6))
+    {
+      if (bpa_pool_by_inside6 (bm, addr6.as_u8, &pool_index, &sub_idx))
+	return clib_error_return (0, "%U is not inside any NAT64 pool",
+				  format_ip6_address, &addr6);
+    }
+  else
     return clib_error_return (0,
 			      "usage: bpa clear subscriber <inside-address>");
-  host = clib_net_to_host_u32 (addr.as_u32);
-  if (bpa_subscriber_pool (bm, host, &pool_index, &sub_idx))
-    return clib_error_return (0, "%U is not inside any configured pool",
-			      format_ip4_address, &addr);
+  p = pool_elt_at_index (bm->pools, pool_index);
 
   now = vlib_time_now (vm);
   vlib_worker_thread_barrier_sync (vm);
   for (i = 0; i < vec_len (bm->per_thread); i++)
-    freed += bpa_subscriber_clear (vec_elt_at_index (bm->per_thread, i), host,
-				   now);
+    freed += bpa_subscriber_clear (vec_elt_at_index (bm->per_thread, i),
+				   pool_index, sub_idx, now);
   vlib_worker_thread_barrier_release (vm);
 
   vlib_cli_output (vm, "cleared %u session(s) of %U", freed,
-		   format_ip4_address, &addr);
+		   format_bpa_subscriber, p, sub_idx);
   if (freed)
     vlib_cli_output (vm, "its block is released after the hold-down (%us)",
 		     bm->block_holddown);
@@ -1745,9 +1758,10 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	}
       else
 	{
-	  priv.as_u32 = clib_host_to_net_u32 (ip_priv);
+	  /* The subscriber as format_bpa_subscriber names it: a NAT64 one by
+	   * its prefix, never by the index its pseudo inside holds (#485). */
 	  vlib_cli_output (vm, "%U:%u  ->  %U", format_ip4_address, &addr,
-			   port, format_ip4_address, &priv);
+			   port, format_bpa_subscriber, p, sub_idx);
 	  vlib_cli_output (vm, "  pool %v, %s %u, %s", p->name,
 			   src == BPA_XLT_RESERVE ? "reserve block" : "block",
 			   block_idx,

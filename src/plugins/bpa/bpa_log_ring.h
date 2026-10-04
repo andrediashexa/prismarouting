@@ -37,14 +37,17 @@
 #include <string.h>
 
 #define BPA_LOG_SEG_MAGIC	 "PRBALOG1"
-#define BPA_LOG_SEG_VERSION	 3
+/* 4 (#485): the event grew a NAT64 subscriber prefix, 52 -> 68 bytes, and
+ * the export ring's slot with it, 64 -> 80. A log container built for 3
+ * refuses the segment rather than read every record 16 bytes askew. */
+#define BPA_LOG_SEG_VERSION	 4
 #define BPA_LOG_SEG_NAME	 "/prisma-bpa-log"
 #define BPA_LOG_SEG_HDR_BYTES	 1024
 #define BPA_LOG_RING_HDR_BYTES	 192
 /* The export ring (#550 step 2): VPP -> the log container, one record per
  * event for the TCP streams, wall clock stamped by VPP when it drained it. */
 #define BPA_LOG_XRING_SLOTS	 65536
-#define BPA_LOG_XEV_BYTES	 64
+#define BPA_LOG_XEV_BYTES	 80
 #define BPA_LOG_XEV_RECORD	 1
 #define BPA_LOG_XEV_MARKER	 2
 /* The watch ring (#556): every event bpa_log_emit() exports and every boot
@@ -96,7 +99,7 @@ typedef struct
   u16 path_mtu;
   u16 block_template_id;
   u16 marker_template_id;
-  u16 pad1;
+  u16 nat64_template_id; /* version 4 (#485): the NAT64 block report's */
   u32 template_interval; /* seconds */
   u32 fib_index;	/* 0: the default table, the only one the container takes */
   u32 domain_id;

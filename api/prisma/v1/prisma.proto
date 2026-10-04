@@ -1807,6 +1807,7 @@ service TelemetryService {
 message WatchLoggingRequest {
   // The VTY monitor's filters: an inside address, a public address and a
   // port in its block, an event, a pool by name. Empty is no filter.
+  // subscriber may be IPv6: any address in a NAT64 subscriber's prefix.
   string subscriber = 1;
   string public_address = 2;
   uint32 port = 3;
@@ -1848,6 +1849,8 @@ message LogEvent {
   Kind kind = 1;
   // The time the exported record carries.
   google.protobuf.Timestamp at = 2;
+  // An IPv4 address, or a NAT64 subscriber's delegated prefix,
+  // "2001:db8:1200:ab00::/56" (#485).
   string subscriber = 3;
   string public_address = 4;
   uint32 port_first = 5;

@@ -1527,8 +1527,16 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
  */
 /* not a unit: it frees sessions out of a worker's tables, which need the
  * plugin's state; lab/api-grpc.sh clears a subscriber and reads it gone. */
+/*
+ * BY POOL AND INDEX, not by address (#485). It matched s->ip_priv alone,
+ * across every pool, and a NAT64 session's ip_priv is its subscriber's
+ * INDEX in a pseudo range from 0.0.0.0: clearing the IPv4 subscriber
+ * 0.0.0.171 would have cut NAT64 subscriber 171 as well. The pair is what
+ * names one subscriber on this box.
+ */
 u32
-bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now)
+bpa_subscriber_clear (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+		      f64 now)
 {
   u32 i, freed = 0;
 
@@ -1539,7 +1547,7 @@ bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now)
       if (pool_is_free_index (pt->sessions, i))
 	continue;
       s = pool_elt_at_index (pt->sessions, i);
-      if (s->ip_priv != ip_priv)
+      if (s->pool_index != pool_index || s->sub_idx != sub_idx)
 	continue;
       bpa_session_free (pt, s, now);
       freed++;
@@ -1631,16 +1639,25 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		     * over it.
 		     */
 		    char who[BPA_IDENTITY_MAX];
+		    bpa_log_sub6_t v6;
 
-		    bpa_identity_lookup (&bm->identity, ip_priv, who,
-					 sizeof (who));
+		    /* A NAT64 subscriber by its prefix, and its identity by
+		     * the delegation covering it: ip_priv is its index there,
+		     * and as an IPv4 address it names nobody (#485). */
+		    bpa_log_sub6_of (j, ip_priv, &v6);
+		    if (v6.len)
+		      bpa_identity_lookup6 (&bm->identity, v6.addr, v6.len, who,
+					    sizeof (who));
+		    else
+		      bpa_identity_lookup (&bm->identity, ip_priv, who,
+					   sizeof (who));
 		    bpa_block_ident_recall (
 		      &pt->block_ident,
 		      bpa_block_ident_key (j, blk.ip_pub, blk.port_lo), who,
 		      sizeof (who));
 		    bpa_log_emit (vm, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
 				  blk.ip_pub, blk.port_lo, blk.port_hi, j,
-				  who);
+				  who, &v6);
 		  }
 		}
 	    }

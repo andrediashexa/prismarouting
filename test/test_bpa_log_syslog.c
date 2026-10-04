@@ -67,7 +67,7 @@ main (void)
 
   printf ("\n--- one allocation, byte for byte ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "cgnat-sp-01", 44444, 134, "joao.silva@isp");
+		       1024, 1027, 0, "cgnat-sp-01", 44444, 134, "joao.silva@isp", 0);
   CHECK (n == strlen (line)
 	   && strcmp (line,
 		      "<134>1 2026-09-18T02:40:59.123Z cgnat-sp-01 "
@@ -81,7 +81,7 @@ main (void)
 
   printf ("\n--- and one release, which reads as one to a person ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 17, 0x64400005, 0xC8960010,
-		       1024, 1027, 3, "cgnat-sp-01", 44444, 134, "joao.silva@isp");
+		       1024, 1027, 3, "cgnat-sp-01", 44444, 134, "joao.silva@isp", 0);
   CHECK (n && strstr (line, "BLOCK-RELEASE ") != 0
 	   && strstr (line, "natEvent=\"17\"") != 0
 	   && strstr (line, "100.64.0.5 released 200.150.0.16") != 0
@@ -90,43 +90,43 @@ main (void)
 
   printf ("\n--- a line that would not fit is refused, never cut ---\n");
   CHECK (bpa_syslog_line (line, 40, WALL, 16, 0x64400005, 0xC8960010, 1024,
-			  1027, 0, "cgnat-sp-01", 44444, 134, "joao.silva@isp") == 0,
+			  1027, 0, "cgnat-sp-01", 44444, 134, "joao.silva@isp", 0) == 0,
 	 "a collector storing half a record has stored a wrong one");
   CHECK (bpa_syslog_line (line, sizeof (line), WALL, 18, 0x64400005,
-			  0xC8960010, 1024, 1027, 0, "h", 44444, 134, "joao.silva@isp") == 0,
+			  0xC8960010, 1024, 1027, 0, "h", 44444, 134, "joao.silva@isp", 0) == 0,
 	 "and so is an event with no name, rather than one invented here");
 
   printf ("\n--- the enterprise number is the operator's, and it is in the "
 	  "SD-ID ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 134, "joao.silva@isp");
+		       1024, 1027, 0, "h", 9, 134, "joao.silva@isp", 0);
   CHECK (n && strstr (line, "[cgnat@9 ") != 0,
 	 "RFC 5424 allows a bare SD-ID only to IANA, so this box asks");
 
   printf ("\n--- the priority is the caller's, and it reaches the wire ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 190, "joao.silva@isp");
+		       1024, 1027, 0, "h", 9, 190, "joao.silva@isp", 0);
   CHECK (n && strncmp (line, "<190>1 ", 7) == 0,
 	 "facility and severity are one number and this file does not pick it");
 
   printf ("\n--- a hostname carrying a delimiter cannot break the SD ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "od]d\"one", 9, 134, "joao.silva@isp");
+		       1024, 1027, 0, "od]d\"one", 9, 134, "joao.silva@isp", 0);
   CHECK (n && strstr (line, "od\\]d\\\"one") != 0,
 	 "escaped where it stands: %s", line);
 
   printf ("\n--- who held the address, and what is said when nobody knows ---\n");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 134, 0);
+		       1024, 1027, 0, "h", 9, 134, 0, 0);
   CHECK (n && strstr (line, "subscriberId=\"unknown\"") != 0,
 	 "no identity is the unknown MARKER, never an empty field: a collector "
 	 "must tell a box that does not know from one that did not say");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 134, "");
+		       1024, 1027, 0, "h", 9, 134, "", 0);
   CHECK (n && strstr (line, "subscriberId=\"unknown\"") != 0,
 	 "and so is an empty one, which is what a truncated table yields");
   n = bpa_syslog_line (line, sizeof (line), WALL, 16, 0x64400005, 0xC8960010,
-		       1024, 1027, 0, "h", 9, 134, "od]d\"name");
+		       1024, 1027, 0, "h", 9, 134, "od]d\"name", 0);
   CHECK (n && strstr (line, "od\\]d\\\"name") != 0,
 	 "an identity comes from a provisioning system, so it is escaped "
 	 "where it stands: %s",
@@ -149,6 +149,32 @@ main (void)
   CHECK (bpa_syslog_marker_line (line, 40, WALL, 1789600000.0, "h", 9, 134)
 	   == 0,
 	 "and a marker that would not fit is refused like any other line");
+
+  printf ("\n--- a NAT64 subscriber, named by its delegated prefix (#485) ---\n");
+  {
+    bpa_log_sub6_t v6 = { { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab }, 56 };
+    char sub[64];
+
+    n = bpa_syslog_line (line, sizeof (line), WALL, 16, 171, 0xCB007103,
+			 1024, 1087, 2, "cgnat-sp-01", 44444, 134, "ana@isp",
+			 &v6);
+    CHECK (n && strstr (line, "subscriber=\"2001:db8:1200:ab00::/56\" ") != 0
+	     && strstr (line, "] 2001:db8:1200:ab00::/56 -> 203.0.113.3 ") != 0
+	     && strstr (line, "0.0.0.171") == 0,
+	   "the prefix in the field and the sentence, never the index:\n"
+	   "         %s", line);
+    CHECK (bpa_log_subscriber_str (sub, sizeof (sub), 0x64400005, 0) == 10
+	     && !strcmp (sub, "100.64.0.5"), "IPv4 as before: %s", sub);
+    v6.len = 0;
+    CHECK (bpa_log_subscriber_str (sub, sizeof (sub), 0x64400005, &v6)
+	     && !strcmp (sub, "100.64.0.5"), "length 0 is an IPv4 subscriber");
+    v6.len = 129;
+    CHECK (bpa_log_subscriber_str (sub, sizeof (sub), 0, &v6) == 0,
+	   "a length past 128 is refused, not printed");
+    v6.len = 56;
+    CHECK (bpa_log_subscriber_str (sub, 10, 0, &v6) == 0,
+	   "and a buffer it does not fit is refused whole");
+  }
 
   printf ("\n%s\n", fail ? "FAILURES" : "ALL TESTS PASSED");
   return fail ? 1 : 0;

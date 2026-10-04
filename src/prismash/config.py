@@ -1383,14 +1383,10 @@ class Pool:
                         f"{self.subscriber_length}", "")
         if any(":" in p for p in self.outside):
             return (f"{n}: prefix-outside is IPv4 on a NAT64 pool", "")
-        if self.mode != "deterministic":
-            return (f"{n}: a NAT64 pool is deterministic only for now",
-                    "a dynamic NAT64 pool is the next phase of #485")
+        # Dynamic, with max-blocks, initial-allocation and block-stride,
+        # since #485's phase 3; what is below is still refused by name.
         unsupported = (
             (self.block_reserve, "reserve"),
-            (self.max_blocks > 1, "max-blocks"),
-            (self.initial_ports, "initial-allocation"),
-            (self.block_stride, "block-stride"),
             (self.forwards, "forward"),
             (self.bypass_src or self.bypass_dst, "bypass"),
             (self.tcp_mss, "tcp-mss"),
@@ -1400,8 +1396,8 @@ class Pool:
         for present, word in unsupported:
             if present:
                 return (f"{n}: a NAT64 pool takes no {word} yet",
-                        "the first NAT64 release is deterministic, with no "
-                        "forwards, bypass, VRF, MSS clamp or ALG")
+                        "a NAT64 pool has no reserve, forwards, bypass, VRF, "
+                        "MSS clamp or ALG yet")
         return None
 
     def nat64_api_args(self) -> dict:

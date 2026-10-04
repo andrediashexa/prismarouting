@@ -21395,10 +21395,12 @@ class Shell:
         if rest[:1] != ["subscriber"] or len(rest) != 2:
             self.err("usage: clear cgnat subscriber <A.B.C.D>")
             return
+        # Either family: a NAT64 subscriber by any address in its prefix
+        # (#485). Still parsed here, so a word never reaches the dataplane.
         try:
-            addr = str(ipaddress.IPv4Address(rest[1]))
+            addr = str(ipaddress.ip_address(rest[1]))
         except ValueError:
-            self.err(f"a subscriber is an IPv4 address: {rest[1]}")
+            self.err(f"a subscriber is an IPv4 or IPv6 address: {rest[1]}")
             return
         if not self.require(CAP_CGNAT, "clear cgnat subscriber"):
             return

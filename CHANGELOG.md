@@ -112,7 +112,38 @@ version has a chance of seeing it.
   `lab/nat64.sh` reads it all off the wire on both sides, with and without
   workers; `lab/nat64-scale.sh` measures it.
 
+* **NAT64, phase 3: dynamic mode, and the log names an IPv6 subscriber.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  `mode dynamic` on a NAT64 pool, with `max-blocks`, `initial-allocation` and
+  `block-stride`: the IPv4 allocator, hold-down, per-worker slices and
+  exhaustion aggregation (#549), unchanged. Every block event names the
+  subscriber by its delegated prefix: IPFIX gains a NAT64 template
+  (sourceIPv6Address and sourceIPv6PrefixLength, over UDP and as template 259
+  over TCP), syslog says `subscriber="2001:db8:1200:ab00::/56"`, and the log
+  container carries both - the shared ring's event grew to 68 bytes (segment
+  version 4), so a log container and a dataplane must be of the same
+  release. RADIUS's Delegated-IPv6-Prefix names a NAT64 subscriber.
+  `clear cgnat subscriber` and `monitor cgnat logging subscriber` take an
+  IPv6 address, and the configuration trail records a NAT64 pool by its IPv6
+  inside, `subscriber-length` and `nat64-prefix`. Still refused by name on a
+  NAT64 pool: reserve, forwards, bypass, VRF, `tcp-mss`, the ALGs.
+  `lab/nat64.sh` reads the dynamic pool's records off IPFIX and syslog
+  collectors, with the dataplane carrying the log and then the container.
+
 ### Fixed
+
+* **RADIUS accounting was not read until the log was exporting.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  The accounting socket was serviced at the end of the log's drain, so never
+  while no transport was enabled, and not until the first IPFIX template had
+  gone out after `logging enable` - up to the template interval. Every block
+  allocated in that window was recorded `unknown` although the BNG had named
+  the subscriber. It is read every second now, whatever the log is doing.
+* **`clear cgnat subscriber` matched sessions by address across every pool.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  It now clears by pool and subscriber index. With a NAT64 pool present the
+  old match would also have cut the NAT64 subscriber whose index read as the
+  same IPv4 address.
 
 ## 0.149.33 - a dataplane restart reports what really happened
 
