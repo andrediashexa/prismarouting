@@ -23,7 +23,7 @@ from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     dns_error, DNS_MAX, hostname_error,
                     address_error,
                     is_number,
-                    validate_role,
+                    validate_role, validate_operator,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp,
                     API_FIELDS, API_DEFAULTS, validate_api,
                     validate_trap_host)
@@ -3685,6 +3685,11 @@ class Config:
                 # rows exist for the prompt, where they are wrapped (#355).
                 return ": ".join(why)
             user.role = role
+        elif w[0] == "operator" and len(w) == 1:
+            why = validate_operator(user.name)
+            if why:
+                return ": ".join(why)
+            user.operator = True
         elif w[0] == "exit":
             pass
         else:

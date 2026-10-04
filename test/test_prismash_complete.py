@@ -6689,7 +6689,7 @@ _out = said(_sh, "no wibble")
 check("wibble" in _out and "mode: no" not in _out,
       f"'no wibble' names wibble, not 'no': {_out!r}")
 _o = tree_opts("user", "no ")
-check({"role", "password", "ssh-key"} == set(_o),
+check({"role", "operator", "password", "ssh-key"} == set(_o),
       f"and 'no ?' offers every statement the block has: {sorted(_o)}")
 print(f"  no wibble -> {_out}")
 print(f"  user 'no ?' -> {sorted(_o)}")

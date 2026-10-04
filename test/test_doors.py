@@ -750,5 +750,45 @@ check(doors.answer(json.dumps({"argv": list(_a)}), 1000,
                    execute=lambda *x: (0, ""))["rc"] == 126,
       "an account that is not root is refused the door")
 
+print("=== the system actions for prisma-operator (#563) ===")
+check(doors.operator_door(["systemctl", "reboot"])
+      and doors.operator_door(("systemctl", "poweroff"))
+      and doors.operator_door(list(doors.api_run_argv("upgrade", "0.149.26")))
+      and doors.operator_door(list(doors.api_run_argv("upgrade")))
+      and doors.operator_door(list(doors.api_run_argv("dataplane"))),
+      "operator_door(): reboot, poweroff, the detached upgrade and restart")
+check(not doors.operator_door(["systemctl", "reload", "ssh"])
+      and not doors.operator_door(["useradd", "-m", "-s", "x", "y"])
+      and not doors.operator_door("systemctl reboot"),
+      "and nothing else: not sshd, not an account, not a string")
+_ex = lambda a, s, t: (0, "ran")
+for _argv, _op, _rc, _what in (
+        (["systemctl", "reboot"], True, 0, "an operator reboots"),
+        (["systemctl", "reboot"], False, 126, "a non-operator is refused"),
+        (["systemctl", "reload", "ssh"], True, 126,
+         "an operator is still refused what is not a system action"),
+        (list(doors.OPERATOR_GROUPADD), True, 126,
+         "and may not create the group: that is root's commit")):
+    _r = doors.answer(json.dumps({"argv": _argv}), 1000, execute=_ex,
+                      is_operator=lambda u, _o=_op: _o)
+    check(_r["rc"] == _rc, f"{_what}: {_r}")
+_r = doors.answer(json.dumps({"argv": ["systemctl", "reboot"]}), 1000,
+                  execute=_ex, is_operator=lambda u: False)
+check("only root and prisma-operator's members may" in _r["out"],
+      f"the refusal names who may: {_r['out']}")
+check(doors.answer(json.dumps({"argv": list(doors.OPERATOR_GROUPADD)}), 0,
+                   execute=_ex)["rc"] == 0,
+      "root creates the operator group through its door")
+check(doors.account_is_operator(os.getuid()) is False
+      and doors.account_is_operator(2 ** 31 - 7) is False,
+      "account_is_operator(): False on a host with no prisma-operator group, "
+      "and for a uid the system cannot describe")
+
+_r = doors.answer(json.dumps({"argv": list(doors.UPGRADE_CHECK_ARGV)}), 1000,
+                  execute=lambda a, s, t: (0, "newest published: 0.149.26"),
+                  is_operator=lambda u: False)
+check(_r == {"rc": 0, "out": "newest published: 0.149.26"},
+      f"the upgrade CHECK is a question any account may ask (#563): {_r}")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)

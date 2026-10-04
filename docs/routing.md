@@ -3327,6 +3327,7 @@ that leaves the group behind is not a demotion.
 |---|---|
 | `role administrator` | `prisma-admin`, `prisma-cgnat` |
 | `role cgnat-operator` | `prisma-cgnat` |
+| `operator` (beside any role, or none) | `prisma-operator` |
 | **every** account the VTY owns, role or none | `vpp`, `frr`, `frrvty` |
 
 The last row is not a role and is not the operator's to choose. VPP creates its
@@ -3334,6 +3335,52 @@ sockets `srwxrwxr-x root:vpp`, `/etc/frr` is `drwxr-x--- frr:frr`, and the
 daemons' `.vty` sockets are group `frrvty` - so an account outside those three
 is refused by the **socket** on every command, the read-only ones included. A
 read-only account that cannot open them has no reading to do either.
+
+#### The system actions: `operator` (#563)
+
+`system upgrade <version>`, `system reboot`, `system shutdown` and `system
+dataplane restart` take the box down or move it to another release. They are
+not a rank of the configuration, so no role grants them: until 0.149.26 only
+root could, and since then root and the members of `prisma-operator` can.
+`operator` in an account's user block puts it there:
+
+```
+configure
+ user prisma-web
+  role administrator
+  operator
+  exit
+ commit
+```
+
+A CAPABILITY BESIDE THE ROLE, NOT A ROLE. An administrator is not an operator
+by being one, and a read-only NOC account can be the one that reboots the box.
+A group for the reason the roles are groups: the system's own deprovisioning
+takes it away. `no operator` removes it. root is refused the statement: it
+already holds the actions by being root.
+
+HOW IT REACHES THE HOST. These four do root's work on the host (the installer,
+`systemctl` on the dataplane), and a login's VTY runs as the account. So from
+the management plane an operator's request goes through the host's doors (#448):
+`systemctl reboot` / `poweroff` for the first two, and for upgrade and
+dataplane restart the same detached run the API uses (#558) - a transient unit,
+root's by being the door's, whose log the VTY follows until it ends. The door
+reads the caller's membership of `prisma-operator` on the host at each request,
+and refuses anyone else ("only root and prisma-operator's members may").
+`appliance/install.sh` does not create the group yet - #563 shipped as a patch,
+and the installer is medium-only - so the first commit that grants `operator`
+creates it, through a door of exactly that shape. 0.150.0 moves it to the
+installer.
+
+THE UPGRADE CHECK IS EVERYBODY'S. `system upgrade` with no version changes
+nothing - it says which release the box runs and which is the newest - so any
+account may ask it. From the management plane it is read by the host's VTY
+through a query door, because the container's network ends at the backplane:
+measured on 0.149.25, the check failed there with "Temporary failure in name
+resolution" for every account, root included, which is what the API's Upgrade
+check met.
+
+The API says it: `WhoAmI.can_operate`, and `UserConfig.operator` in GetConfig.
 
 Only those five memberships are touched. An account put in `sudo`, or in a
 monitoring group, keeps it: a demotion that silently took those away would be

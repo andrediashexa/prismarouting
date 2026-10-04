@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 630 |
+| typed | 632 |
 | text | 19 |
 | n/a | 27 |
 
@@ -511,10 +511,12 @@ Entered with `user <name>`; `EditRequest.path` = `["user <name>"]`; changed by: 
 |---|---|---|---|
 | `role administrator` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 | `role cgnat-operator` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
+| `operator` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 | `ssh-key <type> <key> [<comment>...]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 | `password <hash>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 | `exit` | n/a | - | the session's |
 | `no role` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
+| `no operator` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 | `no ssh-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 | `no password` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area users: read as fields since 0.149.24; written as lines - an account carries a password and keys |
 

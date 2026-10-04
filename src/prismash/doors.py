@@ -42,7 +42,8 @@ import sys
 import threading
 import time
 
-from system import (LOGIN_SHELL, MANAGED_GROUPS, LocalFiles, RESOLV_CONF,
+from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR,
+                    OPERATOR_GROUPADD, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
                     hostname_error, is_number)
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
@@ -146,6 +147,9 @@ FIXED = {
     # have refused root its own reboot. test_doors.py now reads prismash.py's
     # `self.sys._run` too.
     ("systemctl", "reboot"): "restart the box",
+    # The operator group (#563), created by the first account granted it:
+    # appliance/install.sh does not create it, being a medium-only file.
+    OPERATOR_GROUPADD: "create the operator group",
     ("systemctl", "poweroff"): "shut the box down",
     ("systemctl", "restart", "prisma-routing-tune"): "recompute the tuning",
     # The management API's listener (#532): api-configure reads api.env,
@@ -166,7 +170,16 @@ FIXED = {
 #: ssh host keys came from, which driver DPDK would get. The VTY on the host
 #: asked them of the host itself, whatever the account; from the container
 #: the answers would be the container's, or nothing.
+#: The upgrade CHECK (#563): which release this box runs and which is the
+#: newest published - read by the host's VTY, because the management plane's
+#: network ends at the backplane and cannot reach the releases (measured on
+#: 0.149.25: "Temporary failure in name resolution" inside the container,
+#: root included). A question, so any account may ask it; the upgrade itself
+#: is a door of its own (api_run_argv), root's and prisma-operator's.
+UPGRADE_CHECK_ARGV = ("/usr/bin/prismash", "-c", "system upgrade")
+
 QUERIES = {
+    UPGRADE_CHECK_ARGV: "ask which release is the newest",
     ("systemctl", "is-active", "--quiet", "prisma-routing-containers.service"):
         "ask which unit runs the dataplane",
     ("/usr/lib/prisma-routing/ssh-host-key-origin",):
@@ -528,7 +541,51 @@ def peer_uid(conn):
     return struct.unpack("3i", cred)[1]
 
 
-def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None):
+#: The two FIXED doors a prisma-operator member may open besides root (#563);
+#: the API's detached upgrade and dataplane restart are the other two.
+OPERATOR_FIXED = (("systemctl", "reboot"), ("systemctl", "poweroff"))
+
+
+def operator_door(argv):
+    """
+    True when `argv` is one of the system actions (#563) - reboot, poweroff,
+    and the detached `system upgrade [<version>]` / `system dataplane
+    restart` - which root and prisma-operator's members may open.
+    """
+    if not isinstance(argv, (list, tuple)):
+        return False
+    t = tuple(argv)
+    if t in OPERATOR_FIXED:
+        return True
+    for kind in API_RUNS:
+        version = ""
+        if kind == "upgrade" and t:
+            m = re.search(r"system upgrade ?([0-9.]*)'", t[-1])
+            version = m.group(1) if m else ""
+        if api_run_argv(kind, version) == t:
+            return True
+    return False
+
+
+def account_is_operator(uid):
+    """
+    Is the account `uid` a member of prisma-operator, as THIS host's group
+    file says at this instant (#563)? Read per request and never cached, so
+    the system's own deprovisioning takes effect on the next request; an
+    account the system cannot describe is not one.
+    """
+    try:
+        import grp
+        import pwd
+        pw = pwd.getpwuid(uid)
+        g = grp.getgrnam(GROUP_OPERATOR)
+    except (KeyError, ImportError):
+        return False
+    return pw.pw_name in g.gr_mem or pw.pw_gid == g.gr_gid
+
+
+def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
+           is_operator=account_is_operator):
     """
     What the daemon replies to `request` from `uid`: {"rc", "out"}.
 
@@ -555,7 +612,10 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None):
         return {"rc": 126, "out": "the host's door: not an operation the "
                                   "VTY is allowed on the host"}
     if uid not in allowed_uids:
-        return {"rc": 126, "out": f"the host's door: {verb}: only root may"}
+        if not (operator_door(argv) and is_operator(uid)):
+            who = "only root and prisma-operator's members may" \
+                if operator_door(argv) else "only root may"
+            return {"rc": 126, "out": f"the host's door: {verb}: {who}"}
     why = guard_of(argv, execute)
     if why:
         return {"rc": 126, "out": f"the host's door: {verb}: {why}"}

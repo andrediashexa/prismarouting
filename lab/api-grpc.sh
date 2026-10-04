@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 125
+# OFF-RED-AT-LEAST: 129
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -132,6 +132,10 @@ done
 echo "  $(zebra_kernel) of $LAB_ROUTES kernel routes in zebra's RIB after $(( $(date +%s) - T0 ))s"
 # The account without a role: no prisma-admin, no prisma-cgnat.
 id netview >/dev/null 2>&1 || useradd -M -s /usr/sbin/nologin netview
+# #563: an account with no role that holds the system actions - prisma-operator,
+# which the lab creates the way the VTY's first `operator` does on a box.
+getent group prisma-operator >/dev/null 2>&1 || groupadd --system prisma-operator
+id opsman >/dev/null 2>&1 || useradd -M -s /usr/sbin/nologin -G prisma-operator opsman
 chmod 0755 /tmp/rollback 2>/dev/null; chmod 0644 /tmp/rollback/* 2>/dev/null
 chmod 0644 "$PRISMA_CONFIG" 2>/dev/null
 
@@ -152,6 +156,7 @@ sign() {  # sign <name> <CN> [server]
 sign server prisma-api server
 sign root root
 sign netview netview
+sign opsman opsman
 # The layout the box reads: server.key, server.crt, clients-ca.crt.
 mkdir -p $C/box
 cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
@@ -562,6 +567,10 @@ expect "  the last message says how long the API is away, and ends the stream" t
 expect "  a version that is not a release: INVALID_ARGUMENT" t5 system-upgrade-bad-version
 expect "  an upgrade still running: REASON_BUSY" t5 system-upgrade-busy
 expect "  by an account without the role: PERMISSION_DENIED" t5 system-upgrade-permission
+expect "#563: an account in prisma-operator says can_operate in WhoAmI, one without it does not" t5 operator-whoami
+expect "  it reboots with no role at all: the stand-in systemctl reboot asked" t5 operator-reboot
+expect "  the upgrade CHECK (no version) is every account's: not refused for permission" t5 upgrade-check-anyone
+expect "  the upgrade itself is not: PERMISSION for an account without operator" t5 upgrade-permission
 p1() { printf '%s\n' "$P1" "$P2" | grep -q "^RESULT $1 ok"; }
 expect "#558: a line the prompt does not take refuses with reason GRAMMAR" p1 reason-grammar
 expect "  a pool without its prefixes: VALIDATION, from the commit and the check" p1 reason-validation

@@ -639,6 +639,9 @@ message UserConfig {
   // How many SSH public keys the account has.
   uint32 ssh_keys = 3;
   bool password_set = 4;
+  // The system actions beside the role (#563): `operator` in the user block,
+  // membership of prisma-operator on the box.
+  bool operator = 5;
 }
 
 message SnmpUserConfig {
@@ -2138,4 +2141,7 @@ message WhoAmIResponse {
   // What the role may change: the whole configuration, or the CGNAT half.
   bool can_configure = 3;
   bool can_configure_cgnat = 4;
+  // May run the system actions (#563): SystemService's Upgrade, Reboot,
+  // Shutdown and RestartDataplane. Root, or a member of prisma-operator.
+  bool can_operate = 5;
 }

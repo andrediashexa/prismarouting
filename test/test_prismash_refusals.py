@@ -337,7 +337,8 @@ def shell(api=None, dp=None, frr=None, caps=None):
     reaches the refusal it is about.
     """
     sh = prismash.Shell()
-    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT} if caps is None else caps
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT, prismash.CAP_OPERATOR} \
+        if caps is None else caps
     sh.api = api or Api()
     sh.dp = dp or Dp()
     sh.frr = frr or frr_stub()
@@ -1830,16 +1831,43 @@ _sh = shell(caps=set())
 _sh.sys = _systemd(0, "")
 _rv, _text = driven(_sh.do_operational, "system reboot")
 says("read-only, reboot", _text,
-     "error: system reboot: permission denied for a read-only account", _rv,
+     "error: system reboot: permission denied for this account", _rv,
      expect=True)
 check(_asked == [], f"and systemd was not asked: {_asked}")
 _sh = shell(caps={prismash.CAP_CGNAT})
 _sh.sys = _systemd(0, "")
 _rv, _text = driven(_sh.do_operational, "system shutdown")
 says("cgnat operator, shutdown", _text,
-     f"error: system shutdown: permission denied for a {prismash.ROLE_CGNAT} "
-     f"account", _rv, expect=True)
+     "error: system shutdown: permission denied for this account", _rv,
+     expect=True)
 check(_asked == [], f"and systemd was not asked: {_asked}")
+
+# #563: a prisma-operator member in the management plane, not root, runs
+# upgrade and dataplane restart through the API's detached door - a usage it
+# cannot express is refused before anything is asked, and a door that says
+# no is shown in its own words.
+_old_mgmt = os.environ.get("PRISMA_IN_MGMT")
+os.environ["PRISMA_IN_MGMT"] = "1"
+try:
+    _sh = shell(caps={prismash.CAP_OPERATOR})
+    _sh.sys = _systemd(0, "")
+    _asked.clear()
+    _rv, _text = driven(_sh.do_operational, "system upgrade 0.149.26 now")
+    says("operator, upgrade usage", _text,
+         "error: usage: system upgrade [<version>] | system dataplane "
+         "restart", _rv, expect=True)
+    check(_asked == [], f"and nothing was asked: {_asked}")
+    _sh.sys = _systemd(126, "the host's door: start 'system dataplane "
+                            "restart' for the API: only root and "
+                            "prisma-operator's members may")
+    _rv, _text = driven(_sh.do_operational, "system dataplane restart")
+    says("operator, the door refuses", _text,
+         "error: the host would not start it", _rv, expect=True)
+finally:
+    if _old_mgmt is None:
+        os.environ.pop("PRISMA_IN_MGMT", None)
+    else:
+        os.environ["PRISMA_IN_MGMT"] = _old_mgmt
 
 # systemd refusing, in its own words - the sentence 0.76.0 removed with the
 # restart it belonged to, and the one an operator has to see instead of a

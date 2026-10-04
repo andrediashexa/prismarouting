@@ -77,7 +77,30 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`operator`: upgrade, reboot, shut down and restart the dataplane without
+  being root.** ([#563](https://github.com/andrediashexa/hexarouting/issues/563))
+  A statement in the user block, beside the role: membership of
+  `prisma-operator`, which grants exactly `system upgrade <version>`,
+  `system reboot`, `system shutdown` and `system dataplane restart` - at the
+  VTY and through SystemService - and nothing else of root's. From the
+  management plane the host's doors let its members in for those four (the
+  upgrade and the dataplane restart run detached, as the API's do, and the VTY
+  follows their log). An administrator without it is now refused these at the
+  VTY by name, where before it read the cost and then systemd's refusal.
+  WhoAmI gains `can_operate`, GetConfig's accounts `operator`. The group is
+  created by the first commit that grants it; 0.150.0 moves that to the
+  installer.
+
 ### Fixed
+
+* **The upgrade check failed from the management plane, for every account.**
+  ([#563](https://github.com/andrediashexa/hexarouting/issues/563))
+  `system upgrade` with no version read the releases' `latest/` from where the
+  VTY ran, and the management container's network ends at the backplane: the
+  API's Upgrade check, and any VTY in the container, said "the newest release
+  could not be read" (name resolution failed; measured on 0.149.25 as root
+  too). It is now read by the host's VTY through a query door, and - changing
+  nothing - it is every account's to ask; the upgrade itself needs `operator`.
 
 ## 0.149.25 - nothing the VTY does is out of the API's reach
 
