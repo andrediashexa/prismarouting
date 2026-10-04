@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dataplane restart that came back whole was reported as failed.**
+  ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
+  Measured on 10.40.200.166 (0.149.32): the restart worked - VPP up, the
+  cards under their names, the API, SSH and the configuration back - but its
+  log ended "the saved configuration did not load onto the restarted
+  dataplane" and the API answered apply_failed. The load had failed its first
+  tries while FRR was still starting ("1 static route(s) need mgmtd, which
+  is not running") and loaded on a later one. The restart's check now tries
+  the start again every 10 s for up to 180 s and lets the unit's state
+  decide: active from any start, its own or the watcher's, is success; still
+  not active at the end is the real failure.
+
 ## 0.149.32 - a dataplane restart keeps the cards' names
 
 ### Fixed
