@@ -34,6 +34,11 @@ import tempfile
 import types
 
 _root = tempfile.mkdtemp(prefix="prismash-units-")
+# Removed at exit (#566): every run left its directory behind, and 1,187 of
+# them had filled 9.8 GB of the build VM's /tmp by 2026-10-04 - the disk ran
+# out under a release gate. A run that dies by a signal still leaves one.
+import atexit  # noqa: E402
+atexit.register(shutil.rmtree, _root, True)
 # Read at import: every path prismash.py takes from the environment points into
 # this suite's own directory, so no box here reads /etc or /usr/share on the
 # machine running it.
