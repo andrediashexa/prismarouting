@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.149.33 - a dataplane restart reports what really happened
+
+### Fixed
+
 * **A dataplane restart that came back whole was reported as failed.**
   ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
   Measured on 10.40.200.166 (0.149.32): the restart worked - VPP up, the
