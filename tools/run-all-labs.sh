@@ -323,7 +323,7 @@ BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
 # either, and the header says so.
 OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c:off policy-d:off policy-igp:off commit-readback:off heap-full:off hot-card:off control-plane-dies:kill-vpp detreserve:off dns:off drain-slope:no-drain ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
            in-place:off initial:off cgnat-workers:off lacp:off doors:off
-           api-grpc:off ftp64:off pref64:off
+           api-grpc:off ftp64:off pref64:off prune-images:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent nat64:off oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
@@ -413,6 +413,7 @@ NEEDS_NETWORK="
 bng:apt-get for five -dev packages, and a git clone of accel-ppp-ng from GitHub, on every run
 pref64:apt-get for tayga, the CLAT's translator, on every run
 api-grpc:apt-get for traceroute and mtr-tiny, the probes the API streams (#558 phase 7), on every run
+prune-images:apt-get for docker.io, a dockerd of the lab's own to prune against (#569), on every run
 "
 # No pipe into `while`: that runs in a subshell and the list would come back
 # empty, which is this section saying nothing on a run that needs the network.

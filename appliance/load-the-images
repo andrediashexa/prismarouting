@@ -92,4 +92,76 @@ else
   say "this box has no 'vpp' group, so the dataplane's CLI socket will be"
   say "left with the container's own - only root will reach the dataplane."
 fi
+# THE OLD RELEASES' IMAGES, REMOVED (#569). Every patch upgrade loads a new
+# prisma-mgmt, prisma-vpp, prisma-frr and prisma-log and nothing ever removed
+# the old ones: measured on 10.40.200.166 on 2026-10-04, `/` at 96 % - 358 MB
+# free of 8.3 GB - with 118 images and 5.7 GB of them reclaimable, after the
+# 0.149.x and 0.150.x patches. The next upgrade would have run out of space
+# part-way through loading its own.
+#
+# Here and not in the upgrade, because this is the one place that runs both
+# after an upgrade (refresh-the-vty calls it) and at every boot (the
+# containers unit's ExecStartPre), and it already knows the release this box
+# is and has just checked that its images are loaded.
+#
+# KEPT: every image a container references, running or stopped - the
+# dataplane and FRR keep the previous release's until the next boot; every
+# image of the release this box is; and every image of the release before it
+# - the newest tag below this one - so a way back stays on the box. REMOVED:
+# only `prisma-{mgmt,vpp,frr,log}:<x.y.z>` tags matching none of those,
+# never an untagged image or another repository's, and never with -f: docker
+# itself refuses an image a container still uses, which is the second guard.
+# Nothing at all when the release cannot be read for sure - a stamp that is
+# not x.y.z, images that came from another build, a docker that does not
+# answer - and it says why. A release downgraded to comes with its images in
+# its artifact (build-upgrade.sh), so nothing here is the only copy of one.
+prune_old_images() {  # <the release this box is>
+  [ "${PRISMA_PRUNE_IMAGES:-1}" = 1 ] || return 0
+  echo "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+    say "not removing old images: '$1' is not a release number"; return 0; }
+  all=$("$DOCKER" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null) || {
+    say "not removing old images: docker did not list them"; return 0; }
+  used=$("$DOCKER" ps -a --format '{{.Image}}' 2>/dev/null) || {
+    say "not removing old images: docker did not list the containers"; return 0; }
+  ours=$(printf '%s\n' "$all" \
+    | grep -E '^prisma-(mgmt|vpp|frr|log):[0-9]+\.[0-9]+\.[0-9]+$')
+  [ -n "$ours" ] || return 0
+  prev=$(printf '%s\n' "$ours" | sed 's/^[^:]*://' | sort -u -V \
+    | awk -v v="$1" '$0 == v { print last; exit } { last = $0 }')
+  # No release before this one on the box: nothing older to remove, and a
+  # newer one (a box taken back down) is not removed on a rule that cannot
+  # name the way back.
+  [ -n "$prev" ] || return 0
+  gone=""; n=0
+  before_kb=$(df -Pk "${PRISMA_DOCKER_ROOT:-/var/lib/docker}" 2>/dev/null \
+    | awk 'NR == 2 { print $4 }')
+  for img in $ours; do
+    tag=${img#*:}
+    [ "$tag" = "$1" ] && continue
+    [ "$tag" = "$prev" ] && continue
+    printf '%s\n' "$used" | grep -qxF "$img" && continue
+    if "$DOCKER" rmi "$img" >/dev/null 2>&1; then
+      n=$((n + 1)); gone="$gone $img"
+    fi
+  done
+  [ "$n" = 0 ] && return 0
+  after_kb=$(df -Pk "${PRISMA_DOCKER_ROOT:-/var/lib/docker}" 2>/dev/null \
+    | awk 'NR == 2 { print $4 }')
+  freed=""
+  if [ -n "$before_kb" ] && [ -n "$after_kb" ] \
+     && [ $(( (after_kb - before_kb) / 1024 )) -ge 1 ]; then
+    freed=", $(( (after_kb - before_kb) / 1024 )) MB freed"
+  fi
+  say "removed $n image(s) no container uses, of releases other than $1 and $prev$freed:$gone"
+  return 0
+}
+
+# Only when the images are this box's own release: a box running images from
+# another build has no release to keep for sure.
+if [ "$pick" = "$want" ]; then
+  prune_old_images "$want"
+else
+  say "not removing old images: this box runs '$pick' and says it is '${want:-<no stamp>}'"
+fi
+
 exit 0
