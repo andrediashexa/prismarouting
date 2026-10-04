@@ -26,6 +26,10 @@ typedef struct
   u32 status;
   u32 framed_ip;
   char user[BPA_IDENTITY_MAX];
+  /* Delegated-IPv6-Prefix (RFC 4818), for a NAT64 subscriber (#485). */
+  u8 deleg6[16];
+  u8 deleg6_len;
+  u8 have_deleg6;
   u8 have_ip;
   u8 have_status;
   u8 user_truncated;

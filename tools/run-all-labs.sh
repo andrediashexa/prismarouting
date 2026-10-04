@@ -273,7 +273,7 @@ echo
 # box says so at creation, which is the screen #370 found had never been
 # printed by anything in this repository.
 BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
-           hairpin icmp-tcp ipfix-stop mss nat-behaviour pptp rtsp sip
+           hairpin icmp-tcp ipfix-stop mss nat-behaviour nat64 pptp rtsp sip
            two-pools"
 
 # Labs that are run a THIRD time with the feature they test switched OFF.
@@ -325,7 +325,7 @@ OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c
            in-place:off initial:off cgnat-workers:off lacp:off doors:off
            api-grpc:off
            ipfix:no-exporter limits:off mss:off
-           nat-behaviour:address-dependent oom:off pptp:off
+           nat-behaviour:address-dependent nat64:off oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
            utilisation:off vrf:off vrrp:off ha-failover:off
            syslog-reconnect:off syslog-spill-resync:off identity-empty:off snmp-traps:off

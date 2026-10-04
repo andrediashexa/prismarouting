@@ -110,6 +110,8 @@ typedef struct
   /* handoff */
   u32 in2out_fq_index;
   u32 out2in_fq_index;
+  u32 nat64_in2out_fq_index; /* #485 */
+  u32 n_nat64;		     /* NAT64 pools, for the ip6 features */
   u32 n_workers;
   bpa_divisor_t workers; /* spreads subscribers over the workers */
   /*
@@ -663,5 +665,24 @@ bpa_next_after (u16 *next, vlib_buffer_t *b, u16 lookup)
   else
     vnet_feature_next_u16 (next, b);
 }
+
+/* NAT64 (#485), bpa_nat64.c */
+/* A forward's host, and a pool's private address, as screens and refusals
+ * name them: a NAT64 pool's by its IPv6 host or prefix, never by the index
+ * its pseudo inside holds (#485). */
+format_function_t format_bpa_static_host;
+format_function_t format_bpa_priv;
+int bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 fib,
+			 u32 *pool_index,
+			 u32 *sub_idx);
+void bpa_nat64_session_key (bpa_per_thread_t *pt, bpa_session_t *s,
+			    const ip6_address_t *host);
+void bpa_nat64_session_unkey (bpa_per_thread_t *pt, bpa_session_t *s);
+void bpa_nat64_interfaces_update (void);
+clib_error_t *bpa_nat64_check_overlap (const bpa_pool_t *cfg);
+int bpa_nat64_out2in (vlib_main_t *vm, vlib_buffer_t *b, bpa_per_thread_t *pt,
+		      bpa_session_t *s);
+int bpa_nat64_out2in_icmp (vlib_main_t *vm, vlib_buffer_t *b,
+			   bpa_per_thread_t *pt, bpa_session_t *s);
 
 #endif /* __included_bpa_h__ */

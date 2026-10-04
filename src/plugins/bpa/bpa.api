@@ -138,7 +138,12 @@
  * It CHANGES THE LAYOUT of those three messages, so a client built against
  * 0.17.0 must be rebuilt. lab/api.sh pins the JSON shape.
  */
-option version = "0.18.0";
+/*
+ * 0.19.0 adds bpa_nat64_pool_add: a pool whose inside is IPv6 (#485). A new
+ * message, so no existing layout moves - and a NAT64 pool is deleted, like
+ * any other, by bpa_pool_add_del with is_add false.
+ */
+option version = "0.19.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -265,6 +270,50 @@ autoreply define bpa_pool_add_del
   vl_api_prefix_t prefixes[n_prefixes];
 };
 
+/** \brief Creates a NAT64 pool: IPv6 subscribers, IPv4 public addresses (#485).
+    Its own message rather than three more fields on bpa_pool_add_del, so
+    that no client built against 0.18.0 has to be rebuilt for a feature it
+    does not use. The ALGs are not here. The in-place settings - the MSS
+    clamp, the utilisation alarm - reach a NAT64 pool by
+    bpa_pool_settings_set, and forwards by their own message, as for any
+    pool; the reserve re-maps subscribers and so is here.
+    @param name - pool name
+    @param subscriber_length - the prefix length one subscriber holds, 32-128
+    @param nat64_prefix - RFC 6052's prefix; length 0 is 64:ff9b::/96
+    @param vrf_id - the IPv6 table the subscribers arrive in; ~0 is every one
+    @param out_vrf_id - the IPv4 table translated traffic leaves by; ~0
+                        leaves it where it was
+    @param n_inside - how many of the prefixes are inside ones, IPv6
+    @param prefixes - the inside ones first, then the public IPv4 ones
+*/
+autoreply define bpa_nat64_pool_add
+{
+  u32 client_index;
+  u32 context;
+
+  string name[64];
+  u16 block_size;
+  u16 port_min;
+  u16 port_max;
+  vl_api_bpa_policy_t policy;
+  vl_api_bpa_mode_t mode;
+  vl_api_bpa_filter_t filter;
+  u8 max_blocks;
+  u8 initial_blocks;
+  u16 block_stride;
+  u16 block_reserve;
+  vl_api_bpa_timeouts_t timeouts;
+  u8 subscriber_length;
+  vl_api_ip6_prefix_t nat64_prefix;
+  u32 vrf_id;
+  u32 out_vrf_id;
+  string audit_user[64];
+  u32 audit_uid;
+  u8 n_inside;
+  u8 n_prefixes;
+  vl_api_prefix_t prefixes[n_prefixes];
+};
+
 /** \brief Changes a pool's settings without recreating it.
     Everything here is safe to change on a pool that is carrying traffic. What
     is deliberately absent - the prefixes, block size, port range, policy and
@@ -374,6 +423,26 @@ autoreply define bpa_forward_add_del
   u16 port_priv;
   vl_api_ip4_address_t ip_priv;
   /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
+};
+
+/** \brief A forward on a NAT64 pool (#485): bpa_forward_add_del with an
+    IPv6 host, one /128 of a subscriber's delegated prefix. A new message,
+    as bpa_nat64_pool_add is. Removing names the public port and protocol
+    alone, as on the IPv4 message.
+*/
+autoreply define bpa_nat64_forward_add_del
+{
+  u32 client_index;
+  u32 context;
+
+  bool is_add;
+  string name[64];
+  vl_api_bpa_fwd_proto_t proto;
+  u16 port_pub;
+  u16 port_priv;
+  vl_api_ip6_address_t host;
   string audit_user[64];
   u32 audit_uid;
 };

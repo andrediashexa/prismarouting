@@ -75,6 +75,8 @@ typedef enum
 {
   BPA_OUT2IN_NEXT_DROP,
   BPA_OUT2IN_NEXT_LOOKUP,
+  BPA_OUT2IN_NEXT_LOOKUP6, /* a NAT64 session's reply, translated (#485) */
+  BPA_OUT2IN_NEXT_NAT64_FRAG, /* ... over 1280 with DF clear: cut first */
   BPA_OUT2IN_N_NEXT,
 } bpa_out2in_next_t;
 
@@ -294,6 +296,32 @@ VLIB_NODE_FN (bpa_out2in_node)
 		    node->errors[BPA_OUT2IN_ERROR_ICMP_MALFORMED];
 		  goto trace;
 		}
+	      /* An error about a packet a NAT64 subscriber sent: translated to
+	       * ICMPv6 for its host rather than rewritten in IPv4 (#485). */
+	      if (PREDICT_FALSE (bm->n_nat64 && e.port
+				 && bpa_proto_of (e.ip_proto) >= 0))
+		{
+		  clib_bihash_kv_16_8_t ek, ev;
+
+		  bpa_key_out (&ek, e.pub_addr, e.pub_port,
+			       (u8) bpa_proto_of (e.ip_proto));
+		  if (clib_bihash_search_16_8 (&pt->out2in, &ek, &ev) == 0
+		      && pool_elt_at_index (pt->sessions, ev.value)->is_nat64)
+		    {
+		      if (bpa_nat64_out2in_icmp (
+			    vm, b[0], pt,
+			    pool_elt_at_index (pt->sessions, ev.value)))
+			{
+			  b[0]->error =
+			    node->errors[BPA_OUT2IN_ERROR_ICMP_MALFORMED];
+			  goto trace;
+			}
+		      matched = 1;
+		      n_icmp_err++;
+		      next[0] = BPA_OUT2IN_NEXT_LOOKUP6;
+		      goto trace;
+		    }
+		}
 	      {
 		u32 err_fib = ~0;
 
@@ -470,6 +498,10 @@ VLIB_NODE_FN (bpa_out2in_node)
 
 	  if (PREDICT_FALSE (sf != 0 && sf->ip_priv == ip_priv))
 	    s = bpa_session_static_open (pt, p, pool_index, sf, now);
+	  /* A NAT64 pool's forward opens a session on its host: keyed for the
+	   * host's own replies, and translated to it below (#485). */
+	  if (PREDICT_FALSE (s != 0 && s->is_nat64 && sf->has_host6))
+	    bpa_nat64_session_key (pt, s, (const ip6_address_t *) sf->host6);
 
 	  if (PREDICT_TRUE (s == 0))
 	    {
@@ -514,6 +546,24 @@ VLIB_NODE_FN (bpa_out2in_node)
       /* The media an ALG announced has arrived: it is a flow now, not a
        * prediction, so it stops living on the short expectation timer. */
       s->is_expect = 0;
+
+      /* A NAT64 session: back to IPv6 for its host (#485). Nothing below -
+       * the ALGs, the MSS clamp, the IPv4 rewrite - applies to it. */
+      if (PREDICT_FALSE (s->is_nat64))
+	{
+	  int r = proto == BPA_PROTO_ICMP
+		    ? bpa_nat64_out2in_icmp (vm, b[0], pt, s)
+		    : bpa_nat64_out2in (vm, b[0], pt, s);
+
+	  if (r < 0)
+	    {
+	      b[0]->error = node->errors[BPA_OUT2IN_ERROR_UNSUPPORTED];
+	      goto trace;
+	    }
+	  n_translated++;
+	  next[0] = r ? BPA_OUT2IN_NEXT_NAT64_FRAG : BPA_OUT2IN_NEXT_LOOKUP6;
+	  goto trace;
+	}
       if (proto == BPA_PROTO_TCP)
 	{
 	  tcp_header_t *tcp = l4h;
@@ -743,6 +793,8 @@ VLIB_REGISTER_NODE (bpa_out2in_node) = {
   .next_nodes = {
     [BPA_OUT2IN_NEXT_DROP] = "error-drop",
     [BPA_OUT2IN_NEXT_LOOKUP] = "ip4-lookup",
+    [BPA_OUT2IN_NEXT_LOOKUP6] = "ip6-lookup",
+    [BPA_OUT2IN_NEXT_NAT64_FRAG] = "bpa-nat64-frag6",
   },
 };
 

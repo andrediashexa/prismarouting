@@ -4016,7 +4016,7 @@ check(dp.commands == ["bpa clear subscriber 100.64.0.10"]
       f"the dataplane's own clear, its rows printed; a CGNAT operator may: "
       f"{dp.commands} {text!r}")
 for rest, said in ((["subscriber", "100.64.0.300"],
-                    "error: a subscriber is an IPv4 address: 100.64.0.300"),
+                    "error: a subscriber is an IPv4 or IPv6 address: 100.64.0.300"),
                    (["sessions"], "error: usage: clear cgnat subscriber "
                                   "<A.B.C.D>")):
     rv, text = driven(lambda: sh.clear_cgnat(rest))
@@ -7599,7 +7599,8 @@ _ADDR_PROMPT = [
     ("inside potato", "expected a prefix"),
     ("inside 300.0.0.0/10", "not an IPv4 prefix"),
     ("outside 200.0.0.1", "expected a prefix"),
-    ("inside 2001:db8::/32", "expected an IPv4 prefix"),
+    # An IPv6 INSIDE is a NAT64 pool since #485; an outside is IPv4 always.
+    ("outside 2001:db8::/32", "expected an IPv4 prefix"),
     ("inside 100.64.0.5/10", "host bits are set"),
     ("bypass source 999.9.9.9/99", "not an IPv4 prefix"),
     ("bypass destination 2001:db8::/32", "expected an IPv4 prefix"),

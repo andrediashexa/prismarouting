@@ -35,6 +35,15 @@ The trap for whoever implements it: in deterministic mode, two boxes with
   port block each time. It was red on every check when it was written, which
   was the point of writing it first.
 
+**A NAT64 pool in a pair** ([#485](https://github.com/andrediashexa/hexarouting/issues/485)):
+the mapping comparison covers it - `subscriber-length` and `nat64-prefix` are
+mapping fields - but the failover does not carry its IPv6 side. This box takes
+IPv4 virtual routers only, so the IPv6 subscribers' gateway is no virtual
+address that follows the master; their route to the NAT64 prefix has to
+follow it some other way, such as each box announcing the prefix only while
+it is up. `commit check` warns about every NAT64 pool on a box in a VRRP pair,
+and no lab measures a NAT64 failover (docs/nat64.md).
+
 **What does not exist and is still a plan**: session synchronisation, and
 anything that carries the peer's configuration between the boxes by itself.
 The peer's configuration reaches this box as a file somebody copies, and every

@@ -11,12 +11,17 @@ back.
     python3 tools/radius_nas.py <host> <port> <secret> start <ip> <user>
     python3 tools/radius_nas.py <host> <port> <secret> stop  <ip> [user]
 
+<ip> may be an IPv6 prefix, 2001:db8:1200:ab00::/56: it is then sent as
+Delegated-IPv6-Prefix (RFC 4818) instead of Framed-IP-Address, which is how a
+BNG names an IPv6-only subscriber of a NAT64 pool (#485).
+
 IT IS A SECOND IMPLEMENTATION ON PURPOSE. The box builds and checks these
 packets in C; this builds them in Python, from the RFC rather than from that
 code. Two implementations of one rule that agree are evidence; one
 implementation checked against itself is not.
 """
 import hashlib
+import ipaddress
 import socket
 import sys
 
@@ -40,7 +45,14 @@ def acct_request(ident, secret, status, ip=None, user=None):
     attrs = b""
     if user is not None:
         attrs += attr(1, user.encode())
-    if ip is not None:
+    if ip is not None and ":" in ip:
+        # Delegated-IPv6-Prefix: Reserved, Prefix-Length, and only the
+        # octets the length needs (RFC 4818 section 3).
+        net = ipaddress.IPv6Network(ip, strict=True)
+        n = (net.prefixlen + 7) // 8
+        attrs += attr(123, bytes([0, net.prefixlen])
+                      + net.network_address.packed[:n])
+    elif ip is not None:
         attrs += attr(8, socket.inet_aton(ip))
     attrs += attr(40, int(status).to_bytes(4, "big"))
     length = 20 + len(attrs)

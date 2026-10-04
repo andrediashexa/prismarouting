@@ -52,12 +52,14 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 | Comando | Argumento | O que define |
 |---------|-----------|--------------|
-| `prefix-inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno (os assinantes); pode repetir. Obrigatório: o `commit` recusa um pool sem `prefix-inside` ou sem `prefix-outside` |
+| `prefix-inside <prefixo>` | `<A.B.C.D/M\|X:X::X:X/M>` | prefixo interno (os assinantes); pode repetir. Obrigatório: o `commit` recusa um pool sem `prefix-inside` ou sem `prefix-outside`. IPv6 faz do pool um pool NAT64 (veja abaixo) |
 | `prefix-outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
+| `subscriber-length <n>` | `<32-128>` | só NAT64: o tamanho do prefixo IPv6 de **um** assinante — o prefixo delegado, por exemplo `56` |
+| `nat64-prefix <prefixo>` | `<X:X::X:X/M>` | só NAT64: onde ficam os destinos IPv4 (RFC 6052); ausente, vale `64:ff9b::/96` |
 
 Até a 0.148.2 essas duas instruções se chamavam `inside` e `outside`. Os nomes antigos continuam sendo lidos - de uma configuração salva, de uma revisão de rollback ou digitados -, mas a caixa só escreve os novos, e o `?` só oferece os novos. O papel de uma interface no CGNAT (`interface <nome> inside|outside`) não mudou. | `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois; padrão `512`. Um número que não é potência de dois é recusado com as duas potências mais próximas | | `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável; ausente, vale a faixa do próprio equipamento | | `policy interleaved` |           | vizinhos em endereços públicos distintos; é o padrão | | `policy blocked` |           | vizinhos no mesmo endereço público | | `mode deterministic` |           | por fórmula, sem log de alocação: o assinante se acha pela configuração em vigor. É o padrão. Só o bloco entregue da reserva é registrado | | `mode dynamic` |           | BPA: blocos alocados sob demanda, cada alocação registrada. Sem exportação de logging configurada, `commit check` e `commit` avisam — nesse modo o registro é a única prova de quem usou uma porta | | `vrf <n>` | `<0-4294967295>` | a VRF cujos assinantes este pool atende; ausente = todas | | `outside-vrf <n>` | `<0-4294967295>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava | | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
 
-**Os prefixos.** `inside`, `outside` e `bypass` são IPv4. Um prefixo com bits de host (`100.64.0.1/10`) é recusado dizendo qual rede ele nomeia (`100.64.0.0/10`), e um `/0` é recusado: todo endereço não é pool nem bypass.
+**Os prefixos.** `outside` e `bypass` são IPv4; `inside` é IPv4 ou, num pool NAT64, IPv6 — nunca os dois no mesmo pool. Um prefixo com bits de host (`100.64.0.1/10`) é recusado dizendo qual rede ele nomeia (`100.64.0.0/10`), e um `/0` é recusado: todo endereço não é pool nem bypass.
 
 `**policy interleaved**` **vs** `**blocked**` — `interleaved` espalha vizinhos por endereços públicos distintos, o que dilui o impacto de um bloqueio de reputação em um IP. `blocked` mantém vizinhos no mesmo endereço público.
 
@@ -341,6 +343,44 @@ prisma# [edit nat / cgnat / pool residencial] no ?
 ```
 
 Tirar um timeout, um ALG ou um limite **não é o mesmo que ajustá-lo para o valor padrão**: o pool volta a **herdar** o global, e a linha desaparece da configuração em vez de aparecer nela com um número dentro. Um `timeout udp 300` global mudado depois passa a valer para o pool de novo.
+
+## Pool NAT64: assinantes só IPv6 saindo pelo IPv4 público
+
+Um pool com `prefix-inside` IPv6 é um pool NAT64 (RFC 6146): o assinante que só tem IPv6 alcança servidores IPv4 pelo mesmo pool público, repartido em blocos de portas como no CGNAT IPv4. O assinante é o **prefixo delegado**, não um endereço: um /128 dentro de um /64 muda com as extensões de privacidade, e o prefixo é o que o RADIUS atribui a uma pessoa.
+
+```
+nat
+ cgnat
+  pool v6
+   prefix-inside 2001:db8:1200::/40
+   subscriber-length 56
+   nat64-prefix 64:ff9b:1::/48
+   prefix-outside 203.0.113.0/29
+   block-size 2048
+   exit
+```
+
+Cada /56 de `2001:db8:1200::/40` recebe um bloco de 2048 portas pela mesma fórmula do modo determinístico. O assinante fala com `64:ff9b:1:c000:2:200::` e o servidor `192.0.2.2` vê o endereço público e uma porta do bloco desse assinante. Com o prefixo bem conhecido `64:ff9b::/96` (o padrão), endereços IPv4 não globais — privados, de documentação, de laboratório — não são alcançáveis, como manda a RFC 6052.
+
+`subscriber-length` e `nat64-prefix` são campos de **mapeamento**: mudar qualquer um reconstrói o pool.
+
+**Determinístico ou dinâmico.** Em `mode dynamic`, com `max-blocks`, `initial-allocation` e `block-stride`, o pool NAT64 aloca blocos sob demanda como um pool IPv4, e cada alocação e liberação sai no log nomeando o assinante pelo prefixo delegado (veja [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq)). Os outros ajustes do pool valem num pool NAT64 como num pool IPv4 — `reserve`, `tcp-mss`, `vrf` e `outside-vrf`, `max-sessions`, `max-session-rate`, `utilisation-alarm`, timeouts e `filter` —, com duas diferenças. O `tcp-mss auto` fica 20 bytes abaixo do de um pool IPv4, porque o cabeçalho IPv6 do lado do assinante é 20 bytes maior. E o `vrf` de um pool NAT64 é uma tabela IPv6: dois clientes podem ter o mesmo prefixo interno em VRFs diferentes, cada um com o seu pool.
+
+**Encaminhamento de porta para um host IPv6.** Num pool NAT64 o `forward` aponta para um host do prefixo do assinante, e quem está na internet IPv4 alcança esse host pela porta pública:
+
+```
+forward tcp 12000 to 2001:db8:1200:ab00::10 8080
+```
+
+A porta pública tem de estar no bloco do próprio assinante, como num pool IPv4. Um segundo host do mesmo prefixo com a mesma porta privada é recusado.
+
+**Recusados num pool NAT64:** `bypass`, para sempre — um pacote IPv6 para o prefixo NAT64 só chega ao IPv4 traduzido, então não existe caminho sem tradução —, e os ALGs, por enquanto.
+
+**Rotas.** Um pool NAT64 deve ao roteamento dois prefixos: o `prefix-outside`, como qualquer pool, e o `nat64-prefix`, do lado IPv6 — é para ele que os assinantes mandam o tráfego para o IPv4. Com BGP configurado, o `commit check` avisa quando nada anuncia o `nat64-prefix` na família IPv6, e o aviso traz as duas linhas que resolvem: `ipv6 route <prefixo> blackhole` e `network <prefixo>`.
+
+**Par de alta disponibilidade.** A comparação de mapeamento do par cobre o pool NAT64, mas o failover não leva o lado IPv6: esta caixa só cria roteador virtual IPv4, então o gateway dos assinantes IPv6 não acompanha o mestre. O `commit check` avisa sobre todo pool NAT64 numa caixa com VRRP; a rota dos assinantes para o `nat64-prefix` precisa seguir o mestre por outro caminho, por exemplo cada caixa anunciando o prefixo só enquanto está de pé.
+
+Quem estava atrás de uma porta pública: `show cgnat translation 203.0.113.3 44100` responde com o prefixo IPv6 do assinante, pela fórmula. O inverso: `show cgnat subscriber 2001:db8:1200:ab00::10` dá o bloco do assinante, e `show cgnat top` lista os assinantes pelo prefixo.
 
 ## Três ajustes não podem ser removidos, e a caixa diz isso
 

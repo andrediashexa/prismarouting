@@ -94,6 +94,110 @@ bpa_identity_remove (bpa_identity_table_t *t, u32 ip)
   return 1;
 }
 
+/* The prefix with every bit past len cleared: a delegation is a network. */
+static void
+bpa_identity6_mask (u8 out[16], const u8 in[16], u8 len)
+{
+  u32 i;
+
+  for (i = 0; i < 16; i++)
+    {
+      u32 bits = len > i * 8 ? len - i * 8 : 0;
+
+      out[i] = bits >= 8 ? in[i] : (u8) (in[i] & (u8) (0xff << (8 - bits)));
+    }
+}
+
+/* Entry i out, order kept: the same memmove the IPv4 remove makes. */
+static void
+bpa_identity6_cut (bpa_identity_table_t *t, u32 i)
+{
+  if (i + 1 < t->n6)
+    memmove (&t->e6[i], &t->e6[i + 1], (t->n6 - i - 1) * sizeof (t->e6[0]));
+  vec_set_len (t->e6, t->n6 - 1);
+  t->n6 = vec_len (t->e6);
+}
+
+/* Whether two prefixes share an address. */
+static int
+bpa_identity6_overlap (const u8 a[16], u8 al, const u8 b[16], u8 bl)
+{
+  u8 m = al < bl ? al : bl, x[16], y[16];
+
+  bpa_identity6_mask (x, a, m);
+  bpa_identity6_mask (y, b, m);
+  return !memcmp (x, y, 16);
+}
+
+/*
+ * A delegation, from an Accounting-Start or Interim carrying
+ * Delegated-IPv6-Prefix (#485). The table in place, for the IPv4 upsert's
+ * reason.
+ *
+ * WHAT IT OVERLAPS GOES: a prefix delegated now is this subscriber's, and an
+ * older entry covering any of it is a delegation that ended without its Stop
+ * reaching this box. Keeping both would make the lookup's single bisection
+ * wrong, and would answer a court with whichever of two people sorted first.
+ *
+ * Returns 1 when the table changed.
+ */
+int
+bpa_identity6_upsert (bpa_identity_table_t *t, const u8 prefix[16], u8 len,
+		      const char *name)
+{
+  bpa_identity6_entry_t e = { 0 };
+  u32 i, at;
+
+  if (!t || !name || !name[0] || len == 0 || len > 128)
+    return 0;
+  bpa_identity6_mask (e.prefix, prefix, len);
+  e.len = len;
+  snprintf (e.name, sizeof (e.name), "%s", name);
+  for (i = 0; i < t->n6; i++)
+    if (t->e6[i].len == len && !memcmp (t->e6[i].prefix, e.prefix, 16))
+      {
+	if (!strcmp (t->e6[i].name, e.name))
+	  return 0;
+	memcpy (t->e6[i].name, e.name, sizeof (e.name));
+	return 1;
+      }
+  for (i = 0; i < t->n6;)
+    if (bpa_identity6_overlap (t->e6[i].prefix, t->e6[i].len, e.prefix, len))
+      bpa_identity6_cut (t, i);
+    else
+      i++;
+  at = bpa_identity6_at (t, e.prefix);
+  vec_add1 (t->e6, e);
+  t->n6 = vec_len (t->e6);
+  if (at + 1 < t->n6)
+    {
+      memmove (&t->e6[at + 1], &t->e6[at],
+	       (t->n6 - at - 1) * sizeof (t->e6[0]));
+      t->e6[at] = e;
+    }
+  return 1;
+}
+
+/* The delegation ended: its Accounting-Stop. Exact prefix only - a Stop
+ * names what it ends. */
+int
+bpa_identity6_remove (bpa_identity_table_t *t, const u8 prefix[16], u8 len)
+{
+  u8 m[16];
+  u32 i;
+
+  if (!t || !t->n6)
+    return 0;
+  bpa_identity6_mask (m, prefix, len);
+  for (i = 0; i < t->n6; i++)
+    if (t->e6[i].len == len && !memcmp (t->e6[i].prefix, m, 16))
+      {
+	bpa_identity6_cut (t, i);
+	return 1;
+      }
+  return 0;
+}
+
 /*
  * WHAT A FILE'S LINES MEAN ONCE THEY ARE READ, which is three decisions and
  * not one - and all three are about naming the right subscriber in a record

@@ -47,6 +47,10 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
   name = format (0, "bpa-out2in-%u%c", thread_index, 0);
   clib_bihash_init_16_8 (&pt->out2in, (char *) name, bm->hash_buckets,
 			 bm->hash_memory);
+  /* Reserved address space, touched only by NAT64 traffic (#485). */
+  name = format (0, "bpa-in2out6-%u%c", thread_index, 0);
+  clib_bihash_init_24_8 (&pt->in2out6, (char *) name, bm->hash_buckets,
+			 bm->hash_memory);
 
   pt->sub_by_idx = hash_create (0, sizeof (uword));
   /* This thread's ring, in the segment bpa_init() made before any thread was
@@ -321,9 +325,17 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   BPA_STAT (sessions, pt, pool_index, 1);
   bpa_sub_seen (pt, pool_index, sub);
 
-  bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
-  kv.value = s - pt->sessions;
-  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+  /* A NAT64 session's inside key is its IPv6 host, which the caller holds
+   * and installs (bpa_nat64_session_key): the pseudo ip_priv is the
+   * subscriber, shared by every host of the prefix, and keyed here two hosts
+   * on one port would overwrite each other (#485). */
+  s->is_nat64 = p->is_nat64;
+  if (PREDICT_TRUE (!p->is_nat64))
+    {
+      bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
+      kv.value = s - pt->sessions;
+      clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+    }
 
   bpa_key_out (&kv, s->ip_pub, s->port_pub, proto);
   kv.value = s - pt->sessions;
@@ -1057,6 +1069,8 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	  && bpa_shared_is (value.value, s->ip_priv, s->fib_index))
 	clib_bihash_add_del_16_8 (&bm->shared, &kv, 0);
     }
+  else if (PREDICT_FALSE (s->is_nat64))
+    bpa_nat64_session_unkey (pt, s);
   else
     {
       bpa_key_in (&kv, s->ip_priv, s->port_priv, s->proto, s->fib_index);
@@ -1513,8 +1527,16 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
  */
 /* not a unit: it frees sessions out of a worker's tables, which need the
  * plugin's state; lab/api-grpc.sh clears a subscriber and reads it gone. */
+/*
+ * BY POOL AND INDEX, not by address (#485). It matched s->ip_priv alone,
+ * across every pool, and a NAT64 session's ip_priv is its subscriber's
+ * INDEX in a pseudo range from 0.0.0.0: clearing the IPv4 subscriber
+ * 0.0.0.171 would have cut NAT64 subscriber 171 as well. The pair is what
+ * names one subscriber on this box.
+ */
 u32
-bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now)
+bpa_subscriber_clear (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+		      f64 now)
 {
   u32 i, freed = 0;
 
@@ -1525,7 +1547,7 @@ bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now)
       if (pool_is_free_index (pt->sessions, i))
 	continue;
       s = pool_elt_at_index (pt->sessions, i);
-      if (s->ip_priv != ip_priv)
+      if (s->pool_index != pool_index || s->sub_idx != sub_idx)
 	continue;
       bpa_session_free (pt, s, now);
       freed++;
@@ -1617,16 +1639,25 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		     * over it.
 		     */
 		    char who[BPA_IDENTITY_MAX];
+		    bpa_log_sub6_t v6;
 
-		    bpa_identity_lookup (&bm->identity, ip_priv, who,
-					 sizeof (who));
+		    /* A NAT64 subscriber by its prefix, and its identity by
+		     * the delegation covering it: ip_priv is its index there,
+		     * and as an IPv4 address it names nobody (#485). */
+		    bpa_log_sub6_of (j, ip_priv, &v6);
+		    if (v6.len)
+		      bpa_identity_lookup6 (&bm->identity, v6.addr, v6.len, who,
+					    sizeof (who));
+		    else
+		      bpa_identity_lookup (&bm->identity, ip_priv, who,
+					   sizeof (who));
 		    bpa_block_ident_recall (
 		      &pt->block_ident,
 		      bpa_block_ident_key (j, blk.ip_pub, blk.port_lo), who,
 		      sizeof (who));
 		    bpa_log_emit (vm, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
 				  blk.ip_pub, blk.port_lo, blk.port_hi, j,
-				  who);
+				  who, &v6);
 		  }
 		}
 	    }

@@ -95,6 +95,72 @@ version has a chance of seeing it.
   ([#548](https://github.com/andrediashexa/hexarouting/issues/548)), which
   no gate had run since it was added in 0.149.5.
 
+* **NAT64, phase 1: the arithmetic of a pool with an IPv6 inside.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  Stateful NAT64 is the CGNAT with an IPv6 inside, taken back into scope by
+  the maintainer. `src/plugins/bpa/bpa_nat64.h` holds the parts that are pure
+  arithmetic: the subscriber index over inside IPv6 prefixes and a subscriber
+  prefix length (the delegated prefix, never a /128), with the 2^28 capacity
+  rule; RFC 6052 embedding and extraction at all six prefix lengths, the u
+  octet kept zero; RFC 6052 3.1's refusal of non-global IPv4 under the
+  Well-Known Prefix; and the 24-byte inside session key. `ref/bpa_model.py`
+  computes the same from the specifications and `test/test_bpa_nat64.c`
+  compares them, RFC 6052's own section 2.4 table included. No datapath uses
+  it yet and the VTY accepts no NAT64 pool, so nothing is configurable and
+  inert; the translation is phase 2, and the plan is on the issue.
+
+* **NAT64, phase 2: an IPv6-only subscriber reaches IPv4, deterministic.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  A pool whose `prefix-inside` is IPv6 is a NAT64 pool: `subscriber-length`
+  says what one subscriber is (the delegated prefix), `nat64-prefix` where
+  IPv4 destinations live (RFC 6052; `64:ff9b::/96` when not given). Each
+  subscriber prefix gets a port block by the same formula as an IPv4
+  subscriber, and the translation follows RFC 7915: TCP, UDP (a zero IPv4
+  checksum is computed), ICMP echo, ICMP errors with the quoted packet,
+  Packet Too Big with its MTU raised by 20, and fragments both ways - an
+  IPv4 datagram that may be fragmented and translates past 1280 is cut to
+  1280. With workers, a subscriber's packets are handed to the worker that
+  owns it. An unsolicited packet is dropped and counted, as on an IPv4 pool.
+  `show cgnat translation` answers with the subscriber's IPv6 prefix,
+  `show cgnat subscriber` takes an IPv6 address, `show cgnat top` names the
+  prefix. Deterministic only: dynamic mode, the log, reserve, forwards,
+  bypass, VRF, `tcp-mss` and the ALGs are refused on a NAT64 pool by name at
+  `commit check`, and are the next phases. A NAT64 session costs about a
+  third more heap than an IPv4 one (docs/architecture.md, "Memory").
+  `lab/nat64.sh` reads it all off the wire on both sides, with and without
+  workers; `lab/nat64-scale.sh` measures it.
+
+* **NAT64, phase 3: dynamic mode, and the log names an IPv6 subscriber.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  `mode dynamic` on a NAT64 pool, with `max-blocks`, `initial-allocation` and
+  `block-stride`: the IPv4 allocator, hold-down, per-worker slices and
+  exhaustion aggregation (#549), unchanged. Every block event names the
+  subscriber by its delegated prefix: IPFIX gains a NAT64 template
+  (sourceIPv6Address and sourceIPv6PrefixLength, over UDP and as template 259
+  over TCP), syslog says `subscriber="2001:db8:1200:ab00::/56"`, and the log
+  container carries both - the shared ring's event grew to 68 bytes (segment
+  version 4), so a log container and a dataplane must be of the same
+  release. RADIUS's Delegated-IPv6-Prefix names a NAT64 subscriber.
+  `clear cgnat subscriber` and `monitor cgnat logging subscriber` take an
+  IPv6 address, and the configuration trail records a NAT64 pool by its IPv6
+  inside, `subscriber-length` and `nat64-prefix`. Still refused by name on a
+  NAT64 pool: reserve, forwards, bypass, VRF, `tcp-mss`, the ALGs.
+  `lab/nat64.sh` reads the dynamic pool's records off IPFIX and syslog
+  collectors, with the dataplane carrying the log and then the container.
+
+* **NAT64, phase 4: every per-pool setting on a NAT64 pool.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  `reserve`, `tcp-mss` (the automatic clamp 20 less than IPv4's, for the IPv6
+  header), `vrf` and `outside-vrf` (two tenants' NAT64 pools may share an
+  inside prefix in different VRFs), `max-sessions`, `max-session-rate` and
+  `utilisation-alarm` work on a NAT64 pool, and a port forward names an IPv6
+  host of a subscriber's prefix, reached from IPv4. `bypass` is refused for
+  good: an IPv6 packet to the NAT64 prefix reaches IPv4 only translated. The
+  ALGs stay refused until their phase. `commit check` warns when nothing
+  announces a NAT64 pool's NAT64 prefix in BGP's IPv6 family, and when a NAT64
+  pool is on a box in a VRRP pair, whose failover does not carry the IPv6
+  side. `lab/nat64.sh` proves each setting on the wire.
+
 ### Fixed
 
 * **A fresh install had no `prisma-operator` group.**
@@ -105,6 +171,30 @@ version has a chance of seeing it.
   commit's door stays for a box upgraded by patches from before 0.149.26.
   `test/test_install_groups.py` holds the installer's groups to the VTY's
   `GROUP_*` constants.
+
+* **RADIUS accounting was not read until the log was exporting.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  The accounting socket was serviced at the end of the log's drain, so never
+  while no transport was enabled, and not until the first IPFIX template had
+  gone out after `logging enable` - up to the template interval. Every block
+  allocated in that window was recorded `unknown` although the BNG had named
+  the subscriber. It is read every second now, whatever the log is doing.
+* **A pool created with `utilisation-alarm` had no alarm.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  The creation message has no field for it, and a pool being created was
+  given no settings: the alarm reached the dataplane only when a later commit
+  noticed the difference. The settings now follow the creation at once.
+* **The commit check could not see BGP statements in a second address
+  family.** ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  In the configuration read back from FRR, ` exit-address-family` closed
+  `router bgp` as well, so a `network` in the second family - the IPv6 one, as
+  FRR writes them - was read as outside BGP, and the announcement warnings
+  fired on prefixes that were announced.
+* **`clear cgnat subscriber` matched sessions by address across every pool.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  It now clears by pool and subscriber index. With a NAT64 pool present the
+  old match would also have cut the NAT64 subscriber whose index read as the
+  same IPv4 address.
 
 ## 0.149.33 - a dataplane restart reports what really happened
 

@@ -220,6 +220,45 @@ main (void)
 	   "address");
   }
 
+  printf ("\n--- Delegated-IPv6-Prefix: an IPv6-only subscriber (#485) ---\n");
+  {
+    /* RFC 4818: Reserved, Prefix-Length, then only the octets the length
+     * needs - a /56 carries seven. */
+    u8 attrs[] = {
+      1, 7, 'a', 'n', 'a', '@', 'i',                       /* User-Name */
+      123, 11, 0, 56, 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab,
+      40, 6, 0, 0, 0, BPA_ACCT_START,
+    };
+    static const u8 want[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab };
+
+    len = build (pkt, 9, attrs, sizeof (attrs), SECRET);
+    CHECK (bpa_radius_acct_parse (pkt, len, SECRET, &a) == BPA_RADIUS_OK
+	     && a.have_deleg6 && a.deleg6_len == 56
+	     && memcmp (a.deleg6, want, 16) == 0 && !a.have_ip,
+	   "the /56 is read, its missing octets zero, and no IPv4 is claimed");
+  }
+  {
+    /* A /56 that carries six octets is short of the seventh it needs. */
+    u8 attrs[] = {
+      123, 10, 0, 56, 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00,
+      40, 6, 0, 0, 0, BPA_ACCT_START,
+    };
+
+    len = build (pkt, 10, attrs, sizeof (attrs), SECRET);
+    CHECK (bpa_radius_acct_parse (pkt, len, SECRET, &a) == BPA_RADIUS_OK
+	     && !a.have_deleg6,
+	   "a prefix shorter than its length says is not taken as one");
+  }
+  {
+    u8 attrs[] = {
+      123, 4, 0, 129, 40, 6, 0, 0, 0, BPA_ACCT_START,
+    };
+
+    len = build (pkt, 11, attrs, sizeof (attrs), SECRET);
+    CHECK (bpa_radius_acct_parse (pkt, len, SECRET, &a) == BPA_RADIUS_OK
+	     && !a.have_deleg6, "a length past 128 is not a prefix");
+  }
+
   printf ("\n%s\n", fail ? "FAILURES" : "ALL TESTS PASSED");
   return fail ? 1 : 0;
 }

@@ -81,6 +81,12 @@ MUTATIONS = {
     # the next extension goes (issue #39).
     "block_reserve": (lambda p: setattr(p, "block_reserve", 2),
                       "pool_replace"),
+    # NAT64 (#485): what one subscriber is, and where the IPv4 destinations
+    # are - both decide the mapping, so both rebuild the pool.
+    "subscriber_length": (lambda p: setattr(p, "subscriber_length", 56),
+                          "pool_replace"),
+    "nat64_prefix": (lambda p: setattr(p, "nat64_prefix", "64:ff9b:1::/48"),
+                     "pool_replace"),
 
     # --- settings the dataplane changes under a worker barrier, in place.
     "timeouts":     (lambda p: p.timeouts.update({"udp": 900}), "settings_set"),
@@ -515,6 +521,25 @@ check("router static" not in bang,
       f"an indented '!' does not hoist a vrf's route out of it: {bang}")
 check(" ip route 10.0.0.0/8 192.0.2.1" in bang,
       f"and the route is left exactly where FRR put it: {bang}")
+
+# A SECOND address-family, as FRR writes it back (#485): ` exit-address-family`
+# one column in. The indentation closed the family and the closer then closed
+# `router bgp` as well, so every statement of the second family read as top
+# level - the IPv6 family's `network` for a NAT64 prefix was never seen. And
+# ` exit-vrf` beside a vrf's statements still closes the vrf, not the last of
+# them.
+two = ["router bgp 65000", " address-family ipv4 unicast",
+       "  network 203.0.113.0/29", " exit-address-family",
+       " address-family ipv6 unicast", "  network 64:ff9b::/96",
+       " exit-address-family", "exit", "!", "ip route 1.0.0.0/8 Null0"]
+paths = config.block_paths(two)
+check(paths[5] == ["router bgp 65000", "address-family ipv6 unicast"],
+      f"the second family's statement is inside router bgp: {paths[5]}")
+check(paths[9] == [], f"and the router ends at its exit: {paths[9]}")
+vp = config.block_paths(["vrf red", " ip route 10.0.0.0/8 Null0", " exit-vrf",
+                         "ip route 1.0.0.0/8 Null0"])
+check(vp[1] == ["vrf red"] and vp[3] == [],
+      f"an indented exit-vrf closes the vrf: {vp}")
 
 # The third thing that `!` broke, and the one no lab holds: `show this` inside
 # `router bgp`, on a configuration READ BACK from FRR rather than typed.
@@ -2209,6 +2234,109 @@ check(config.startup_default_mtu("unix {\n nodaemon\n}\n") == config.VPP_DEFAULT
       "and VPP's own 9000 when startup.conf sets none")
 check(config.startup_default_mtu("ethernet { default-mtu 99 }") == 9000,
       "a value outside the MTU range is not believed")
+
+print("\n=== a NAT64 pool: its statements, its refusals, its message (#485) ===")
+# prefix6_error: prefix_error's four questions for an IPv6 inside.
+check(config.prefix6_error("prefix-inside", "2001:db8:1200::/40") is None,
+      "an IPv6 /40 is an inside")
+for value, needle in (("2001:db8::", "expected a prefix"),
+                      ("2001:db8::1/32", "host bits are set"),
+                      ("2001:db8::/129", "not a prefix length"),
+                      ("zz::/3", "not an IPv6 prefix"),
+                      ("::/0", "a /0 is every address")):
+    r = config.prefix6_error("prefix-inside", value)
+    check(r is not None and needle in r[0], f"{value!r}: {r}")
+check("2001:db8::/32" in config.prefix6_error("prefix-inside",
+                                              "2001:db8::1/32")[1],
+      "the network meant is in the refusal")
+# nat64_prefix_error: RFC 6052's lengths and its zero octet.
+for good in ("64:ff9b::/96", "64:ff9b:1::/48", "2001:db8::/32"):
+    check(config.nat64_prefix_error(good) is None, f"{good} is RFC 6052")
+r = config.nat64_prefix_error("64:ff9b::/44")
+check(r is not None and "RFC 6052" in r[1], f"a /44: {r}")
+r = config.nat64_prefix_error("2001:db8:0:0:ff::/72")
+check(r is not None, "a /72 is not an RFC 6052 length")
+r = config.nat64_prefix_error("64:ff9b::ff00:0:0:0/96")
+check(r is not None and "64-71" in r[0], f"bits 64-71 set: {r}")
+# canonical_prefix: the form the dataplane prints back, so text round-trips.
+check(config.canonical_prefix("2001:DB8:1200:0::/40") == "2001:db8:1200::/40",
+      "an IPv6 prefix is written the way show bpa config reads it back")
+check(config.canonical_prefix("100.64.0.0/10") == "100.64.0.0/10",
+      "IPv4 is left alone")
+
+v6 = config.Pool("v6")
+v6.inside = ["2001:db8:1200::/40"]
+v6.outside = ["203.0.113.0/29"]
+check(v6.is_nat64 and not base_pool().is_nat64, "an IPv6 inside is NAT64")
+check(v6.nat64_prefix_eff == "64:ff9b::/96", "no prefix is the well-known one")
+r = v6.nat64_fits()
+check(r is not None and "subscriber-length" in r[0], f"no length: {r}")
+v6.subscriber_length = 56
+check(v6.nat64_fits() is None, f"a whole NAT64 pool: {v6.nat64_fits()}")
+lines = v6.lines()
+check(" subscriber-length 56" in lines and " nat64-prefix 64:ff9b::/96" in lines,
+      f"the statements are rendered, the prefix with it: {lines}")
+# Each thing the first release does not do, refused by name.
+for setup, needle in (
+        (lambda p: p.bypass_src.append("10.0.0.0/8"), "no bypass"),
+        (lambda p: p.algs.update({"ftp": True}), "no alg"),
+        (lambda p: p.forwards.append(("tcp", 80, "10.0.0.1", 80)),
+         "names an IPv4 host"),
+        (lambda p: p.inside.append("100.64.0.0/10"), "not both"),
+        (lambda p: setattr(p, "subscriber_length", 32), "longer than")):
+    t = copy.deepcopy(v6)
+    setup(t)
+    r = t.nat64_fits()
+    check(r is not None and needle in r[0], f"{needle}: {r}")
+    check(len(r[0]) <= 79 if r else True, f"fits a console: {r}")
+# Phase 3: a dynamic NAT64 pool, and what its allocation takes.
+t = copy.deepcopy(v6)
+t.mode, t.max_blocks, t.initial_ports, t.block_stride = "dynamic", 4, 1024, 1
+t.block_reserve = 2
+check(t.nat64_fits() is None, f"a dynamic NAT64 pool: {t.nat64_fits()}")
+t = base_pool()
+t.subscriber_length = 56
+check(t.nat64_fits() is not None, "subscriber-length on an IPv4 pool is refused")
+check(base_pool().nat64_fits() is None, "an IPv4 pool is not asked")
+# Forwards (#485 phase 4): an IPv6 host on a NAT64 pool, by its own message.
+t = copy.deepcopy(v6)
+check(config.Config._pool_line(t, "forward tcp 12000 to 2001:DB8:1200:AB00::10 "
+                                  "8080") is None
+      and t.forwards == [("tcp", 12000, "2001:db8:1200:ab00::10", 8080)],
+      f"an IPv6 forward is taken, in RFC 5952's form: {t.forwards}")
+check(t.nat64_fits() is None, f"and fits a NAT64 pool: {t.nat64_fits()}")
+m, a = t.forward_message(t.forwards[0])
+check(m == "bpa_nat64_forward_add_del" and a["host"] == "2001:db8:1200:ab00::10"
+      and a["port_pub"] == 12000 and a["is_add"],
+      f"it goes by the NAT64 forward message: {m} {a}")
+check(base_pool().forward_message(("tcp", 80, "100.64.0.5", 80))[0]
+      == "bpa_forward_add_del", "an IPv4 forward by the IPv4 one")
+check(config.Config._pool_line(t, "forward tcp 1 to 2001:zz::1 2") is not None,
+      "a word where an IPv6 host goes is refused")
+t4 = base_pool()
+t4.forwards.append(("tcp", 80, "2001:db8::1", 80))
+r = t4.nat64_fits()
+check(r is not None and "IPv6 host" in r[0],
+      f"an IPv6 forward on an IPv4 pool is refused: {r}")
+
+# alg_masks: none runs on a NAT64 pool, and it says so in both masks.
+alg, alg_set = v6.alg_masks()
+check(alg == 0 and alg_set == sum(config.Pool.ALG_BITS.values()),
+      f"NAT64 masks: {alg} {alg_set}")
+check(base_pool().alg_masks() == (sum(config.Pool.ALG_BITS[a] for a in
+                                      config.Pool.ALG_DEFAULT_ON), 0),
+      "an IPv4 pool keeps the defaults")
+# add_message / nat64_api_args: the NAT64 pool's own message.
+msg, a = v6.add_message()
+check(msg == "bpa_nat64_pool_add", msg)
+check(a == v6.nat64_api_args(), "add_message carries nat64_api_args")
+check(a["subscriber_length"] == 56 and a["nat64_prefix"] == "::/0"
+      and a["n_inside"] == 1 and a["prefixes"][0] == "2001:db8:1200::/40",
+      f"the message: {a}")
+check("alg" not in a and a["vrf_id"] == 4294967295 and a["block_reserve"] == 0,
+      "no ALG on the message; every VRF and no reserve unless stated")
+check(base_pool().add_message()[0] == "bpa_pool_add_del",
+      "an IPv4 pool is created as before")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -27,9 +27,9 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## Next (0.150.0)
+## 0.150.0 - NAT64, and the 0.149.x patches proved by a fresh install
 
-* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **Contract:** additive (`prisma.proto` sha256 `7905cf993bf993f40ec0d2026697ac216719ff16861cdc41e232d7cbec357ea2`): the NAT64 fields below.
 * **`operator` on a fresh install:** a box installed from the 0.150.0 medium
   has the `prisma-operator` group from the start, so granting `operator`
   works the same on a new box as on one upgraded by patches. Nothing for a
@@ -39,6 +39,28 @@ generated from the VTY's grammar.
   `RestartDataplane`) and a killed dataplane both come back configured, and
   that the log container runs.
 * **Lab box:** .166 is on 0.149.33.
+
+### NAT64 (#485), phases 1-4, new in 0.150.0
+
+* **Contract:** additive. `prisma.proto` sha256 `7905cf993bf993f40ec0d2026697ac216719ff16861cdc41e232d7cbec357ea2`.
+* **`PoolConfig`** gains 25 `subscriber_length` (0 on an IPv4 pool) and 26
+  `nat64_prefix` ("" is the well-known `64:ff9b::/96`). A pool whose
+  `prefix_inside` is IPv6 is a NAT64 pool; GetSchema offers both statements,
+  and `prefix-inside` takes either family. `mode` may be `dynamic` on one.
+  Every other pool field works on one; SetConfig refuses `bypass` (for good)
+  and an ALG (for now) with the VTY's own commit-check sentence.
+* **`PortForwardConfig.private_address`** on a NAT64 pool is an IPv6 host of
+  one of its subscribers' prefixes; on an IPv4 pool it is IPv4 as before.
+* **`LogEvent.subscriber`** (WatchLogging) is a NAT64 subscriber's delegated
+  prefix, `2001:db8:1200:ab00::/56`, where it was always an IPv4 address: a
+  client that parses it as one must take either form.
+  `WatchLoggingRequest.subscriber` may be any IPv6 address inside such a
+  prefix. No field moved; the comments say it.
+* **`Clear`** with `TARGET_CGNAT_SUBSCRIBER` takes an IPv6 address: a NAT64
+  subscriber, by any address in its prefix.
+* **Dataplane API:** `bpa.api` 0.19.0 adds two messages,
+  `bpa_nat64_pool_add` (with its VRFs and reserve) and
+  `bpa_nat64_forward_add_del`; no existing layout moves.
 
 ## 0.149.33 - a restart that came back is reported as one
 

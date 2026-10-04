@@ -36,6 +36,8 @@ typedef struct vlib_main_t vlib_main_t;
 
 /* Tabela 21 da RFC 8158: 8 + 1 + 4 + 4 + 2 + 2 + 4 */
 #define BPA_LOG_RECORD_SIZE 25
+/* The NAT64 block (#485): 8 + 1 + 16 + 1 + 4 + 2 + 2 + 4. */
+#define BPA_LOG_NAT64_RECORD_SIZE 38
 
 /*
  * THE BOOT MARKER. A PROPOSAL - the maintainer may change its shape, and the
@@ -115,6 +117,18 @@ typedef struct vlib_main_t vlib_main_t;
  * wire. Found in lab/ipfix.sh, where only the events emitted from process
  * context arrived at the collector. The dataplane queues, a process drains.
  */
+/*
+ * A NAT64 subscriber, as its records name it (#485): the delegated prefix's
+ * network address and its length. len 0 is an IPv4 subscriber, named by
+ * ip_priv as before. Seventeen bytes with no alignment, so it can sit at the
+ * end of the event without moving anything a reader built before it knows.
+ */
+typedef struct
+{
+  u8 addr[16];
+  u8 len;
+} bpa_log_sub6_t;
+
 typedef struct
 {
   u32 ip_priv;
@@ -134,14 +148,23 @@ typedef struct
    * collector has to tell a box that does not know from one that did not say.
    */
   char identity[BPA_IDENTITY_MAX];
+  /*
+   * THE NAT64 SUBSCRIBER, copied HERE at the instant of the event for the
+   * identity's reason: a pool redefined between the event and the drain
+   * would otherwise name somebody else's prefix (#485). ip_priv is then the
+   * subscriber's index in the pool, which no record carries.
+   */
+  bpa_log_sub6_t sub6;
 } bpa_log_event_t;
 
 /* The event is a record in a segment another program reads (#550): its size
  * and offsets are that program's contract, checked by bpa_log_seg_check()
  * against event_bytes in the header. A change here is a new
  * BPA_LOG_SEG_VERSION, never a silent one. */
-_Static_assert (sizeof (bpa_log_event_t) == 52,
-		"bpa_log_event_t is the shared segment's record: 52 bytes");
+_Static_assert (sizeof (bpa_log_event_t) == 68,
+		"bpa_log_event_t is the shared segment's record: 68 bytes");
+_Static_assert (offsetof (bpa_log_event_t, sub6) == 49,
+		"bpa_log_event_t's NAT64 prefix starts at byte 49");
 _Static_assert (offsetof (bpa_log_event_t, identity) == 17,
 		"bpa_log_event_t's identity starts at byte 17");
 
@@ -157,7 +180,7 @@ typedef struct
 } bpa_log_xev_t;
 
 _Static_assert (sizeof (bpa_log_xev_t) == BPA_LOG_XEV_BYTES,
-		"bpa_log_xev_t is the export ring's slot: 64 bytes");
+		"bpa_log_xev_t is the export ring's slot: 80 bytes");
 
 /* Per-thread queue ceiling: if the process falls behind, the excess is lost
  * in an accounted way, rather than growing without bound. */
@@ -206,6 +229,10 @@ typedef struct
    * a collector sees one ordered flow of records rather than two. */
   u32 marker_template_id;
   u32 marker_report_index;
+  /* A NAT64 subscriber's block (#485): a third report on the same stream,
+   * its template naming sourceIPv6Address where the block's names IPv4. */
+  u32 nat64_template_id;
+  u32 nat64_report_index;
   u64 n_markers;
   f64 next_marker;
   u64 n_records;
@@ -232,13 +259,13 @@ clib_error_t *bpa_log_enable (int enable);
  */
 void bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub,
 		   u16 port_lo, u16 port_hi, u32 pool_id,
-		   const char *identity);
+		   const char *identity, const bpa_log_sub6_t *v6);
 
 /* Actually emits over UDP. May only be called from process context.
  * wall is seconds since the UNIX epoch, not since VPP started. */
 void bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall,
 			  u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
-			  u16 port_hi, u32 pool_id);
+			  u16 port_hi, u32 pool_id, const bpa_log_sub6_t *v6);
 
 /*
  * Export over TCP, for when losing a record is not acceptable.
@@ -327,7 +354,8 @@ void bpa_log_streams_init (void);
  */
 void bpa_log_stream_record (bpa_log_stream_t *s, f64 wall, u8 event,
 			    u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
-			    u32 pool_id, const char *identity);
+			    u32 pool_id, const char *identity,
+			    const bpa_log_sub6_t *v6);
 void bpa_log_stream_marker (bpa_log_stream_t *s, f64 wall, f64 init);
 void bpa_log_stream_service (bpa_log_stream_t *s, f64 now);
 int bpa_log_stream_pending (bpa_log_stream_t *s);
@@ -355,19 +383,27 @@ u32 bpa_syslog_marker_line (char *out, u32 cap, f64 wall, f64 init,
 u32 bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
 		     u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
 		     const char *hostname, u32 pen, u32 pri,
-		     const char *identity);
+		     const char *identity, const bpa_log_sub6_t *v6);
+/* A subscriber as every record and screen names it: dotted IPv4, or a NAT64
+ * subscriber's prefix in RFC 5952's form with its length (#485). The length
+ * written, or 0 when it does not fit. */
+u32 bpa_log_subscriber_str (char *out, u32 cap, u32 ip_priv,
+			    const bpa_log_sub6_t *v6);
 
 clib_error_t *bpa_log_tcp_enable (ip4_address_t *collector, u16 port,
 				  int enable);
 /* wall is seconds since the UNIX epoch. */
 void bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
-			 u16 port_lo, u16 port_hi, u32 pool_id);
+			 u16 port_lo, u16 port_hi, u32 pool_id,
+			 const bpa_log_sub6_t *v6);
 /* now is vlib_time_now(): monotonic, which is what scheduling a retry wants
  * and what a timestamp on a record does not. */
 void bpa_log_tcp_service (f64 now);
 
 /* Drains every thread's queue. Called under the barrier. */
 void bpa_log_drain (vlib_main_t *vm);
+/* The NAT64 subscriber an event names, or len 0 (#485). */
+void bpa_log_sub6_of (u32 pool_id, u32 ip_priv, bpa_log_sub6_t *out);
 
 /*
  * The exporter's last act before the process leaves: whatever the socket

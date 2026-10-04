@@ -50,12 +50,30 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
   ip4_address_t a;
   u32 i;
 
-  for (i = 0; i < p->inside.n_ranges; i++)
+  /*
+   * A NAT64 pool by what it was configured with (#485): its IPv6 inside,
+   * the subscriber length and the NAT64 prefix. Its IPv4 inside is the
+   * pseudo range [0, N) the arithmetic runs on, and a trail entry reading
+   * "inside 0.0.0.0+65536" is a definition nobody can recompute a
+   * subscriber from - which, for a deterministic pool, is the one thing
+   * this trail is for.
+   */
+  if (p->is_nat64)
     {
-      a.as_u32 = clib_host_to_net_u32 (p->inside.ranges[i].base);
-      s = format (s, " inside %U+%u", format_ip4_address, &a,
-		  p->inside.ranges[i].count);
+      for (i = 0; i < p->n_inside6; i++)
+	s = format (s, " inside %U/%u", format_ip6_address,
+		    (ip6_address_t *) p->inside6_addr[i], p->inside6_len[i]);
+      s = format (s, " subscriber-length %u nat64-prefix %U/%u",
+		  p->inside6.sub_len, format_ip6_address,
+		  (ip6_address_t *) p->nat64_prefix, p->nat64_len);
     }
+  else
+    for (i = 0; i < p->inside.n_ranges; i++)
+      {
+	a.as_u32 = clib_host_to_net_u32 (p->inside.ranges[i].base);
+	s = format (s, " inside %U+%u", format_ip4_address, &a,
+		    p->inside.ranges[i].count);
+      }
   for (i = 0; i < p->outside.n_ranges; i++)
     {
       a.as_u32 = clib_host_to_net_u32 (p->outside.ranges[i].base);
@@ -109,10 +127,12 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
    */
   for (i = 0; i < vec_len (p->statics); i++)
     {
-      a.as_u32 = clib_host_to_net_u32 (p->statics[i].ip_priv);
+      /* A NAT64 forward by its host (#485): the trail is what answers who
+       * held a forwarded port, and an index answers nobody. */
       s = format (s, " forward %U/%u->%U:%u", format_bpa_proto,
 		  p->statics[i].proto, p->statics[i].port_pub,
-		  format_ip4_address, &a, p->statics[i].port_priv);
+		  format_bpa_static_host, &p->statics[i],
+		  p->statics[i].port_priv);
     }
   return s;
 }

@@ -21,7 +21,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_static \
       $(BUILD)/test_bpa_top \
       $(BUILD)/test_bpa_rate \
-      $(BUILD)/test_bpa_keys \
+      $(BUILD)/test_bpa_keys $(BUILD)/test_bpa_nat64 \
       $(BUILD)/test_bpa_subblock \
       $(BUILD)/test_bpa_workers \
       $(BUILD)/test_bpa_local \
@@ -31,7 +31,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@sh tools/run-tests.sh
 
 vectors:
-	@cd ref && python3 gen_vectors.py
+	@cd ref && python3 gen_vectors.py && python3 gen_nat64_vectors.py
 
 # bpa_pool.c is #included by the harness rather than compiled beside it, and
 # bpa_dyn.c below the same way: four of the functions in each are static, and
@@ -43,7 +43,7 @@ vectors:
 # so that a change to it rebuilds the binary, which is the property the
 # bpa_seq.h comment below is about.
 $(BUILD)/test_bpa: test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c \
-                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vectors.h
+                   src/plugins/bpa/bpa_pool.h src/plugins/bpa/bpa_nat64.h test/bpa_shim.h test/bpa_vectors.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pool.c
 
@@ -67,6 +67,13 @@ $(BUILD)/test_bpa_keys: test/test_bpa_keys.c \
                    test/bpa_shim.h test/bpa_vec_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_keys.c
+
+# NAT64's arithmetic (#485): bpa_nat64.h against ref/bpa_model.py.
+$(BUILD)/test_bpa_nat64: test/test_bpa_nat64.c \
+                   src/plugins/bpa/bpa_nat64.h src/plugins/bpa/bpa_pool.h \
+                   test/bpa_shim.h test/bpa_vec_shim.h test/bpa_nat64_vectors.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_nat64.c
 
 # A subscriber's blocks (#472): bpa_subblock.h.
 $(BUILD)/test_bpa_subblock: test/test_bpa_subblock.c \
@@ -539,4 +546,4 @@ model:
 	@cd ref && python3 validate.py && python3 check_magic.py
 
 clean:
-	@rm -rf $(BUILD) test/bpa_vectors.h
+	@rm -rf $(BUILD) test/bpa_vectors.h test/bpa_nat64_vectors.h

@@ -438,6 +438,8 @@ message PortForwardConfig {
   // "tcp" or "udp".
   string protocol = 1;
   uint32 public_port = 2;
+  // An IPv4 address, or on a NAT64 pool an IPv6 host of one of its
+  // subscribers' prefixes (#485).
   string private_address = 3;
   uint32 private_port = 4;
 }
@@ -481,6 +483,11 @@ message PoolConfig {
   // Only the ALGs the operator chose ("ftp", "rtsp", "pptp", "esp", "sip").
   map<string, bool> algs = 23;
   repeated PortForwardConfig forwards = 24;
+  // NAT64 (#485), when prefix_inside is IPv6: the prefix length one
+  // subscriber holds; 0 on an IPv4 pool.
+  uint32 subscriber_length = 25;
+  // RFC 6052's prefix; "": the well-known 64:ff9b::/96 (no statement).
+  string nat64_prefix = 26;
 }
 
 // One CGNAT log stream's collector, as `logging <transport> ...` states it.
@@ -1802,6 +1809,7 @@ service TelemetryService {
 message WatchLoggingRequest {
   // The VTY monitor's filters: an inside address, a public address and a
   // port in its block, an event, a pool by name. Empty is no filter.
+  // subscriber may be IPv6: any address in a NAT64 subscriber's prefix.
   string subscriber = 1;
   string public_address = 2;
   uint32 port = 3;
@@ -1843,6 +1851,8 @@ message LogEvent {
   Kind kind = 1;
   // The time the exported record carries.
   google.protobuf.Timestamp at = 2;
+  // An IPv4 address, or a NAT64 subscriber's delegated prefix,
+  // "2001:db8:1200:ab00::/56" (#485).
   string subscriber = 3;
   string public_address = 4;
   uint32 port_first = 5;
