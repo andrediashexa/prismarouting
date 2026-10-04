@@ -27,6 +27,12 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.31 - a test suite cleans up after itself
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc...68c8`).
+* **Behaviour:** none an API client sees: a build-machine fix (#566).
+* **Lab box:** .166 is on 0.149.30.
+
 ## 0.149.30 - the system actions, proved through the host's door
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
