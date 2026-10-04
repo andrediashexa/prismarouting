@@ -27,6 +27,17 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.1 - FTP through a NAT64 pool
+
+* **Contract:** unchanged (`prisma.proto` sha256 `7905cf993bf993f40ec0d2026697ac216719ff16861cdc41e232d7cbec357ea2`).
+* **An ALG on a NAT64 pool (#485, phase 5):** SetConfig now accepts
+  `alg ftp on` on a pool whose `prefix_inside` is IPv6 (FTP64, RFC 6384; off
+  by default there). `rtsp`, `sip`, `pptp` and `esp` on such a pool are
+  refused for good, each with its own commit-check sentence, which replaces
+  0.150.0's "an ALG (for now)". A UI offering the ALG toggles on a NAT64 pool
+  should offer only FTP; the refusal text is the VTY's and can be shown as is.
+* **Lab box:** .166 is on 0.150.0.
+
 ## 0.150.0 - NAT64, and the 0.149.x patches proved by a fresh install
 
 * **Contract:** additive (`prisma.proto` sha256 `7905cf993bf993f40ec0d2026697ac216719ff16861cdc41e232d7cbec357ea2`): the NAT64 fields below.

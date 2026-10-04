@@ -48,8 +48,8 @@ Num pool NAT64 o assinante só tem IPv6 e o servidor só tem IPv4, e o problema 
 
 | O cliente manda | O servidor recebe | O cliente recebe de volta |
 |-----------------|-------------------|---------------------------|
-| `EPSV` | `PASV` | a resposta `227` do servidor reescrita como `229`, só com a porta |
-| `EPRT` com o próprio endereço IPv6 | `PORT` com o endereço público e uma porta do bloco do assinante | a resposta do servidor |
+| `EPSV`          | `PASV`            | a resposta `227` do servidor reescrita como `229`, só com a porta |
+| `EPRT` com o próprio endereço IPv6 | `PORT` com o endereço público e uma porta do bloco do assinante | a resposta do servidor    |
 | `EPSV ALL`, ou `EPSV` com outro protocolo | um `NOOP`, no lugar | `504` ou `522`, respondidos pela caixa |
 | `ALGS STATUS64`, `ENABLE64`, `DISABLE64` | um `NOOP`, no lugar | `216`, com o estado da tradução |
 
@@ -70,6 +70,7 @@ configure
 ```
 
 **Os outros quatro são recusados num pool NAT64**, para sempre e cada um pelo nome no `commit check`: o RTSP e o SIP carregam endereços no SDP e nenhuma RFC traduz isso entre IPv6 e IPv4 — para o SIP a RFC 6157 usa ICE e relay, não um tradutor reescrevendo o corpo —, e o GRE do PPTP e o ESP não são protocolos que o NAT64 com estado carrega. O IPsec atravessa NAT64 como NAT-T, em UDP 4500, sem ALG nenhum.
+
 
 :::info
 O PPTP tem um problema próprio: GRE não tem portas, então o **Call ID** precisa fazer o papel que a porta faria. A reescrita não muda tamanho algum, nenhum número de sequência se move, e cada mensagem é guardada por um *magic cookie* de 32 bits e pelo próprio campo de comprimento antes de um único byte ser tocado.
