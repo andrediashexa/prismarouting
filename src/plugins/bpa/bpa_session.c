@@ -47,6 +47,10 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
   name = format (0, "bpa-out2in-%u%c", thread_index, 0);
   clib_bihash_init_16_8 (&pt->out2in, (char *) name, bm->hash_buckets,
 			 bm->hash_memory);
+  /* Reserved address space, touched only by NAT64 traffic (#485). */
+  name = format (0, "bpa-in2out6-%u%c", thread_index, 0);
+  clib_bihash_init_24_8 (&pt->in2out6, (char *) name, bm->hash_buckets,
+			 bm->hash_memory);
 
   pt->sub_by_idx = hash_create (0, sizeof (uword));
   /* This thread's ring, in the segment bpa_init() made before any thread was
@@ -321,9 +325,17 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   BPA_STAT (sessions, pt, pool_index, 1);
   bpa_sub_seen (pt, pool_index, sub);
 
-  bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
-  kv.value = s - pt->sessions;
-  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+  /* A NAT64 session's inside key is its IPv6 host, which the caller holds
+   * and installs (bpa_nat64_session_key): the pseudo ip_priv is the
+   * subscriber, shared by every host of the prefix, and keyed here two hosts
+   * on one port would overwrite each other (#485). */
+  s->is_nat64 = p->is_nat64;
+  if (PREDICT_TRUE (!p->is_nat64))
+    {
+      bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
+      kv.value = s - pt->sessions;
+      clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+    }
 
   bpa_key_out (&kv, s->ip_pub, s->port_pub, proto);
   kv.value = s - pt->sessions;
@@ -1057,6 +1069,8 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	  && bpa_shared_is (value.value, s->ip_priv, s->fib_index))
 	clib_bihash_add_del_16_8 (&bm->shared, &kv, 0);
     }
+  else if (PREDICT_FALSE (s->is_nat64))
+    bpa_nat64_session_unkey (pt, s);
   else
     {
       bpa_key_in (&kv, s->ip_priv, s->port_priv, s->proto, s->fib_index);

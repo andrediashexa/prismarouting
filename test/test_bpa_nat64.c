@@ -100,6 +100,17 @@ test_prefix_rules (void)
   u8 pfx[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab, 0x00 };
   CHECK (bpa_ip6_in_prefix (a, pfx, 56) && !bpa_ip6_in_prefix (a, pfx, 64),
 	 "in_prefix at /56 and /64");
+
+  /* Two prefixes overlap when the shorter contains the longer, from either
+   * side; neighbours of one length do not. */
+  u8 b48[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00 };
+  u8 n56[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xac, 0x00 };
+  CHECK (bpa_ip6_prefixes_overlap (pfx, 56, b48, 48)
+	   && bpa_ip6_prefixes_overlap (b48, 48, pfx, 56),
+	 "a /56 inside a /48 overlaps it, from either side");
+  CHECK (!bpa_ip6_prefixes_overlap (pfx, 56, n56, 56),
+	 "two neighbouring /56s overlapped");
+  CHECK (bpa_ip6_prefixes_overlap (pfx, 56, pfx, 56), "a prefix is itself");
 }
 
 static void

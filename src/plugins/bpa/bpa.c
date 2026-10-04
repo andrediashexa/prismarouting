@@ -762,6 +762,17 @@ bpa_pool_validate (bpa_pool_t *cfg)
   e = bpa_check_pool_overlap (cfg);
   if (e)
     return e;
+  /* The NAT64 refusals bpa_pool_add() makes, so a check does not approve a
+   * pool the commit then cannot create (#485). */
+  {
+    const char *why = bpa_nat64_unsupported (cfg);
+
+    if (why)
+      return clib_error_return (0, "%s", why);
+    e = bpa_nat64_check_overlap (cfg);
+    if (e)
+      return e;
+  }
 
   /* run the derived-value computation on a copy, so nothing is retained */
   probe = *cfg;
@@ -1045,6 +1056,9 @@ bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
    * THIS interface and not all of them: see bpa_auto_mss.h for why that
    * distinction is the difference between an attach and 83 seconds of them. */
   bpa_auto_mss_interface_update (sw_if_index);
+  /* Its IPv6 half, while a NAT64 pool exists (#485). */
+  if (is_inside)
+    bpa_nat64_interfaces_update ();
 
   /*
    * Recorded only once the dataplane has accepted it, and by NAME: an entry
@@ -1541,6 +1555,44 @@ bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate)
   return 0;
 }
 
+/*
+ * NAT64 pools against each other (#485): an IPv6 subscriber prefix belongs
+ * to one pool, and one NAT64 prefix to one pool - the reverse direction
+ * derives a reply's source from the pool's prefix, so two pools on one would
+ * leave the second's replies unattributable.
+ */
+/* not a unit: it walks bpa_main's pools; the overlap rule is
+ * bpa_ip6_prefixes_overlap(), which test/test_bpa_nat64.c holds. */
+clib_error_t *
+bpa_nat64_check_overlap (const bpa_pool_t *cfg)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  u32 i, j;
+
+  if (!cfg->is_nat64)
+    return 0;
+  pool_foreach (p, bm->pools)
+    {
+      /* The same name is the pool this one replaces, when it is a commit
+       * check asking; bpa_pool_add() has refused a live name already. */
+      if (!p->is_nat64 || p->deleted || vec_is_equal (p->name, cfg->name))
+	continue;
+      if (p->nat64_len == cfg->nat64_len
+	  && !memcmp (p->nat64_prefix, cfg->nat64_prefix, 16))
+	return clib_error_return (0, "NAT64 prefix already used by pool %v",
+				  p->name);
+      for (i = 0; i < cfg->n_inside6; i++)
+	for (j = 0; j < p->n_inside6; j++)
+	  if (bpa_ip6_prefixes_overlap (cfg->inside6_addr[i],
+					cfg->inside6_len[i],
+					p->inside6_addr[j], p->inside6_len[j]))
+	    return clib_error_return (0, "inside IPv6 prefix overlaps pool %v",
+				      p->name);
+    }
+  return 0;
+}
+
 /* not a unit: it inserts a pool into bpa_main's pool and hash under the
  * worker barrier. What it validates with is bpa_pool_validate() above and
  * bpa_pool_init(), which test/test_bpa_pool.c drives against
@@ -1563,6 +1615,17 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   e = bpa_check_pool_overlap (cfg);
   if (e)
     return e;
+  /* NAT64 (#485): what phase 2 does not do is refused, not accepted inert,
+   * and its IPv6 prefixes against every other NAT64 pool's. */
+  {
+    const char *why = bpa_nat64_unsupported (cfg);
+
+    if (why)
+      return clib_error_return (0, "%s", why);
+    e = bpa_nat64_check_overlap (cfg);
+    if (e)
+      return e;
+  }
 
   /* Workers read bm->pools on the datapath; mutate it under the barrier. */
   vlib_worker_thread_barrier_sync (bm->vlib_main);
@@ -1660,7 +1723,12 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	bpa_static_pin (p - bm->pools, p, &p->statics[i], 1);
     }
 
+  if (p->is_nat64)
+    bm->n_nat64++;
   vlib_worker_thread_barrier_release (bm->vlib_main);
+  /* The inside interfaces take their IPv6 half with the first NAT64 pool. */
+  if (p->is_nat64)
+    bpa_nat64_interfaces_update ();
 
   /*
    * A reserve too small for this box's workers is warned about HERE, and here
@@ -1996,11 +2064,15 @@ bpa_pool_del (u8 *name)
    */
   bpa_lent_clear_pool (bm, pool_index);
   bpa_stats_pool_del (pool_index);
+  if (p->is_nat64 && bm->n_nat64)
+    bm->n_nat64--;
   vec_free (p->name);
   vec_free (p->statics);
   pool_put (bm->pools, p);
   bpa_outside_window_update ();
   vlib_worker_thread_barrier_release (vm);
+  /* The last NAT64 pool gone: the inside interfaces drop their IPv6 half. */
+  bpa_nat64_interfaces_update ();
   return 0;
 }
 

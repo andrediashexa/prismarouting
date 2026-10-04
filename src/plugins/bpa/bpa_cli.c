@@ -203,9 +203,27 @@ format_bpa_pool (u8 *s, va_list *args)
   if (p->out_vrf_id != ~0u)
     s = format (s, "\n%Uoutside vrf  %u", format_white_space, indent + 2,
 		p->out_vrf_id);
-  s = format (s, "\n%Uinside       %U (%u addresses, %u range(s))",
-	      format_white_space, indent + 2, format_bpa_addr_set, &p->inside,
-	      p->inside.count, p->inside.n_ranges);
+  if (p->is_nat64)
+    {
+      u32 i;
+
+      for (i = 0; i < p->n_inside6; i++)
+	s = format (s, "\n%U%s %U/%u", format_white_space, indent + 2,
+		    i ? "            " : "inside6     ", format_ip6_address,
+		    (ip6_address_t *) p->inside6_addr[i], p->inside6_len[i]);
+      s = format (s, "\n%Usubscribers  %u prefixes of /%u",
+		  format_white_space, indent + 2, p->inside6.count,
+		  p->inside6.sub_len);
+      s = format (s, "\n%Unat64        %U/%u (RFC 6052)%s", format_white_space,
+		  indent + 2, format_ip6_address,
+		  (ip6_address_t *) p->nat64_prefix, p->nat64_len,
+		  bpa_nat64_is_wkp (p->nat64_prefix, p->nat64_len)
+		    ? ", the Well-Known Prefix" : "");
+    }
+  else
+    s = format (s, "\n%Uinside       %U (%u addresses, %u range(s))",
+		format_white_space, indent + 2, format_bpa_addr_set,
+		&p->inside, p->inside.count, p->inside.n_ranges);
   s = format (s, "\n%Uoutside      %U (%u addresses, %u range(s))",
 	      format_white_space, indent + 2, format_bpa_addr_set, &p->outside,
 	      p->outside.count, p->outside.n_ranges);
@@ -481,7 +499,8 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
   ip4_address_t addr;
-  u32 len = 0;
+  ip6_address_t addr6;
+  u32 len = 0, sub_len = 0;
   u32 block = 512, port_min = 1024, port_max = 65535, mss = 0, vrf = 0;
   u32 tv = 0;
 
@@ -513,6 +532,27 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	is_del = 1;
       else if (unformat (line_input, "check"))
 	is_check = 1;
+      /* NAT64 (#485): an IPv6 inside, its subscriber length and the RFC 6052
+       * prefix. Before the IPv4 form, which would not match an IPv6 one. */
+      else if (unformat (line_input, "inside %U/%d", unformat_ip6_address,
+			 &addr6, &len))
+	{
+	  if (cfg.n_inside6 >= BPA_NAT64_MAX_PREFIXES || len > 128)
+	    {
+	      error = clib_error_return (0, "inside IPv6 prefix refused");
+	      goto done;
+	    }
+	  clib_memcpy (cfg.inside6_addr[cfg.n_inside6], addr6.as_u8, 16);
+	  cfg.inside6_len[cfg.n_inside6++] = (u8) len;
+	}
+      else if (unformat (line_input, "subscriber-length %u", &sub_len))
+	; /* applied below, with the prefixes */
+      else if (unformat (line_input, "nat64-prefix %U/%d", unformat_ip6_address,
+			 &addr6, &len))
+	{
+	  clib_memcpy (cfg.nat64_prefix, addr6.as_u8, 16);
+	  cfg.nat64_len = (u8) len;
+	}
       /* inside and outside repeat: provider IPv4 is fragmented */
       else if (unformat (line_input, "inside %U/%d", unformat_ip4_address,
 			 &addr, &len))
@@ -750,10 +790,16 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       goto done;
     }
 
-  if (vec_len (in_b) == 0 || vec_len (out_b) == 0)
+  if ((vec_len (in_b) == 0 && cfg.n_inside6 == 0) || vec_len (out_b) == 0)
     {
       error = clib_error_return (
 	0, "at least one inside and one outside prefix are required");
+      goto done;
+    }
+  if (vec_len (in_b) && cfg.n_inside6)
+    {
+      error = clib_error_return (
+	0, "a pool's inside is IPv4 or IPv6, not both");
       goto done;
     }
   if (port_max > 65535 || port_min < 1 || port_min > port_max)
@@ -767,7 +813,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       goto done;
     }
 
-  error = bpa_addr_set_build (&cfg.inside, in_b, in_c, vec_len (in_b));
+  if (cfg.n_inside6)
+    error = bpa_nat64_cfg_finish (&cfg, (u8) sub_len);
+  else
+    error = bpa_addr_set_build (&cfg.inside, in_b, in_c, vec_len (in_b));
   if (error)
     goto done;
   error = bpa_addr_set_build (&cfg.outside, out_b, out_c, vec_len (out_b));
@@ -3290,10 +3339,24 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   pool_foreach (p, bm->pools)
     {
       s = format (s, "cgnat pool %v\n", p->name);
-      for (i = 0; i < p->inside.n_ranges; i++)
-	s = format (s, "%U", format_bpa_range_as_prefixes,
-		    p->inside.ranges[i].base, p->inside.ranges[i].count, 1,
-		    "inside");
+      /* A NAT64 pool's inside is IPv6, kept as configured; its `inside`
+       * is the pseudo set the arithmetic runs on and means nothing to read
+       * back (#485). */
+      if (p->is_nat64)
+	{
+	  for (i = 0; i < p->n_inside6; i++)
+	    s = format (s, " inside %U/%u\n", format_ip6_address,
+			(ip6_address_t *) p->inside6_addr[i],
+			p->inside6_len[i]);
+	  s = format (s, " subscriber-length %u\n", p->inside6.sub_len);
+	  s = format (s, " nat64-prefix %U/%u\n", format_ip6_address,
+		      (ip6_address_t *) p->nat64_prefix, p->nat64_len);
+	}
+      else
+	for (i = 0; i < p->inside.n_ranges; i++)
+	  s = format (s, "%U", format_bpa_range_as_prefixes,
+		      p->inside.ranges[i].base, p->inside.ranges[i].count, 1,
+		      "inside");
       for (i = 0; i < p->outside.n_ranges; i++)
 	s = format (s, "%U", format_bpa_range_as_prefixes,
 		    p->outside.ranges[i].base, p->outside.ranges[i].count, 1,
@@ -3358,7 +3421,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * pool would fill every running configuration with lines that say
        * nothing. */
 #define _(sym, nm, desc)                                                      \
-  if ((p->alg & BPA_ALG_##sym) != (BPA_ALG_DEFAULT & BPA_ALG_##sym))          \
+  if (!p->is_nat64                                                            \
+      && (p->alg & BPA_ALG_##sym) != (BPA_ALG_DEFAULT & BPA_ALG_##sym))       \
     s = format (s, " alg %s %s\n", nm, (p->alg & BPA_ALG_##sym) ? "on" : "off");
       foreach_bpa_alg
 #undef _

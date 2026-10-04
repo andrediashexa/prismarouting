@@ -525,6 +525,133 @@ main (void)
 	    "holds on both sides of 2^28\n");
   }
 
+  printf ("\n=== a NAT64 pool: what the configuration step builds and refuses ===\n");
+  {
+    static const u8 v6a[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12 }; /* 2001:db8:1200::/40 */
+    static const u8 wkp[16] = { 0x00, 0x64, 0xff, 0x9b };
+    static const u8 lwkp[16] = { 0x00, 0x64, 0xff, 0x9b, 0x00, 0x01 };
+    bpa_pool_t c;
+    unsigned refused = 0;
+
+#define NAT64_CFG(c)                                                          \
+  do                                                                          \
+    {                                                                         \
+      memset (&(c), 0, sizeof (c));                                           \
+      (c).n_inside6 = 1;                                                      \
+      memcpy ((c).inside6_addr[0], v6a, 16);                                  \
+      (c).inside6_len[0] = 40;                                                \
+      (c).vrf_id = (c).out_vrf_id = ~0u;                                      \
+      (c).alg = 1;                                                            \
+    }                                                                         \
+  while (0)
+
+    /* With no nat64-prefix the pool takes the well-known one, /96, and the
+     * IPv4 inside it hands the shared arithmetic is the dense range
+     * [0, subscribers): a /40 cut into /56s is 65536 of them. */
+    NAT64_CFG (c);
+    CHECK (bpa_nat64_cfg_finish (&c, 56) == 0, "a /40 of /56s was refused");
+    CHECK (c.is_nat64 == 1, "the pool was not marked NAT64");
+    CHECK (c.nat64_len == 96 && memcmp (c.nat64_prefix, wkp, 16) == 0,
+	   "no nat64-prefix did not give 64:ff9b::/96 (len %u)", c.nat64_len);
+    CHECK (c.inside6.count == 65536, "a /40 of /56s is %u subscribers",
+	   c.inside6.count);
+    CHECK (c.inside.count == 65536 && c.inside.n_ranges == 1
+	     && c.inside.ranges[0].base == 0,
+	   "the pseudo inside is %u from %u, not [0, 65536)", c.inside.count,
+	   c.inside.ranges[0].base);
+    /* The ALG default for IPv4 is not a NAT64 pool's: none runs on one yet,
+     * and the mask says so, so bpa_pool_init() does not put it back. */
+    CHECK (c.alg == 0 && c.alg_set == ~0u, "an ALG was left on");
+
+    NAT64_CFG (c);
+    memcpy (c.nat64_prefix, lwkp, 16);
+    c.nat64_len = 48;
+    CHECK (bpa_nat64_cfg_finish (&c, 56) == 0
+	     && c.nat64_len == 48 && memcmp (c.nat64_prefix, lwkp, 16) == 0,
+	   "an explicit 64:ff9b:1::/48 was refused or replaced");
+
+    NAT64_CFG (c);
+    c.n_inside6 = 0;
+    CHECK (bpa_nat64_cfg_finish (&c, 56) != 0, "no inside was accepted");
+    refused++;
+    NAT64_CFG (c);
+    CHECK (bpa_nat64_cfg_finish (&c, 0) != 0, "no subscriber-length accepted");
+    refused++;
+    NAT64_CFG (c);
+    c.nat64_len = 44;
+    memcpy (c.nat64_prefix, lwkp, 16);
+    CHECK (bpa_nat64_cfg_finish (&c, 56) != 0, "a /44 NAT64 prefix accepted");
+    refused++;
+    NAT64_CFG (c);
+    CHECK (bpa_nat64_cfg_finish (&c, 32) != 0,
+	   "a /40 inside with /32 subscribers was accepted");
+    refused++;
+    NAT64_CFG (c);
+    CHECK (bpa_nat64_cfg_finish (&c, 72) != 0,
+	   "2^32 subscribers, past the 2^28 bound, were accepted");
+    refused++;
+    NAT64_CFG (c);
+    c.n_inside6 = 2;
+    memcpy (c.inside6_addr[1], v6a, 16);
+    c.inside6_addr[1][5] = 0x80;
+    c.inside6_len[1] = 48;
+    CHECK (bpa_nat64_cfg_finish (&c, 56) != 0, "overlapping insides accepted");
+    refused++;
+    NAT64_CFG (c);
+    c.inside6_addr[0][15] = 1;
+    CHECK (bpa_nat64_cfg_finish (&c, 56) != 0, "host bits were accepted");
+    refused++;
+    /* A NAT64 prefix inside the subscribers' own: a reply would be built
+     * into the subscriber space, and routed back in. */
+    NAT64_CFG (c);
+    memcpy (c.nat64_prefix, v6a, 16);
+    c.nat64_prefix[5] = 0x01;
+    c.nat64_len = 48;
+    CHECK (bpa_nat64_cfg_finish (&c, 56) != 0,
+	   "a NAT64 prefix inside the inside was accepted");
+    refused++;
+
+    /* What the datapath does not do yet is refused by name, one at a time,
+     * on a pool that is otherwise accepted. */
+    NAT64_CFG (c);
+    CHECK (bpa_nat64_cfg_finish (&c, 56) == 0, "the base pool was refused");
+    CHECK (bpa_nat64_unsupported (&c) == 0, "the base pool is unsupported: %s",
+	   bpa_nat64_unsupported (&c));
+    {
+      bpa_pool_t t;
+      bpa_static_t one = { 0 };
+
+#define NAT64_REFUSES(field_set, what)                                        \
+  do                                                                          \
+    {                                                                         \
+      t = c;                                                                  \
+      field_set;                                                              \
+      CHECK (bpa_nat64_unsupported (&t) != 0, "%s was accepted", what);       \
+      refused++;                                                              \
+    }                                                                         \
+  while (0)
+      NAT64_REFUSES (t.mode = BPA_MODE_DYNAMIC, "dynamic mode");
+      NAT64_REFUSES (t.block_reserve = 1, "a reserve");
+      NAT64_REFUSES (t.max_blocks = 2, "max-blocks");
+      NAT64_REFUSES (t.statics = &one, "a forward");
+      NAT64_REFUSES (t.bypass_src.n_ranges = 1, "a bypass");
+      NAT64_REFUSES (t.tcp_mss = 1400, "tcp-mss");
+      NAT64_REFUSES (t.tcp_mss_auto = 1, "tcp-mss auto");
+      NAT64_REFUSES (t.vrf_id = 5, "a vrf");
+      NAT64_REFUSES (t.out_vrf_id = 5, "an outside vrf");
+      NAT64_REFUSES (t.alg = 1, "an ALG");
+#undef NAT64_REFUSES
+      t = c;
+      t.is_nat64 = 0;
+      t.mode = BPA_MODE_DYNAMIC;
+      CHECK (bpa_nat64_unsupported (&t) == 0,
+	     "an IPv4 pool was refused for a NAT64 limit");
+    }
+#undef NAT64_CFG
+    printf ("  a /40 of /56s builds 65536 subscribers; %u configurations "
+	    "refused\n", refused);
+  }
+
   printf ("\n=== merging of adjacent ranges ===\n");
   {
     bpa_addr_set_t s;

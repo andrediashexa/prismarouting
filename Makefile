@@ -43,7 +43,7 @@ vectors:
 # so that a change to it rebuilds the binary, which is the property the
 # bpa_seq.h comment below is about.
 $(BUILD)/test_bpa: test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c \
-                   src/plugins/bpa/bpa_pool.h test/bpa_shim.h test/bpa_vectors.h
+                   src/plugins/bpa/bpa_pool.h src/plugins/bpa/bpa_nat64.h test/bpa_shim.h test/bpa_vectors.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pool.c
 

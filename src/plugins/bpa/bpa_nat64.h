@@ -23,9 +23,17 @@
 #ifndef __included_bpa_nat64_h__
 #define __included_bpa_nat64_h__
 
-#include "bpa_pool.h"
+#ifdef BPA_STANDALONE
+#include "bpa_shim.h"
+#else
+#include <vlib/vlib.h>
+#endif
+#include <string.h>
 
-typedef unsigned __int128 bpa_u128;
+/* 8-byte aligned on purpose: it lives inside bpa_pool_t, in a VPP pool whose
+ * elements are not promised 16, and a 16-aligned type lets the compiler emit
+ * aligned vector moves on it. */
+typedef unsigned __int128 bpa_u128 __attribute__ ((aligned (8)));
 
 /*
  * The capacity rule, unchanged from IPv4 (docs/architecture.md "The
@@ -144,6 +152,13 @@ bpa_ip6_in_prefix (const u8 addr[16], const u8 prefix[16], u8 len)
   bpa_u128 a = bpa_ip6_to_u128 (addr), p = bpa_ip6_to_u128 (prefix);
   u8 sh = 128 - len;
   return sh >= 128 ? 1 : (a >> sh) == (p >> sh);
+}
+
+/* Do two IPv6 prefixes share an address? */
+static_always_inline int
+bpa_ip6_prefixes_overlap (const u8 a[16], u8 al, const u8 b[16], u8 bl)
+{
+  return bpa_ip6_in_prefix (a, b, al < bl ? al : bl);
 }
 
 /* 64:ff9b::/96, the Well-Known Prefix. */
