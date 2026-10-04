@@ -27,6 +27,16 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.4 - the VTY's exit status trusts good screens
+
+* **Contract:** unchanged (`prisma.proto` sha256 `e872dea7d1a4fa7c9377183ff2be01bef1b2617f6f5369a78a6579a1d2782f5c`).
+* **Nothing changes through the API** (#567): `Show` returns the screen
+  text, which was always right. What changed is the exit status of
+  `prismash -c` on the box, which read 1 for the correct `show cgnat
+  identity` and `show cgnat history verify` screens; a client that runs
+  the VTY over ssh and trusts that status is the one affected.
+* **Lab box:** .166 is on 0.150.3.
+
 ## 0.150.3 - the rest of show cgnat, typed; SetConfig on an interface works again
 
 * **Contract:** additive (`prisma.proto` sha256 `e872dea7d1a4fa7c9377183ff2be01bef1b2617f6f5369a78a6579a1d2782f5c`).

@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`prismash -c` exited 1 on good screens whose first line reads `label:
+  text`.** ([#567](https://github.com/andrediashexa/hexarouting/issues/567))
+  On 10.40.200.166 (0.150.2) `show cgnat identity` ("no identity table: ...")
+  and `show cgnat history verify` ("configuration trail: ...") printed
+  correct screens and exited 1: any first line shaped `words: text` was taken
+  for a dataplane refusal, so a script or monitoring check trusting the exit
+  status read a failure. VPP's CLI labels an error with the path of the
+  command that failed, so a refusal is now a first line whose label is the
+  start of the command sent - every refusal measured on the box still is one.
+
 ## 0.150.3 - the rest of show cgnat, typed; SetConfig on an interface works again
 
 ### Added
