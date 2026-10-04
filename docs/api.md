@@ -98,6 +98,8 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
 | | `GetLogging` | `show cgnat logging` (#555): each log export - syslog and IPFIX over TCP, IPFIX over UDP - its collector, who carries it (the log container or the dataplane), its connection, its counters, its spill and whether it is delivering; the box-wide drop counters; the screen itself in `text`. See [The log export](#the-log-export) |
 | | `Clear` | `clear ...` (#558, phase 5): interface counters (one or every), a CGNAT subscriber's sessions, a BGP session (hard, soft, soft in or out), OSPF's process or one adjacency, IS-IS adjacencies; the VTY's line run, its output returned. See [Actions and the box](#actions-and-the-box) |
+| | `LookupTranslation` | `show cgnat translation <public> <port>` (#558, phase 6): the subscriber behind it - an IPv4 address, or a NAT64 subscriber's prefix - its pool and block, and whether the answer holds for any instant (`SOURCE_FORMULA`) or only now (`SOURCE_RESERVE`, `SOURCE_DYNAMIC`). See [The CGNAT's screens](#the-cgnats-screens) |
+| | `ListTop`, `GetDrops`, `GetCgnatMemory`, `ListBlocks`, `GetIdentity`, `VerifyHistory`, `ListAlgs`, `ListForwards`, `GetHaStatus` | `show cgnat top`, `drops`, `memory`, `blocks`, `identity`, `history verify`, `alg`, `forward` and `ha` (#558, phase 6), each as fields and its screen in `text`. See [The CGNAT's screens](#the-cgnats-screens) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) - and, with `logging_events`, the log export's `log-...` events (#555) |
 | | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
 | | `WatchLogging` | `monitor cgnat logging` (#558, phase 5): each block event the box exports, as a stream of `LogEvent`, with the monitor's filters and its delivery lines |
@@ -228,6 +230,47 @@ starts `log-` and whose `text` names the stream: `log-connected`,
 `log-disconnected`, `log-carrier`, `log-spill` (the spill file started),
 `log-spill-full` (bytes dropped over the cap), `log-stalled`,
 `log-delivering`. A reading every 10 s makes an event up to that late.
+
+### The CGNAT's screens
+
+The rest of `show cgnat` (#558, phase 6) is typed by reading the screen
+itself. Eight of these screens - `translation`, `top`, `drops`, `blocks`,
+`identity`, `history verify`, `alg`, `forward` - are the dataplane's own
+commands, which the VTY forwards word for word; the rpc runs the same VTY
+line in the account's own process and reads its answer into fields, so a
+typed answer and the screen an operator reads are one reading, never two.
+`memory` and `ha` are drawn by the VTY from data it reads itself, and the rpc
+takes that data and the screen drawn from that one reading. Every response
+carries the screen, verbatim, in `text`.
+
+* **Who may call them.** Every account, as every account may type the
+  screens. A dataplane that does not answer is `UNAVAILABLE`, with what the
+  VTY printed.
+* **`LookupTranslation`** checks its arguments before anything runs: an
+  address that is not IPv4 or a port over 65535 is `INVALID_ARGUMENT`; an
+  address no pool owns is `NOT_FOUND`, with the dataplane's sentence. Its
+  `now_only` is the answer's weight: a dynamic block or a reserve block was
+  somebody else's before, and for a past instant the RFC 8158 log says whose.
+* **NAT64 pools** (#485): a subscriber is its delegated prefix
+  (`2001:db8:1200:ab00::/56`) in `Translation.subscriber` and
+  `TopSubscriber.subscriber`, and a forward's `private_address` is IPv6.
+* **Counters and gauges** are marked field by field in the contract. The
+  counters count from the dataplane's start; `GetDrops` lists only the
+  counters that are not zero, the ones that mean a packet did not get through
+  marked `dropped`.
+* **Not an identity.** `GetIdentity` answers how many identities the box
+  holds, when it read them and RADIUS accounting's counters - never an
+  entry, which no screen prints either (#21). Its `read_at` is the
+  dataplane's own clock as it prints it.
+* **`GetHaStatus`** compares against the peer's copy at its default path;
+  `agree` is true only when that copy was read and no pool diverges, never
+  on a question left unanswered. `show cgnat ha peer <file>`, a path on the
+  box's own disk, stays a screen through `Show`.
+* **Widths.** `show bpa top` and `show bpa drops` printed through vppinfra
+  widths, which cut a value longer than its column: a pool of more than
+  twelve letters, more than 99,999 ports, a counter of thirteen digits. The
+  dataplane pads those columns now and never cuts them, so neither the
+  screen nor the fields carry a truncated value.
 
 ### Why a change was refused
 

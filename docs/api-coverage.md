@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 640 |
-| text | 19 |
+| typed | 649 |
+| text | 10 |
 | n/a | 27 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -78,11 +78,15 @@ grouping rule (#533).
    port_end, pool_name, subscriber_id, repeats_held})` - the observation
    ring `monitor cgnat logging` reads (#556) - plus the per-stream delivery
    lines.
-5. **CGNAT reads** (the rest of `show cgnat`). Typed `ListBlocks` (per
-   thread: in use, allocations, releases, refusals), `GetDrops` (counter
-   per reason, both directions), `GetCgnatMemory`, `ListTop`,
-   `LookupTranslation(public, port, at)` - the lawful-intercept question,
-   `GetIdentity`, `VerifyHistory`, `ListAlgs`, `GetForward`, `GetHaPeer`.
+5. **CGNAT reads** (the rest of `show cgnat`) - *delivered as #558's sixth
+   phase*. `LookupTranslation(public, port)` - the lawful-intercept
+   question, with whether the answer holds for any instant or only now;
+   `ListTop`, `GetDrops` (counter per reason, both nodes), `GetCgnatMemory`,
+   `ListBlocks` (per worker: in use, allocations, releases, refusals,
+   pinned, lent), `GetIdentity`, `VerifyHistory`, `ListAlgs`,
+   `ListForwards`, `GetHaStatus`. Each reads the VTY's own screen through
+   the same Shell and carries it verbatim beside the fields. `show cgnat ha
+   peer <file>` - a path on the box's disk - stays text.
 6. **Routing detail.** BGP neighbor detail (prefixes received/accepted,
    timers, capabilities, last error), OSPF and IS-IS interfaces, verbose
    routes.
@@ -123,19 +127,19 @@ reachable in the phase their note names.
 | `monitor cgnat logging pool <name>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `monitor cgnat logging seconds <1-86400>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `show cgnat subscriber <inside-address>` | typed | OperationalService.GetSubscriber | every account |  |
-| `show cgnat translation <public-address> <port>` | text | OperationalService.Show | every account |  |
-| `show cgnat top [<n>]` | text | OperationalService.Show | every account |  |
-| `show cgnat drops` | text | OperationalService.Show | every account |  |
-| `show cgnat memory` | text | OperationalService.Show | every account |  |
+| `show cgnat translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | now or any instant, as the screen says |
+| `show cgnat top [<n>]` | typed | OperationalService.ListTop | every account |  |
+| `show cgnat drops` | typed | OperationalService.GetDrops | every account |  |
+| `show cgnat memory` | typed | OperationalService.GetCgnatMemory | every account | heap and session figures in bytes and counts |
 | `show cgnat pool` | typed | OperationalService.ListPools | every account |  |
 | `show cgnat session` | typed | OperationalService.GetSessionsSummary | every account |  |
-| `show cgnat blocks` | text | OperationalService.Show | every account |  |
+| `show cgnat blocks` | typed | OperationalService.ListBlocks | every account |  |
 | `show cgnat logging` | typed | OperationalService.GetLogging | every account |  |
-| `show cgnat identity` | text | OperationalService.Show | every account |  |
-| `show cgnat history verify` | text | OperationalService.Show | every account |  |
-| `show cgnat alg` | text | OperationalService.Show | every account |  |
-| `show cgnat forward [<pool>]` | text | OperationalService.Show | every account |  |
-| `show cgnat ha peer <file>` | text | OperationalService.Show | every account |  |
+| `show cgnat identity` | typed | OperationalService.GetIdentity | every account | the count and RADIUS' counters, never an identity |
+| `show cgnat history verify` | typed | OperationalService.VerifyHistory | every account |  |
+| `show cgnat alg` | typed | OperationalService.ListAlgs | every account |  |
+| `show cgnat forward [<pool>]` | typed | OperationalService.ListForwards | every account |  |
+| `show cgnat ha peer <file>` | text | OperationalService.Show | every account | a file on the box's disk; GetHaStatus reads the peer copy at its default path |
 | `show configuration compare` | typed | ConfigService.Compare | every account |  |
 | `show running-config` | typed | ConfigService.GetRunning | every account | the configuration as text, with its revision |
 | `show rollback` | typed | ConfigService.ListRevisions | every account |  |

@@ -1283,6 +1283,393 @@ service OperationalService {
   // interface counters, a CGNAT subscriber's sessions, a BGP session, OSPF's
   // process or one adjacency, IS-IS adjacencies. Changes no configuration.
   rpc Clear(ClearRequest) returns (ClearResponse);
+  // The CGNAT's reads, typed (#558, phase 6). Each is the VTY's screen of
+  // the same name read into fields - the same Shell, the same dataplane
+  // command, so a typed answer and the screen cannot disagree - and each
+  // carries that screen verbatim in `text`. Every account may call them, as
+  // every account may type the screens. A dataplane that does not answer is
+  // UNAVAILABLE.
+  //
+  // `show cgnat translation <public> <port>`: who is behind a public address
+  // and port, and whether the answer holds for any instant or only for now -
+  // the question a court order or an abuse report asks. INVALID_ARGUMENT for
+  // an address or port that is not one; NOT_FOUND, with the dataplane's
+  // words, for an address that is no pool's.
+  rpc LookupTranslation(LookupTranslationRequest) returns (Translation);
+  // `show cgnat top [<n>]`: the subscribers closest to exhausting their
+  // blocks, most nearly full first.
+  rpc ListTop(ListTopRequest) returns (ListTopResponse);
+  // `show cgnat drops`: why packets did not get through, per CGNAT node.
+  rpc GetDrops(GetDropsRequest) returns (DropsReport);
+  // `show cgnat memory`: the dataplane's main heap, which holds every
+  // session, and how many more sessions still fit in it.
+  rpc GetCgnatMemory(GetCgnatMemoryRequest) returns (CgnatMemory);
+  // `show cgnat blocks`: every pool that allocates blocks, per worker.
+  rpc ListBlocks(ListBlocksRequest) returns (ListBlocksResponse);
+  // `show cgnat identity`: how many identities the box holds and RADIUS
+  // accounting's counters. Never an identity: no screen prints one (#21).
+  rpc GetIdentity(GetIdentityRequest) returns (IdentityState);
+  // `show cgnat history verify`: the configuration trail's hash chain.
+  rpc VerifyHistory(VerifyHistoryRequest) returns (HistoryVerification);
+  // `show cgnat alg`: which ALGs the dataplane has on, per pool.
+  rpc ListAlgs(ListAlgsRequest) returns (ListAlgsResponse);
+  // `show cgnat forward [<pool>]`: the port forwards the dataplane holds.
+  rpc ListForwards(ListForwardsRequest) returns (ListForwardsResponse);
+  // `show cgnat ha`: whether this box and its peer map subscribers the same
+  // way, from the peer's copy at its default path. `peer <file>` - a path
+  // on the box's own disk - stays a screen, through Show.
+  rpc GetHaStatus(GetHaStatusRequest) returns (HaStatus);
+}
+
+// ------------------------------------------------- the CGNAT's reads (#558)
+
+message LookupTranslationRequest {
+  // A public address of a pool, IPv4.
+  string public_address = 1;
+  // 0-65535.
+  uint32 port = 2;
+}
+
+message Translation {
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+    // A deterministic pool's formula: the answer holds for any instant,
+    // past or present, while the pool's addresses and block size have not
+    // changed since.
+    SOURCE_FORMULA = 1;
+    // A deterministic pool's reserve block: the holder NOW only.
+    SOURCE_RESERVE = 2;
+    // A dynamic pool's block: the holder NOW only; for a past instant, the
+    // RFC 8158 log says who held it.
+    SOURCE_DYNAMIC = 3;
+    // The port is outside the pool's usable range: nothing was ever
+    // translated there.
+    SOURCE_OUTSIDE_RANGE = 4;
+  }
+  string public_address = 1;
+  uint32 port = 2;
+  // The subscriber: an IPv4 inside address, or a NAT64 subscriber's
+  // delegated prefix ("2001:db8:1200:ab00::/56"). Empty when nobody holds
+  // the block now, and for SOURCE_OUTSIDE_RANGE.
+  string subscriber = 3;
+  string pool = 4;
+  // The block's index in the pool, or in its reserve for SOURCE_RESERVE.
+  uint32 block = 5;
+  Source source = 6;
+  // True on a NAT64 pool.
+  bool nat64 = 7;
+  // True when the answer is about now only (SOURCE_RESERVE, SOURCE_DYNAMIC).
+  bool now_only = 8;
+  // `show cgnat translation <public> <port>`, verbatim.
+  string text = 9;
+}
+
+message ListTopRequest {
+  // How many rows; 0 is the screen's own default, 10.
+  uint32 count = 1;
+}
+
+message TopSubscriber {
+  // An IPv4 inside address, or a NAT64 subscriber's delegated prefix.
+  string subscriber = 1;
+  string pool = 2;
+  // Gauge: ports in use across all of the subscriber's blocks.
+  uint32 ports_used = 3;
+  // Gauge: ports in all of its blocks.
+  uint32 ports_total = 4;
+  // Gauge: ports_used * 100 / ports_total, rounded down.
+  uint32 percent_full = 5;
+  // Gauge: blocks it holds.
+  uint32 blocks = 6;
+  // Counter: connections it was refused for want of a port.
+  uint32 refusals = 7;
+}
+
+message ListTopResponse {
+  repeated TopSubscriber subscribers = 1;
+  // Gauge: every subscriber holding a block, whatever `count` was.
+  uint32 holding_blocks = 2;
+  // `show cgnat top [<n>]`, verbatim.
+  string text = 3;
+}
+
+message GetDropsRequest {}
+
+message DropCounter {
+  // The dataplane's own description of the counter, as the screen prints it.
+  string reason = 1;
+  // Counter, summed across workers since the dataplane started.
+  uint64 count = 2;
+  // True for a packet that did not get through; false for everything else
+  // the node counted (packets translated, among them).
+  bool dropped = 3;
+}
+
+message DropNode {
+  // "in2out" or "out2in".
+  string node = 1;
+  // Only the counters that are not zero, drops first.
+  repeated DropCounter counters = 2;
+}
+
+message DropsReport {
+  repeated DropNode nodes = 1;
+  // `show cgnat drops`, verbatim.
+  string text = 2;
+}
+
+message GetCgnatMemoryRequest {}
+
+message CgnatMemory {
+  // Gauge, bytes: the dataplane's main heap, where every session and
+  // subscriber record lives.
+  uint64 heap_bytes = 1;
+  // Gauge, bytes: of it, in use.
+  uint64 heap_used_bytes = 2;
+  // Gauge: sessions now; sessions_known false when the dataplane did not say.
+  uint64 sessions = 3;
+  bool sessions_known = 4;
+  // Gauge: sessions the free part of the heap still holds, at ~300 bytes each.
+  uint64 sessions_fit = 5;
+  // Counter: sessions refused for want of memory since the dataplane started.
+  uint64 refused_no_memory = 6;
+  // GB given to the CGNAT (`memory <GB>` under `nat`, `cgnat`); 0 with
+  // given false when the box sizes it from the subscriber target.
+  uint32 given_gb = 7;
+  bool given = 8;
+  // True when the heap the dataplane booted with is the figure given; false
+  // until the reboot that applies it.
+  bool given_in_effect = 9;
+  // `show cgnat memory`, verbatim.
+  string text = 10;
+}
+
+message ListBlocksRequest {}
+
+message BlockCounts {
+  // Gauge: blocks in use.
+  uint64 in_use = 1;
+  // Gauge: blocks this worker's slice (or the pool, in a total) has.
+  uint64 blocks = 2;
+  // Counters since the dataplane started.
+  uint64 allocations = 3;
+  uint64 extensions = 4;
+  uint64 releases = 5;
+  uint64 refusals = 6;
+  // Gauge: blocks pinned by a port forward - a subset of in_use that no
+  // hold-down gives back.
+  uint64 pinned = 7;
+}
+
+message WorkerBlocks {
+  uint32 thread = 1;
+  BlockCounts counts = 2;
+  // Gauge: blocks of this slice lent to another worker, neither in use nor
+  // free here; 0 when none.
+  uint32 lent = 3;
+}
+
+message PoolBlocks {
+  string pool = 1;
+  // True for a deterministic pool's reserve; false for a dynamic pool.
+  bool reserve = 2;
+  // Seconds a released block is held before it is given again.
+  uint32 holddown_seconds = 3;
+  // A reserve's blocks per public address, and in all; 0 on a dynamic pool.
+  uint32 reserve_per_address = 4;
+  uint32 reserve_blocks = 5;
+  repeated WorkerBlocks workers = 6;
+  BlockCounts total = 7;
+  // The extension stride, 0 when none; with it, the extensions placed
+  // where it says and the ones that fell back to the free list (counters).
+  uint32 stride = 8;
+  uint64 stride_placed = 9;
+  uint64 stride_fell_back = 10;
+  // RFC 4787 REQ-2 paired pooling: extensions on the holder's own public
+  // address, of all extensions (counters). paired_shown false where the
+  // pool cannot extend at all and the screen says nothing.
+  uint64 paired = 11;
+  uint64 paired_of = 12;
+  bool paired_shown = 13;
+  // Counter, a reserve only: a subscriber under max-blocks filled its block
+  // and the reserve had nothing left.
+  uint64 reserve_exhausted = 14;
+}
+
+message ListBlocksResponse {
+  repeated PoolBlocks pools = 1;
+  // `show cgnat blocks`, verbatim.
+  string text = 2;
+}
+
+message GetIdentityRequest {}
+
+message IdentityState {
+  // False when the box holds no identity table: every record says
+  // "unknown". The RADIUS fields are read only while it holds one.
+  bool loaded = 1;
+  // Gauge: identities held.
+  uint32 entries = 2;
+  // When they were read, as the dataplane prints it - its own local clock,
+  // "YYYY/MM/DD hh:mm:ss:mmm".
+  string read_at = 3;
+  // True while RADIUS accounting listens, on radius_port.
+  bool radius = 4;
+  uint32 radius_port = 5;
+  // Counters since the dataplane started.
+  uint64 received = 6;
+  uint64 applied = 7;
+  uint64 answered = 8;
+  uint64 bad_authenticator = 9;
+  uint64 malformed = 10;
+  // Gauge: names longer than name_limit characters, carried in part.
+  uint32 truncated_names = 11;
+  uint32 name_limit = 12;
+  // `show cgnat identity`, verbatim.
+  string text = 13;
+}
+
+message VerifyHistoryRequest {}
+
+message HistoryVerification {
+  enum Verdict {
+    VERDICT_UNSPECIFIED = 0;
+    // Every chained entry verifies, and the file ends where this dataplane
+    // last wrote.
+    VERDICT_INTACT = 1;
+    // No trail at `path`.
+    VERDICT_NO_TRAIL = 2;
+    // A trail with no chained entry: nothing in it is covered.
+    VERDICT_NO_CHAINED_ENTRIES = 3;
+    // Entry `entry` does not match its own digest: its text was altered.
+    VERDICT_ALTERED = 4;
+    // The sequence jumps before entry `entry`: `removed` entries were
+    // removed from the middle.
+    VERDICT_REMOVED = 5;
+    // The file ends part way through an entry: a write stopped.
+    VERDICT_TRUNCATED_MID_ENTRY = 6;
+    // The file ends at entry file_ends_at and this dataplane wrote up to
+    // dataplane_wrote_to: `removed` entries were removed from the end.
+    VERDICT_TRUNCATED_END = 7;
+  }
+  // The trail's path on the box.
+  string path = 1;
+  Verdict verdict = 2;
+  // Entries that verified (VERDICT_INTACT, VERDICT_TRUNCATED_END).
+  uint64 checked = 3;
+  // Entries written before the chain existed: readable, not covered.
+  uint64 unchained = 4;
+  // Entries this dataplane could not write since it started: missing from
+  // the file and from nowhere else. Any verdict may carry it.
+  uint64 unwritten = 5;
+  // The entry the verdict names (VERDICT_ALTERED, VERDICT_REMOVED), and its
+  // text (VERDICT_ALTERED, VERDICT_TRUNCATED_MID_ENTRY).
+  uint64 entry = 6;
+  string entry_text = 7;
+  uint64 removed = 8;
+  // The last verified entry and its digest, to compare with the copy in a
+  // remote syslog (VERDICT_INTACT).
+  uint64 head_seq = 9;
+  string head_sha256 = 10;
+  uint64 file_ends_at = 11;
+  uint64 dataplane_wrote_to = 12;
+  // `show cgnat history verify`, verbatim.
+  string text = 13;
+}
+
+message ListAlgsRequest {}
+
+message AlgState {
+  // ftp, rtsp, pptp, esp, sip.
+  string alg = 1;
+  bool on = 2;
+  // The dataplane's description of it.
+  string description = 3;
+}
+
+message PoolAlgs {
+  string pool = 1;
+  repeated AlgState algs = 2;
+}
+
+message ListAlgsResponse {
+  repeated PoolAlgs pools = 1;
+  // `show cgnat alg`, verbatim.
+  string text = 2;
+}
+
+message ListForwardsRequest {
+  // One pool's forwards; empty for every pool's.
+  string pool = 1;
+}
+
+message Forward {
+  string pool = 1;
+  // tcp, udp - as the dataplane names the protocol.
+  string protocol = 2;
+  string public_address = 3;
+  uint32 public_port = 4;
+  // The inside host: IPv4, or IPv6 on a NAT64 pool.
+  string private_address = 5;
+  uint32 private_port = 6;
+}
+
+message ListForwardsResponse {
+  repeated Forward forwards = 1;
+  // `show cgnat forward [<pool>]`, verbatim.
+  string text = 2;
+}
+
+message GetHaStatusRequest {}
+
+message HaRouter {
+  string interface = 1;
+  uint32 vr_id = 2;
+  // As `show cgnat ha` says it: master, backup, initialize.
+  string state = 3;
+  repeated string addresses = 4;
+  string virtual_mac = 5;
+  // The priority configured, and the one advertised: lower while something
+  // it tracks is down.
+  uint32 priority_configured = 6;
+  uint32 priority_advertised = 7;
+}
+
+message HaDivergence {
+  string pool = 1;
+  // The pool's mapping statement on each box; empty when only the other
+  // box has the pool.
+  string here = 2;
+  string there = 3;
+}
+
+message HaStatus {
+  // False when the dataplane did not answer: nothing else is read, and
+  // nothing below means the two boxes agree.
+  bool dataplane = 1;
+  string fingerprint = 2;
+  repeated string pools = 3;
+  repeated HaRouter routers = 4;
+  // The peer's copy: where it was read from, and whether it was. When it
+  // was not, peer_unread says why, and nothing says the boxes agree.
+  string peer_path = 5;
+  bool peer_read = 6;
+  string peer_unread = 7;
+  string peer_fingerprint = 8;
+  repeated string peer_pools = 9;
+  // When the copy was written; unset when its age could not be read.
+  google.protobuf.Timestamp peer_copied = 10;
+  // The pair's VRRP findings, as sentences; empty when it is sound.
+  repeated string pair_findings = 11;
+  // True when either box carries a virtual router.
+  bool routers_either = 12;
+  // The pools the two boxes would map differently; empty when every
+  // subscriber lands on the same public address and port block on both.
+  repeated HaDivergence divergences = 13;
+  // True when the peer was read and nothing diverges.
+  bool agree = 14;
+  // `show cgnat ha`, verbatim.
+  string text = 15;
 }
 
 message ClearRequest {

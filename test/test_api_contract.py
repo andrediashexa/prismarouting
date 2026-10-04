@@ -86,7 +86,12 @@ want = {
                            # #555: the CGNAT log export's state.
                            "GetLogging",
                            # #558 phase 5: the VTY's clears.
-                           "Clear"],
+                           "Clear",
+                           # #558 phase 6: the CGNAT's screens, typed.
+                           "LookupTranslation", "ListTop", "GetDrops",
+                           "GetCgnatMemory", "ListBlocks", "GetIdentity",
+                           "VerifyHistory", "ListAlgs", "ListForwards",
+                           "GetHaStatus"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

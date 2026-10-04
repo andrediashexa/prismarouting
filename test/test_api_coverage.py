@@ -48,8 +48,10 @@ check(not bad, "every command path has a classification"
 by = {(r[0], " ".join(r[1])): r for r in rows}
 check(by.get(("operational", "show version"), (0, 0, 0, ""))[3] == "typed",
       "show version is typed (GetVersion)")
-check(by.get(("operational", "show cgnat drops"), (0, 0, 0, ""))[3] == "text",
-      "show cgnat drops is text (Show) until it has an rpc")
+check(by.get(("operational", "show cgnat drops"), (0, 0, 0, ""))[3] == "typed",
+      "show cgnat drops is typed (GetDrops, #558 phase 6)")
+check(by.get(("operational", "show hardware"), (0, 0, 0, ""))[3] == "text",
+      "show hardware is text (Show) until it has an rpc")
 check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "typed",
       "system reboot is typed (SystemService.Reboot, #558 phase 5)")
 check(not [r for r in rows if r[3] == "none"],

@@ -98,6 +98,26 @@ OPERATIONAL_RULES = [
     (["show", "cgnat", "session"], "typed",
      "OperationalService.GetSessionsSummary", ""),
     (["show", "cgnat", "logging"], "typed", "OperationalService.GetLogging", ""),
+    # #558, phase 6: the rest of `show cgnat`, each its screen read into
+    # fields and carried beside them verbatim.
+    (["show", "cgnat", "translation"], "typed",
+     "OperationalService.LookupTranslation", "now or any instant, as the screen says"),
+    (["show", "cgnat", "top"], "typed", "OperationalService.ListTop", ""),
+    (["show", "cgnat", "drops"], "typed", "OperationalService.GetDrops", ""),
+    (["show", "cgnat", "memory"], "typed", "OperationalService.GetCgnatMemory",
+     "heap and session figures in bytes and counts"),
+    (["show", "cgnat", "blocks"], "typed", "OperationalService.ListBlocks", ""),
+    (["show", "cgnat", "identity"], "typed", "OperationalService.GetIdentity",
+     "the count and RADIUS' counters, never an identity"),
+    (["show", "cgnat", "history", "verify"], "typed",
+     "OperationalService.VerifyHistory", ""),
+    (["show", "cgnat", "alg"], "typed", "OperationalService.ListAlgs", ""),
+    (["show", "cgnat", "forward"], "typed", "OperationalService.ListForwards", ""),
+    (["show", "cgnat", "ha", "peer"], "text", "OperationalService.Show",
+     "a file on the box's disk; GetHaStatus reads the peer copy at its default "
+     "path"),
+    (["show", "cgnat", "ha"], "typed", "OperationalService.GetHaStatus",
+     "the peer copy at its default path"),
     (["show", "bgp"], "typed", "OperationalService.ListBgpNeighbors",
      "per-neighbor detail beyond the summary is text (phase 6)"),
     (["show", "ospf", "neighbor"], "typed", "OperationalService.ListOspfNeighbors", ""),
@@ -448,11 +468,15 @@ grouping rule (#533).
    port_end, pool_name, subscriber_id, repeats_held})` - the observation
    ring `monitor cgnat logging` reads (#556) - plus the per-stream delivery
    lines.
-5. **CGNAT reads** (the rest of `show cgnat`). Typed `ListBlocks` (per
-   thread: in use, allocations, releases, refusals), `GetDrops` (counter
-   per reason, both directions), `GetCgnatMemory`, `ListTop`,
-   `LookupTranslation(public, port, at)` - the lawful-intercept question,
-   `GetIdentity`, `VerifyHistory`, `ListAlgs`, `GetForward`, `GetHaPeer`.
+5. **CGNAT reads** (the rest of `show cgnat`) - *delivered as #558's sixth
+   phase*. `LookupTranslation(public, port)` - the lawful-intercept
+   question, with whether the answer holds for any instant or only now;
+   `ListTop`, `GetDrops` (counter per reason, both nodes), `GetCgnatMemory`,
+   `ListBlocks` (per worker: in use, allocations, releases, refusals,
+   pinned, lent), `GetIdentity`, `VerifyHistory`, `ListAlgs`,
+   `ListForwards`, `GetHaStatus`. Each reads the VTY's own screen through
+   the same Shell and carries it verbatim beside the fields. `show cgnat ha
+   peer <file>` - a path on the box's disk - stays text.
 6. **Routing detail.** BGP neighbor detail (prefixes received/accepted,
    timers, capabilities, last error), OSPF and IS-IS interfaces, verbose
    routes.

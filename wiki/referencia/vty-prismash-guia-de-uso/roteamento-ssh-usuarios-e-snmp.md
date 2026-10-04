@@ -742,6 +742,8 @@ Desde a 0.149.2 ela também:
 * responde ao **health check** padrão do gRPC, com o mesmo certificado de cliente;
 * diz a quem chama **qual conta ele é e o papel dela** (administrador, operador de CGNAT ou só leitura), sem abrir um candidato.
 
+Ela também lê **em campos o resto das telas do CGNAT**: quem estava atrás de um endereço público e uma porta, e se a resposta vale para qualquer instante (o pool determinístico, pela fórmula) ou só para agora (um bloco dinâmico ou de reserva, que já foi de outro); os assinantes mais perto de esgotar os blocos; os descartes; a memória e quantas sessões ainda cabem; os blocos de cada worker; quantas identidades a caixa tem (nunca uma identidade); a verificação da trilha de configuração; os ALGs ligados em cada pool; os encaminhamentos de porta; e se esta caixa e o par de HA mapeiam os assinantes do mesmo jeito. Num pool NAT64 o assinante vem como o prefixo IPv6 dele. Cada resposta traz junto a tela da VTY, igual ao que o terminal mostra, porque é a mesma leitura.
+
 # Ver também
 
 * [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — o que cada grupo pode mudar

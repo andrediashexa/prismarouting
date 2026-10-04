@@ -18532,7 +18532,34 @@ class Shell:
         print(f"  control plane uses    "
               f"{f'{used / 1073741824:.1f} GB' if used is not None else '(unknown)'}")
 
-    def show_cgnat_memory(self):
+    def cgnat_memory_facts(self):
+        """
+        What `show cgnat memory` prints, as data (#558): the main heap's size
+        and use in bytes, the sessions now (None when the dataplane did not
+        say), the sessions that still fit, the sessions refused for memory,
+        and the figure tune.env gives (None when it gives none) with whether
+        the heap the dataplane booted with is it. None when the heap could not
+        be read. The screen and OperationalService.GetCgnatMemory are both
+        this, so they cannot disagree.
+        """
+        rc, out = self.dp.run("show memory main-heap")
+        fig = heap_figures(out) if rc == 0 else None
+        if fig is None:
+            return None
+        total, used, free = fig
+        rc, out = self.dp.run("show bpa session")
+        now = sessions_now(out) if rc == 0 else None
+        rc, out = self.dp.run("show errors")
+        refused = refused_for_memory(out) if rc == 0 else 0
+        given = self.read_tune_key("PRISMA_CGNAT_MEMORY_GB")
+        given = int(given) if given and is_number(given) else None
+        return {"heap_bytes": total, "heap_used_bytes": used,
+                "sessions": now, "sessions_fit": free // SESSION_BYTES,
+                "refused_no_memory": refused, "given_gb": given,
+                "given_in_effect": given is not None
+                and abs(total / (1 << 30) - given) < 0.5}
+
+    def show_cgnat_memory(self, facts=False):
         """
         `show cgnat memory` (#454): the memory the CGNAT has now, what it
         holds, what still fits, and what was asked for the next boot.
@@ -18542,35 +18569,32 @@ class Shell:
         is at the measured ~300 bytes a session. The given figure is read
         from tune.env and compared with the heap the dataplane actually has,
         because a figure committed today is not in effect until the box boots.
+
+        `facts` is a reading cgnat_memory_facts() already took - None for one
+        whose heap could not be read - so the API's screen is drawn from the
+        very numbers its fields carry; left out, it is read here.
         """
-        rc, out = self.dp.run("show memory main-heap")
-        fig = heap_figures(out) if rc == 0 else None
-        if fig is None:
+        f = self.cgnat_memory_facts() if facts is False else facts
+        if f is None:
             self.err_dataplane("show cgnat memory: the dataplane's heap "
                                "could not be read")
             return
-        total, used, free = fig
-        rc, out = self.dp.run("show bpa session")
-        now = sessions_now(out) if rc == 0 else None
-        rc, out = self.dp.run("show errors")
-        refused = refused_for_memory(out) if rc == 0 else 0
-        given = self.read_tune_key("PRISMA_CGNAT_MEMORY_GB")
         # Each value LAST on its row, with nothing of this VTY's after it: a
         # count has no widest, and words behind one fold wherever the
         # operator's window happens to end (#363).
         gib = 1 << 30
-        print(f"  {'main heap GB':<22}{total / gib:.2f}")
-        print(f"  {'in use GB':<22}{used / gib:.2f}")
-        if now is not None:
-            print(f"  {'sessions now':<22}{now:,}")
-        print(f"  {'sessions that fit':<22}{free // SESSION_BYTES:,}")
-        if refused:
-            print(f"  {'refused, no memory':<22}{refused:,}")
+        print(f"  {'main heap GB':<22}{f['heap_bytes'] / gib:.2f}")
+        print(f"  {'in use GB':<22}{f['heap_used_bytes'] / gib:.2f}")
+        if f["sessions"] is not None:
+            print(f"  {'sessions now':<22}{f['sessions']:,}")
+        print(f"  {'sessions that fit':<22}{f['sessions_fit']:,}")
+        if f["refused_no_memory"]:
+            print(f"  {'refused, no memory':<22}{f['refused_no_memory']:,}")
             print_prose("sessions refused for want of memory since the "
                         "dataplane started; the ones already open go on")
-        if given and is_number(given):
-            print(f"  {'given GB':<22}{given}")
-            print_prose("in effect" if abs(total / gib - int(given)) < 0.5
+        if f["given_gb"] is not None:
+            print(f"  {'given GB':<22}{f['given_gb']}")
+            print_prose("in effect" if f["given_in_effect"]
                         else "from the next reboot: the dataplane has what "
                              "it booted with until then")
         else:
@@ -22048,7 +22072,7 @@ class Shell:
                     "addresses and port blocks, and neither box logs anything")
                 print(f"    the peer: {there}")
 
-    def show_ha(self, args):
+    def show_ha(self, args, facts=None):
         """
         Whether this box and its peer would map subscribers the same way.
 
@@ -22071,24 +22095,22 @@ class Shell:
             self.err("show cgnat ha: takes nothing, or 'peer <file>'")
             return
 
+        # A reading ha_facts() already took, so the API's screen is drawn from
+        # the facts its fields carry; left out, it is read here.
+        f = facts if facts is not None else self.ha_facts(path)
         print("  this box")
-        if not self.dp.reachable():
-            # Without this the empty configuration a dead dataplane produces is
-            # compared as if it were the truth, and a box with ten pools
-            # reports every one of them as "the peer has it and this box does
-            # not" - or, if the peer file is empty too, as agreement.
+        if not f["dataplane"]:
             print_prose("the dataplane is not answering, so this box cannot "
                         "say what it maps and nothing below would mean "
                         "anything")
             return
-        mine = self.running_config()
-        print(f"    mapping fingerprint  {mine.mapping_fingerprint()}")
+        print(f"    mapping fingerprint  {f['fingerprint']}")
         print("    pools                "
-              + (", ".join(sorted(mine.pools)) if mine.pools else "(none)"))
+              + (", ".join(f["pools"]) if f["pools"] else "(none)"))
 
         print()
         print("  role")
-        rows = self.device_vrrp_state()
+        rows = f["routers"]
         if not rows:
             print_prose("no virtual router on this box, so it elects nothing "
                         "and takes no service address over. What is checked "
@@ -22112,29 +22134,25 @@ class Shell:
                 print(f"      priority           {row['configured']}")
 
         print()
-        peer, why = read_peer_config(path)
-        where = path or PEER_CONFIG_PATH
-        if peer is None:
+        if not f["peer_read"]:
             print("  peer")
-            print_prose(why)
+            print_prose(f["peer_unread"])
             print_prose("nothing here says the two boxes agree, and an "
                         "unanswered question is not a match")
             return
-        print(f"  peer, from {where}")
-        print(f"    mapping fingerprint  {peer.mapping_fingerprint()}")
+        print(f"  peer, from {f['peer_path']}")
+        print(f"    mapping fingerprint  {f['peer_fingerprint']}")
         # No "(none)" case here, unlike this box above: read_peer_config
         # refuses a configuration with no pool in it rather than handing one
         # back to be compared.
-        print("    pools                " + ", ".join(sorted(peer.pools)))
+        print("    pools                " + ", ".join(f["peer_pools"]))
         # The date, because this file is a COPY and a copy has an age. A digest
         # that matches a configuration the peer stopped running last week is
         # the same false agreement as no check at all.
-        try:
+        if f["peer_copied"] is not None:
             when = time.strftime("%Y-%m-%d %H:%M:%S",
-                                 time.localtime(os.path.getmtime(where)))
+                                 time.localtime(f["peer_copied"]))
             print(f"    copied               {when}")
-        except OSError:
-            pass
 
         # THE PAIR'S OWN HALF, read from the same file as the mapping. The
         # peer's configuration is what `save` wrote on the other box, so it
@@ -22143,25 +22161,63 @@ class Shell:
         # or one whose master is decided by the addressing.
         print()
         print("  the pair")
-        pair = vrrp_pair_findings(mine.vrrp, peer.vrrp)
-        if not mine.vrrp and not peer.vrrp:
+        if not f["routers_either"]:
             print_prose("neither box carries a virtual router, so neither "
                         "takes a service address over", indent="    ")
-        elif not pair:
+        elif not f["pair_findings"]:
             print_prose("every virtual router this box carries has one on the "
                         "peer with the same id, the same address and a "
                         "different priority", indent="    ")
         else:
-            for line in pair:
+            for line in f["pair_findings"]:
                 self.say_finding("warning", "", line)
 
         print()
-        findings = mine.mapping_diff_to(peer)
-        if not findings:
+        if not f["divergences"]:
             print_prose("the two boxes map every subscriber to the same "
                         "public address and the same port block", indent="  ")
             return
-        self.say_divergence("warning", findings)
+        self.say_divergence("warning", f["divergences"])
+
+    def ha_facts(self, path=None):
+        """
+        What `show cgnat ha [peer <file>]` prints, as data (#558): whether the
+        dataplane answered, this box's mapping fingerprint and pools, its
+        virtual routers, the peer's copy as read from `path` (the default
+        copy when None) or why it was not, the pair's VRRP findings and the
+        pools the two boxes would map differently, as (pool, here, there).
+        The screen and OperationalService.GetHaStatus are both this.
+
+        A dataplane that is not answering stops it there: the empty
+        configuration a dead dataplane produces would otherwise be compared
+        as if it were the truth, and a box with ten pools reports every one of
+        them as "the peer has it and this box does not" - or, if the peer file
+        is empty too, as agreement.
+        """
+        where = path or PEER_CONFIG_PATH
+        f = {"dataplane": False, "fingerprint": "", "pools": [], "routers": [],
+             "peer_path": where, "peer_read": False, "peer_unread": "",
+             "peer_fingerprint": "", "peer_pools": [], "peer_copied": None,
+             "routers_either": False, "pair_findings": [], "divergences": []}
+        if not self.dp.reachable():
+            return f
+        mine = self.running_config()
+        f.update(dataplane=True, fingerprint=mine.mapping_fingerprint(),
+                 pools=sorted(mine.pools), routers=self.device_vrrp_state())
+        peer, why = read_peer_config(path)
+        if peer is None:
+            f["peer_unread"] = why
+            return f
+        f.update(peer_read=True, peer_fingerprint=peer.mapping_fingerprint(),
+                 peer_pools=sorted(peer.pools),
+                 routers_either=bool(mine.vrrp or peer.vrrp),
+                 pair_findings=list(vrrp_pair_findings(mine.vrrp, peer.vrrp)),
+                 divergences=list(mine.mapping_diff_to(peer)))
+        try:
+            f["peer_copied"] = os.path.getmtime(where)
+        except OSError:
+            pass
+        return f
 
     def show_compare(self):
         if self.candidate is None:

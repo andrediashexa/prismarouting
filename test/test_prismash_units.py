@@ -2094,10 +2094,24 @@ try:
           and "given GB              8" in text and "from the next reboot" in text,
           f"the screen: the heap, what it holds and what fits, the refusals, "
           f"and a figure not yet in effect said as one: {text!r}")
+    # #558: the same reading as data, which GetCgnatMemory carries - and the
+    # screen drawn from a reading handed to it is the screen above.
+    _mf = sh.cgnat_memory_facts()
+    check(_mf == {"heap_bytes": 4 << 30, "heap_used_bytes": int(848.18 * (1 << 20)),
+                  "sessions": 2000000,
+                  "sessions_fit": int(3.17 * (1 << 30)) // prismash.SESSION_BYTES,
+                  "refused_no_memory": 1533401, "given_gb": 8,
+                  "given_in_effect": False},
+          f"cgnat_memory_facts: the screen's numbers, exact: {_mf}")
+    rv, text2 = driven(lambda: sh.show_cgnat_memory(_mf))
+    check(text2 == text, "and the screen drawn from that reading is the same screen")
     sh = shell(dp=RecDp({"show memory main-heap": (1, "unknown input")}))
     rv, text = driven(lambda: sh.show_cgnat_memory())
     check("show cgnat memory: the dataplane's heap could not be read" in text,
           f"a heap that cannot be read is said: {text!r}")
+    check(sh.cgnat_memory_facts() is None, "and as data it is None, not zeros")
+    rv, text = driven(lambda: sh.show_cgnat_memory(None))
+    check("could not be read" in text, "a None reading handed in is said the same way")
     # apply_cgnat_memory: the key written, the tuner asked, the sentence said.
     run = RecRunner()
     sh = shell(runner=run)
