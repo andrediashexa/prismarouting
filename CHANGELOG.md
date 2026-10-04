@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.3 - the rest of show cgnat, typed; SetConfig on an interface works again
+
+### Added
+
 * **The rest of `show cgnat` through the management API, typed.**
   ([#558](https://github.com/andrediashexa/hexarouting/issues/558), phase 6)
   `OperationalService` gains `LookupTranslation` (`show cgnat translation`:
