@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.1 - FTP through a NAT64 pool
+
+### Added
+
 * **NAT64, phase 5: FTP through a NAT64 pool (RFC 6384).**
   ([#485](https://github.com/andrediashexa/hexarouting/issues/485), phase 5)
   An IPv6-only subscriber's FTP client speaks EPSV and EPRT (RFC 2428), and
@@ -95,8 +101,6 @@ version has a chance of seeing it.
   translates between IPv6 and IPv4, and PPTP's GRE and ESP are not protocols
   stateful NAT64 carries. `lab/ftp64.sh` fetches a file from an IPv4 server
   that refuses RFC 2428, passive and active, through the box.
-
-### Fixed
 
 ## 0.150.0 - NAT64, and the 0.149.x patches proved by a fresh install
 
