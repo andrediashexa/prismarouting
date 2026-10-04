@@ -184,7 +184,7 @@ Dentro de um `peer` ou de um `profile`:
 | `passive-mode` | espera o vizinho falar primeiro |
 | `minimum-ttl <1-254>` | só multihop: o menor TTL aceito (padrão 254) |
 | `shutdown` | segura a sessão derrubada, mantendo a configuração |
-| `profile <nome>` | só dentro de um `peer`: a sessão usa os tempos daquele perfil; o que for configurado na própria sessão vale por cima |
+| `profile <nome>` | **só dentro de um** `**peer**`: a sessão usa os tempos daquele perfil; o que for configurado na própria sessão vale por cima |
 
 O mesmo `profile <nome>` quer dizer duas coisas: no nível do `bfd` ele **cria** o perfil, dentro de um `peer` ele **usa** o perfil. O prompt mostra onde você está.
 
