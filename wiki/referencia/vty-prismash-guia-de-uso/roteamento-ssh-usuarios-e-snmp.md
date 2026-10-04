@@ -108,6 +108,7 @@ Dentro do bloco:
 | `<prefixo> next-hop <próximo-salto\|interface\|blackhole\|Null0\|reject>` | uma rota estática |
 | `... distance <1-255>` | a distância administrativa; sem ela vale a do roteamento |
 | `... tag <1-4294967295>` | uma marca numérica, que uma política de redistribuição pode casar |
+| `... bfd [multi-hop] [source <endereço>] [profile <nome>]` | a rota sai da tabela enquanto a sessão BFD até o próximo salto estiver caída (veja a seção BFD, abaixo) |
 | `... description <texto>` | um texto seu sobre a rota, até 63 caracteres; vai sempre por último |
 | `no <prefixo> next-hop <próximo-salto>` | remove a rota, com o que ela tiver de distância, tag e descrição |
 | `exit`  | sai do bloco |
@@ -135,6 +136,69 @@ error: this next hop is on no connected network: 172.31.99.1
 Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
 
 Repare que a recusa nomeia a rota **no bloco em que ela está** - `router static / 10.55.0.0/16 next-hop ...` - e não como uma linha solta. É assim mesmo quando a rota foi digitada no topo, na grafia do roteamento, `ip route ...`: a caixa mostra onde a rota mora na configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
+
+## BFD: a queda do vizinho em milissegundos
+
+O BGP só percebe que o vizinho morreu quando o hold time acaba - 90 segundos por padrão - e uma rota estática nunca percebe: ela continua apontando para um próximo salto que parou de encaminhar. O caso que importa é o vizinho que **para de responder com o enlace de pé** - um switch no meio que perdeu a VLAN, uma placa travada -, porque aí nenhuma interface cai para avisar ninguém. O BFD troca pacotes pequenos com o vizinho em intervalos de milissegundos e derruba a sessão quando eles param de chegar.
+
+```
+configure
+ bfd
+  profile rapido
+   receive-interval 100
+   transmit-interval 100
+   detect-multiplier 3
+  exit
+  peer 10.0.0.2 interface enp1s0
+   profile rapido
+  exit
+ exit
+ router bgp 65000
+  neighbor 10.0.0.2 bfd profile rapido
+ exit
+ router static
+  203.0.113.0/24 next-hop 10.0.0.2 bfd profile rapido
+ exit
+ commit
+```
+
+Com 100 ms e multiplicador 3, a sessão cai depois de 300 ms sem pacote. Medido no laboratório, com o vizinho mudo e o enlace de pé: o BFD viu a queda em 252 ms, a rota estática saiu da tabela de encaminhamento em 252 ms e a rota aprendida por BGP em 325 ms - com o hold time do BGP em 30 segundos. Sem o BFD, nenhuma das duas saiu em 12 segundos.
+
+Dentro de `bfd`:
+
+| Comando | O que faz |
+|---------|-----------|
+| `peer <endereço> [multihop] [local-address <endereço>] [interface <interface>] [vrf <nome>]` | uma sessão com um vizinho; entra no bloco dela |
+| `profile <nome>` | um conjunto de tempos com nome, que sessões e protocolos usam; entra no bloco dele |
+| `exit` | sai do bloco |
+
+Dentro de um `peer` ou de um `profile`:
+
+| Comando | O que faz |
+|---------|-----------|
+| `detect-multiplier <2-255>` | quantos pacotes perdidos até a sessão cair (padrão 3) |
+| `receive-interval <10-4294967>` | o intervalo mais lento em que esta caixa quer receber, em ms (padrão 300) |
+| `transmit-interval <10-4294967>` | o intervalo mais rápido em que esta caixa envia, em ms (padrão 300) |
+| `echo-mode` | manda pacotes de eco que o vizinho devolve; só IPv4, a não ser que o vizinho também seja FRR |
+| `echo receive-interval` e `echo transmit-interval` | os intervalos do eco, em ms (padrão 50) |
+| `passive-mode` | espera o vizinho falar primeiro |
+| `minimum-ttl <1-254>` | só multihop: o menor TTL aceito (padrão 254) |
+| `shutdown` | segura a sessão derrubada, mantendo a configuração |
+| `profile <nome>` | **só dentro de um `peer`**: a sessão usa os tempos daquele perfil; o que for configurado na própria sessão vale por cima |
+
+O mesmo `profile <nome>` quer dizer duas coisas: no nível do `bfd` ele **cria** o perfil, dentro de um `peer` ele **usa** o perfil. O prompt mostra onde você está.
+
+Quem pede a sessão é o protocolo: `neighbor <endereço> bfd [profile <nome>]` no BGP ([Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ)), e `bfd` depois do próximo salto numa rota estática. Um `peer` no bloco `bfd` serve para dar à sessão tempos próprios, e para ela existir mesmo sem nenhum protocolo pedindo.
+
+Para ver:
+
+* `show bfd peers` - duas linhas por sessão: onde ela roda (salto único ou multihop, a interface, a origem, o perfil, e se foi pedida por um protocolo), e depois o estado, há quanto tempo, o intervalo, em quanto tempo ela cai, o diagnóstico quando há um e quantas vezes caiu.
+* `show bfd peer <endereço>` - cada sessão com aquele vizinho em detalhe: os tempos desta caixa e os do vizinho, o tempo de detecção, o eco, os pacotes que entraram e saíram, e quantas vezes subiu e caiu.
+
+:::warning
+**Numa caixa atualizada por uma versão de correção, o BFD só funciona depois do reboot.** Quem roda as sessões é o `bfdd`, e ele é ligado pelo contêiner de roteamento quando esse contêiner sobe na versão nova - o que, numa atualização de correção, acontece no próximo reboot. Até lá o `commit` recusa qualquer configuração com `bfd`, dizendo que o `bfdd` não está rodando e que o reboot o liga. É de propósito: sem o `bfdd`, o BGP e a rota estática aceitam a palavra `bfd` e nenhuma sessão é criada - o vizinho ficaria vigiado por ninguém.
+
+:::
 
 ## Ver a tabela: `show route`, não `show ip route`
 
@@ -179,7 +243,7 @@ Endereços locais e rotas por interfaces que o VPP não possui — a de gerênci
 
 ## Quais daemons rodam
 
-`zebra`, `mgmtd` e `staticd` sobem sempre. `bgpd`, `ospfd`, `ospf6d` e `isisd` são habilitados pelo instalador - o pacote do Debian os traz desligados, e uma caixa instalada sem isso oferecia os protocolos no VTY sem rodar nenhum.
+`zebra`, `mgmtd` e `staticd` sobem sempre. `bgpd`, `ospfd`, `ospf6d` e `isisd` são habilitados pelo instalador - o pacote do Debian os traz desligados, e uma caixa instalada sem isso oferecia os protocolos no VTY sem rodar nenhum. O `bfdd`, que roda as sessões BFD, é ligado pelo próprio contêiner de roteamento ao subir, e por isso chega também por uma atualização de correção - mas só a partir do próximo reboot.
 
 `commit check` recusa um `router <protocolo>` cujo daemon não está de pé:
 

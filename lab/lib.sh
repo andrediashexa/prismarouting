@@ -85,8 +85,14 @@ start_frr() {
     # way on arm64.
     if [ "$_d" = bgpd ] && [ -n "$(_rpki_module)" ]; then
       /usr/lib/frr/bgpd -d -A 127.0.0.1 -M rpki$(_snmp_opt) -f /etc/frr/bgpd.conf 2>/dev/null
-    else
+    elif [ -n "$(ls /usr/lib/*/frr/modules/${_d}_snmp.so \
+                    /usr/lib/frr/modules/${_d}_snmp.so 2>/dev/null | head -1)" ]; then
       "/usr/lib/frr/$_d" -d -A 127.0.0.1$(_snmp_opt) -f "/etc/frr/$_d.conf" 2>/dev/null
+    else
+      # A daemon with no SNMP module of its own - bfdd, on FRR 10.7.1 (#559) -
+      # refuses to start when told to load one, for the reason -M rpki is
+      # asked for only when it is there.
+      "/usr/lib/frr/$_d" -d -A 127.0.0.1 -f "/etc/frr/$_d.conf" 2>/dev/null
     fi
   done
   # mgmtd's front-end socket is what vtysh connects to for these statements,

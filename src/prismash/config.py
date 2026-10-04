@@ -362,10 +362,37 @@ FRR_BLOCK_OPENERS = ("router ", "interface ", "vrf ", "route-map ",
 FRR_BLOCK_CLOSERS = ("exit", "quit", "end", "exit-vrf", "exit-address-family")
 
 
+#: The two blocks that live INSIDE `bfd` (#559): a session and a named set of
+#: timers. They nest in `bfd` the way `address-family` nests in `router bgp`,
+#: and a second one replaces the first rather than nesting in it - measured on
+#: FRR 10.7.1, which writes every `peer` and `profile` one column in under
+#: `bfd`, each closed by its own ` exit`.
+BFD_BLOCK_WORD = "bfd"
+BFD_SUBBLOCK_OPENERS = ("peer ", "profile ")
+
+
+def bfd_uses_profile(block: str, line: str) -> bool:
+    """
+    Is `line`, typed inside `block`, a BFD session taking a profile (#559)?
+
+    The same words open a profile at the `bfd` level and apply one inside a
+    `peer`, measured on FRR 10.7.1:
+
+        bfd
+         profile fast        <- a block: the profile itself
+         exit
+         peer 10.0.0.2
+          profile fast       <- a statement: this session uses it
+    """
+    return block.strip().startswith("peer ") \
+        and line.strip().startswith("profile ")
+
+
 def opens_frr_block(line: str) -> bool:
-    """Does this statement open a block? `rpki` is the one that takes no name."""
+    """Does this statement open a block? `rpki` and `bfd` take no name."""
     s = line.strip()
-    return s.startswith(FRR_BLOCK_OPENERS) or s == "rpki"
+    return (s.startswith(FRR_BLOCK_OPENERS) or s in ("rpki", BFD_BLOCK_WORD)
+            or s.startswith(BFD_SUBBLOCK_OPENERS))
 
 
 def block_paths(routing: list) -> list:
@@ -482,10 +509,21 @@ def block_paths(routing: list) -> list:
                 stack.pop()
             out.append(None)
             continue
+        if not indent and bfd_uses_profile(stack[-1][1] if stack else "",
+                                           stmt):
+            # `profile <name>` INSIDE a session is the session taking that
+            # profile, a statement and not a block (#559).
+            out.append([f[1] for f in stack])
+            continue
         if not indent and opens_frr_block(stmt):
             if stmt.startswith("address-family "):
                 while stack and stack[-1][1].startswith("address-family "):
                     stack.pop()         # a sibling family, not a parent
+            elif stmt.startswith(BFD_SUBBLOCK_OPENERS):
+                # A session or a profile nests in `bfd` (#559), and a second
+                # one is its sibling.
+                while stack and stack[-1][1].startswith(BFD_SUBBLOCK_OPENERS):
+                    stack.pop()
             else:
                 stack = []
         out.append([f[1] for f in stack])
@@ -571,6 +609,9 @@ def is_static_route(line: str) -> bool:
 #: The next hops that are not an address or an interface: FRR's words for
 #: "drop it here". Offered by name, and not checked as an address.
 STATIC_DROP_HOPS = ("blackhole", "Null0", "reject")
+
+#: What may follow `bfd` on a static route (#559), FRR 10.7.1's own words.
+STATIC_BFD_WORDS = ("multi-hop", "source", "profile")
 #: Where a static route's own words end and the next begins (#436).
 STATIC_KEYWORDS = ("distance", "tag", "description")
 
@@ -638,10 +679,47 @@ def static_route(words):
             return None, None, ("the next hop is not in the prefix's family",
                                 f"'{hop}' is IPv{addr.version} and "
                                 f"'{prefix}' is IPv{net.version}")
-    extra, distance, tag, description = [], None, None, None
+    extra, distance, tag, description, bfd = [], None, None, None, None
     i = 3
     while i < len(words):
         w = words[i]
+        if w == "bfd":
+            # The route withdrawn while its BFD session is down (#559):
+            # `bfd [multi-hop] [source <address>] [profile <name>]`, each
+            # once and in any order, written after the distance because that
+            # is where FRR 10.7.1 reads it back - `ip route P NH tag 5 10 bfd
+            # multi-hop source S`, measured.
+            if bfd is not None:
+                return None, None, ("bfd: given twice",
+                                    "a route has one BFD session")
+            bfd, seen, i = ["bfd"], set(), i + 1
+            while i < len(words) and words[i] in STATIC_BFD_WORDS \
+                    and words[i] not in seen:
+                opt = words[i]
+                seen.add(opt)
+                if opt == "multi-hop":
+                    bfd.append(opt)
+                    i += 1
+                    continue
+                if i + 1 >= len(words):
+                    return None, None, (f"bfd {opt}: no value after it",
+                                        "source takes an address, profile "
+                                        "a profile's name")
+                value = words[i + 1]
+                if opt == "source":
+                    try:
+                        src = ipaddress.ip_address(value)
+                    except ValueError:
+                        return None, None, ("bfd source: not an address",
+                                            f"'{value}' is not one")
+                    if src.version != net.version:
+                        return None, None, (
+                            "bfd source: not in the prefix's family",
+                            f"'{value}' is IPv{src.version} and "
+                            f"'{prefix}' is IPv{net.version}")
+                bfd += [opt, value]
+                i += 2
+            continue
         if w == "description":
             text = " ".join(words[i + 1:])
             if not text:
@@ -671,6 +749,11 @@ def static_route(words):
                 tag = str(int(value))
             i += 2
             continue
+        if bfd is not None and distance is None and tag is None:
+            return None, None, ("a static route: a word bfd does not take",
+                                f"'{w}' is not one; after 'bfd' come "
+                                f"'multi-hop', 'source <address>' and "
+                                f"'profile <name>'")
         if distance is not None or tag is not None:
             return None, None, ("a static route: words after distance or tag",
                                 f"'{w}' comes after them; FRR's own words go "
@@ -686,6 +769,8 @@ def static_route(words):
         line += f" tag {tag}"
     if distance is not None:
         line += f" {distance}"
+    if bfd is not None:
+        line += " " + " ".join(bfd)
     return line, description, None
 
 
@@ -700,7 +785,7 @@ def static_route_key(line: str) -> str:
     bare number in FRR's spelling, so it is told apart from a `table <n>` or
     a `label <n>` by the word in front of it.
     """
-    w = line.split()
+    w, _ = _bfd_tail(line.split())
     keep, i = w[:4], 4
     while i < len(w):
         if w[i] == "tag" and i + 1 < len(w):
@@ -723,7 +808,7 @@ def static_route_words(line: str, description=None) -> str:
     keeps for it on the end. What FRR carries that this spelling has no word
     for stays where FRR put it, after the next hop, so it survives the trip.
     """
-    w = line.split()
+    w, bfd = _bfd_tail(line.split())
     extra, distance, tag, i = [], None, None, 4
     while i < len(w):
         if w[i] == "tag" and i + 1 < len(w):
@@ -741,9 +826,24 @@ def static_route_words(line: str, description=None) -> str:
         out += f" distance {distance}"
     if tag is not None:
         out += f" tag {tag}"
+    if bfd:
+        out += " " + " ".join(bfd)
     if description:
         out += f" description {description}"
     return out
+
+
+def _bfd_tail(w):
+    """
+    An FRR static route's words split at its `bfd` (#559): (the route, the
+    BFD words). FRR writes them last, after the distance, so everything from
+    `bfd` on is the session's - and none of it is the route's identity: the
+    same prefix and next hop with BFD added is the same route, watched.
+    """
+    if "bfd" in w[4:]:
+        at = w.index("bfd", 4)
+        return w[:at], w[at:]
+    return w, []
 
 
 def group_static(routing: list, descriptions=None) -> list:

@@ -48,6 +48,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     MEMORY_LEVEL, SYSTEM_SETTINGS,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
+                    BFD_BLOCK_WORD, BFD_SUBBLOCK_OPENERS, bfd_uses_profile,
                     ROUTING_HEADER,
                     as_hierarchy, group_static,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
@@ -1103,6 +1104,13 @@ def dataplane_journal_advice():
 
 def enable_daemon_advice(need):
     """How to get `need` running, which depends on whether it is optional."""
+    if need == BFD_DAEMON:
+        # The routing container turns bfdd on as it starts (#559), so what a
+        # box without it is missing is a start of that container on this
+        # release: a patch upgrade changes the routing image at the reboot.
+        return ("bfdd starts with the routing daemons from this release on; "
+                "a box upgraded to it starts bfdd at its next reboot "
+                "('system reboot')")
     if need in ALWAYS_STARTED:
         return (f"{need} is started by frr itself, not listed in "
                 "/etc/frr/daemons - so frr did not finish starting. "
@@ -1112,6 +1120,163 @@ def enable_daemon_advice(need):
 ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
                  "isis": "isisd", "rip": "ripd", "eigrp": "eigrpd",
                  "babel": "babeld", "pim": "pimd"}
+
+#: The daemon that runs BFD sessions (#559).
+BFD_DAEMON = "bfdd"
+
+
+def bfd_statements(routing):
+    """
+    The statements of `routing` that need bfdd, stripped (#559): the `bfd`
+    block itself, a BGP neighbour's `bfd`, a static route's, and an IGP
+    interface's - every place FRR 10.7.1 takes the word. Read by position
+    rather than by the word appearing anywhere, so a route-map or a
+    description that happens to be called `bfd` asks nothing of bfdd.
+    """
+    out = []
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if (w == [BFD_BLOCK_WORD]
+                or (w[0] == "neighbor" and len(w) > 2 and w[2] == "bfd")
+                or (is_static_route(line.strip()) and "bfd" in w[4:])
+                or w[:3] in (["ip", "ospf", "bfd"], ["ipv6", "ospf6", "bfd"])
+                or w[:2] == ["isis", "bfd"]):
+            out.append(line.strip())
+    return out
+
+
+def bfd_sessions(peers, counters):
+    """
+    bfdd's sessions, each with its counters folded in (#559).
+
+    `peers` and `counters` are FRR 10.7.1's `show bfd peers json` and `show
+    bfd peers counters json`, two lists of the same sessions keyed by `id`.
+    Sorted by neighbour, the single-hop session before a multihop one to the
+    same address: FRR lists them in creation order, which says nothing.
+    """
+    by_id = {c.get("id"): c for c in counters or [] if isinstance(c, dict)}
+    out = []
+    for p in peers or []:
+        if not isinstance(p, dict) or "peer" not in p:
+            continue
+        s = dict(p)
+        s["counters"] = by_id.get(p.get("id"), {})
+        out.append(s)
+    return sorted(out, key=lambda s: (_addr_key(s["peer"]),
+                                      bool(s.get("multihop"))))
+
+
+def _addr_key(text):
+    """An address as a sort key, IPv4 before IPv6; text that is not one last."""
+    try:
+        a = ipaddress.ip_address(text)
+        return (a.version, int(a), "")
+    except ValueError:
+        return (9, 0, text)
+
+
+def _bfd_where(s):
+    """Where a session runs, in words: its hop, interface, source and VRF."""
+    parts = ["multihop" if s.get("multihop") else "single hop"]
+    if s.get("interface"):
+        parts.append(f"on {s['interface']}")
+    if s.get("local"):
+        parts.append(f"from {s['local']}")
+    if s.get("vrf") and s.get("vrf") != "default":
+        parts.append(f"vrf {s['vrf']}")
+    if s.get("profile"):
+        parts.append(f"profile {s['profile']}")
+    if s.get("type") == "dynamic":
+        # Made by a protocol's `bfd` rather than by a `peer` statement.
+        parts.append("asked for by a protocol")
+    return ", ".join(parts)
+
+
+def _bfd_state(s):
+    """`up for 2 h 13 min`, or `down for 45 s` - the state and how long."""
+    status = s.get("status", "unknown")
+    held = s.get("uptime") if "uptime" in s else s.get("downtime")
+    if held is None:
+        return status
+    return f"{status} for {human_duration(held)}"
+
+
+def bfd_peers_screen(sessions):
+    """
+    `show bfd peers` (#559): two lines a session, so an IPv6 neighbour and its
+    IPv6 source fit a 79-column console - one row of FRR's own `brief` table
+    is 171.
+    """
+    if not sessions:
+        return ["  no BFD sessions: nothing is configured with 'bfd', and no "
+                "protocol asked", "  for one"]
+    out = []
+    for s in sessions:
+        out += textwrap.wrap(f"{s['peer']}  {_bfd_where(s)}", width=77,
+                             initial_indent="  ", subsequent_indent="      ",
+                             break_on_hyphens=False, break_long_words=False)
+        downs = s.get("counters", {}).get("session-down")
+        tail = [_bfd_state(s),
+                f"every {s.get('transmit-interval', '?')} ms",
+                f"down after {s.get('detection-timeout', '?')} ms"]
+        if s.get("diagnostic", "ok") != "ok":
+            tail.append(f"diagnostic: {s['diagnostic']}")
+        if downs is not None:
+            tail.append(f"downs {downs}")
+        out += textwrap.wrap(", ".join(tail), width=77,
+                             initial_indent="      ",
+                             subsequent_indent="      ",
+                             break_on_hyphens=False, break_long_words=False)
+    return out
+
+
+def bfd_peer_screen(sessions):
+    """`show bfd peer <address>` (#559): each of its sessions in detail."""
+    out = []
+    for s in sessions:
+        c = s.get("counters", {})
+        rows = [
+            ("session", f"{s['peer']}, {_bfd_where(s)}"),
+            ("state", f"{_bfd_state(s)}; diagnostic "
+                      f"{s.get('diagnostic', '?')}, the neighbour's "
+                      f"{s.get('remote-diagnostic', '?')}"),
+            ("this box", f"sends every {s.get('transmit-interval', '?')} ms "
+                         f"(actual {s.get('transmit-interval-actual', '?')}), "
+                         f"wants one every "
+                         f"{s.get('receive-interval', '?')} ms, "
+                         f"multiplier {s.get('detect-multiplier', '?')}"),
+            ("neighbour", f"sends every "
+                          f"{s.get('remote-transmit-interval', '?')} ms, "
+                          f"wants one every "
+                          f"{s.get('remote-receive-interval', '?')} ms, "
+                          f"multiplier "
+                          f"{s.get('remote-detect-multiplier', '?')}"),
+            ("detect", f"down after {s.get('detection-timeout', '?')} ms "
+                       "without a packet"),
+        ]
+        if s.get("echo-transmit-interval"):
+            rows.append(("echo", f"every {s['echo-transmit-interval']} ms, "
+                                 f"wants one every "
+                                 f"{s.get('echo-receive-interval', '?')} ms"))
+        if c:
+            rows.append(("packets", f"in {c.get('control-packet-input', '?')}"
+                                    f" ({c.get('controlPacketBadInput', 0)} "
+                                    f"bad), out "
+                                    f"{c.get('control-packet-output', '?')}"))
+            rows.append(("history", f"up {c.get('session-up', '?')} time(s), "
+                                    f"down {c.get('session-down', '?')} "
+                                    f"time(s)"))
+        if out:
+            out.append("")
+        for label, text in rows:
+            out += textwrap.wrap(text, width=77,
+                                 initial_indent=f"  {label:<10} ",
+                                 subsequent_indent=" " * 13,
+                                 break_on_hyphens=False,
+                                 break_long_words=False)
+    return out
 
 
 def configurable_daemons():
@@ -1131,6 +1296,10 @@ def configurable_daemons():
     """
     offered = {ROUTER_DAEMON[word] for word in TREE["config"]["router"][1]
                if word in ROUTER_DAEMON}
+    # `bfd` is a level of its own rather than a `router` (#559), read off the
+    # same tree for the same reason.
+    if BFD_BLOCK_WORD in TREE["config"]:
+        offered.add(BFD_DAEMON)
     return sorted(offered | set(ALWAYS_STARTED) | set(POLICY_DAEMONS)
                   | set(STATIC_DAEMONS))
 
@@ -1864,6 +2033,12 @@ SHOW = {
         "interface": ("each circuit, and whether its frames are being punted",
                       None),
     }),
+    # #559: the sessions, from bfdd, in the box's words rather than FRR's.
+    "bfd": ("BFD sessions: state, timers, and how often each went down", {
+        "peers": ("every session, two lines each", None),
+        "peer": ("one neighbour's sessions in detail, with their counters",
+                 "<address>"),
+    }),
     "interface": ("interfaces on the dataplane, with state and addresses", {
         "terse": ("one line each: admin state, link state, address", None),
         "description": ("what each interface is for, and its state", None),
@@ -1930,7 +2105,7 @@ def _is_network(word) -> bool:
 #: A static route's next hop, and what may follow it. Named so the box can
 #: answer it: the neighbours on the networks it is connected to (#557).
 ARG_STATIC_NEXT_HOP = ("<next-hop> [distance <1-255>] [tag <1-4294967295>] "
-                       "[description <text>]")
+                       "[bfd] [description <text>]")
 _STATIC_ROUTE = {
     "next-hop": ("where it goes: an address, an interface, blackhole, Null0 "
                  "or reject", ARG_STATIC_NEXT_HOP),
@@ -2457,6 +2632,48 @@ RPKI_BLOCK = {
     "exit": ("leave the RPKI configuration", None),
 }
 
+# Offered inside `bfd` (#559). FRR's bfdd runs the sessions, behind the
+# linux_cp pair like every other routing protocol here - docs/bfd.md has the
+# measurement that chose it over the dataplane's own BFD. A session is a
+# `peer`, a named set of timers is a `profile`, and BGP neighbours and static
+# routes refer to either by the neighbour's address.
+#
+# The timers, the way both blocks take them. FRR 10.7.1's ranges, in ms.
+BFD_TIMERS = {
+    "detect-multiplier": ("packets missed before the session is down "
+                          "(default 3)", "<2-255>"),
+    "receive-interval": ("the slowest this box wants to receive, in ms "
+                         "(default 300)", "<10-4294967>"),
+    "transmit-interval": ("the fastest this box will send, in ms "
+                          "(default 300)", "<10-4294967>"),
+    "echo-mode": ("send echo packets the neighbour loops back; IPv4 only "
+                  "unless the neighbour is FRR", None),
+    "echo": ("the echo packets' own intervals", {
+        "receive-interval": ("the slowest echo this box wants back, in ms "
+                             "(default 50)", "<10-4294967>|disabled"),
+        "transmit-interval": ("the fastest echo this box sends, in ms "
+                              "(default 50)", "<10-4294967>"),
+    }),
+    "passive-mode": ("wait for the neighbour to speak first", None),
+    "minimum-ttl": ("multihop only: the lowest TTL accepted "
+                    "(default 254)", "<1-254>"),
+    "shutdown": ("hold the session down, keeping the configuration", None),
+}
+BFD_PROFILE = dict(BFD_TIMERS, exit=("leave the profile", None))
+BFD_PEER = dict(BFD_TIMERS, **{
+    "profile": ("take the timers of a profile; a timer set here wins",
+                "<name>"),
+    "exit": ("leave the session", None),
+})
+BFD_BLOCK = {
+    "peer": ("a session to a neighbour, by its address",
+             "<address> [multihop] [local-address <address>] "
+             "[interface <interface>] [vrf <name>]"),
+    "profile": ("a named set of timers that sessions and protocols use",
+                "<name>"),
+    "exit": ("leave the BFD configuration", None),
+}
+
 ROUTE_MAP_BLOCK = {
     "match": ("which routes this clause applies to", ROUTE_MAP_MATCH),
     "set": ("what it changes about them", ROUTE_MAP_SET),
@@ -2484,7 +2701,7 @@ BGP_NEIGHBOUR = {
                        "<n> [<percent>] [restart <minutes>]"),
     "next-hop-self": ("advertise this box as the next hop", None),
     "bfd": ("track the session with BFD, so a failure is seconds not minutes",
-            None),
+            "[profile <name>]"),
     "shutdown": ("hold the session down, keeping the configuration", None),
     "peer-group": ("put this neighbour in a peer group", ARG_PEER_GROUP),
     "capability": ("optional BGP capabilities", {
@@ -3265,6 +3482,15 @@ FRR_OMITS_AT = {
     "metric-style": ("wide",),
     "isis hello-interval": ("3",),
     "isis metric": ("10",),
+    # BFD's defaults, in a `peer` or a `profile` (#559), probed in
+    # lab/frr-readback.sh beside a control at a non-default value each:
+    # FRR 10.7.1 writes none of these six back at its default.
+    "detect-multiplier": ("3",),
+    "receive-interval": ("300",),
+    "transmit-interval": ("300",),
+    "echo receive-interval": ("50",),
+    "echo transmit-interval": ("50",),
+    "minimum-ttl": ("254",),
 }
 
 # The one entry whose answer depends on the REST of the configuration, and the
@@ -3991,6 +4217,9 @@ TREE = {
                                      COMMUNITY_LIST_LINE),
         }),
         "rpki": ("origin validation: the caches this box asks", None),
+        # #559: sessions and profiles. What uses them - a BGP neighbour, a
+        # static route - says `bfd` in its own statement.
+        "bfd": ("sub-second failure detection: sessions and profiles", None),
         "router": ("routing, static and dynamic", {
             "static": ("routes this box is told, rather than taught", None),
             "bgp": ("BGP", "<AS>"),
@@ -4722,6 +4951,14 @@ def block_grammar(block, words):
         return PORT_BLOCK
     if block.strip() == "rpki":
         return RPKI_BLOCK
+    if block.strip() == BFD_BLOCK_WORD:
+        return BFD_BLOCK
+    # The two that live inside `bfd` (#559); FRR has no other block opened
+    # by these words.
+    if block.startswith("peer "):
+        return BFD_PEER
+    if block.startswith("profile "):
+        return BFD_PROFILE
     if block.split()[:2] == ["router", "isis"]:
         return ISIS_BLOCK
     if block.split()[:2] == ["router", "ospf"]:
@@ -5539,7 +5776,7 @@ def isis_findings(routing):
         if w[0] == "interface" and len(w) > 1:
             tag, iface = None, w[1]
             continue
-        if w[0] in ("router", "route-map", "rpki", "vrf"):
+        if w[0] in ("router", "route-map", "rpki", "vrf", "bfd"):
             tag, iface = None, None
             continue
         if tag:
@@ -6295,7 +6532,7 @@ def ospf_state(routing):
         if w[0] == "interface" and len(w) > 1:
             in_ospf, iface = False, w[1]
             continue
-        if w[0] in ("router", "route-map", "rpki", "vrf"):
+        if w[0] in ("router", "route-map", "rpki", "vrf", "bfd"):
             in_ospf, iface = False, None
             continue
         if in_ospf:
@@ -6365,7 +6602,7 @@ def ospf6_state(routing):
         if w[0] == "interface" and len(w) > 1:
             iface = w[1]
             continue
-        if w[0] in ("router", "route-map", "rpki", "vrf"):
+        if w[0] in ("router", "route-map", "rpki", "vrf", "bfd"):
             iface = None
             continue
         if not iface or w[:2] != ["ipv6", "ospf6"]:
@@ -6996,7 +7233,7 @@ def bgp_errors(routing, have_interfaces=None, lcp_pairs=None,
         if w[:2] == ["router", "bgp"]:
             in_bgp = True
             continue
-        if w[0] in ("router", "interface", "route-map", "rpki", "vrf"):
+        if w[0] in ("router", "interface", "route-map", "rpki", "vrf", "bfd"):
             in_bgp = False
             continue
         if w[0] == "exit":
@@ -7167,7 +7404,7 @@ def max_prefix_findings(routing):
             in_bgp = True
             local_as = w[2] if len(w) >= 3 else None
             continue
-        if w[0] in ("router", "interface", "route-map", "rpki", "vrf"):
+        if w[0] in ("router", "interface", "route-map", "rpki", "vrf", "bfd"):
             in_bgp = False
             continue
         if w[0] == "exit":
@@ -11587,6 +11824,20 @@ class Shell:
                         print_prose("they would commit and forward "
                                     "nothing. "
                                     + enable_daemon_advice(need))
+                        ok = False
+
+                    # BFD (#559): bgpd, staticd and the IGPs take `bfd` on
+                    # their statements whether bfdd runs or not, and without
+                    # it every session they ask for is never brought up - a
+                    # neighbour watched by nothing, which is the failure BFD
+                    # is configured to prevent.
+                    bfds = bfd_statements(target.routing)
+                    if bfds and BFD_DAEMON not in running_daemons:
+                        self.err(f"{len(bfds)} BFD statement(s) need "
+                                 f"{BFD_DAEMON}, which is not running")
+                        print(f"    first one: {bfds[0]}")
+                        print_prose("they would commit and watch nothing. "
+                                    + enable_daemon_advice(BFD_DAEMON))
                         ok = False
 
             # A static route whose next hop is on no connected network is
@@ -16700,7 +16951,8 @@ class Shell:
         # typed went somewhere they did not intend, with nothing on screen
         # saying so. That is exactly the failure the prompt work exists to
         # prevent (#150).
-        if opens_frr_block(line):
+        if opens_frr_block(line) and not bfd_uses_profile(
+                self.frr_ctx[-1] if self.frr_ctx else "", line):
             # Naming a loopback is what CREATES it, the way naming a
             # sub-interface is - there is nothing else on the box to create it
             # from. Recorded on the way into the block, because the statements
@@ -16721,6 +16973,12 @@ class Shell:
             if line.startswith("address-family "):
                 while (self.frr_ctx
                        and self.frr_ctx[-1].startswith("address-family ")):
+                    self.frr_ctx.pop()
+            elif line.startswith(BFD_SUBBLOCK_OPENERS):
+                # A session or a profile nests in `bfd` (#559), the reading
+                # block_paths gives it.
+                while (self.frr_ctx
+                       and self.frr_ctx[-1].startswith(BFD_SUBBLOCK_OPENERS)):
                     self.frr_ctx.pop()
             else:
                 self.frr_ctx = []
@@ -18721,6 +18979,9 @@ class Shell:
             return
         if _w[:2] == ["show", "bgp"]:
             self.show_bgp(_w[2:])
+            return
+        if _w[:2] == ["show", "bfd"]:
+            self.show_bfd(_w[2:])
             return
         # `show ospf` is this product's spelling and `show ip ospf` is FRR's.
         # Both reach the same place, with one deliberate difference: bare
@@ -20855,6 +21116,66 @@ class Shell:
         for line in hot_card_notes(ifaces):
             print(line)
 
+
+    def bfd_facts(self):
+        """
+        bfdd's sessions as data (#559): {"answered", "garbled", "sessions"}.
+        The one reading `show bfd` prints and ListBfdSessions carries.
+        """
+        rc, peers_out = self.frr.show("show bfd peers json")
+        rc2, counters_out = self.frr.show("show bfd peers counters json") \
+            if rc == 0 else (rc, "")
+        if rc or rc2:
+            return {"answered": False, "garbled": False, "sessions": []}
+        try:
+            peers = json.loads(peers_out[peers_out.index("["):])
+            counters = json.loads(counters_out[counters_out.index("["):])
+        except ValueError:
+            return {"answered": True, "garbled": True, "sessions": []}
+        return {"answered": True, "garbled": False,
+                "sessions": bfd_sessions(peers, counters)}
+
+    def show_bfd(self, args, facts=None):
+        """
+        `show bfd peers` and `show bfd peer <address>` (#559), read from bfdd
+        as JSON and printed in the box's words. FRR's own screens are a
+        tab-indented page per session or a 171-column table. `facts` is a
+        reading already taken (the API's), so the screen is drawn from it.
+        """
+        if args[:1] not in (["peers"], ["peer"]) or \
+                (args[0] == "peer" and len(args) != 2) or \
+                (args[0] == "peers" and len(args) != 1):
+            self.err("usage: show bfd peers | show bfd peer <address>")
+            return
+        if args[0] == "peer":
+            try:
+                want = ipaddress.ip_address(args[1])
+            except ValueError:
+                self.err("show bfd peer: not an address")
+                print_prose(f"'{args[1]}' is not one; 'show bfd peers' "
+                            "lists the neighbours")
+                return
+        f = self.bfd_facts() if facts is None else facts
+        if not f["answered"]:
+            self.err(f"{BFD_DAEMON} is not answering")
+            print_prose("so no BFD session can be read: "
+                        + enable_daemon_advice(BFD_DAEMON))
+            return
+        if f["garbled"]:
+            self.err(f"{BFD_DAEMON} answered something that is not its list "
+                     "of sessions")
+            return
+        sessions = f["sessions"]
+        if args[0] == "peers":
+            print("\n".join(bfd_peers_screen(sessions)))
+            return
+        mine = [s for s in sessions if _addr_key(s["peer"])
+                == (want.version, int(want), "")]
+        if not mine:
+            self.err("no BFD session to that address")
+            print_prose("'show bfd peers' lists the ones there are")
+            return
+        print("\n".join(bfd_peer_screen(mine)))
 
     def show_bgp(self, args):
         """

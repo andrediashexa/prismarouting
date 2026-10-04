@@ -77,6 +77,7 @@ import ast
 import contextlib
 import io
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -1645,6 +1646,65 @@ _rv, _text = driven(_sh.apply, _target, check_only=True)
 says("policy with no daemon", _text,
      "error: 1 policy statement(s) need mgmtd, which is not running", _rv)
 print("  a route-map refused because nothing is running to hold it")
+
+print("\n=== BFD that would commit and watch nothing (#559) ===")
+# bgpd and staticd take `bfd` whether bfdd runs or not, and without it the
+# sessions they ask for never come up: a neighbour watched by nothing. Counted
+# from the statements that need it - the block, a neighbour's, a route's -
+# and not from the word anywhere (a route-map named bfd needs nothing).
+_target = config.Config()
+_target.routing = ["bfd", " peer 10.0.0.2 interface vppwan0", " exit", "exit",
+                   "router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+                   " neighbor 10.0.0.2 bfd profile lab", "exit",
+                   "ip route 203.0.113.0/24 10.0.0.2 bfd",
+                   "route-map bfd permit 10", "exit"]
+_frr = frr_stub(available=True)
+_frr.daemons = lambda: {"bgpd", "zebra", "mgmtd", "staticd"}
+_sh = shell(frr=_frr)
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("bfd with no bfdd", _text,
+     "error: 3 BFD statement(s) need bfdd, which is not running", _rv)
+check("next reboot" in " ".join(_text.split()),
+      f"and it says what starts bfdd on a box upgraded to this release: "
+      f"{_text!r}")
+_frr = frr_stub(available=True)
+_frr.daemons = lambda: {"bgpd", "zebra", "mgmtd", "staticd", "bfdd"}
+_sh = shell(frr=_frr)
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+check("BFD statement(s) need" not in _text,
+      f"with bfdd running the same configuration is not refused for it: "
+      f"{_text!r}")
+print("  BFD refused while bfdd is not running, and only then")
+
+print("\n=== show bfd, each of its refusals (#559) ===")
+_peers = json.dumps([{"peer": "10.0.0.2", "id": 1, "status": "up",
+                      "uptime": 5, "multihop": False}])
+_counters = json.dumps([{"id": 1, "session-down": 0}])
+_ok = {"show bfd peers counters json": (0, _counters),
+       "show bfd peers json": (0, _peers)}
+for _args, _row, _frr in (
+        ([], "error: usage: show bfd peers | show bfd peer <address>",
+         frr_stub(shows=_ok)),
+        (["peer"], "error: usage: show bfd peers | show bfd peer <address>",
+         frr_stub(shows=_ok)),
+        (["peer", "nope"], "error: show bfd peer: not an address",
+         frr_stub(shows=_ok)),
+        (["peers"], "error: bfdd is not answering", frr_stub()),
+        (["peers"], "error: bfdd answered something that is not its list "
+                    "of sessions",
+         frr_stub(shows={"show bfd peers": (0, "% garbled")})),
+        (["peer", "10.0.0.9"], "error: no BFD session to that address",
+         frr_stub(shows=_ok))):
+    _sh = shell(frr=_frr)
+    _rv, _text = driven(_sh.show_bfd, _args)
+    says(f"show bfd {' '.join(_args)}", _text, _row)
+_rv, _text = driven(shell(frr=frr_stub(shows=_ok)).show_bfd, ["peers"])
+check("error" not in _text and "10.0.0.2  single hop" in _text,
+      f"and with bfdd answering, the session: {_text!r}")
+print("  the usage, a word that is not an address, bfdd down or garbled, "
+      "and an address with no session")
 
 print("\n=== IS-IS frames that would never reach the kernel ===")
 # MEASURED ON A SHIPPED BOX: IS-IS configured, commit succeeded, isisd up, the
