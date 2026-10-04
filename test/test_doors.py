@@ -847,5 +847,31 @@ check("--property=StandardOutput" not in " ".join(_dp)
       and doors.verb_of(list(_dp)) and doors.operator_door(_dp),
       "no shape depends on systemd opening a log, and each is still a door")
 
+print("=== #564: every system action, built as the API and the VTY build it ===")
+# Three releases (0.149.27, .28, .29) met a door that refused an argv the
+# other side built. Each argv here is built exactly as apiserver.py
+# (hostrun -> api_run_argv) and prismash.py (dataplane_restart_argv,
+# ask_systemd -> system_action_argv, the upgrade check, the VTY refresh) build
+# it, and sent through answer() as the daemon receives it: JSON, from root,
+# from a prisma-operator member, from a plain account.
+_ex = lambda a, si, t: (0, "ran")
+_shapes = {
+    "API upgrade": (doors.api_run_argv("upgrade", "0.149.30"), (0, 0, 126)),
+    "API dataplane restart": (doors.api_run_argv("dataplane"), (0, 0, 126)),
+    "VTY dataplane restart unit": (doors.dataplane_restart_argv(), (0, 0, 126)),
+    "reboot": (doors.system_action_argv("reboot"), (0, 0, 126)),
+    "shutdown": (doors.system_action_argv("poweroff"), (0, 0, 126)),
+    "upgrade check": (doors.UPGRADE_CHECK_ARGV, (0, 0, 0)),
+    "VTY refresh after an upgrade": (doors.REFRESH_VTY_ARGV, (0, 126, 126)),
+}
+for _n, (_argv, _want) in _shapes.items():
+    _got = tuple(doors.answer(json.dumps({"argv": list(_argv)}), _u, execute=_ex,
+                              is_operator=lambda x, o=_op: o)["rc"]
+                 for _u, _op in ((0, False), (1000, True), (1000, False)))
+    check(_got == _want, f"{_n}: root/operator/plain answered {_got}, wanted {_want}")
+import prismash as _P2
+check(tuple(_P2.dataplane_restart_argv()) == tuple(doors.dataplane_restart_argv()),
+      "the VTY's restart argv is the door's builder, not a copy")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)
