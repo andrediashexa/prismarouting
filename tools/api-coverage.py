@@ -156,7 +156,8 @@ TYPED_CONFIG = {
              "policy", "timeout", "max-blocks", "initial-allocation",
              "block-stride", "reserve", "bypass", "utilisation-alarm",
              "max-sessions", "max-session-rate", "tcp-mss", "forward",
-             "filter", "alg", "vrf", "outside-vrf", "mode"),
+             "filter", "alg", "vrf", "outside-vrf", "mode",
+             "subscriber-length", "nat64-prefix"),
     "cgnat": ("logging",),
 }
 TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"

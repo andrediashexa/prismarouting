@@ -139,6 +139,9 @@ def is_question(message):
 # reader to think reading was recorded too.
 WRITE_MESSAGES = frozenset({
     "bpa_pool_add_del",
+    # A NAT64 pool is created by its own message (#485); deleted by the one
+    # above.
+    "bpa_nat64_pool_add",
     "bpa_pool_settings_set",
     "bpa_bypass_set",
     "bpa_limits_set",
@@ -953,8 +956,8 @@ VTY_MESSAGES = frozenset({
     "bpa_bypass_set", "bpa_forward_add_del", "bpa_global_set",
     "bpa_identity_radius_set", "bpa_identity_source_set",
     "bpa_interface_add_del_feature", "bpa_limits_set", "bpa_logging_set",
-    "bpa_logging_syslog_set", "bpa_pool_add_del", "bpa_pool_settings_set",
-    "cli_inband", "create_loopback_instance", "create_subif",
+    "bpa_logging_syslog_set", "bpa_nat64_pool_add", "bpa_pool_add_del",
+    "bpa_pool_settings_set", "cli_inband", "create_loopback_instance", "create_subif",
     "create_vlan_subif", "delete_loopback", "delete_subif", "ip_table_add_del",
     "ip_table_dump", "ipfix_exporter_dump", "lcp_itf_pair_add_del",
     "lcp_osi_proto_enable", "lcp_osi_proto_get", "set_ipfix_exporter",

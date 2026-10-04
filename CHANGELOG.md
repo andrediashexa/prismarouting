@@ -91,6 +91,27 @@ version has a chance of seeing it.
   it yet and the VTY accepts no NAT64 pool, so nothing is configurable and
   inert; the translation is phase 2, and the plan is on the issue.
 
+* **NAT64, phase 2: an IPv6-only subscriber reaches IPv4, deterministic.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  A pool whose `prefix-inside` is IPv6 is a NAT64 pool: `subscriber-length`
+  says what one subscriber is (the delegated prefix), `nat64-prefix` where
+  IPv4 destinations live (RFC 6052; `64:ff9b::/96` when not given). Each
+  subscriber prefix gets a port block by the same formula as an IPv4
+  subscriber, and the translation follows RFC 7915: TCP, UDP (a zero IPv4
+  checksum is computed), ICMP echo, ICMP errors with the quoted packet,
+  Packet Too Big with its MTU raised by 20, and fragments both ways - an
+  IPv4 datagram that may be fragmented and translates past 1280 is cut to
+  1280. With workers, a subscriber's packets are handed to the worker that
+  owns it. An unsolicited packet is dropped and counted, as on an IPv4 pool.
+  `show cgnat translation` answers with the subscriber's IPv6 prefix,
+  `show cgnat subscriber` takes an IPv6 address, `show cgnat top` names the
+  prefix. Deterministic only: dynamic mode, the log, reserve, forwards,
+  bypass, VRF, `tcp-mss` and the ALGs are refused on a NAT64 pool by name at
+  `commit check`, and are the next phases. A NAT64 session costs about a
+  third more heap than an IPv4 one (docs/architecture.md, "Memory").
+  `lab/nat64.sh` reads it all off the wire on both sides, with and without
+  workers; `lab/nat64-scale.sh` measures it.
+
 ### Fixed
 
 ## 0.149.33 - a dataplane restart reports what really happened

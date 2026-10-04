@@ -2390,7 +2390,8 @@ INTERFACE_KEYS = ("name", "kind", "description", "mtu", "shutdown", "ipv4",
 POOL_SCALARS = ("name", "block_size", "port_first", "port_last", "policy",
                 "mode", "max_blocks", "initial_allocation", "block_stride",
                 "reserve", "utilisation_alarm", "max_sessions",
-                "max_session_rate", "tcp_mss", "filter")
+                "max_session_rate", "tcp_mss", "filter",
+                "subscriber_length", "nat64_prefix")
 POOL_LISTS = ("prefix_inside", "prefix_outside", "bypass_source",
               "bypass_destination")
 COLLECTOR_KEYS = ("transport", "configured", "collector", "port", "source",

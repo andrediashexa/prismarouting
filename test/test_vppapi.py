@@ -241,7 +241,7 @@ print("\n=== every message that changes something is on the list ===")
 # nothing anywhere says it should have had a name.
 mutating = {"bpa_pool_add_del", "bpa_pool_settings_set", "bpa_bypass_set",
             "bpa_limits_set", "bpa_forward_add_del",
-            "bpa_interface_add_del_feature"}
+            "bpa_interface_add_del_feature", "bpa_nat64_pool_add"}
 check(vppapi.WRITE_MESSAGES == mutating,
       f"the write list has drifted: {sorted(vppapi.WRITE_MESSAGES ^ mutating)}")
 print(f"  {len(vppapi.WRITE_MESSAGES)} write messages")

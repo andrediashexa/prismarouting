@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 12
+# OFF-RED-AT-LEAST: 19
 # (the floor: what the off run of 2026-10-04 measured red, every check)
 # NAT64, deterministic: an IPv6-only subscriber reaches an IPv4 server (#485).
 #
@@ -33,6 +33,8 @@ mkdir -p /run/vpp /vpp_plugins /var/log/prisma-routing /etc/prisma-routing
 cd /src
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
+use_binary_api
+HX="python3 /src/src/prismash/prismash.py"
 
 # --- the two hosts ---------------------------------------------------------
 for ns in sub srv; do
@@ -101,9 +103,12 @@ vppctl set interface bpa out2in host-host-srv
 
 echo "=========== 1. the pool ==========="
 if [ "$MODE" != off ]; then
-  vppctl bpa pool v6 inside 2001:db8:1200::/40 subscriber-length 56 \
-    nat64-prefix 64:ff9b:1::/48 outside 203.0.113.0/29 block 2048 2>&1 \
-    | sed 's/^/  /'
+  # Through the VTY, so the grammar, the commit check, bpa_nat64_pool_add
+  # and the readback are what built it.
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+      -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
+      -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.0/29" \
+      -c "block-size 2048" -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
 else
   echo "  off: no NAT64 pool"
 fi
@@ -258,7 +263,57 @@ EOF
 echo "  the subscriber's path MTU to the server: $PTB"
 
 echo
-echo "=========== 9. the box ==========="
+echo "=========== 9. unsolicited, to a NAT64 pool's public address ==========="
+# What an IPv4 pool does: no session, so dropped and counted, nothing sent
+# back and nothing delivered (the coordinator's answer on #485).
+NS0=$(vppctl show errors | awk '/bpa-out2in/ && /no session/ {print $1}')
+ip netns exec sub python3 - > /tmp/unsol.log 2>&1 <<'EOF' &
+import socket
+s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM); s.settimeout(5)
+s.bind(("::", 46000))
+try:
+    s.recvfrom(100); print("delivered")
+except socket.timeout:
+    print("nothing")
+EOF
+sleep 1
+ip netns exec srv python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b'x', ('203.0.113.3', 46000))"
+sleep 6
+NS1=$(vppctl show errors | awk '/bpa-out2in/ && /no session/ {print $1}')
+UNSOL=$(cat /tmp/unsol.log)
+echo "  the subscriber: $UNSOL; 'no session' ${NS0:-0} -> ${NS1:-0}"
+
+echo
+echo "=========== 10. the VTY: a change in place, and a refusal ==========="
+SESS0=$(vppctl show bpa session | awk '/^ *total:/ {print $2}')
+if [ "$MODE" != off ]; then
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" -c "timeout udp 600" \
+      -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
+  REFUSED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+      -c "mode dynamic" -c "exit" -c "commit" 2>&1)
+  echo "$REFUSED" | sed 's/^/  /'
+else
+  REFUSED=""
+fi
+printf '%s\n' "$REFUSED" > /tmp/n64-refused.txt
+SESS1=$(vppctl show bpa session | awk '/^ *total:/ {print $2}')
+echo "  sessions before $SESS0, after $SESS1"
+vppctl show bpa config | sed -n '/cgnat pool v6/,/exit/p' > /tmp/n64-config2.txt
+
+echo
+echo "=========== 11. show cgnat: who is behind a public port, and back ==========="
+# The court-order question. A NAT64 pool's inside index would print as
+# 0.0.0.<n> through the IPv4 path; the answer is the subscriber's prefix.
+$HX -c "show cgnat translation 203.0.113.3 44100" > /tmp/n64-xlt.txt 2>&1
+$HX -c "show cgnat subscriber 2001:db8:1200:ab00::10" > /tmp/n64-sub.txt 2>&1
+$HX -c "show cgnat top" > /tmp/n64-top.txt 2>&1
+cat /tmp/n64-xlt.txt /tmp/n64-sub.txt /tmp/n64-top.txt | sed 's/^/  /'
+
+echo
+echo "=========== 12. the box ==========="
 vppctl show bpa session | sed 's/^/  /' | head -20
 vppctl show errors | grep -iE "nat64|bpa-out2in" | sed 's/^/  /'
 
@@ -277,6 +332,20 @@ for f in "$TCPSRV" "$UDPSRV" "$FRAGSRV"; do
   expect "a flow's port is in the model's block ($3-$4: $p)" \
     sh -c "[ '$p' -ge $3 ] && [ '$p' -le $4 ]"
 done
+expect "an unsolicited datagram was dropped, counted, not delivered" \
+  sh -c "[ '$UNSOL' = nothing ] && [ '${NS1:-0}' -gt '${NS0:-0}' ]"
+expect "a timeout changed in place: the pool was not rebuilt" \
+  sh -c "[ -n '$SESS1' ] && [ '$SESS1' -gt 0 ] && [ '$SESS1' = '$SESS0' ] && grep -q 'timeout udp 600' /tmp/n64-config2.txt"
+expect "the VTY refuses a dynamic NAT64 pool at commit" \
+  grep -q "a NAT64 pool is deterministic only" /tmp/n64-refused.txt
+expect "show cgnat translation names the subscriber's IPv6 prefix" \
+  grep -q "203.0.113.3:44100  ->  2001:db8:1200:ab00::/56" /tmp/n64-xlt.txt
+expect "  and says it is the formula's answer, for any instant" \
+  sh -c "grep -q ', DETERMINISTIC NAT64' /tmp/n64-xlt.txt && grep -q \"from the FORMULA. It holds for any instant, past or present, as long as this pool's prefixes and block size have not changed since. No allocation record is involved.\" /tmp/n64-xlt.txt"
+expect "show cgnat subscriber takes an IPv6 address and gives the block" \
+  grep -q "the formula gives it 203.0.113.3 ports 44032-46079" /tmp/n64-sub.txt
+expect "show cgnat top names the subscriber by its prefix" \
+  grep -q "^2001:db8:1200:ab00::/56 " /tmp/n64-top.txt
 expect "show bpa config gives the pool back as configured" \
   sh -c "grep -q 'inside 2001:db8:1200::/40' /tmp/n64-config.txt && grep -q 'subscriber-length 56' /tmp/n64-config.txt && grep -q 'nat64-prefix 64:ff9b:1::/48' /tmp/n64-config.txt"
 verdict

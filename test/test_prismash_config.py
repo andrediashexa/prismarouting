@@ -81,6 +81,12 @@ MUTATIONS = {
     # the next extension goes (issue #39).
     "block_reserve": (lambda p: setattr(p, "block_reserve", 2),
                       "pool_replace"),
+    # NAT64 (#485): what one subscriber is, and where the IPv4 destinations
+    # are - both decide the mapping, so both rebuild the pool.
+    "subscriber_length": (lambda p: setattr(p, "subscriber_length", 56),
+                          "pool_replace"),
+    "nat64_prefix": (lambda p: setattr(p, "nat64_prefix", "64:ff9b:1::/48"),
+                     "pool_replace"),
 
     # --- settings the dataplane changes under a worker barrier, in place.
     "timeouts":     (lambda p: p.timeouts.update({"udp": 900}), "settings_set"),
@@ -2209,6 +2215,87 @@ check(config.startup_default_mtu("unix {\n nodaemon\n}\n") == config.VPP_DEFAULT
       "and VPP's own 9000 when startup.conf sets none")
 check(config.startup_default_mtu("ethernet { default-mtu 99 }") == 9000,
       "a value outside the MTU range is not believed")
+
+print("\n=== a NAT64 pool: its statements, its refusals, its message (#485) ===")
+# prefix6_error: prefix_error's four questions for an IPv6 inside.
+check(config.prefix6_error("prefix-inside", "2001:db8:1200::/40") is None,
+      "an IPv6 /40 is an inside")
+for value, needle in (("2001:db8::", "expected a prefix"),
+                      ("2001:db8::1/32", "host bits are set"),
+                      ("2001:db8::/129", "not a prefix length"),
+                      ("zz::/3", "not an IPv6 prefix"),
+                      ("::/0", "a /0 is every address")):
+    r = config.prefix6_error("prefix-inside", value)
+    check(r is not None and needle in r[0], f"{value!r}: {r}")
+check("2001:db8::/32" in config.prefix6_error("prefix-inside",
+                                              "2001:db8::1/32")[1],
+      "the network meant is in the refusal")
+# nat64_prefix_error: RFC 6052's lengths and its zero octet.
+for good in ("64:ff9b::/96", "64:ff9b:1::/48", "2001:db8::/32"):
+    check(config.nat64_prefix_error(good) is None, f"{good} is RFC 6052")
+r = config.nat64_prefix_error("64:ff9b::/44")
+check(r is not None and "RFC 6052" in r[1], f"a /44: {r}")
+r = config.nat64_prefix_error("2001:db8:0:0:ff::/72")
+check(r is not None, "a /72 is not an RFC 6052 length")
+r = config.nat64_prefix_error("64:ff9b::ff00:0:0:0/96")
+check(r is not None and "64-71" in r[0], f"bits 64-71 set: {r}")
+# canonical_prefix: the form the dataplane prints back, so text round-trips.
+check(config.canonical_prefix("2001:DB8:1200:0::/40") == "2001:db8:1200::/40",
+      "an IPv6 prefix is written the way show bpa config reads it back")
+check(config.canonical_prefix("100.64.0.0/10") == "100.64.0.0/10",
+      "IPv4 is left alone")
+
+v6 = config.Pool("v6")
+v6.inside = ["2001:db8:1200::/40"]
+v6.outside = ["203.0.113.0/29"]
+check(v6.is_nat64 and not base_pool().is_nat64, "an IPv6 inside is NAT64")
+check(v6.nat64_prefix_eff == "64:ff9b::/96", "no prefix is the well-known one")
+r = v6.nat64_fits()
+check(r is not None and "subscriber-length" in r[0], f"no length: {r}")
+v6.subscriber_length = 56
+check(v6.nat64_fits() is None, f"a whole NAT64 pool: {v6.nat64_fits()}")
+lines = v6.lines()
+check(" subscriber-length 56" in lines and " nat64-prefix 64:ff9b::/96" in lines,
+      f"the statements are rendered, the prefix with it: {lines}")
+# Each thing the first release does not do, refused by name.
+for setup, needle in (
+        (lambda p: setattr(p, "mode", "dynamic"), "deterministic only"),
+        (lambda p: setattr(p, "block_reserve", 1), "no reserve"),
+        (lambda p: setattr(p, "max_blocks", 2), "no max-blocks"),
+        (lambda p: p.bypass_src.append("10.0.0.0/8"), "no bypass"),
+        (lambda p: setattr(p, "tcp_mss", "1400"), "no tcp-mss"),
+        (lambda p: setattr(p, "vrf", "1"), "no vrf"),
+        (lambda p: p.algs.update({"ftp": True}), "no alg"),
+        (lambda p: p.forwards.append(("tcp", 80, "10.0.0.1", 80)), "no forward"),
+        (lambda p: p.inside.append("100.64.0.0/10"), "not both"),
+        (lambda p: setattr(p, "subscriber_length", 32), "longer than")):
+    t = copy.deepcopy(v6)
+    setup(t)
+    r = t.nat64_fits()
+    check(r is not None and needle in r[0], f"{needle}: {r}")
+    check(len(r[0]) <= 79 if r else True, f"fits a console: {r}")
+t = base_pool()
+t.subscriber_length = 56
+check(t.nat64_fits() is not None, "subscriber-length on an IPv4 pool is refused")
+check(base_pool().nat64_fits() is None, "an IPv4 pool is not asked")
+# alg_masks: none runs on a NAT64 pool, and it says so in both masks.
+alg, alg_set = v6.alg_masks()
+check(alg == 0 and alg_set == sum(config.Pool.ALG_BITS.values()),
+      f"NAT64 masks: {alg} {alg_set}")
+check(base_pool().alg_masks() == (sum(config.Pool.ALG_BITS[a] for a in
+                                      config.Pool.ALG_DEFAULT_ON), 0),
+      "an IPv4 pool keeps the defaults")
+# add_message / nat64_api_args: the NAT64 pool's own message.
+msg, a = v6.add_message()
+check(msg == "bpa_nat64_pool_add", msg)
+check(a == v6.nat64_api_args(), "add_message carries nat64_api_args")
+check(a["subscriber_length"] == 56 and a["nat64_prefix"] == "::/0"
+      and a["n_inside"] == 1 and a["prefixes"][0] == "2001:db8:1200::/40",
+      f"the message: {a}")
+check("alg" not in a and "block_reserve" not in a and "vrf_id" not in a,
+      "what a NAT64 pool takes no part of is not on its message")
+check(base_pool().add_message()[0] == "bpa_pool_add_del",
+      "an IPv4 pool is created as before")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

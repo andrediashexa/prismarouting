@@ -1157,7 +1157,9 @@ class Pool:
         # commit.
         if self.subscriber_length:
             out.append(f" subscriber-length {self.subscriber_length}")
-        if self.is_nat64:
+        # And whenever it was typed, IPv4 inside or not: nat64_fits() refuses
+        # that at commit, and it can only refuse what it is shown.
+        if self.is_nat64 or self.nat64_prefix:
             out.append(f" nat64-prefix {self.nat64_prefix_eff}")
         out += [f" prefix-outside {p}" for p in self.outside]
         out.append(f" block-size {self.block_size}")
@@ -1333,6 +1335,8 @@ class Pool:
                 alg_set |= bit
         return alg, alg_set
 
+    # not a unit: a property is read and never called, so no test can name
+    # it for the reader; test_prismash_config.py reads it all the same
     @property
     def is_nat64(self) -> bool:
         """An IPv6 inside is a NAT64 pool (#485)."""
@@ -1340,6 +1344,8 @@ class Pool:
 
     NAT64_WKP = "64:ff9b::/96"
 
+    # not a unit: a property is read and never called, so no test can name
+    # it for the reader; test_prismash_config.py reads it all the same
     @property
     def nat64_prefix_eff(self) -> str:
         return self.nat64_prefix or self.NAT64_WKP

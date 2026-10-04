@@ -481,6 +481,11 @@ message PoolConfig {
   // Only the ALGs the operator chose ("ftp", "rtsp", "pptp", "esp", "sip").
   map<string, bool> algs = 23;
   repeated PortForwardConfig forwards = 24;
+  // NAT64 (#485), when prefix_inside is IPv6: the prefix length one
+  // subscriber holds; 0 on an IPv4 pool.
+  uint32 subscriber_length = 25;
+  // RFC 6052's prefix; "": the well-known 64:ff9b::/96 (no statement).
+  string nat64_prefix = 26;
 }
 
 // One CGNAT log stream's collector, as `logging <transport> ...` states it.

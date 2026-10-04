@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 632 |
+| typed | 636 |
 | text | 19 |
 | n/a | 27 |
 
@@ -290,8 +290,10 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 
 | Statement | Class | API | Notes |
 |---|---|---|---|
-| `prefix-inside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `subscriber-length <32-128>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `nat64-prefix <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `block-size <64-32768>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ports <1-65535> <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `policy interleaved` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -328,7 +330,9 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 | `mode deterministic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `mode dynamic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `exit` | n/a | - | the session's |
-| `no prefix-inside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no subscriber-length` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no nat64-prefix` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ports` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no timeout udp <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |

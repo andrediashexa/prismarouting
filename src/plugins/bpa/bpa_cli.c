@@ -1342,6 +1342,35 @@ bpa_sub_block_pinned (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
  * claimant answers as before - which tenant an idle address belongs to is a
  * question only the operator can settle, and that is issue #81.
  */
+/*
+ * A subscriber as an operator names it: its inside address, or on a NAT64
+ * pool its IPv6 prefix (#485) - whose sub_idx the pool's pseudo inside
+ * would otherwise print as 0.0.0.<n>, an address nobody holds.
+ */
+/* not a unit: a VPP format function; the prefix comes from
+ * bpa_set6_prefix_of(), held by test/test_bpa_nat64.c, and lab/nat64.sh
+ * reads it off `show cgnat translation` and `show cgnat top`. */
+static u8 *
+format_bpa_subscriber (u8 *s, va_list *args)
+{
+  bpa_pool_t *p = va_arg (*args, bpa_pool_t *);
+  u32 sub_idx = va_arg (*args, u32);
+  u32 ip_priv;
+
+  if (p->is_nat64)
+    {
+      ip6_address_t a;
+
+      if (bpa_set6_prefix_of (&p->inside6, sub_idx, a.as_u8))
+	return format (s, "?");
+      return format (s, "%U/%u", format_ip6_address, &a, p->inside6.sub_len);
+    }
+  if (bpa_set_addr_of (&p->inside, sub_idx, &ip_priv))
+    return format (s, "?");
+  ip_priv = clib_host_to_net_u32 (ip_priv);
+  return format (s, "%U", format_ip4_address, &ip_priv);
+}
+
 /* not a unit: walks VPP's pool of pools; the rule it applies is
  * bpa_claimant_take(), held by test/test_bpa_pool.c (#472) */
 static int
@@ -1355,7 +1384,8 @@ bpa_subscriber_pool (bpa_main_t *bm, u32 host, u32 *pool_index, u32 *sub_idx)
       bpa_block_t blk;
       u32 idx, si;
 
-      if (p->deleted)
+      /* A NAT64 pool's inside is IPv6; its pseudo set holds no address. */
+      if (p->deleted || p->is_nat64)
 	continue;
       if (bpa_set_index_of (&p->inside, host, &si))
 	continue;
@@ -1380,16 +1410,32 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
   ip4_address_t addr;
-  u32 pool_index, sub_idx, i;
+  ip6_address_t addr6;
+  u32 pool_index = ~0u, sub_idx, i;
   bpa_pool_t *p;
   bpa_sub_t *sub;
   bpa_block_t blk;
 
   if (!unformat_user (input, unformat_line_input, line_input))
     return clib_error_return (0, "usage: show bpa subscriber <inside-address>");
-  if (!unformat (line_input, "%U", unformat_ip4_address, &addr))
+  if (unformat (line_input, "%U", unformat_ip4_address, &addr))
+    ;
+  else if (unformat (line_input, "%U", unformat_ip6_address, &addr6))
     {
-      error = clib_error_return (0, "expected an inside IPv4 address");
+      /* A NAT64 subscriber (#485): any address in its prefix names it, and
+       * the pool's pseudo inside is [0, N), so its "address" there is its
+       * index - which is what everything below hands the arithmetic. */
+      if (bpa_pool_by_inside6 (bm, addr6.as_u8, &pool_index, &sub_idx))
+	{
+	  error = clib_error_return (0, "%U is not inside any NAT64 pool",
+				     format_ip6_address, &addr6);
+	  goto done;
+	}
+      addr.as_u32 = clib_host_to_net_u32 (sub_idx);
+    }
+  else
+    {
+      error = clib_error_return (0, "expected an inside IPv4 or IPv6 address");
       goto done;
     }
 
@@ -1399,7 +1445,8 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
     /* No packet, so no VRF: on a box with one VRF there is one claimant; on a
      * box with several the one holding this subscriber's state answers, and
      * which tenant an idle address belongs to is issue #81. */
-    if (bpa_subscriber_pool (bm, host, &pool_index, &sub_idx))
+    if (pool_index == ~0u && bpa_subscriber_pool (bm, host, &pool_index,
+						  &sub_idx))
       {
 	error = clib_error_return (
 	  0, "%U is not inside any configured pool", format_ip4_address, &addr);
@@ -1408,7 +1455,7 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
     p = pool_elt_at_index (bm->pools, pool_index);
 
     vlib_cli_output (vm, "subscriber %U   pool %v, index %u, worker thread %u",
-		     format_ip4_address, &addr, p->name, sub_idx,
+		     format_bpa_subscriber, p, sub_idx, p->name, sub_idx,
 		     bpa_sub_thread (bm, sub_idx));
 
     /*
@@ -1627,6 +1674,19 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	goto done;
       }
 
+    if (src == BPA_XLT_FORMULA && p->is_nat64)
+      {
+	vlib_cli_output (vm, "%U:%u  ->  %U", format_ip4_address, &addr, port,
+			 format_bpa_subscriber, p, block_idx);
+	vlib_cli_output (vm, "  pool %v, block %u, DETERMINISTIC NAT64", p->name,
+			 block_idx);
+	vlib_cli_output (
+	  vm, "  from the FORMULA. It holds for any instant, past or present, "
+	      "as long as this pool's prefixes and block size have not "
+	      "changed since. No allocation record is involved.");
+	goto done;
+      }
+
     if (src == BPA_XLT_FORMULA)
       {
 	if (bpa_set_addr_of (&p->inside, block_idx, &ip_priv))
@@ -1774,11 +1834,14 @@ bpa_show_top_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  }
 	if (total == 0)
 	  continue;
-	if (bpa_set_addr_of (&pool_elt_at_index (bm->pools, pool_index)->inside,
-			     sub_idx, &ip_priv))
+	if (!pool_elt_at_index (bm->pools, pool_index)->is_nat64
+	    && bpa_set_addr_of (
+	      &pool_elt_at_index (bm->pools, pool_index)->inside, sub_idx,
+	      &ip_priv))
 	  continue;
 	vec_add2 (rows, r, 1);
 	r->ip_priv = ip_priv;
+	r->sub_idx = sub_idx;
 	r->used = used;
 	r->total = total;
 	r->pct = (used * 100) / total;
@@ -1800,14 +1863,19 @@ bpa_show_top_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		   "ports", "full", "blocks", "refusals");
   for (i = 0; i < vec_len (rows) && i < want; i++)
     {
-      ip4_address_t a;
       bpa_pool_t *p = pool_elt_at_index (bm->pools, rows[i].pool_index);
+      u8 *who = format (0, "%U", format_bpa_subscriber, p, rows[i].sub_idx);
 
-      a.as_u32 = clib_host_to_net_u32 (rows[i].ip_priv);
-      vlib_cli_output (vm, "%-16U %-12v %5u/%-5u %4u%% %7u %9u",
-		       format_ip4_address, &a, p->name, rows[i].used,
+      /* Padded by hand: vppinfra's %-16v also CUTS at 16, which left a
+       * NAT64 subscriber as 2001:db8:1200:ab - measured in lab/nat64.sh. An
+       * IPv6 prefix overruns the column instead; the row stays one row. */
+      while (vec_len (who) < 16)
+	vec_add1 (who, ' ');
+      vlib_cli_output (vm, "%v %-12v %5u/%-5u %4u%% %7u %9u", who,
+		       p->name, rows[i].used,
 		       rows[i].total, rows[i].pct, rows[i].n_blocks,
 		       rows[i].n_refused);
+      vec_free (who);
     }
   vlib_cli_output (vm, "%u subscriber(s) holding blocks", vec_len (rows));
   vec_free (rows);

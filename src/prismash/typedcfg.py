@@ -120,6 +120,8 @@ def pool_typed(pool):
         "forwards": [{"protocol": proto, "public_port": int(pub),
                       "private_address": ip, "private_port": int(priv)}
                      for proto, pub, ip, priv in pool.forwards],
+        "subscriber_length": int(pool.subscriber_length),
+        "nat64_prefix": pool.nat64_prefix,
     }
 
 
@@ -1460,7 +1462,7 @@ POOL_FIELDS = ("prefix_inside", "prefix_outside", "block_size", "ports",
                "max_blocks", "initial_allocation", "block_stride",
                "bypass_source", "bypass_destination", "utilisation_alarm",
                "max_sessions", "max_session_rate", "tcp_mss", "filter",
-               "algs", "forwards")
+               "algs", "forwards", "subscriber_length", "nat64_prefix")
 
 LOGGING_FIELDS = ("collectors", "enabled")
 
@@ -1597,8 +1599,11 @@ def pool_lines(current, desired, fields=()):
                        else f"max-blocks {int(want)}")
         elif f == "tcp_mss":
             out.append(f"tcp-mss {want}" if want else "no tcp-mss")
+        elif f == "nat64_prefix":
+            out.append(f"nat64-prefix {want}" if want else "no nat64-prefix")
         else:
             word = {"initial_allocation": "initial-allocation",
+                    "subscriber_length": "subscriber-length",
                     "block_stride": "block-stride",
                     "utilisation_alarm": "utilisation-alarm",
                     "max_sessions": "max-sessions",

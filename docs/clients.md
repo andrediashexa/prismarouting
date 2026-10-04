@@ -27,14 +27,17 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## Next (0.150.x) - NAT64 phase 1 (#485)
+## Next (0.150.x) - NAT64, phases 1 and 2 (#485)
 
-* **Contract:** unchanged.
-* **Nothing an API client sees.** The NAT64 pool's arithmetic is in the
-  dataplane's code, but no NAT64 pool can be configured yet. When one can
-  (phase 2), the typed pool in GetConfig/SetConfig and GetSchema gain its
-  fields - IPv6 inside prefixes, the subscriber prefix length, the NAT64
-  prefix - announced in that release's entry.
+* **Contract:** additive. `prisma.proto` sha256 `a7fc99a99812799c51691cdc4b51b9dd72bc4e352f5b71e14806b8542e162d4d`.
+* **`PoolConfig`** gains 25 `subscriber_length` (0 on an IPv4 pool) and 26
+  `nat64_prefix` ("" is the well-known `64:ff9b::/96`). A pool whose
+  `prefix_inside` is IPv6 is a NAT64 pool; GetSchema offers both statements,
+  and `prefix-inside` takes either family. SetConfig refuses what a NAT64
+  pool does not take yet - dynamic mode, reserve, forwards, bypass, VRF,
+  tcp-mss, the ALGs - with the VTY's own commit-check sentence.
+* **Dataplane API:** `bpa.api` 0.19.0 adds `bpa_nat64_pool_add`, a new
+  message; no existing layout moves.
 
 ## 0.149.33 - a restart that came back is reported as one
 

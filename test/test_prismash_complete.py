@@ -89,7 +89,8 @@ print(f"  policy -> {sorted(o)} ; mode has two options")
 
 print("\n=== a free argument becomes a hint, not an empty list ===")
 o, hint, _ = opts("pool", "prefix-inside ")
-check(hint == prismash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
+# Either family since #485: an IPv6 inside is a NAT64 pool.
+check(hint == prismash.ARG_PREFIX46, f"expected a prefix hint, got {hint!r}")
 check(not o, f"should not list options after 'prefix-inside': {o}")
 o, hint, _ = opts("config", "block-holddown ", nat=("nat", "cgnat"))
 check(hint == prismash.ARG_SECONDS, f"expected a numeric hint, got {hint!r}")
