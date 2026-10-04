@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **0.149.27's dataplane restart was refused by the host's door.**
+  ([#564](https://github.com/andrediashexa/hexarouting/issues/564))
+  Measured on 10.95.200.198: RestartDataplane answered FAILED_PRECONDITION,
+  "the host's door: not an operation the VTY is allowed on the host". The
+  restart unit's argv was built in prismash.py and no door knew its shape;
+  the labs run the restart in-line, without doors, and could not see it.
+  The builder now lives in doors.py beside the shape it must match, the door
+  accepts exactly that argv for root and prisma-operator's members, and
+  test_doors drives the VTY's own argv through the door's answer() - with
+  any other tool, log path or command line refused, root's included. No
+  other systemd-run shape was added in 0.149.26-0.149.27.
+
 ## 0.149.27 - a dataplane restart always comes back, and account changes reach the API
 
 ### Fixed

@@ -1397,30 +1397,12 @@ UPGRADE_WORK = os.environ.get("PRISMA_UPGRADE_WORK", "/var/tmp")
 HOT_CARDS = os.environ.get("PRISMA_HOT_CARDS", "/run/prisma-routing/hot-cards")
 HOT_CARD_TOOL = os.environ.get("PRISMA_HOT_CARD_TOOL",
                                "/usr/lib/prisma-routing/prisma-hot-card")
-#: Where the hot-card tool lives on a box: the dataplane restart is detached
-#: only when it is this one (#564) - a stand-in is a test's, and runs in-line.
-HOT_CARD_INSTALLED = "/usr/lib/prisma-routing/prisma-hot-card"
-#: What a detached dataplane restart prints, in the host's /run (#564).
-DATAPLANE_RESTART_LOG = "/run/prisma-routing/dataplane-restart.log"
-
-
-def dataplane_restart_argv(tool=HOT_CARD_INSTALLED, log=DATAPLANE_RESTART_LOG):
-    """
-    `system dataplane restart` as a unit of its own (#564): the hot-card
-    tool's restart, its output in `log`, its last line `prisma-api-exit <n>`
-    as the API's detached runs end (follow_run_log reads it).
-
-    WHY A UNIT. Run as a child of the VTY, the restart died with whatever ran
-    the VTY: on 10.95.200.198 (0.149.26) the API's run of it stopped the
-    containers and never started them, and the box - whose management is a
-    dataplane interface - was dark until a reboot. A session over SSH on such
-    a box is cut by the very stop it asked for. A unit outlives its caller;
-    the caller only watches.
-    """
-    return ("systemd-run", "--collect", "--unit=prisma-routing-dataplane-restart",
-            f"--property=StandardOutput=truncate:{log}",
-            "--property=StandardError=inherit",
-            "/bin/sh", "-c", f"{tool} restart-dataplane; echo \"prisma-api-exit $?\"")
+#: The detached dataplane restart (#564) is built in doors.py, beside the
+#: door that has to accept it: the builder and the door's shape cannot drift
+#: apart (0.149.27 shipped a shape the door refused, #564 on 10.95.200.198).
+HOT_CARD_INSTALLED = doors.HOT_CARD_INSTALLED
+DATAPLANE_RESTART_LOG = doors.DATAPLANE_RESTART_LOG
+dataplane_restart_argv = doors.dataplane_restart_argv
 
 
 def detach_dataplane_restart(tool=None, which=shutil.which,

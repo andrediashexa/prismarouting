@@ -27,6 +27,18 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.28 - RestartDataplane works on a box
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **Fixed (#564):** on 0.149.27, `SystemService.RestartDataplane` (and the
+  VTY's `system dataplane restart` from the management plane) was refused on
+  a box with `FAILED_PRECONDITION` "the dataplane restart could not be
+  started ... the host's door: not an operation the VTY is allowed on the
+  host" - nothing was stopped. From 0.149.28 it runs. **Client note:** on
+  0.149.25-0.149.26 the call was unsafe (it could leave the box without a
+  dataplane), on 0.149.27 it is refused; only 0.149.28 and later run it.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.27 - a dataplane restart that always comes back, and rights that follow the account
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).

@@ -95,6 +95,35 @@ API_RUN_DIR = "/run/prisma-routing/api"
 #: in, and a dataplane restart outlasts a gRPC call: so neither runs in the
 #: API's process, and both are units of their own.
 API_RUNS = {"upgrade": "system upgrade", "dataplane": "system dataplane restart"}
+#: Where the hot-card tool lives on a box (#564).
+HOT_CARD_INSTALLED = "/usr/lib/prisma-routing/prisma-hot-card"
+#: What a detached dataplane restart prints, in the host's /run (#564).
+DATAPLANE_RESTART_LOG = "/run/prisma-routing/dataplane-restart.log"
+
+
+def dataplane_restart_argv(tool=HOT_CARD_INSTALLED, log=DATAPLANE_RESTART_LOG):
+    """
+    `system dataplane restart` as a unit of its own (#564): the hot-card
+    tool's restart, its output in `log`, its last line `prisma-api-exit <n>`
+    as the API's detached runs end (prismash's follow_run_log reads it).
+
+    WHY A UNIT. Run as a child of the VTY, the restart died with whatever ran
+    the VTY: on 10.95.200.198 (0.149.26) the API's run of it stopped the
+    containers and never started them, and the box - whose management is a
+    dataplane interface - was dark until a reboot. A unit outlives its
+    caller; the caller only watches.
+
+    BUILT HERE, beside the door that accepts it (verb_of, operator_door):
+    0.149.27 built it in prismash.py, the door knew no such shape, and every
+    restart on a box was refused - "not an operation the VTY is allowed on the
+    host" - while the labs, which run it in-line without doors, passed.
+    """
+    return ("systemd-run", "--collect", "--unit=prisma-routing-dataplane-restart",
+            f"--property=StandardOutput=truncate:{log}",
+            "--property=StandardError=inherit",
+            "/bin/sh", "-c", f"{tool} restart-dataplane; echo \"prisma-api-exit $?\"")
+
+
 #: A release as `system upgrade` takes it.
 RELEASE = re.compile(r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$")
 
@@ -273,6 +302,10 @@ def verb_of(argv, stdin=None):
     if n == 6 and argv[:4] == ("ip", "link", "set", "dev") \
             and NETDEV.match(argv[4]) and argv[5] == "nomaster":
         return "take a Linux interface out of its VRF"
+    # The dataplane restart as a unit of its own (#564): the one shape
+    # dataplane_restart_argv() builds, with the installed tool and log only.
+    if argv == dataplane_restart_argv():
+        return "restart the dataplane as a unit of its own"
     # The API's upgrade and dataplane restart (#558, phase 5), detached.
     for kind in API_RUNS:
         stmt = argv[-1] if argv else ""
@@ -542,7 +575,8 @@ def peer_uid(conn):
 
 
 #: The two FIXED doors a prisma-operator member may open besides root (#563);
-#: the API's detached upgrade and dataplane restart are the other two.
+#: the API's detached upgrade and dataplane restart, and the dataplane restart
+#: as a unit of its own (#564), are the others.
 OPERATOR_FIXED = (("systemctl", "reboot"), ("systemctl", "poweroff"))
 
 
@@ -555,7 +589,7 @@ def operator_door(argv):
     if not isinstance(argv, (list, tuple)):
         return False
     t = tuple(argv)
-    if t in OPERATOR_FIXED:
+    if t in OPERATOR_FIXED or t == dataplane_restart_argv():
         return True
     for kind in API_RUNS:
         version = ""
