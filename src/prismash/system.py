@@ -111,6 +111,16 @@ ROLES = (ROLE_ADMIN, ROLE_CGNAT)
 
 GROUP_ADMIN = "prisma-admin"
 GROUP_CGNAT = "prisma-cgnat"
+# Not a role: a capability BESIDE whichever role the account has (#563). The
+# role answers what an account may CHANGE in the configuration; this answers
+# whether it may take the box itself down or move it to another release -
+# `system upgrade`, `system reboot`, `system shutdown`, `system dataplane
+# restart` - which until now only root could. Orthogonal on purpose: a NOC
+# account that may only read the configuration can still be the one that
+# reboots the box, and an administrator is not one by being an administrator.
+# A group for the same reason the roles are groups: the system's own
+# deprovisioning takes it away.
+GROUP_OPERATOR = "prisma-operator"
 
 # Not a role and not the operator's to choose: this is the reach an account
 # needs before authorization is even the question, and EVERY account this VTY
@@ -140,12 +150,18 @@ ROLE_GROUPS = {
 # account in "sudo" or in a monitoring group for reasons of their own, and a
 # demotion that silently took those away would be this VTY deciding something
 # nobody asked it to decide.
-MANAGED_GROUPS = (GROUP_ADMIN, GROUP_CGNAT) + REACH_GROUPS
+MANAGED_GROUPS = (GROUP_ADMIN, GROUP_CGNAT, GROUP_OPERATOR) + REACH_GROUPS
 
 
-def groups_for(role) -> set:
-    """The memberships an account with this role must have."""
-    return set(REACH_GROUPS) | set(ROLE_GROUPS.get(role, ()))
+#: The one groupadd this VTY runs (#563), on the host through a door.
+OPERATOR_GROUPADD = ("groupadd", "--system", GROUP_OPERATOR)
+
+
+def groups_for(role, operator=False) -> set:
+    """The memberships an account with this role (and, when `operator`, the
+    system-actions capability, #563) must have."""
+    return set(REACH_GROUPS) | set(ROLE_GROUPS.get(role, ())) | \
+        ({GROUP_OPERATOR} if operator else set())
 
 
 def role_from_groups(names) -> str:
@@ -296,17 +312,31 @@ def validate_role(name, role):
     return None
 
 
+def validate_operator(name):
+    """
+    Why this account cannot be given the system actions (#563), or None: a
+    tuple of rows, as validate_role() gives. root holds them by being root.
+    """
+    if name == "root":
+        return ("root may already upgrade, reboot and shut the box down",
+                "'operator' is for accounts that are not root")
+    return None
+
+
 class User:
     def __init__(self, name):
         self.name = name
         self.keys: list[str] = []
         self.password = ""      # crypt(3) hash, or "" for none
         self.role = ""          # "" is read-only: no role group at all
+        self.operator = False   # the system actions, beside the role (#563)
 
     def lines(self) -> list[str]:
         out = [f"user {self.name}"]
         if self.role:
             out.append(f" role {self.role}")
+        if self.operator:
+            out.append(" operator")
         out += [f" ssh-key {k}" for k in self.keys]
         if self.password:
             out.append(f" password {self.password}")
@@ -771,9 +801,10 @@ class System:
                     # come from a group, so a role read off one would be
                     # noise - and this VTY does not manage its memberships.
                     if name != "root":
-                        u.role = role_from_groups(
-                            members.get(name, set())
-                            | {gid_group.get(gid, "")})
+                        held = members.get(name, set()) \
+                            | {gid_group.get(gid, "")}
+                        u.role = role_from_groups(held)
+                        u.operator = GROUP_OPERATOR in held
                     users[name] = u
         except OSError:
             return users
@@ -912,7 +943,8 @@ class System:
                 # repairs an account whose membership drifted, and it is
                 # cheap - the memberships are read from /etc/group and only
                 # the difference is written.
-                ok, why, gmsgs = self._apply_groups(name, u.role)
+                ok, why, gmsgs = self._apply_groups(
+                    name, u.role, getattr(u, "operator", False))
                 msgs += gmsgs
                 if not ok:
                     return False, msgs + [why]
@@ -933,7 +965,7 @@ class System:
                 msgs.append(f"{name}: password changed")
         return True, msgs
 
-    def _apply_groups(self, name, role):
+    def _apply_groups(self, name, role, operator=False):
         """
         Put the account in the groups its role implies, and take it out of the
         ones it no longer has. Returns (ok, why, [messages]).
@@ -943,10 +975,20 @@ class System:
         would go on granting the role, and the account would keep the reach
         the role was the only reason for.
         """
-        want = groups_for(role)
-        members, _ = self._read_groups()
+        want = groups_for(role, operator)
+        members, gid_group = self._read_groups()
         have = members.get(name, set())
         msgs = []
+        if GROUP_OPERATOR in want and GROUP_OPERATOR not in gid_group.values():
+            # A group appliance/install.sh does not create yet - that is a
+            # medium-only file and #563 shipped as a patch - so the first
+            # account granted it creates it, through a door of exactly this
+            # shape (doors.FIXED). 0.150.0 moves it to the installer.
+            rc, out = self._run(list(OPERATOR_GROUPADD))
+            if rc not in (0, 9, 127):          # 9: it already exists
+                return False, (f"cannot create group {GROUP_OPERATOR}: "
+                               + out.strip()[:120]), msgs
+            msgs.append(f"created group {GROUP_OPERATOR}")
         for g in MANAGED_GROUPS:
             if g in want and g not in have:
                 rc, out = self._run(["gpasswd", "-a", name, g])
@@ -958,7 +1000,7 @@ class System:
                     # A missing reach group is said out loud and does not stop
                     # the account being created: on a box without FRR there is
                     # no frrvty group to join and no vtysh to run either.
-                    if g in (GROUP_ADMIN, GROUP_CGNAT):
+                    if g in (GROUP_ADMIN, GROUP_CGNAT, GROUP_OPERATOR):
                         return False, why, msgs
                     msgs.append(why + " - it cannot use what needs that group")
                     continue

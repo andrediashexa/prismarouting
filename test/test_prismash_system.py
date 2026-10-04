@@ -222,13 +222,16 @@ def at_ask(sd):
 
 
 ADMIN = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+# What the system actions need since #563: root has it, and so does any
+# account in prisma-operator whatever its role.
+OPERATOR = ADMIN | {prismash.CAP_OPERATOR}
 COST_SESSIONS = "every session on this box ends, including this one"
 COST_DATAPLANE = "the dataplane stops; systemd runs its stop-drain first"
 UNSAVED = "warning: the running configuration has NOT been saved"
 UNCONFIRMED = "warning: the last commit has NOT been confirmed"
 
 print("=== 1. system reboot, by an administrator, and systemd takes it ===")
-rv, said, sd, sh = driven(ADMIN, "system reboot")
+rv, said, sd, sh = driven(OPERATOR, "system reboot")
 print(said.rstrip())
 check(rows(said)[:1] == ["restarting the box"],
       f"the first row says what is happening: {rows(said)[:1]}")
@@ -260,7 +263,7 @@ check(not [r for r in rows(said) if r.startswith("warning:")],
 
 print()
 print("=== 2. system shutdown: the other verb, the other unit, its own cost ===")
-rv, said, sd, sh = driven(ADMIN, "system shutdown")
+rv, said, sd, sh = driven(OPERATOR, "system shutdown")
 print(said.rstrip())
 check(rows(said)[:1] == ["shutting the box down"],
       f"the first row says what is happening: {rows(said)[:1]}")
@@ -288,7 +291,7 @@ print("=== 3. the argv is the plain verb, so the ExecStop drain is on its "
 # of whether #217's promise survives a reboot typed here. do_system() carries
 # the systemd measurement.
 for verb, unit in (("reboot", "reboot"), ("shutdown", "poweroff")):
-    _, _, sd, _ = driven(ADMIN, f"system {verb}")
+    _, _, sd, _ = driven(OPERATOR, f"system {verb}")
     check(len(sd.systemctl) == 1 and sd.systemctl[0] == ["systemctl", unit],
           f"'system {verb}' asks ['systemctl', '{unit}'] and adds no flag: "
           f"{sd.systemctl}")
@@ -309,7 +312,7 @@ THREE_LINES = (
     "required.\n"
     "Failed to start reboot.target: Interactive authentication required.\n"
     "See system logs and 'systemctl status reboot.target' for details.\n")
-rv, said, sd, sh = driven(ADMIN, "system reboot", rc=1, says=THREE_LINES)
+rv, said, sd, sh = driven(OPERATOR, "system reboot", rc=1, says=THREE_LINES)
 print(said.rstrip())
 check("error: the box could not be restarted" in rows(said),
       "the verdict is one row of its own, naming what did not happen")
@@ -328,7 +331,7 @@ check(sh.failed == 1, f"counted as one refusal: failed={sh.failed}")
 check(sd.systemctl == [["systemctl", "reboot"]],
       f"and it was asked once, not retried: {sd.systemctl}")
 
-rv, said, sd, sh = driven(ADMIN, "system shutdown", rc=1,
+rv, said, sd, sh = driven(OPERATOR, "system shutdown", rc=1,
                           says="Failed to power off: unit not found")
 check("error: the box could not be shut down" in rows(said)
       and "Failed to power off: unit not found" in prose(said),
@@ -340,14 +343,14 @@ print("=== 5. no systemctl at all is a refusal, not 'written and not run' ===")
 # which is every developer box. apply_dataplane_if treats that as "stored,
 # the tuner is not on this machine" because something WAS written; a reboot
 # that did not happen has no half that did.
-rv, said, sd, sh = driven(ADMIN, "system reboot", rc=127,
+rv, said, sd, sh = driven(OPERATOR, "system reboot", rc=127,
                           says="systemctl: not found")
 check("error: the box could not be restarted" in rows(said)
       and "systemctl: not found" in prose(said),
       f"named as a refusal: {rows(said)[-2:]}")
 check(sh.failed == 1, f"and counted: failed={sh.failed}")
 
-rv, said, sd, sh = driven(ADMIN, "system reboot", rc=1, says="")
+rv, said, sd, sh = driven(OPERATOR, "system reboot", rc=1, says="")
 check("error: the box could not be restarted" in rows(said)
       and "systemctl exited 1 and said nothing" in prose(said),
       f"a silent failure is still a refusal that ends in words: "
@@ -357,11 +360,11 @@ print()
 print("=== 6. a read-only account is refused BEFORE systemd is asked ===")
 rv, said, sd, sh = driven(set(), "system reboot")
 print(said.rstrip())
-check("error: system reboot: permission denied for a read-only account"
+check("error: system reboot: permission denied for this account"
       in rows(said),
-      "the same rendered refusal every privileged statement gives")
-check(any(prismash.GROUP_ADMIN in r for r in rows(said)),
-      "naming the membership that would allow it")
+      "refused as an account without the system actions (#563)")
+check(prismash.GROUP_OPERATOR in prose(said),
+      "naming the membership that would allow it: prisma-operator")
 # The WHOLE list, not the systemctl half: the refusal is before the cost is
 # measured, so not even the running configuration was read.
 check(sd.asked == [], f"and nothing was asked through the seam: {sd.asked}")
@@ -370,11 +373,22 @@ check("restarting the box" not in said,
 check(rv is True, "the session goes on")
 
 rv, said, sd, sh = driven({prismash.CAP_CGNAT}, "system shutdown")
-check("error: system shutdown: permission denied for a "
-      f"{prismash.ROLE_CGNAT} account" in rows(said),
-      f"a CGNAT operator is refused by the name of their role: "
+check("error: system shutdown: permission denied for this account"
+      in rows(said),
+      f"a CGNAT operator is refused too, the role grants no system action: "
       f"{rows(said)[:1]}")
 check(sd.asked == [], f"and nothing was asked through the seam: {sd.asked}")
+
+# #563: the capability is BESIDE the role. An administrator without it is
+# refused, naming the group; an account with no role but with it is not.
+rv, said, sd, sh = driven(ADMIN, "system reboot")
+check("error: system reboot: permission denied for this account"
+      in rows(said) and prismash.GROUP_OPERATOR in prose(said),
+      f"an administrator is not an operator by being one: {rows(said)[:1]}")
+check(sd.asked == [], f"and nothing was asked: {sd.asked}")
+rv, said, sd, sh = driven({prismash.CAP_OPERATOR}, "system reboot")
+check(sd.systemctl == [["systemctl", "reboot"]],
+      f"a read-only account in prisma-operator reboots: {sd.systemctl}")
 
 print()
 print("=== 7. the menu with no verb, or a verb it has not got ===")
@@ -391,7 +405,7 @@ print("=== 8. what is committed and not saved is lost at boot, and the box "
 # behind - which is a box after `commit` and before `save`. The warning has
 # to be on the screen at the ask, like every other cost, and it has to name
 # the word that keeps the change.
-rv, said, sd, sh = driven(ADMIN, "system reboot", running=RUNNING,
+rv, said, sd, sh = driven(OPERATOR, "system reboot", running=RUNNING,
                           saved=SAVED)
 print(said.rstrip())
 check(UNSAVED in rows(said),
@@ -404,7 +418,7 @@ check(sd.systemctl == [["systemctl", "reboot"]] and sh.failed == 0,
       f"a warning, not a refusal: the reboot was still asked for "
       f"({sd.systemctl}) and nothing counted as failed ({sh.failed})")
 
-rv, said, sd, sh = driven(ADMIN, "system reboot", running=SAVED, saved=SAVED)
+rv, said, sd, sh = driven(OPERATOR, "system reboot", running=SAVED, saved=SAVED)
 check(UNSAVED not in rows(said),
       "a box whose file holds what is running is not warned")
 
@@ -419,14 +433,14 @@ check(UNSAVED not in rows(said),
 # the box lab's own reboot, and that sentence was false of it.
 for on_disk, what in ((SHIPPED, "the installer's three comments"),
                       (ABSENT, "no file at all")):
-    rv, said, sd, sh = driven(ADMIN, "system reboot", running=FRESH,
+    rv, said, sd, sh = driven(OPERATOR, "system reboot", running=FRESH,
                               saved=on_disk)
     check(UNSAVED not in rows(said),
           f"a fresh appliance with {what} is not warned: root and the sshd "
           f"drop-in come back after the boot")
     check("lost" not in prose(said),
           f"and is told nothing is lost, with {what}")
-    rv, said, sd, sh = driven(ADMIN, "system reboot", running=FRESH_POOL,
+    rv, said, sd, sh = driven(OPERATOR, "system reboot", running=FRESH_POOL,
                               saved=on_disk)
     check(UNSAVED in rows(said),
           f"the same box with one pool committed and {what} is warned: "
@@ -434,7 +448,7 @@ for on_disk, what in ((SHIPPED, "the installer's three comments"),
     check("'save'" in prose(said) and "lost" in prose(said),
           f"in the same shape, naming 'save', with {what}")
 
-rv, said, sd, sh = driven(ADMIN, "system reboot",
+rv, said, sd, sh = driven(OPERATOR, "system reboot",
                           running=config.Config().text(), saved=ABSENT)
 check(UNSAVED not in rows(said),
       "and a box with no file and nothing configured is not: nothing is lost")
@@ -442,7 +456,7 @@ check(UNSAVED not in rows(said),
 # The spelling is not the difference. The file as an operator may have left
 # it - a comment, a blank line - against the running text `save` would
 # write, so a file that is up to date is not called unsaved over a comment.
-rv, said, sd, sh = driven(ADMIN, "system reboot", running=SAVED,
+rv, said, sd, sh = driven(OPERATOR, "system reboot", running=SAVED,
                           saved="! saved by hand\n\n" + SAVED)
 check(UNSAVED not in rows(said),
       "a file that differs from the running text only in spelling is saved")
@@ -450,7 +464,7 @@ check(UNSAVED not in rows(said),
 # The running configuration read off the box, through the product's own
 # path: sshd is read through the same seam systemd is asked through, and it
 # is read BEFORE the ask, which is the order the warning depends on.
-rv, said, sd, sh = driven(ADMIN, "system reboot", running=REAL, saved=ABSENT)
+rv, said, sd, sh = driven(OPERATOR, "system reboot", running=REAL, saved=ABSENT)
 check(sd.asked[:1] == [["sshd", "-T"]] and sd.asked[-1:] == [["systemctl", "reboot"]],
       f"the running configuration is read the way `save` reads it, through "
       f"the seam, before the ask: {sd.asked}")
@@ -484,7 +498,7 @@ print()
 print("=== 9. a 'commit confirmed' nobody confirmed comes back reverted, "
       "and the box says so first ===")
 deadline = int(time.time()) + 600
-rv, said, sd, sh = driven(ADMIN, "system reboot", pending=deadline)
+rv, said, sd, sh = driven(OPERATOR, "system reboot", pending=deadline)
 print(said.rstrip())
 when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(deadline))
 check(UNCONFIRMED in rows(said),
@@ -504,16 +518,16 @@ check(widest(said) <= config.CONSOLE_COLUMNS,
       f"every row fits the console: the widest is {widest(said)} of "
       f"{config.CONSOLE_COLUMNS} columns")
 
-rv, said, sd, sh = driven(ADMIN, "system shutdown", pending=deadline)
+rv, said, sd, sh = driven(OPERATOR, "system shutdown", pending=deadline)
 check(UNCONFIRMED in rows(at_ask(sd)),
       "a shutdown says it too, before the ask")
 
-rv, said, sd, sh = driven(ADMIN, "system reboot")
+rv, said, sd, sh = driven(OPERATOR, "system reboot")
 check(UNCONFIRMED not in rows(said),
       "and a box with nothing pending is not warned of a window it is not in")
 
 # Both at once: one commit unsaved AND unconfirmed is two rows, each true.
-rv, said, sd, sh = driven(ADMIN, "system reboot", running=RUNNING,
+rv, said, sd, sh = driven(OPERATOR, "system reboot", running=RUNNING,
                           saved=SAVED, pending=deadline)
 check(UNSAVED in rows(at_ask(sd)) and UNCONFIRMED in rows(at_ask(sd)),
       "unsaved and unconfirmed are two warnings, both before the ask")
@@ -529,7 +543,7 @@ print("=== 10. no privilege path: the argv is the same for every uid, and a "
 # and not a refusal on a box.
 argvs = {}
 for uid in (0, 1000):
-    _, _, sd, _ = driven(ADMIN, "system reboot", euid=uid)
+    _, _, sd, _ = driven(OPERATOR, "system reboot", euid=uid)
     argvs[uid] = sd.systemctl
 check(argvs[0] == [["systemctl", "reboot"]],
       f"root asks ['systemctl', 'reboot']: {argvs[0]}")
@@ -544,7 +558,7 @@ DENIED = ("Failed to reboot system via logind: Access denied\n"
           "Failed to start reboot.target: Access denied\n"
           "See system logs and 'systemctl status reboot.target' for "
           "details.\n")
-rv, said, sd, sh = driven(ADMIN, "system reboot", rc=4, says=DENIED,
+rv, said, sd, sh = driven(OPERATOR, "system reboot", rc=4, says=DENIED,
                           euid=1000)
 print(said.rstrip())
 check("error: the box could not be restarted" in rows(said)
@@ -1088,8 +1102,10 @@ box = Box()
 box.write("/etc/group", GROUPS)
 rv = box.sys._apply_groups("bob", system.ROLE_ADMIN)
 check(box.asked == [["gpasswd", "-a", "bob", g]
-                    for g in system.MANAGED_GROUPS] and rv[0] is True,
-      f"a new administrator joins every managed group, in order: "
+                    for g in system.MANAGED_GROUPS
+                    if g != system.GROUP_OPERATOR] and rv[0] is True,
+      f"a new administrator joins every managed group but the operator's, "
+      f"in order: "
       f"{box.asked}")
 box = Box({("gpasswd", "-a", "bob", "prisma-admin"):
            (1, "gpasswd: group 'prisma-admin' does not exist")})
@@ -1446,6 +1462,32 @@ check("sysname edge1" in system._snmpd_body({}, ["c"], {}, release="",
       and not any(l.startswith("sysname") for l in system._snmpd_body(
           {}, ["c"], {}, release="").splitlines()),
       "sysName is the box's name when there is one, and absent otherwise")
+
+print("=== the operator group (#563) ===")
+box = Box()
+box.write("/etc/group", GROUPS)
+rv = box.sys._apply_groups("bob", "", True)
+check(box.asked[0] == list(system.OPERATOR_GROUPADD) and
+      ["gpasswd", "-a", "bob", system.GROUP_OPERATOR] in box.asked
+      and rv[0] is True,
+      f"the first operator creates prisma-operator, then joins it: {box.asked}")
+box = Box()
+box.write("/etc/group", GROUPS + f"{system.GROUP_OPERATOR}:x:990:bob\n")
+rv = box.sys._apply_groups("bob", "", False)
+check(["gpasswd", "-d", "bob", system.GROUP_OPERATOR] in box.asked
+      and list(system.OPERATOR_GROUPADD) not in box.asked,
+      f"`no operator` leaves the group, and nothing is created: {box.asked}")
+check(system.validate_operator("root") is not None
+      and system.validate_operator("ops") is None,
+      "root is refused 'operator', any other account takes it")
+u = system.User("ops")
+u.operator = True
+check(u.lines() == ["user ops", " operator", " exit"],
+      f"the user block says it: {u.lines()}")
+check(system.groups_for("", True) == set(system.REACH_GROUPS)
+      | {system.GROUP_OPERATOR}, "groups_for() adds the group, beside the role")
+
+print()
 
 if fail:
     print(f"{fail} FAILURES")

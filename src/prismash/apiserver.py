@@ -676,12 +676,13 @@ def whoami(sh):
     same answer the VTY login gives, not a second reading of the groups.
     """
     import pwd
-    from prismash import CAP_ALL, CAP_CGNAT, role_name
+    from prismash import CAP_ALL, CAP_CGNAT, CAP_OPERATOR, role_name
     caps = set(getattr(sh, "caps", set()) or set())
     return {"account": pwd.getpwuid(os.geteuid()).pw_name,
             "role": role_name(caps),
             "can_configure": CAP_ALL in caps,
-            "can_configure_cgnat": CAP_CGNAT in caps}
+            "can_configure_cgnat": CAP_CGNAT in caps,
+            "can_operate": CAP_OPERATOR in caps}
 
 
 # --------------------------------------------------------- the routes (#533)
@@ -1262,14 +1263,15 @@ def hostrun(sh, kind, version=""):
     """
     Start `kind` (doors.API_RUNS) on the host, detached, through the doors,
     as the account `sh` is: the VTY's permission first - `system upgrade`
-    and `system dataplane restart` need the whole configuration - then the
-    host's, which today is root's. {"ok", "output"}.
+    and `system dataplane restart` need the system actions, root's and
+    prisma-operator's members' (#563) - then the host's door, which lets the
+    same two in. {"ok", "output"}.
     """
     import doors
     import prismash as P
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        allowed = sh.require(P.CAP_ALL, doors.API_RUNS[kind])
+        allowed = sh.require(P.CAP_OPERATOR, doors.API_RUNS[kind])
     if not allowed:
         return {"ok": False, "output": buf.getvalue()}
     argv = doors.api_run_argv(kind, version)
@@ -2451,7 +2453,9 @@ def action_reason(output):
     "action" stage, and the host's door refusing an account that is not
     root - which the VTY prints under its own verdict - as a permission.
     """
-    if "only root may" in (output or ""):
+    if re.search(r"only root (may|and prisma-operator's members may)",
+                 output or "") or "permission denied for this account" in \
+            (output or ""):
         return "permission"
     return refusal_reason(output, stage="action")["reason"]
 

@@ -180,7 +180,45 @@ def refused_stream(name, fn, code):
 def system_checks():
     root = rpc.SystemServiceStub(channel("root"))
     netview = rpc.SystemServiceStub(channel("netview"))
+    opsman = rpc.SystemServiceStub(channel("opsman"))
     A = pb.SystemActionRequest
+
+    # #563: the system actions beside the role. opsman has no role and is in
+    # prisma-operator; netview has neither.
+    def operator_whoami():
+        me = rpc.SessionServiceStub(channel("opsman")).WhoAmI(
+            pb.WhoAmIRequest(), timeout=30)
+        nv = rpc.SessionServiceStub(channel("netview")).WhoAmI(
+            pb.WhoAmIRequest(), timeout=30)
+        result("operator-whoami", me.can_operate and not me.can_configure
+               and not nv.can_operate,
+               f"opsman can_operate={me.can_operate} role={me.role}; "
+               f"netview can_operate={nv.can_operate}")
+    run("operator-whoami", operator_whoami)
+
+    def operator_reboot():
+        r = opsman.Reboot(A(force=True), timeout=60)
+        asked = open("/tmp/fake-systemctl.argv").read().split("\n")
+        result("operator-reboot", "restarting the box" in r.output
+               and "reboot" in asked, f"systemctl asked: {asked[:3]}")
+    run("operator-reboot", operator_reboot)
+
+    def check_by_anyone():
+        # The upgrade CHECK (no version) changes nothing and is every
+        # account's: netview is not refused it. Whether the releases can be
+        # read from the lab is not the question - the box reads them
+        # through its host (#563) - only that permission is not why.
+        # An answer is required: any refusal, permission or not, is red -
+        # the lab's off mode (no client the server trusts) must not pass it.
+        got = list(netview.Upgrade(pb.UpgradeRequest(), timeout=60))
+        text = " ".join(p.message + p.output for p in got)
+        result("upgrade-check-anyone", "this box runs" in text
+               and "permission" not in text, text[:120])
+    run("upgrade-check-anyone", check_by_anyone)
+    refused("upgrade-permission",
+            lambda: list(netview.Upgrade(pb.UpgradeRequest(version="0.149.99"),
+                                         timeout=60)),
+            grpc.StatusCode.PERMISSION_DENIED, "REASON_PERMISSION")
     refused("system-reboot-unsaved", lambda: root.Reboot(A(), timeout=60),
             grpc.StatusCode.FAILED_PRECONDITION, "REASON_UNSAVED")
     refused("system-reboot-permission", lambda: netview.Reboot(A(force=True), timeout=60),

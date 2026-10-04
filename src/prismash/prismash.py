@@ -72,7 +72,8 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     ApiService, API_DEFAULTS, API_FIELDS, validate_api,
                     api_enable_error,
                     validate_trap_host, validate_ssh, validate_role,
-                    SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
+                    validate_operator,
+                    SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT, GROUP_OPERATOR,
                     ROLE_ADMIN, ROLE_CGNAT)
 import routes
 import typedcfg
@@ -2981,6 +2982,10 @@ INSTALLER = os.environ.get("PRISMA_INSTALLER", "/usr/sbin/prisma-routing-install
 # refused to write.
 CAP_CGNAT = "cgnat"
 CAP_ALL = "configure"
+# The box's own system actions - upgrade, reboot, shutdown, dataplane restart
+# (#563): not a rank of configuration but a capability beside it, held by
+# root and by prisma-operator's members, whatever their role.
+CAP_OPERATOR = "operate"
 
 
 def capabilities():
@@ -2993,7 +2998,7 @@ def capabilities():
     it.
     """
     if os.geteuid() == 0:
-        return {CAP_ALL, CAP_CGNAT}
+        return {CAP_ALL, CAP_CGNAT, CAP_OPERATOR}
 
     names = set()
     try:
@@ -3014,6 +3019,8 @@ def capabilities():
         caps |= {CAP_ALL, CAP_CGNAT}
     if GROUP_CGNAT in names:
         caps.add(CAP_CGNAT)
+    if GROUP_OPERATOR in names:
+        caps.add(CAP_OPERATOR)
     return caps
 
 
@@ -3712,6 +3719,42 @@ def role_name(caps):
     return "read-only"
 
 
+#: The last line a detached run writes (doors.api_run_argv).
+RUN_EXIT = re.compile(r"^prisma-api-exit (\d+)$")
+
+
+def follow_run_log(path, started, wait=1800, out=None, sleep=time.sleep,
+                   clock=time.time):
+    """
+    Print a detached run's log (#563) as it grows, from the run that started
+    at `started` on, until its `prisma-api-exit <n>` line; that status, or
+    None when it did not finish within `wait` seconds. A log older than the
+    start is the previous run's, and is not this one's to print.
+    """
+    out = out or sys.stdout
+    shown = 0
+    deadline = clock() + wait
+    while clock() < deadline:
+        try:
+            if os.stat(path).st_mtime < started - 1:
+                raise FileNotFoundError(path)
+            with open(path) as f:
+                text = f.read()
+        except OSError:
+            sleep(0.5)
+            continue
+        lines = text.splitlines()
+        for line in lines[shown:]:
+            m = RUN_EXIT.match(line.strip())
+            if m:
+                return int(m.group(1))
+            out.write(line + "\n")
+        out.flush()
+        shown = len(lines)
+        sleep(0.5)
+    return None
+
+
 def running_from_live_medium():
     return os.path.exists(LIVE_SQUASHFS) and os.access(INSTALLER, os.X_OK)
 
@@ -3950,6 +3993,9 @@ TREE = {
         "role": ("what this account may change; without one it is read-only", {
             ROLE_ADMIN: ("routing, CGNAT, accounts and the box itself", None),
             ROLE_CGNAT: ("CGNAT configuration only", None)}),
+        # #563: beside the role, not one of them.
+        "operator": ("may upgrade, reboot, shut down and restart the "
+                     "dataplane; nothing else of root's", None),
         "ssh-key": ("an authorized public key, as it appears in "
                     # `[<comment>...]`: a comment is a value of any words,
                     # not the keyword `comment` the old hint spelled.
@@ -8714,6 +8760,13 @@ class Shell:
         """
         if cap in self.caps:
             return True
+        if cap == CAP_OPERATOR:
+            # Not a rank of the configuration: the role does not grant it, so
+            # naming the role would send the operator to the wrong statement.
+            self.err_prose(f"{what}: permission denied for this account",
+                           f"only root and members of {GROUP_OPERATOR} may "
+                           "('operator' in the account's user block)")
+            return False
         self.err(f"{what}: permission denied for a {role_name(self.caps)} "
                  "account")
         if not self.caps:
@@ -14700,7 +14753,7 @@ class Shell:
         reboot that did not happen has no half that did.
         """
         if rest == ["reboot"]:
-            if not self.require(CAP_ALL, "system reboot"):
+            if not self.require(CAP_OPERATOR, "system reboot"):
                 return
             print("restarting the box")
             self.say_system_cost()
@@ -14712,7 +14765,7 @@ class Shell:
                 self.err_prose("the box could not be restarted", *said)
             return
         if rest == ["shutdown"]:
-            if not self.require(CAP_ALL, "system shutdown"):
+            if not self.require(CAP_OPERATOR, "system shutdown"):
                 return
             print("shutting the box down")
             self.say_system_cost()
@@ -14724,15 +14777,59 @@ class Shell:
                 self.err_prose("the box could not be shut down", *said)
             return
         if rest[:1] == ["upgrade"]:
+            # The check (no version) is everybody's and goes the old way.
+            if rest[1:] and self.operator_on_host("upgrade", rest[1:]):
+                return
             if not self.on_the_host(["system"] + rest):
                 self.system_upgrade(rest[1:])
             return
         if rest == ["dataplane", "restart"]:
+            if self.operator_on_host("dataplane", []):
+                return
             if not self.on_the_host(["system"] + rest):
                 self.system_dataplane_restart()
             return
         self.err("usage: system reboot | shutdown | upgrade | dataplane "
                  "restart")
+
+    def operator_on_host(self, kind, args):
+        """
+        True when `system upgrade` / `system dataplane restart` (#563) was
+        handled here for an account that is not root, in the management
+        plane; False everywhere else, and the caller goes on as it always did.
+
+        Not through the broker's HOSTRUN: that runs the host's VTY AS THE
+        ACCOUNT, and both statements do root's work on the host (the
+        installer, systemctl on vpp.service), so a prisma-operator member
+        would get as far as the host and fail there. The door the API uses
+        for the same two actions (#558, phase 5) starts them as a transient
+        unit - root's, by being the door's - and that is the path here too:
+        the door lets root and prisma-operator's members in (doors.answer),
+        and this follows the run's log until its exit line, so the screen is
+        the one the host's VTY would have printed. An upgrade recreates the
+        container this session lives in: the session ends with it, which the
+        upgrade itself says before it happens.
+        """
+        if not os.environ.get("PRISMA_IN_MGMT") or os.geteuid() == 0:
+            return False
+        import doors
+        if not self.require(CAP_OPERATOR, doors.API_RUNS[kind]):
+            return True
+        version = args[0] if kind == "upgrade" and len(args) == 1 else ""
+        argv = doors.api_run_argv(kind, version)
+        if argv is None or len(args) > (1 if kind == "upgrade" else 0):
+            self.err("usage: system upgrade [<version>] | system dataplane "
+                     "restart")
+            return True
+        log = doors.api_run_log(kind)
+        started = time.time()
+        rc, out = self.sys._run(list(argv))
+        if rc != 0:
+            self.err_prose("the host would not start it",
+                           *[l for l in out.splitlines() if l.strip()])
+            return True
+        follow_run_log(log, started)
+        return True
 
     def system_dataplane_restart(self):
         """
@@ -14753,7 +14850,7 @@ class Shell:
         xdp-ens20, the tuner would claim it under that name, and the
         configuration written for ens20 would find no interface.
         """
-        if not self.require(CAP_ALL, "system dataplane restart"):
+        if not self.require(CAP_OPERATOR, "system dataplane restart"):
             return
         hot = sorted(hot_cards())
         print("restarting the dataplane")
@@ -14783,6 +14880,24 @@ class Shell:
         print("the dataplane is starting; 'show interface' says when it "
               "forwards")
 
+    def newest_release(self):
+        """
+        latest_release(), from wherever this VTY can reach the releases: the
+        box itself on the host, and the host's VTY through a door from the
+        management plane (#563), whose network ends at the backplane - every
+        account's check failed there with a name-resolution error, root's
+        included, which is what the API's Upgrade check met on 0.149.25.
+        """
+        if not os.environ.get("PRISMA_IN_MGMT"):
+            return latest_release()
+        rc, out = self.sys._run(list(doors.UPGRADE_CHECK_ARGV))
+        m = re.search(r"^newest published: (\S+)", out or "", re.M)
+        if m:
+            return m.group(1), ""
+        said = " ".join(l.strip() for l in (out or "").splitlines()
+                        if l.strip() and not l.startswith("this box runs"))
+        return None, said or f"the host's check exited {rc} and said nothing"
+
     def system_upgrade(self, args):
         """
         `system upgrade [<version>]` (#440): a release, from where the box can
@@ -14805,11 +14920,12 @@ class Shell:
         slow one. The terminal would send SIGINT to `upgrade` too, so it is
         ignored in both, by sigint_ignored().
         """
-        if not self.require(CAP_ALL, "system upgrade"):
-            return
         mine = prisma_routing_version()
         if not args:
-            newest, why = latest_release()
+            # The CHECK changes nothing, so every account may ask it (#563):
+            # the capability is for taking the box to another release, not
+            # for knowing which ones exist.
+            newest, why = self.newest_release()
             print(f"this box runs: {mine}")
             if newest is None:
                 self.err_prose("the newest release could not be read", why)
@@ -14818,6 +14934,8 @@ class Shell:
             if version_tuple(newest) and version_tuple(mine) \
                     and version_tuple(newest) > version_tuple(mine):
                 print_prose(f"'system upgrade {newest}' takes this box to it")
+            return
+        if not self.require(CAP_OPERATOR, "system upgrade"):
             return
         if len(args) != 1 or version_tuple(args[0]) is None:
             self.err("usage: system upgrade [<version>], as in "
@@ -16925,6 +17043,14 @@ class Shell:
         elif w[:2] == ["no", "ssh-key"] and len(w) > 2:
             key = " ".join(w[2:])
             u.keys = [k for k in u.keys if k != key and not k.startswith(key)]
+        elif w == ["operator"]:
+            why = validate_operator(u.name)
+            if why:
+                self.err_prose(*why)
+            else:
+                u.operator = True
+        elif w == ["no", "operator"]:
+            u.operator = False
         elif w[:2] == ["no", "role"]:
             why = validate_role(u.name, "")
             if why:

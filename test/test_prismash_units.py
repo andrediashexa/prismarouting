@@ -322,7 +322,8 @@ BOTH = {prismash.CAP_ALL, prismash.CAP_CGNAT}
 users = _Group("users", 100)
 admin = _Group(system.GROUP_ADMIN, 1001, ["alice"])
 cgnat = _Group(system.GROUP_CGNAT, 1002, ["bob"])
-check(caps_as(0, "root", [users], 0) == BOTH, "root has both")
+check(caps_as(0, "root", [users], 0) == BOTH | {prismash.CAP_OPERATOR},
+      "root has both, and the system actions (#563)")
 check(caps_as(1000, "alice", [users, admin, cgnat], 100) == BOTH,
       "a member of prisma-admin has both")
 check(caps_as(1000, "bob", [users, admin, cgnat], 100)
@@ -883,7 +884,8 @@ def shell(api=None, dp=None, frr=None, caps=None, runner=None, running=None):
     groups, and left alone every privileged box here is refused first.
     """
     sh = prismash.Shell()
-    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT} if caps is None else caps
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT, prismash.CAP_OPERATOR} \
+        if caps is None else caps
     # A box on the installer's name (#526), not the machine running this.
     sh._prompt_name = prismash.HOSTNAME_DEFAULT
     sh.api = api or RecApi()
@@ -4339,7 +4341,7 @@ def frr_stub(shows=None, available=True):
 
 def shell(dp=None, api=None, frr=None, running=None):
     sh = prismash.Shell()
-    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT, prismash.CAP_OPERATOR}
     sh._prompt_name = prismash.HOSTNAME_DEFAULT       # not this machine's (#526)
     sh.dp = dp or Dp()
     sh.api = api or Api()
@@ -9068,6 +9070,88 @@ finally:
     if _mg is not None:
         os.environ["PRISMA_IN_MGMT"] = _mg
 ok("show system uptime: each clock where it lives, the boot's reason only as recorded")
+
+print("=== an operator's upgrade and restart, detached (#563) ===")
+_d = tempfile.mkdtemp()
+_log = os.path.join(_d, "upgrade.log")
+_t = [1000.0]
+def _clock():
+    return _t[0]
+def _sleep(n):
+    _t[0] += n
+    if _t[0] > 1001.2 and not os.path.exists(_log):
+        with open(_log, "w") as _f:
+            _f.write("checking the release\nupgraded to 0.149.26\n"
+                     "prisma-api-exit 0\n")
+        os.utime(_log, (1001.5, 1001.5))
+_out = io.StringIO()
+_rc = prismash.follow_run_log(_log, 1000.0, wait=30, out=_out, sleep=_sleep,
+                              clock=_clock)
+check(_rc == 0 and _out.getvalue() == "checking the release\n"
+      "upgraded to 0.149.26\n",
+      f"follow_run_log(): the run's lines, then its status: {_rc} "
+      f"{_out.getvalue()!r}")
+with open(_log, "w") as _f:
+    _f.write("an older run\nprisma-api-exit 1\n")
+os.utime(_log, (10.0, 10.0))
+_t[0] = 2000.0
+check(prismash.follow_run_log(_log, 2000.0, wait=3, out=io.StringIO(),
+                              sleep=lambda n: _t.__setitem__(0, _t[0] + n),
+                              clock=_clock) is None,
+      "and a log older than the start is not this run's: None at the deadline")
+_mg2 = os.environ.pop("PRISMA_IN_MGMT", None)
+_sh = shell()
+_sh.caps = {prismash.CAP_OPERATOR}
+check(_sh.operator_on_host("upgrade", ["0.149.26"]) is False,
+      "Shell.operator_on_host(): outside the management plane it hands back")
+os.environ["PRISMA_IN_MGMT"] = "1"
+_asked = []
+_sh.sys = prismash.System(runner=lambda argv, **kw: (_asked.append(list(argv))
+                                                    or (0, "")))
+_real = prismash.follow_run_log
+prismash.follow_run_log = lambda path, started, **kw: 0
+try:
+    _rv, _text = driven(lambda: _sh.operator_on_host("upgrade", ["0.149.26"]))
+finally:
+    prismash.follow_run_log = _real
+    if _mg2 is None:
+        os.environ.pop("PRISMA_IN_MGMT", None)
+    else:
+        os.environ["PRISMA_IN_MGMT"] = _mg2
+check(_rv is True and _asked == [list(prismash.doors.api_run_argv(
+    "upgrade", "0.149.26"))],
+      f"inside it, a non-root operator starts the detached door: {_asked}")
+
+print("=== the upgrade check, from the management plane (#563) ===")
+_mg3 = os.environ.get("PRISMA_IN_MGMT")
+os.environ["PRISMA_IN_MGMT"] = "1"
+try:
+    _asked = []
+    _sh = shell()
+    _sh.caps = set()                      # read-only, and not an operator
+    _sh.sys = prismash.System(runner=lambda argv, **kw: (
+        _asked.append(list(argv)) or
+        (0, "this box runs: 0.149.25 (4eb95cc2)\nnewest published: 0.149.26\n")))
+    check(_sh.newest_release() == ("0.149.26", "")
+          and _asked == [list(prismash.doors.UPGRADE_CHECK_ARGV)],
+          f"Shell.newest_release() reads it through the host's VTY: {_asked}")
+    _rv, _text = driven(_sh.system_upgrade, [])
+    check("newest published: 0.149.26" in _text and "permission" not in _text,
+          f"and the check is every account's, a read-only one's too: {_text!r}")
+    _rv, _text = driven(_sh.system_upgrade, ["0.149.26"])
+    check("permission denied for this account" in _text,
+          f"while the upgrade itself is not: {_text!r}")
+    _sh.sys = prismash.System(runner=lambda argv, **kw: (
+        1, "this box runs: x\nerror: the newest release could not be read\n"
+           "    no route\n"))
+    _n, _why = _sh.newest_release()
+    check(_n is None and "no route" in _why,
+          f"a host that cannot read it either says why: {_why!r}")
+finally:
+    if _mg3 is None:
+        os.environ.pop("PRISMA_IN_MGMT", None)
+    else:
+        os.environ["PRISMA_IN_MGMT"] = _mg3
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

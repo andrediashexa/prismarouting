@@ -85,7 +85,31 @@ Duas capacidades, mapeadas em **grupos do sistema** — não num banco de contas
 
 `root` tem as duas, porque root fala com o socket do dataplane diretamente e fingir o contrário seria teatro.
 
-Uma coisa que `prisma-admin` **não** faz hoje: reiniciar ou desligar a caixa, nem aplicar uma versão nova. `system reboot`, `system shutdown` e `system upgrade` são oferecidos a quem tem o papel, mas a caixa só executa o reinício para `root`, e a appliance não instala nada que conceda isso a outra conta — uma conta `prisma-admin` lê o aviso do que custa e recebe a recusa. Hoje, quem reinicia e atualiza a caixa pela VTY é `root`.
+Uma coisa que nenhum papel faz: reiniciar ou desligar a caixa, aplicar uma versão nova ou reiniciar o dataplane. Essas quatro ações — `system reboot`, `system shutdown`, `system upgrade <versão>` e `system dataplane restart` — são do `root` e de quem tem `**operator**` (desde a 0.149.26). Veja [O operador: reinício e atualização sem root](#o-operador-reinicio-e-atualizacao-sem-root).
+
+### O operador: reinício e atualização sem root
+
+`operator` é uma linha no bloco da conta, **ao lado** do papel, e não um papel a mais. Ela coloca a conta no grupo `prisma-operator`, que libera exatamente as quatro ações de sistema e nada mais do que o root faz: nem shell, nem gerenciar contas.
+
+```
+configure
+ user prisma-web
+  role administrator
+  operator
+  exit
+ commit
+```
+
+* Um `administrator` **não** é operador só por ser administrador; uma conta somente leitura de um NOC **pode** ser quem reinicia a caixa.
+* `no operator` tira de novo. O `root` não aceita a linha: ele já pode tudo isso por ser root.
+* É um grupo do sistema, como os papéis: desativar a conta no sistema tira a permissão junto.
+* O grupo `prisma-operator` é criado pelo primeiro commit que dá `operator` a alguém. A partir da 0.150.0 o instalador já o cria.
+
+Quem não tem `operator` recebe a recusa antes de qualquer coisa acontecer, com o motivo e o grupo que libera a ação: `prisma-operator`.
+
+A **consulta** de versões — `system upgrade` sem versão, que só diz qual versão a caixa roda e qual é a mais nova publicada — não muda nada, então **qualquer conta** pode fazer. Ela é lida pelo sistema da caixa, porque a rede da VTY termina no backplane e não alcança o site de releases; até a 0.149.25 essa consulta falhava ali para todo mundo.
+
+Na API, `WhoAmI` diz `can_operate`, e as contas lidas por `GetConfig` trazem `operator`.
 
 As capacidades são lidas da participação em grupos **no momento em que a VTY inicia**, e nunca de algo que o programa guarde: a resposta precisa ser a que o sistema daria, senão desprovisionar uma conta aqui não a desprovisiona de fato.
 
@@ -148,7 +172,9 @@ Mídias anteriores à **0.37.0** não instalavam o componente que atende essa ch
 |-----------------|--------------------|
 | Pools, `cgnat inside`/`cgnat outside` nas interfaces, timeouts, limites, bypass, forwards, logging | `prisma-cgnat`     |
 | Todo o resto: roteamento, endereços e demais ajustes de interface, SSH, contas, SNMP, DNS, `system` (placas, núcleos, memória) e a memória do CGNAT (`nat` > `cgnat` > `memory`), que é um ajuste da máquina | `prisma-admin`     |
-| `start shell`, `install`, `system reboot`, `system shutdown`, `system upgrade`, `system dataplane restart` | `prisma-admin` (reinício e atualização: na prática, `root`) |
+| `start shell`, `install` | `prisma-admin`     |
+| `system reboot`, `system shutdown`, `system upgrade <versão>`, `system dataplane restart` | `root` ou `operator` (`prisma-operator`), qualquer que seja o papel |
+| `system upgrade` sem versão (a consulta) | qualquer conta, inclusive somente leitura |
 | `show`, `ping`, `traceroute`, `mtr` | qualquer conta, inclusive somente leitura |
 
 ## Invocando o prismash

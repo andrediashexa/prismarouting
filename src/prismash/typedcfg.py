@@ -991,7 +991,8 @@ def users_typed(cfg):
     """The accounts: name, role ("" is read only), how many SSH keys, and
     whether a password is set - never the hash, never a key."""
     return [{"name": n, "role": u.role, "ssh_keys": len(u.keys),
-             "password_set": bool(u.password)}
+             "password_set": bool(u.password),
+             "operator": bool(getattr(u, "operator", False))}
             for n, u in sorted(cfg.users.items())]
 
 

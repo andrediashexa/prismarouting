@@ -27,6 +27,27 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.26 - an operator may upgrade and reboot without root (#563)
+
+* **Contract:** additive. `prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`.
+* **`WhoAmIResponse.can_operate`** (5): the account may run SystemService's
+  Upgrade, Reboot, Shutdown and RestartDataplane - root, or a member of
+  `prisma-operator`. Independent of `role` and of `can_configure`.
+* **`UserConfig.operator`** (5) in GetConfig's accounts: the account has
+  `operator` in its user block.
+* **How prisma-web's account gets it:** the box's administrator (root) adds
+  `operator` to the account's user block and commits:
+  `user prisma-web` / `role administrator` / `operator` / `exit`. From then
+  on SystemService no longer answers that account `PERMISSION_DENIED`.
+  An account without it still gets `PERMISSION_DENIED` with
+  `REASON_PERMISSION`, and the message names `prisma-operator`.
+* **The Upgrade CHECK** (`UpgradeRequest` with no version) is now every
+  account's and works: it is read by the host, because the management plane
+  cannot reach the releases. **Client workaround before 0.149.26:** none; on
+  0.149.25 the check failed with "the newest release could not be read" for
+  every account, root included.
+* **Lab box:** .166 is on 0.149.14.
+
 ## 0.149.25 - nothing out of the API's reach: the clears, the log live, the box (#558, phase 5)
 
 * **Contract:** additive. `prisma.proto` sha256 `7c924ccf4d961baaa7cea9f4d9fcf2ccea5b6773fff30a93ce8e698bde8db60f`.

@@ -179,9 +179,14 @@ check(T._kv({"b": 2, "a": 1}) == [{"key": "a", "value": "1"},
 print("=== accounts (users_typed, snmp_users_typed) ===")
 u = T.users_typed(cfg)
 check(u == [{"name": "ops", "role": "administrator", "ssh_keys": 1,
-             "password_set": False},
-            {"name": "viewer", "role": "", "ssh_keys": 0, "password_set": False}],
-      f"accounts: role, key count, password presence: {u}")
+             "password_set": False, "operator": False},
+            {"name": "viewer", "role": "", "ssh_keys": 0, "password_set": False,
+             "operator": False}],
+      f"accounts: role, key count, password presence, operator: {u}")
+cfg.users["viewer"].operator = True
+check(T.users_typed(cfg)[1]["operator"] is True,
+      "the system actions beside the role are read typed (#563)")
+cfg.users["viewer"].operator = False
 check(T.snmp_users_typed(cfg) == [{"name": "mon", "auth_protocol": "sha",
                                    "priv_protocol": "aes"}],
       "an SNMP user's protocols, not its passphrases")
