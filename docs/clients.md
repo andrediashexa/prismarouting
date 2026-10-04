@@ -27,6 +27,23 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.149.33 - a restart that came back is reported as one
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).
+* **Known bug on 0.149.32:** `RestartDataplane` can answer
+  `FAILED_PRECONDITION`, `REASON_APPLY_FAILED` ("the saved configuration did
+  not load onto the restarted dataplane") while the box actually came back
+  whole - the load only failed while FRR was still starting, and loaded a
+  few seconds later. **Client workaround on 0.149.32:** after such an
+  answer, confirm with `GetVersion` / `GetSystem` (and `GetRunning`) before
+  showing a failure.
+* **Fixed (#564):** from 0.149.33 the restart waits for the configuration to
+  load, retrying for up to 180 s, and reports failure only when it never
+  does. `RestartDataplane` can therefore take up to about four minutes to
+  answer; set the call's deadline accordingly (the server's own wait is
+  300 s).
+* **Lab box:** .166 is on 0.149.32.
+
 ## 0.149.32 - a dataplane restart keeps the cards' names
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).

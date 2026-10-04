@@ -85,9 +85,18 @@ if [ "\$*" = "restart prisma-routing-tune.service" ] && [ -e "$S/tunewrites" ]; 
     done
     echo "}"; } > "$R/etc/vpp/startup.conf"
 fi
-if [ "\$*" = "start prisma-routing.service" ] && [ -e "$S/loadneeds" ]; then
-  grep -q "name \$(cat "$S/loadneeds")\$" "$R/etc/vpp/startup.conf" || exit 1
+if [ "\$*" = "start prisma-routing.service" ]; then
+  if [ -e "$S/loadneeds" ]; then
+    grep -q "name \$(cat "$S/loadneeds")\$" "$R/etc/vpp/startup.conf" || exit 1
+  fi
+  # #564: a load that fails its first tries (FRR still starting), then loads.
+  if [ -s "$S/loadfails" ]; then
+    n=\$(cat "$S/loadfails")
+    [ "\$n" -gt 0 ] && { echo \$((n - 1)) > "$S/loadfails"; exit 1; }
+  fi
+  : > "$S/loaded"; exit 0
 fi
+[ "\$*" = "is-active --quiet prisma-routing.service" ] && { [ -e "$S/loaded" ]; exit \$?; }
 exit 0
 EOF
 cat > "$T/giveback" <<EOF
@@ -100,6 +109,7 @@ echo "udevadm \$*" >> "$S/calls"
 EOF
 chmod +x "$T/ip" "$T/vppctl" "$T/tune" "$T/systemctl" "$T/udevadm" "$T/giveback"
 HC() {
+  PRISMA_SLEEP=: PRISMA_LOAD_WAIT=30 PRISMA_LOAD_RETRY=10 \
   PRISMA_ROOT=$R PRISMA_IP=$T/ip PRISMA_VPPCTL=$T/vppctl PRISMA_TUNE=$T/tune \
   PRISMA_SYSTEMCTL=$T/systemctl PRISMA_UDEVADM=$T/udevadm PRISMA_GIVE_BACK=$T/giveback \
   sh "$REPO/appliance/prisma-hot-card" "$@"
@@ -193,7 +203,7 @@ echo "=== restart-dataplane: stop, hand the cards back, tune, start ==="
 fresh; HC add eth9 >/dev/null; : > "$S/calls"
 OUT=$(HC restart-dataplane); RC=$?
 _seq=$(grep -E "^systemctl|^giveback|name eth9$" "$S/calls" | tr '\n' '|')
-[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl start prisma-routing.service|systemctl cat prisma-routing-api-proxy.socket|" ] \
+[ $RC = 0 ] && [ "$_seq" = "systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl is-active --quiet prisma-routing.service|systemctl start prisma-routing.service|systemctl cat prisma-routing-api-proxy.socket|" ] \
   && ok "stopped, every claimed card given back, renamed back, tuned, started, replayed" \
   || bad "the sequence (rc=$RC): $_seq"
 ! called "restart prisma-routing-containers" \
@@ -263,6 +273,30 @@ OUT=$(HC restart-dataplane); RC=$?
   && ok "the restart unit checks its own result: rc 1 and the reason in its log" \
   || bad "a configuration that did not load (rc=$RC): $OUT"
 rm -f "$S/loadneeds"
+
+echo "=== #564: a load that fails while FRR starts, then loads, is a success ==="
+# 10.40.200.166, 0.149.32: the restart said "did not load" and the API
+# answered apply_failed; the load had only failed its first tries, FRR still
+# starting, and loaded on a later one - the box was whole.
+fresh; : > "$S/calls"; echo 2 > "$S/loadfails"
+OUT=$(HC restart-dataplane); RC=$?
+_tries=$(grep -c "^systemctl start prisma-routing.service$" "$S/calls")
+[ $RC = 0 ] && ! said "did not load onto" && [ "$_tries" = 3 ] \
+  && said "did not load yet; trying again" \
+  && ok "two refusals, then the load: success, after 3 tries" \
+  || bad "a load that came on the third try (rc=$RC, tries=$_tries): $OUT"
+fresh; : > "$S/calls"; echo 99 > "$S/loadfails"
+OUT=$(HC restart-dataplane); RC=$?
+_tries=$(grep -c "^systemctl start prisma-routing.service$" "$S/calls")
+[ $RC = 1 ] && said "did not load onto the restarted dataplane" && [ "$_tries" = 4 ] \
+  && ok "a load that never comes: failure, said, after the bound (4 tries in 30 s)" \
+  || bad "a load that never came (rc=$RC, tries=$_tries): $OUT"
+fresh; : > "$S/calls"; : > "$S/loaded"; echo 99 > "$S/loadfails"
+OUT=$(HC restart-dataplane); RC=$?
+[ $RC = 0 ] && ! called "start prisma-routing.service" \
+  && ok "loaded already by another start (the watcher): success, not started again" \
+  || bad "an already active configuration (rc=$RC): $(cat "$S/calls")"
+rm -f "$S/loadfails" "$S/loaded"
 
 echo "=== the paths it runs are the paths install.sh writes ==="
 # Measured on a KVM guest: the default pointed at /usr/lib/prisma-routing/

@@ -287,13 +287,38 @@ restart_dataplane() {
   # what replays the saved configuration onto the dataplane.
   # The restart checks its own result (#564): the saved configuration has to
   # load onto the dataplane it started, or the box is up with nothing on it.
-  if ! $SYSTEMCTL start prisma-routing.service; then
+  if ! config_loaded; then
     rc=1
-    say "error: the saved configuration did not load onto the restarted dataplane;"
-    say "    'journalctl -u prisma-routing' on the box says why"
+    say "error: the saved configuration did not load onto the restarted dataplane"
+    say "    in ${LOAD_WAIT} s; 'journalctl -u prisma-routing' on the box says why"
   fi
   api_socket_back
   return $rc
+}
+
+# THE CONFIGURATION, LOADED - OR GIVEN UP ON (#564). A first refusal is not the
+# answer: measured on 10.40.200.166 (0.149.32) the load failed while FRR was
+# still starting - "1 static route(s) need mgmtd, which is not running" -
+# twice, and loaded on a later try at 03:41:56; the restart had already
+# reported "did not load" and the API answered apply_failed for a box that
+# came back whole. So the start is tried again every LOAD_RETRY seconds (the
+# unit has no Restart= of its own, and a few tries stay under its start
+# limit), and the unit's state decides, for at most LOAD_WAIT seconds: active
+# from any start - this one, or the watcher's (#548) - is loaded; still not
+# active at the end is the real failure.
+LOAD_WAIT=${PRISMA_LOAD_WAIT:-180}
+LOAD_RETRY=${PRISMA_LOAD_RETRY:-10}
+SLEEP=${PRISMA_SLEEP:-sleep}
+config_loaded() {
+  waited=0
+  while :; do
+    $SYSTEMCTL is-active --quiet prisma-routing.service && return 0
+    $SYSTEMCTL start prisma-routing.service 2>/dev/null && return 0
+    [ "$waited" -ge "$LOAD_WAIT" ] && return 1
+    say "the saved configuration did not load yet; trying again in ${LOAD_RETRY} s"
+    $SLEEP "$LOAD_RETRY"
+    waited=$((waited + LOAD_RETRY))
+  done
 }
 
 # THE API'S SOCKET, BACK (#564). While the containers are down every client
