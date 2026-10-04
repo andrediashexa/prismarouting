@@ -138,7 +138,10 @@ set -- "$@" -c "router bgp 65000" -c "bgp router-id 10.0.0.1" \
 [ "$MODE" = off ] || set -- "$@" -c "neighbor 10.0.0.2 bfd profile lab"
 ST="203.0.113.0/24 next-hop 10.0.0.2"
 [ "$MODE" = off ] || ST="$ST bfd profile lab"
-set -- "$@" -c exit -c "router static" -c "$ST" -c exit -c commit
+# And a default route with no BFD, the shape #570 was found on: every removal
+# below must leave it where it is.
+set -- "$@" -c exit -c "router static" -c "$ST" \
+  -c "0.0.0.0/0 next-hop 10.0.0.2" -c exit -c commit
 CFG=$($HX "$@" 2>&1)
 echo "$CFG" | tail -4 | sed 's/^/  /'
 expect_in "the VTY commits it" "commit complete" "$CFG"
@@ -227,6 +230,70 @@ wait_for 60 in_fib 203.0.113.0/24
 expect "the static route is back in the dataplane" in_fib 203.0.113.0/24
 wait_for 90 in_fib 198.51.100.0/24
 expect "and the BGP route" in_fib 198.51.100.0/24
+
+# ---------------- taking it away again (#570) ----------------
+# On 10.40.200.166 (0.150.8) `no bfd` and `no peer ...` failed `commit check`:
+# the VTY deleted the block's header line and left its body behind, and FRR
+# refused the file. Each removal here has to commit, leave FRR without what
+# was removed, and leave the routes - the default one included - in the
+# dataplane's table.
+if [ "$MODE" != off ]; then
+  echo
+  echo "=========== and each piece of it taken away (#570) ==========="
+  # In FRR's table and not the dataplane's: this lab's container has a
+  # kernel default route of docker's at distance 0, so the static default is
+  # never FRR's best and never reaches the FIB here. What #570 asked is
+  # whether the commit withdraws it, which FRR's table answers.
+  default_via() { vtysh -c "show ip route 0.0.0.0/0" 2>/dev/null \
+                    | grep -A6 'Known via "static"' | grep -q "10.0.0.2"; }
+  routes_intact() {  # <what was just removed>
+    expect "after $1: the static default route is still in FRR" default_via
+    expect "after $1: and so is the static route" in_fib 203.0.113.0/24
+  }
+  frr_run() { vtysh -c 'show running-config' 2>/dev/null; }
+
+  OUT=$($HX -c configure -c "router bgp 65000" \
+            -c "no neighbor 10.0.0.2 bfd" -c exit -c commit 2>&1)
+  expect_in "BFD off a BGP neighbour commits" "commit complete" "$OUT"
+  expect_not_in "and FRR's neighbour has no bfd left, profile line included" \
+    "neighbor 10.0.0.2 bfd" "$(frr_run)"
+  routes_intact "the neighbour's bfd"
+
+  OUT=$($HX -c configure -c "router static" \
+            -c "203.0.113.0/24 next-hop 10.0.0.2" -c exit -c commit 2>&1)
+  expect_in "BFD off a static route (typed again without it) commits" \
+    "commit complete" "$OUT"
+  expect_in "and FRR holds the route without bfd" \
+    "ip route 203.0.113.0/24 10.0.0.2" "$(frr_run | grep '^ip route 203')"
+  expect_not_in "and only that once" "bfd profile lab" \
+    "$(frr_run | grep '^ip route 203')"
+  routes_intact "the route's bfd"
+
+  OUT=$($HX -c configure -c bfd -c "no peer 10.0.0.2 interface vppwan0" \
+            -c exit -c commit 2>&1)
+  expect_in "a peer taken away commits" "commit complete" "$OUT"
+  expect_not_in "and FRR has no such session" \
+    "peer 10.0.0.2 interface vppwan0" "$(frr_run)"
+  expect_in "and the profile it used is still there" " profile lab" "$(frr_run)"
+  routes_intact "the peer"
+
+  OUT=$($HX -c configure -c bfd -c "no profile lab" -c exit -c commit 2>&1)
+  expect_in "a profile taken away commits" "commit complete" "$OUT"
+  expect_not_in "and FRR has no such profile" "profile lab" "$(frr_run)"
+  routes_intact "the profile"
+
+  OUT=$($HX -c configure -c bfd -c "profile again" -c "detect-multiplier 5" \
+            -c exit -c "peer 10.0.0.2 interface vppwan0" -c exit -c exit \
+            -c commit 2>&1)
+  expect_in "a new profile and peer commit" "commit complete" "$OUT"
+  OUT=$($HX -c configure -c "no bfd" -c commit 2>&1)
+  expect_in "the whole bfd block taken away commits" "commit complete" "$OUT"
+  # Not even an empty one: frr-reload re-opens the block to remove its
+  # sessions one by one, and the commit takes that leftover away.
+  expect_not_in "and FRR has no bfd block, not even an empty one" "bfd" \
+    "$(frr_run | grep -E '^bfd|^ peer|^ profile')"
+  routes_intact "the whole block"
+fi
 
 echo "  -- lab took $(( $(date +%s) - LAB_T0 )) s"
 verdict
