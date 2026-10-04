@@ -4,6 +4,7 @@ __pycache__/
 *.so
 .build/
 test/bpa_vectors.h
+test/bpa_nat64_vectors.h
 .build-vpp/
 # The released tree lab/upgrade.sh installs as the OLD side, when git inside
 # the build container cannot extract it itself - which is every run out of a

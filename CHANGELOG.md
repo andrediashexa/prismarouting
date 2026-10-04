@@ -77,6 +77,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **NAT64, phase 1: the arithmetic of a pool with an IPv6 inside.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  Stateful NAT64 is the CGNAT with an IPv6 inside, taken back into scope by
+  the maintainer. `src/plugins/bpa/bpa_nat64.h` holds the parts that are pure
+  arithmetic: the subscriber index over inside IPv6 prefixes and a subscriber
+  prefix length (the delegated prefix, never a /128), with the 2^28 capacity
+  rule; RFC 6052 embedding and extraction at all six prefix lengths, the u
+  octet kept zero; RFC 6052 3.1's refusal of non-global IPv4 under the
+  Well-Known Prefix; and the 24-byte inside session key. `ref/bpa_model.py`
+  computes the same from the specifications and `test/test_bpa_nat64.c`
+  compares them, RFC 6052's own section 2.4 table included. No datapath uses
+  it yet and the VTY accepts no NAT64 pool, so nothing is configurable and
+  inert; the translation is phase 2, and the plan is on the issue.
+
 ### Fixed
 
 ## 0.149.33 - a dataplane restart reports what really happened

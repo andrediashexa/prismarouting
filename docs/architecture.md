@@ -2326,3 +2326,10 @@ out: with the right address and the wrong session.
 What is still missing, and why each item matters, is in
 [roadmap.md](roadmap.md) — including the items that turn out to be already
 satisfied by this design rather than needing to be built.
+
+## NAT64 (#485, in progress)
+
+A pool whose inside is IPv6 is being built in phases; what exists and what
+each phase adds is in [docs/nat64.md](nat64.md). Phase 1 is arithmetic only
+(`src/plugins/bpa/bpa_nat64.h`): the subscriber index over IPv6 prefixes, RFC
+6052 and the 24-byte inside key. No datapath uses it yet.

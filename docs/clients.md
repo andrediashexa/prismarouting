@@ -27,6 +27,15 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## Next (0.150.x) - NAT64 phase 1 (#485)
+
+* **Contract:** unchanged.
+* **Nothing an API client sees.** The NAT64 pool's arithmetic is in the
+  dataplane's code, but no NAT64 pool can be configured yet. When one can
+  (phase 2), the typed pool in GetConfig/SetConfig and GetSchema gain its
+  fields - IPv6 inside prefixes, the subscriber prefix length, the NAT64
+  prefix - announced in that release's entry.
+
 ## 0.149.33 - a restart that came back is reported as one
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3f8ac0fc80f46252af5a36829b142201d6054af82f0ac0254993f2bd7e4268c8`).

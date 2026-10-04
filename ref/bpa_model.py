@@ -631,3 +631,93 @@ def bitmap_walk(sessions: int, block_size: int, max_blocks: int,
         "probes": probes,
         "probe_ns": probes * 2.3,
     }
+
+
+# ---------------------------------------------------------------------------
+# NAT64 (#485, phase 1): the subscriber index over IPv6 prefixes, and RFC 6052.
+# Written from the specifications, not from src/plugins/bpa/bpa_nat64.h:
+# make test compares the two through test/bpa_nat64_vectors.h.
+# ---------------------------------------------------------------------------
+
+NAT64_LENGTHS = (32, 40, 48, 56, 64, 96)
+NAT64_MAX_SUBSCRIBERS = 1 << 28
+
+
+def rfc6052_embed(prefix: str, ip4: str) -> str:
+    """RFC 6052 2.2: the IPv4 address under the NAT64 prefix, bits 64-71 zero."""
+    net = ipaddress.IPv6Network(prefix, strict=True)
+    if net.prefixlen not in NAT64_LENGTHS:
+        raise BpaError(f"RFC 6052 defines no /{net.prefixlen} prefix")
+    v4 = int(ipaddress.IPv4Address(ip4))
+    bits = bin(int(net.network_address))[2:].zfill(128)[:net.prefixlen]
+    v4bits = bin(v4)[2:].zfill(32)
+    out = list(bits)
+    i = 0
+    while i < 32:
+        if len(out) == 64:          # the u octet, reserved and zero
+            out.extend("0" * 8)
+        out.append(v4bits[i])
+        i += 1
+    out.extend("0" * (128 - len(out)))
+    return str(ipaddress.IPv6Address(int("".join(out), 2)))
+
+
+def rfc6052_extract(addr: str, length: int) -> str:
+    if length not in NAT64_LENGTHS:
+        raise BpaError(f"RFC 6052 defines no /{length} prefix")
+    bits = bin(int(ipaddress.IPv6Address(addr)))[2:].zfill(128)
+    # drop the u octet (bits 64-71); the IPv4 bits then run on from the
+    # prefix length, which past the u octet is 8 positions earlier
+    rest = bits[:64] + bits[72:]
+    start = length if length <= 64 else length - 8
+    return str(ipaddress.IPv4Address(int(rest[start:start + 32], 2)))
+
+
+class AddrSet6:
+    """
+    Inside IPv6 prefixes cut into subscriber prefixes of one length, as a
+    dense index - AddrSet's rules (sorted, adjacent merged, overlap refused)
+    over subscriber prefixes instead of addresses.
+    """
+
+    def __init__(self, prefixes, sub_len: int):
+        if not prefixes:
+            raise BpaError("empty address set")
+        if not 32 <= sub_len <= 128:
+            raise BpaError(f"subscriber length /{sub_len} outside /32-/128")
+        self.sub_len = sub_len
+        parsed = []
+        for p in prefixes:
+            n = ipaddress.IPv6Network(p, strict=True)
+            if n.prefixlen > sub_len:
+                raise BpaError(f"{p} is longer than a /{sub_len} subscriber")
+            parsed.append((int(n.network_address) >> (128 - sub_len),
+                           1 << (sub_len - n.prefixlen)))
+        parsed.sort()
+        for (b1, c1), (b2, _) in zip(parsed, parsed[1:]):
+            if b2 < b1 + c1:
+                raise BpaError("overlapping prefixes")
+        self.ranges, idx = [], 0
+        for base, cnt in parsed:
+            if self.ranges and self.ranges[-1][0] + self.ranges[-1][1] == base:
+                self.ranges[-1][1] += cnt
+            else:
+                self.ranges.append([base, cnt, idx])
+            idx += cnt
+            if idx > NAT64_MAX_SUBSCRIBERS:
+                raise BpaError(f"more than 2^28 subscribers ({idx}+)")
+        self.count = idx
+
+    def index_of(self, addr: str):
+        v = int(ipaddress.IPv6Address(addr)) >> (128 - self.sub_len)
+        for base, cnt, first in self.ranges:
+            if base <= v < base + cnt:
+                return first + (v - base)
+        return None
+
+    def prefix_of(self, idx: int):
+        for base, cnt, first in self.ranges:
+            if first <= idx < first + cnt:
+                v = (base + idx - first) << (128 - self.sub_len)
+                return str(ipaddress.IPv6Address(v))
+        return None
