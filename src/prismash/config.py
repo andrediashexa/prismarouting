@@ -901,6 +901,9 @@ class Pool:
         "initial-allocation": (1, 255 * 65536),
         "block-stride": (0, 65535),
         "reserve": (0, 65535),
+        # A NAT64 pool's subscriber, an IPv6 prefix of this length (#485):
+        # bpa_set6_build()'s own bounds.
+        "subscriber-length": (32, 128),
         "max-sessions": (0, 4294967295),
         "max-session-rate": (0, 4294967295),
         "timeout": (1, 4294967295),
@@ -1098,6 +1101,11 @@ class Pool:
         # reason, which is what puts it in pool_replace and sends it through
         # the re-mapping warning at commit (issue #23).
         self.block_reserve = 0
+        # A NAT64 pool (#485): its inside is IPv6, one subscriber is a prefix
+        # of this length, and the IPv4 destinations live under nat64_prefix
+        # - "" is the well-known 64:ff9b::/96. Both change the mapping.
+        self.subscriber_length = 0
+        self.nat64_prefix = ""
         # TCP MSS clamp: "" is off, "auto" derives it from the interface
         # MTUs, anything else is the number of bytes.
         self.tcp_mss = ""
@@ -1143,6 +1151,14 @@ class Pool:
         """
         out = [f"cgnat pool {self.name}"]
         out += [f" prefix-inside {p}" for p in self.inside]
+        # Rendered with the prefix even when none was typed, because the
+        # dataplane prints the one it took and these lines are compared with
+        # its readback: a pool that said nothing would differ on every
+        # commit.
+        if self.subscriber_length:
+            out.append(f" subscriber-length {self.subscriber_length}")
+        if self.is_nat64:
+            out.append(f" nat64-prefix {self.nat64_prefix_eff}")
         out += [f" prefix-outside {p}" for p in self.outside]
         out.append(f" block-size {self.block_size}")
         if self.ports:
@@ -1205,6 +1221,10 @@ class Pool:
         parts = ["bpa pool", self.name]
         for p in self.inside:
             parts += ["inside", p]
+        if self.subscriber_length:
+            parts += ["subscriber-length", str(self.subscriber_length)]
+        if self.nat64_prefix:
+            parts += ["nat64-prefix", self.nat64_prefix]
         for p in self.outside:
             parts += ["outside", p]
         parts += ["block", self.block_size]
@@ -1278,12 +1298,7 @@ class Pool:
         for k, v in self.timeouts.items():
             timeouts[api_t[k]] = int(v)
 
-        alg = alg_set = 0
-        for name, bit in self.ALG_BITS.items():
-            if self.algs.get(name, name in self.ALG_DEFAULT_ON):
-                alg |= bit
-            if name in self.algs:
-                alg_set |= bit
+        alg, alg_set = self.alg_masks()
 
         return {
             "name": self.name,
@@ -1299,6 +1314,111 @@ class Pool:
             "util_alarm": int(self.util_alarm),
             "timeouts": timeouts,
         }
+
+    def alg_masks(self):
+        """
+        The two masks the dataplane stores: what is enabled, and what the
+        operator chose. Anything not chosen is left to bpa_pool_init(), so a
+        pool that says nothing about ALGs gets the documented defaults - except
+        a NAT64 pool, on which no ALG runs yet and which says so in both
+        (#485); its creation message carries no ALG at all.
+        """
+        if self.is_nat64:
+            return 0, sum(self.ALG_BITS.values())
+        alg = alg_set = 0
+        for name, bit in self.ALG_BITS.items():
+            if self.algs.get(name, name in self.ALG_DEFAULT_ON):
+                alg |= bit
+            if name in self.algs:
+                alg_set |= bit
+        return alg, alg_set
+
+    @property
+    def is_nat64(self) -> bool:
+        """An IPv6 inside is a NAT64 pool (#485)."""
+        return any(":" in p for p in self.inside)
+
+    NAT64_WKP = "64:ff9b::/96"
+
+    @property
+    def nat64_prefix_eff(self) -> str:
+        return self.nat64_prefix or self.NAT64_WKP
+
+    def nat64_fits(self):
+        """
+        Why this pool cannot be the NAT64 pool it says, or None: a tuple of
+        the verdict row and its prose, the way pool_prefixes_missing answers.
+
+        Of the finished pool, for block_fits()'s reason - `prefix-inside`,
+        `subscriber-length` and the rest may be typed in any order. What the
+        dataplane does not do with a NAT64 pool yet is
+        bpa_nat64_unsupported()'s list, in its order; refused there as well,
+        so this is the answer arriving before anything was applied.
+        """
+        v6 = [p for p in self.inside if ":" in p]
+        n = f"pool '{self.name}'"
+        if not v6:
+            if self.subscriber_length or self.nat64_prefix:
+                return (f"{n}: subscriber-length and nat64-prefix need an "
+                        "IPv6 inside",
+                        "they describe a NAT64 pool, whose prefix-inside is "
+                        "IPv6")
+            return None
+        if len(v6) != len(self.inside):
+            return (f"{n}: an inside is IPv4 or IPv6, not both",
+                    "a NAT64 pool and a NAT44 pool are two pools")
+        if not self.subscriber_length:
+            return (f"{n}: an IPv6 inside needs subscriber-length",
+                    "the prefix one subscriber holds, e.g. "
+                    "'subscriber-length 56'")
+        for p in v6:
+            if ipaddress.IPv6Network(p).prefixlen > self.subscriber_length:
+                return (f"{n}: {p} is longer than subscriber-length "
+                        f"{self.subscriber_length}", "")
+        if any(":" in p for p in self.outside):
+            return (f"{n}: prefix-outside is IPv4 on a NAT64 pool", "")
+        if self.mode != "deterministic":
+            return (f"{n}: a NAT64 pool is deterministic only for now",
+                    "a dynamic NAT64 pool is the next phase of #485")
+        unsupported = (
+            (self.block_reserve, "reserve"),
+            (self.max_blocks > 1, "max-blocks"),
+            (self.initial_ports, "initial-allocation"),
+            (self.block_stride, "block-stride"),
+            (self.forwards, "forward"),
+            (self.bypass_src or self.bypass_dst, "bypass"),
+            (self.tcp_mss, "tcp-mss"),
+            (self.vrf != "" or self.outside_vrf != "", "vrf"),
+            (any(self.algs.values()), "alg"),
+        )
+        for present, word in unsupported:
+            if present:
+                return (f"{n}: a NAT64 pool takes no {word} yet",
+                        "the first NAT64 release is deterministic, with no "
+                        "forwards, bypass, VRF, MSS clamp or ALG")
+        return None
+
+    def nat64_api_args(self) -> dict:
+        """
+        The pool as bpa_nat64_pool_add, the message a NAT64 pool is created
+        by (#485). Deleted, like any pool, through api_args(is_add=False).
+        """
+        a = self.api_args()
+        n64 = self.nat64_prefix or "::/0"
+        keep = ("name", "block_size", "port_min", "port_max", "policy",
+                "mode", "filter", "max_blocks", "initial_blocks",
+                "block_stride", "timeouts", "n_inside", "n_prefixes",
+                "prefixes")
+        out = {k: a[k] for k in keep}
+        out["subscriber_length"] = int(self.subscriber_length)
+        out["nat64_prefix"] = n64
+        return out
+
+    def add_message(self):
+        """(message, arguments) that create this pool on the dataplane."""
+        if self.is_nat64:
+            return "bpa_nat64_pool_add", self.nat64_api_args()
+        return "bpa_pool_add_del", self.api_args()
 
     def limits_api_args(self) -> dict:
         """Both bounds, always together: the device takes them as a pair."""
@@ -1339,17 +1459,7 @@ class Pool:
             parts = self.ports.replace("-", " ").split()
             if len(parts) == 2:
                 port_min, port_max = int(parts[0]), int(parts[1])
-        # Two masks, as the dataplane stores them: what is enabled, and what
-        # the operator actually chose. Anything not chosen is left to
-        # bpa_pool_init(), so a pool that says nothing about ALGs gets the
-        # documented defaults rather than "all off".
-        alg = alg_set = 0
-        for name, bit in self.ALG_BITS.items():
-            on = self.algs.get(name, name in self.ALG_DEFAULT_ON)
-            if on:
-                alg |= bit
-            if name in self.algs:
-                alg_set |= bit
+        alg, alg_set = self.alg_masks()
 
         api_t = {"udp": "udp", "icmp": "icmp", "tcp-syn": "tcp_syn",
                  "tcp-transitory": "tcp_transitory",
@@ -1904,6 +2014,70 @@ def prefix_error(what: str, value: str):
                 "a range here holds at most half the space, and a box meant "
                 "to translate nothing has no 'cgnat inside'")
     return None
+
+
+def prefix6_error(what: str, value: str):
+    """
+    None if `value` is an IPv6 network a NAT64 pool's inside can hold, else
+    why not - prefix_error's tuple, for prefix_error's reasons (#485).
+
+    The bounds are bpa_set6_build()'s: a length of 1-128, no host bits.
+    Whether the length fits the pool's subscriber-length is asked of the
+    finished pool, Pool.nat64_fits(), because either may be typed first.
+    """
+    if "/" not in value:
+        return (f"{what} '{value}': expected a prefix", "a prefix carries its "
+                "length, as in 2001:db8:1200::/40")
+    try:
+        ipaddress.IPv6Network(value, strict=True)
+    except ipaddress.AddressValueError:
+        return (f"{what} '{value}': not an IPv6 prefix", "")
+    except ipaddress.NetmaskValueError:
+        return (f"{what} '{value}': not a prefix length",
+                "a length is 1 to 128")
+    except ValueError:
+        try:
+            meant = ipaddress.IPv6Interface(value).network
+        except ValueError:
+            return (f"{what} '{value}': not an IPv6 prefix", "")
+        return (f"{what} '{value}': host bits are set",
+                f"the prefix this names is {meant}")
+    if ipaddress.IPv6Network(value).prefixlen == 0:
+        return (f"{what} '{value}': a /0 is every address", "")
+    return None
+
+
+#: RFC 6052 2.2's lengths; bpa_nat64_prefix_valid() is the dataplane's copy.
+NAT64_LENGTHS = (32, 40, 48, 56, 64, 96)
+
+
+def nat64_prefix_error(value: str):
+    """None if `value` is an RFC 6052 prefix, else why not (#485)."""
+    why = prefix6_error("nat64-prefix", value)
+    if why:
+        return why
+    net = ipaddress.IPv6Network(value)
+    if net.prefixlen not in NAT64_LENGTHS:
+        return (f"nat64-prefix '{value}': not an RFC 6052 length",
+                "RFC 6052 takes /32, /40, /48, /56, /64 or /96")
+    if (int(net.network_address) >> 56) & 0xff:
+        return (f"nat64-prefix '{value}': bits 64-71 must be zero",
+                "RFC 6052 2.2 keeps them for the u octet")
+    return None
+
+
+def canonical_prefix(value: str) -> str:
+    """
+    An IPv6 prefix in RFC 5952's form - the form the dataplane prints it
+    back in - and anything else as it was. Without it `2001:DB8::/32`
+    typed and `2001:db8::/32` read back are a difference on every commit.
+    """
+    if ":" not in value:
+        return value
+    try:
+        return str(ipaddress.IPv6Network(value, strict=True))
+    except ValueError:
+        return value
 
 
 def prefix_why(refusal) -> str:
@@ -3712,10 +3886,25 @@ class Config:
             return None
         side = POOL_PREFIX_WORDS.get(w[0])
         if side and len(w) > 1:
-            why = prefix_error(f"prefix-{side}", w[1])
+            # An IPv6 inside is a NAT64 pool (#485); an outside is IPv4 always.
+            if side == "inside" and ":" in w[1]:
+                why = prefix6_error(f"prefix-{side}", w[1])
+            else:
+                why = prefix_error(f"prefix-{side}", w[1])
             if why:
                 return prefix_why(why)
-            (pool.inside if side == "inside" else pool.outside).append(w[1])
+            (pool.inside if side == "inside" else pool.outside).append(
+                canonical_prefix(w[1]))
+        elif w[0] == "subscriber-length" and len(w) > 1:
+            why = Pool.check_number("subscriber-length", w[1])
+            if why:
+                return why
+            pool.subscriber_length = int(w[1])
+        elif w[0] == "nat64-prefix" and len(w) > 1:
+            why = nat64_prefix_error(w[1])
+            if why:
+                return prefix_why(why)
+            pool.nat64_prefix = canonical_prefix(w[1])
         elif w[0] == "block-size" and len(w) > 1:
             # NOT BOUNDED HERE, and that is the whole of #357. This function
             # is the reader for THREE things: a statement typed at the prompt,

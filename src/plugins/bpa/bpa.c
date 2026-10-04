@@ -580,6 +580,8 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
 
   pool_index = q[0];
   p = pool_elt_at_index (bm->pools, pool_index);
+  if (is_add && p->is_nat64)
+    return clib_error_return (0, "a NAT64 pool takes no forward yet");
 
   /*
    * Removing is identified by the public port and the protocol, and nothing
@@ -1447,6 +1449,23 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks,
     if (e)
       return e;
   }
+  /* A NAT64 pool refuses here what it refuses at creation (#485): this is
+   * the door every one of these settings reaches a live pool by. */
+  if (p->is_nat64)
+    {
+      bpa_pool_t probe = *p;
+      const char *why;
+
+      probe.max_blocks = max_blocks;
+      probe.initial_blocks = initial_blocks;
+      probe.alg = alg;
+      probe.tcp_mss = tcp_mss;
+      probe.tcp_mss_auto = tcp_mss_auto;
+      probe.block_stride = block_stride;
+      why = bpa_nat64_unsupported (&probe);
+      if (why)
+	return clib_error_return (0, "%s", why);
+    }
 
   /* Under the barrier: the datapath reads the filtering mode, the ALG mask and
    * the clamp on the packet path, and a half-applied set of them is a pool
@@ -1517,6 +1536,8 @@ bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
     }
 
   p = pool_elt_at_index (bm->pools, q[0]);
+  if (n && p->is_nat64)
+    return clib_error_return (0, "a NAT64 pool takes no bypass yet");
   vlib_worker_thread_barrier_sync (bm->vlib_main);
   if (is_dst)
     p->bypass_dst = built;

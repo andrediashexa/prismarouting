@@ -421,6 +421,10 @@ bpa_nat64_unsupported (const bpa_pool_t *cfg)
     return "a NAT64 pool takes no reserve yet";
   if (cfg->max_blocks > 1)
     return "a NAT64 pool takes no max-blocks yet";
+  if (cfg->initial_blocks > 1)
+    return "a NAT64 pool takes no initial-allocation yet";
+  if (cfg->block_stride)
+    return "a NAT64 pool takes no block-stride yet";
   if (cfg->statics)
     return "a NAT64 pool takes no forward yet";
   if (cfg->bypass_src.n_ranges || cfg->bypass_dst.n_ranges)

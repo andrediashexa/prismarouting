@@ -54,7 +54,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     is_static_route, static_route, static_route_key,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     _is_bundle, new_bundle, bundle_statement,
-                    prefix_error, prefix_why, address_error,
+                    prefix_error, prefix6_error, nat64_prefix_error,
+                    canonical_prefix, prefix_why, address_error,
                     text_error, text_why,
                     mac_error, mac_normal,
                     asn_error, asn_why, asn_note,
@@ -1628,6 +1629,8 @@ ARG_PREFIX = "<A.B.C.D/M>"
 #: operator the wrong thing about the one argument they were asking about
 #: (#557).
 ARG_PREFIX6 = "<X:X::X:X/M>"
+#: Either family: a pool's inside, IPv6 being a NAT64 pool (#485).
+ARG_PREFIX46 = "<A.B.C.D/M|X:X::X:X/M>"
 #: An address of this box's own, either family: where a daemon listens.
 #: Completed from the addresses the configuration gives the box (#557).
 ARG_LOCAL_ADDRESS = "<A.B.C.D|X:X::X:X>"
@@ -2596,9 +2599,15 @@ CGNAT_POOL = {
     # prefix-inside / prefix-outside, not inside / outside (#531): those two
     # words are also an interface's role under `cgnat`. The old spellings are
     # still read - see do_pool and Config._pool_line - and offered by nothing.
-    "prefix-inside": ("the subscribers' prefix, may repeat", ARG_PREFIX),
+    "prefix-inside": ("the subscribers' prefix, may repeat; IPv6 makes a "
+                      "NAT64 pool", ARG_PREFIX46),
     "prefix-outside": ("the public prefix they are translated to, may repeat",
                        ARG_PREFIX),
+    # NAT64 (#485): the two statements an IPv6 inside needs, and only it.
+    "subscriber-length": ("NAT64: the IPv6 prefix length one subscriber "
+                          "holds", "<32-128>"),
+    "nat64-prefix": ("NAT64: where IPv4 destinations are, RFC 6052; "
+                     "64:ff9b::/96 if not given", ARG_PREFIX6),
     # <64-65536> was wrong at BOTH ends and the top end was the expensive
     # one: the dataplane carries block_size in a u16, `bpa_cli.c` casts to it,
     # and 65536 arrives as 0 - so the documented maximum came back as "block
@@ -2799,8 +2808,12 @@ def _pool_no_clear(attr, value):
 
 
 POOL_NEGATE = {
-    "prefix-inside": ("remove one subscriber prefix", ARG_PREFIX,
+    "prefix-inside": ("remove one subscriber prefix", ARG_PREFIX46,
                       lambda p, w: _pool_no_item(p.inside, "prefix-inside", w)),
+    "subscriber-length": ("no subscriber length; an IPv6 inside needs one",
+                          None, _pool_no_clear("subscriber_length", 0)),
+    "nat64-prefix": ("go back to the well-known 64:ff9b::/96", None,
+                     _pool_no_clear("nat64_prefix", "")),
     "prefix-outside": ("remove one public prefix", ARG_PREFIX,
                        lambda p, w: _pool_no_item(p.outside, "prefix-outside",
                                                   w)),
@@ -12002,7 +12015,26 @@ class Shell:
                             "block-stride, or put the pool in dynamic mode")
                 ok = False
 
+            # A NAT64 POOL (#485), of the finished pool for the stride's
+            # reason above, and over every route for it too: a forward, a
+            # bypass or an ALG reaches a live pool by the in-place messages,
+            # which the device check below never sees.
+            nat64_refused = set()
+            for pool in (d["pool_add"] + d["pool_replace"]
+                         + list(d["settings_set"].values())
+                         + [p for p, _ in d["bypass_set"]]
+                         + [p for p, _ in d["fwd_add"]]):
+                if pool.name in nat64_refused:
+                    continue
+                why = pool.nat64_fits()
+                if why:
+                    nat64_refused.add(pool.name)
+                    self.err_prose(*why)
+                    ok = False
+
             for pool in d["pool_add"] + d["pool_replace"]:
+                if pool.name in nat64_refused:
+                    continue
                 # Already refused above. The device refuses it too and the
                 # check below would print its sentence as well, which is two
                 # verdicts and two paragraphs for one fault - and the operator
@@ -12188,7 +12220,7 @@ class Shell:
         for pool in d["pool_replace"]:
             self.api_call("bpa_pool_add_del", pool.api_args(is_add=False))
         for pool in d["pool_add"] + d["pool_replace"]:
-            r = self.api_call("bpa_pool_add_del", pool.api_args())
+            r = self.api_call(*pool.add_message())
             if not r.ok:
                 # Named, because a commit carrying several pools has to say
                 # which one the dataplane refused. "commit failed" sends the
@@ -17214,8 +17246,12 @@ class Shell:
                 # The same rule as the saved file's, from the same function.
                 # A second copy is what lets the two doors disagree, which is
                 # #417 - and `inside potato` reached a commit through this one
-                # while the file's half only asked for a slash.
-                why = prefix_error(w[0], w[1])
+                # while the file's half only asked for a slash. An IPv6 inside
+                # is a NAT64 pool (#485), and an outside is IPv4 always.
+                if w[0] == "prefix-inside" and ":" in w[1]:
+                    why = prefix6_error(w[0], w[1])
+                else:
+                    why = prefix_error(w[0], w[1])
                 if why:
                     # SAID and not raised, the way block-size above is: the
                     # chain answers a ValueError with "invalid argument: " in
@@ -17224,7 +17260,16 @@ class Shell:
                     self.err_prose(*why)
                     return True
                 (p.inside if w[0] == "prefix-inside"
-                 else p.outside).append(w[1])
+                 else p.outside).append(canonical_prefix(w[1]))
+            elif w[0] == "subscriber-length":
+                self.pool_range("subscriber-length", w[1])
+                p.subscriber_length = int(w[1])
+            elif w[0] == "nat64-prefix":
+                why = nat64_prefix_error(w[1])
+                if why:
+                    self.err_prose(*why)
+                    return True
+                p.nat64_prefix = canonical_prefix(w[1])
             elif w[0] == "block-size":
                 self.pool_range("block-size", w[1])
                 # The range is one of TWO things `?` promises about this

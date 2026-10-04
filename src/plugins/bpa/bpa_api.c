@@ -170,6 +170,107 @@ done:
   REPLY_MACRO (VL_API_BPA_POOL_ADD_DEL_REPLY);
 }
 
+/* not a unit: a binary API message handler, VPP's machinery on both sides.
+ * What the VTY sends through it is driven on a box by lab/nat64.sh. */
+static void
+vl_api_bpa_nat64_pool_add_t_handler (vl_api_bpa_nat64_pool_add_t *mp)
+{
+  vl_api_bpa_nat64_pool_add_reply_t *rmp;
+  bpa_pool_t cfg = { 0 };
+  clib_error_t *e = 0;
+  u32 *out_b = 0, *out_c = 0;
+  u8 *name;
+  int rv = 0, i;
+
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
+  name = format (0, "%s", mp->name);
+  cfg.fib_index = cfg.vrf_id = ~0u;
+  cfg.out_fib_index = cfg.out_vrf_id = ~0u;
+
+  if (mp->n_inside > mp->n_prefixes || mp->n_inside > BPA_NAT64_MAX_PREFIXES)
+    {
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto done;
+    }
+  for (i = 0; i < mp->n_prefixes; i++)
+    {
+      ip_prefix_t p;
+      u32 base, count;
+
+      ip_prefix_decode2 (&mp->prefixes[i], &p);
+      /* The inside IPv6 and the public IPv4, each where it belongs. */
+      if (ip_prefix_version (&p) != (i < mp->n_inside ? AF_IP6 : AF_IP4))
+	{
+	  rv = VNET_API_ERROR_INVALID_ADDRESS_FAMILY;
+	  goto done;
+	}
+      if (i < mp->n_inside)
+	{
+	  clib_memcpy (cfg.inside6_addr[i], &ip_prefix_v6 (&p), 16);
+	  cfg.inside6_len[i] = ip_prefix_len (&p);
+	  cfg.n_inside6++;
+	  continue;
+	}
+      if (bpa_prefix_range (clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32),
+			    ip_prefix_len (&p), &base, &count))
+	{
+	  rv = VNET_API_ERROR_INVALID_VALUE;
+	  goto done;
+	}
+      vec_add1 (out_b, base);
+      vec_add1 (out_c, count);
+    }
+  e = bpa_addr_set_build (&cfg.outside, out_b, out_c, vec_len (out_b));
+  if (e)
+    goto done;
+
+  /* Length 0 leaves the pool to take the well-known prefix. */
+  if (mp->nat64_prefix.len)
+    {
+      clib_memcpy (cfg.nat64_prefix, mp->nat64_prefix.address, 16);
+      cfg.nat64_len = mp->nat64_prefix.len;
+    }
+  e = bpa_nat64_cfg_finish (&cfg, mp->subscriber_length);
+  if (e)
+    goto done;
+
+  cfg.name = name;
+  cfg.block_size = clib_net_to_host_u16 (mp->block_size);
+  cfg.port_min = clib_net_to_host_u16 (mp->port_min);
+  cfg.port_max = clib_net_to_host_u16 (mp->port_max);
+  cfg.policy = (bpa_policy_t) mp->policy;
+  cfg.mode = (bpa_mode_t) mp->mode;
+  cfg.filter = (bpa_filter_t) mp->filter;
+  cfg.max_blocks = mp->max_blocks;
+  cfg.initial_blocks = mp->initial_blocks;
+  cfg.block_stride = clib_net_to_host_u16 (mp->block_stride);
+  cfg.timeouts.udp = clib_net_to_host_u32 (mp->timeouts.udp);
+  cfg.timeouts.icmp = clib_net_to_host_u32 (mp->timeouts.icmp);
+  cfg.timeouts.tcp_syn = clib_net_to_host_u32 (mp->timeouts.tcp_syn);
+  cfg.timeouts.tcp_trans = clib_net_to_host_u32 (mp->timeouts.tcp_transitory);
+  cfg.timeouts.tcp_estab = clib_net_to_host_u32 (mp->timeouts.tcp_established);
+  cfg.timeouts.gre = clib_net_to_host_u32 (mp->timeouts.gre);
+  cfg.timeouts.port_holddown =
+    clib_net_to_host_u32 (mp->timeouts.port_holddown);
+  cfg.timeouts.alg_expect = clib_net_to_host_u32 (mp->timeouts.alg_expect);
+
+  e = bpa_pool_add (&cfg, 0);
+
+done:
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      if (!rv)
+	rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+  vec_free (out_b);
+  vec_free (out_c);
+  vec_free (name);
+  bpa_actor_clear ();
+  REPLY_MACRO (VL_API_BPA_NAT64_POOL_ADD_REPLY);
+}
+
 /* not a unit: a binary API message handler. VPP's API machinery dispatches it
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.

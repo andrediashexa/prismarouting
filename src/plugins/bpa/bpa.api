@@ -138,7 +138,12 @@
  * It CHANGES THE LAYOUT of those three messages, so a client built against
  * 0.17.0 must be rebuilt. lab/api.sh pins the JSON shape.
  */
-option version = "0.18.0";
+/*
+ * 0.19.0 adds bpa_nat64_pool_add: a pool whose inside is IPv6 (#485). A new
+ * message, so no existing layout moves - and a NAT64 pool is deleted, like
+ * any other, by bpa_pool_add_del with is_add false.
+ */
+option version = "0.19.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -258,6 +263,43 @@ autoreply define bpa_pool_add_del
   /* The variable-length array is last, as the API requires: anything added
    * later goes above this line. */
   /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
+  u8 n_inside;
+  u8 n_prefixes;
+  vl_api_prefix_t prefixes[n_prefixes];
+};
+
+/** \brief Creates a NAT64 pool: IPv6 subscribers, IPv4 public addresses (#485).
+    Its own message rather than three more fields on bpa_pool_add_del, so
+    that no client built against 0.18.0 has to be rebuilt for a feature it
+    does not use. Mode, max_blocks, initial_blocks and block_stride are here
+    for the dynamic NAT64 pool to come and refused until it does; a reserve,
+    forwards, bypass, VRFs, tcp-mss and the ALGs are not here at all.
+    @param name - pool name
+    @param subscriber_length - the prefix length one subscriber holds, 32-128
+    @param nat64_prefix - RFC 6052's prefix; length 0 is 64:ff9b::/96
+    @param n_inside - how many of the prefixes are inside ones, IPv6
+    @param prefixes - the inside ones first, then the public IPv4 ones
+*/
+autoreply define bpa_nat64_pool_add
+{
+  u32 client_index;
+  u32 context;
+
+  string name[64];
+  u16 block_size;
+  u16 port_min;
+  u16 port_max;
+  vl_api_bpa_policy_t policy;
+  vl_api_bpa_mode_t mode;
+  vl_api_bpa_filter_t filter;
+  u8 max_blocks;
+  u8 initial_blocks;
+  u16 block_stride;
+  vl_api_bpa_timeouts_t timeouts;
+  u8 subscriber_length;
+  vl_api_ip6_prefix_t nat64_prefix;
   string audit_user[64];
   u32 audit_uid;
   u8 n_inside;

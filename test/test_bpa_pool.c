@@ -633,6 +633,8 @@ main (void)
       NAT64_REFUSES (t.mode = BPA_MODE_DYNAMIC, "dynamic mode");
       NAT64_REFUSES (t.block_reserve = 1, "a reserve");
       NAT64_REFUSES (t.max_blocks = 2, "max-blocks");
+      NAT64_REFUSES (t.initial_blocks = 2, "initial-allocation");
+      NAT64_REFUSES (t.block_stride = 1, "block-stride");
       NAT64_REFUSES (t.statics = &one, "a forward");
       NAT64_REFUSES (t.bypass_src.n_ranges = 1, "a bypass");
       NAT64_REFUSES (t.tcp_mss = 1400, "tcp-mss");
