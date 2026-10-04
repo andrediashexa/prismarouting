@@ -416,8 +416,6 @@ bpa_nat64_unsupported (const bpa_pool_t *cfg)
   /* Dynamic mode, with max-blocks, initial-allocation and block-stride,
    * since phase 3, and a deterministic pool's reserve since phase 4:
    * bpa_in2out's allocator on the subscriber's index. */
-  if (cfg->statics)
-    return "a NAT64 pool takes no forward yet";
   /* NOT "yet": there is nothing for a bypass to mean. A NAT64 subscriber's
    * packet is addressed into the NAT64 prefix, and the only way it reaches
    * an IPv4 host is translated - so neither an untranslated source nor an
@@ -427,5 +425,29 @@ bpa_nat64_unsupported (const bpa_pool_t *cfg)
 	   "translated";
   if (cfg->alg)
     return "a NAT64 pool runs no ALG yet";
+  return 0;
+}
+
+/*
+ * A forward's subscriber, on a pool of either family (#485 phase 4).
+ *
+ * On a NAT64 pool the forward names a host - one /128 of a delegated prefix -
+ * and the subscriber is the prefix's index, which is its pseudo inside
+ * address: written into ip_priv, so every check and pin after this one is
+ * the IPv4 code unchanged. 0, or why not: -1 the host is in no inside
+ * prefix, -2 an IPv6 host on an IPv4 pool, -3 an IPv4 host on a NAT64 one.
+ */
+int
+bpa_nat64_static_resolve (const bpa_pool_t *p, bpa_static_t *sf)
+{
+  u32 idx;
+
+  if (!p->is_nat64)
+    return sf->has_host6 ? -2 : 0;
+  if (!sf->has_host6)
+    return -3;
+  if (bpa_set6_index_of (&p->inside6, sf->host6, &idx))
+    return -1;
+  sf->ip_priv = idx;
   return 0;
 }

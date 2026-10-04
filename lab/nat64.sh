@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 32
+# OFF-RED-AT-LEAST: 46
 # (the floor: what the off run of 2026-10-04 measured red, every check)
 # NAT64: an IPv6-only subscriber reaches an IPv4 server (#485), through a
 # deterministic pool (sections 1-12) and then a dynamic one whose blocks are
@@ -302,7 +302,7 @@ if [ "$MODE" != off ]; then
   $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" -c "timeout udp 600" \
       -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
   REFUSED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
-      -c "reserve 2" -c "exit" -c "commit" 2>&1)
+      -c "bypass source 10.0.0.0/8" -c "exit" -c "commit" 2>&1)
   echo "$REFUSED" | sed 's/^/  /'
 else
   REFUSED=""
@@ -476,6 +476,157 @@ fi
 dyn_phase B logc 10.99.0.2 10.99.0.1
 [ -n "$LOGD" ] && kill $LOGD 2>/dev/null
 
+# ======================================================================
+# PHASE 4 (#485): every other per-pool setting on a NAT64 pool, each proven
+# here or refused by name (section 10's bypass).
+# ======================================================================
+echo
+echo "=========== 15. reserve, tcp-mss, max-sessions, utilisation-alarm ==========="
+# A deterministic pool on one public address, blocks of 64: 1008 blocks, 8
+# held back as the reserve, so 1000 subscribers and A (index 171) among them.
+# A fills its block and is given one out of the reserve; the handshake's MSS
+# is clamped to 1300 both ways; B is held to 100 sessions; and A's block
+# crossing half full raises the alarm.
+if [ "$MODE" != off ]; then
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+      -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
+      -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.3/32" \
+      -c "block-size 64" -c "mode deterministic" -c "reserve 8" \
+      -c "max-blocks 2" -c "tcp-mss 1300" -c "max-sessions 100" \
+      -c "utilisation-alarm 50" -c "vrf 0" -c "exit" -c "commit remap" 2>&1 \
+    | grep -E "error|complete" | sed 's/^/  /'
+fi
+vppctl show bpa config | tr -d '\r' | sed -n '/cgnat pool v6/,/exit/p' \
+  > /tmp/n64-cfg4.txt
+ip netns exec srv python3 - > /tmp/n64-mss-srv.txt 2>&1 <<'PY' &
+import socket
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", 8443)); s.listen(1); s.settimeout(15)
+c, a = s.accept()
+print(c.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG), flush=True)
+c.close()
+PY
+sleep 1
+MSS_C=$(ip netns exec sub python3 -c '
+import socket
+s = socket.socket(socket.AF_INET6); s.settimeout(10)
+s.bind(("2001:db8:1200:ab00::10", 0)); s.connect(("64:ff9b:1:c000:2:200::", 8443))
+print(s.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG))' 2>&1)
+sleep 1
+MSS_S=$(cat /tmp/n64-mss-srv.txt)
+echo "  TCP_MAXSEG: subscriber $MSS_C, server $MSS_S"
+# The UDP server that records every source port it sees.
+ip netns exec srv python3 - > /tmp/n64-ports.txt 2>&1 <<'PY' &
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("0.0.0.0", 7000))
+s.settimeout(6)
+try:
+    while True:
+        d, a = s.recvfrom(100); print(a[0], a[1], flush=True)
+except socket.timeout:
+    pass
+PY
+sleep 1
+flows 2001:db8:1200:ab00::10 22000 70       # A: its block, then the reserve
+flows $B_ADDR 22000 120                      # B: capped at 100 sessions
+sleep 7
+A_RES=$(awk '$1 == "203.0.113.3" && $2 >= 65024' /tmp/n64-ports.txt | head -1 | cut -d' ' -f2)
+N_B=$(grep -c . /tmp/n64-ports.txt)
+echo "  A's port out of the reserve: ${A_RES:-none}; ports seen in all: $N_B"
+$HX -c "show cgnat translation 203.0.113.3 ${A_RES:-65024}" > /tmp/n64-rxlt.txt 2>&1
+sed 's/^/  /' /tmp/n64-rxlt.txt | head -3
+$HX -c "show cgnat subscriber $B_ADDR" > /tmp/n64-bsub.txt 2>&1
+grep -E "refusals" /tmp/n64-bsub.txt | sed 's/^/  /'
+vppctl show log 2>/dev/null | tr -d '\r' | grep -E "past the 50% alarm" | tail -1 \
+  > /tmp/n64-alarm.txt
+sed 's/^/  /' /tmp/n64-alarm.txt
+
+echo
+echo "=========== 16. two tenants: the same inside prefix in two VRFs ==========="
+# A second subscriber with the SAME prefix as A, in IPv6 table 10, and a
+# second NAT64 pool bound to it: its traffic must leave on that pool's
+# public address, and come back into table 10, while A's stays on v6's.
+ip netns add sub2 2>/dev/null
+ip link add v-sub2 type veth peer name host-sub2 2>/dev/null
+ip link set v-sub2 netns sub2
+ip link set host-sub2 up
+ip netns exec sub2 ip link set lo up
+ip netns exec sub2 ip link set v-sub2 up
+txcsum_off sub2 v-sub2; txcsum_off - host-sub2
+ip netns exec sub2 sysctl -qw net.ipv6.conf.all.accept_dad=0
+ip netns exec sub2 ip -6 addr add 2001:db8:1200:ab00::10/56 dev v-sub2 nodad
+ip netns exec sub2 ip -6 route add 64:ff9b:1::/48 via 2001:db8:1200:ab00::1
+vppctl create host-interface name host-sub2 cksum-gso-disable >/dev/null
+vppctl ip6 table add 10 >/dev/null 2>&1
+vppctl set interface ip6 table host-host-sub2 10
+vppctl set interface state host-host-sub2 up
+vppctl enable ip6 interface host-host-sub2
+vppctl set interface ip address host-host-sub2 2001:db8:1200:ab00::1/56
+vppctl set ip neighbor host-host-sub2 2001:db8:1200:ab00::10 \
+  "$(ip netns exec sub2 cat /sys/class/net/v-sub2/address)"
+vppctl set interface bpa in2out host-host-sub2
+if [ "$MODE" != off ]; then
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool t10" \
+      -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
+      -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.4/32" \
+      -c "block-size 64" -c "vrf 10" -c "outside-vrf 0" -c "exit" \
+      -c "commit" 2>&1 | grep -E "error|complete" | sed 's/^/  /'
+fi
+server udp 5858
+T2=$(ip netns exec sub2 python3 -c '
+import socket
+s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM); s.settimeout(8)
+s.bind(("2001:db8:1200:ab00::10", 0)); s.sendto(b"tenant", ("64:ff9b:1:c000:2:200::", 5858))
+print("ok" if s.recvfrom(100)[0] == b"pong:tenant" else "mismatch")' 2>&1)
+sleep 1
+T2SRV=$(cat /tmp/srv-udp-5858.log)
+echo "  tenant 10: $T2, the server saw: $T2SRV"
+
+echo
+echo "=========== 17. the NAT64 prefix blackholed, as announcing it takes ==========="
+# To originate the NAT64 prefix in BGP the box needs a route for it, and the
+# commit check's advice is a blackhole (pool_announce_findings). The
+# translation runs on ip6-unicast before the lookup, so the blackhole must
+# catch nothing a pool takes: what FRR would install through linux-cp, put
+# straight in VPP's table here.
+vppctl ip route add 64:ff9b:1::/48 via drop >/dev/null
+server udp 5959
+BH=$(client udp 5959 100 2>&1)
+echo "  with the NAT64 prefix blackholed: $BH"
+vppctl ip route del 64:ff9b:1::/48 via drop >/dev/null
+
+echo
+echo "=========== 18. a forward to an IPv6 host, reached from IPv4 ==========="
+# Public port 12000 is inside A's block (11968-12031 from the formula, with
+# blocks of 64 and the reserve of section 15), so it is A's to forward. The
+# IPv4 server connects to 203.0.113.3:12000 and must reach A's host on 8080,
+# which sees the server as its IPv4 address under the NAT64 prefix.
+ip netns exec sub python3 - > /tmp/n64-fwd-host.txt 2>&1 <<'PY' &
+import socket
+s = socket.socket(socket.AF_INET6); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("2001:db8:1200:ab00::10", 8080)); s.listen(1); s.settimeout(20)
+c, a = s.accept(); d = c.recv(100); print(a[0], d.decode(), flush=True)
+c.sendall(b"pong:" + d); c.close()
+PY
+sleep 1
+if [ "$MODE" != off ]; then
+  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+      -c "forward tcp 12000 to 2001:db8:1200:ab00::10 8080" -c "exit" \
+      -c "commit" 2>&1 | grep -E "error|complete" | sed 's/^/  /'
+fi
+FWD=$(ip netns exec srv python3 -c '
+import socket
+s = socket.socket(); s.settimeout(8)
+s.connect(("203.0.113.3", 12000)); s.sendall(b"inbound")
+print("ok" if s.recv(100) == b"pong:inbound" else "mismatch")' 2>&1)
+sleep 1
+FWD_HOST=$(cat /tmp/n64-fwd-host.txt)
+echo "  from IPv4: $FWD; A's host saw: $FWD_HOST"
+vppctl show bpa config | tr -d '\r' | grep "forward tcp 12000" | sed 's/^/  /' \
+  | tee /tmp/n64-fwd-cfg.txt
+vppctl show bpa pool history 2>/dev/null | tr -d '\r' | grep "forward tcp/12000" \
+  | tail -1 > /tmp/n64-fwd-trail.txt
+
 echo
 echo "=========== 12. the box ==========="
 vppctl show bpa session | sed 's/^/  /' | head -20
@@ -500,8 +651,8 @@ expect "an unsolicited datagram was dropped, counted, not delivered" \
   sh -c "[ '$UNSOL' = nothing ] && [ '${NS1:-0}' -gt '${NS0:-0}' ]"
 expect "a timeout changed in place: the pool was not rebuilt" \
   sh -c "[ -n '$SESS1' ] && [ '$SESS1' -gt 0 ] && [ '$SESS1' = '$SESS0' ] && grep -q 'timeout udp 600' /tmp/n64-config2.txt"
-expect "the VTY refuses what a NAT64 pool does not take yet: reserve" \
-  grep -q "a NAT64 pool takes no reserve yet" /tmp/n64-refused.txt
+expect "the VTY refuses a bypass on a NAT64 pool, saying why" \
+  sh -c "grep -q 'a NAT64 pool takes no bypass' /tmp/n64-refused.txt && tr -s ' \n' ' ' < /tmp/n64-refused.txt | grep -q 'reaches IPv4 only translated'"
 expect "show cgnat translation names the subscriber's IPv6 prefix" \
   grep -q "203.0.113.3:44100  ->  2001:db8:1200:ab00::/56" /tmp/n64-xlt.txt
 expect "  and says it is the formula's answer, for any instant" \
@@ -528,6 +679,34 @@ for _p in A B; do
 done
 expect "the log was carried by the dataplane, then by the log container" \
   sh -c "grep -q 'carried by the dataplane' /tmp/n64-carrier-A.txt && grep -q 'carried by the log container' /tmp/n64-carrier-B.txt"
+expect "tcp-mss 1300: the subscriber's MSS is clamped ($MSS_C)" \
+  sh -c "[ -n '$MSS_C' ] && [ '$MSS_C' -le 1300 ] 2>/dev/null"
+expect "  and the server's ($MSS_S)" \
+  sh -c "[ -n '$MSS_S' ] && [ '$MSS_S' -le 1300 ] 2>/dev/null"
+expect "reserve: A's 65th flow left on a reserve port (${A_RES:-none})" \
+  test -n "$A_RES"
+expect "  and translation calls it the reserve, naming A's prefix" \
+  sh -c "grep -q '2001:db8:1200:ab00::/56' /tmp/n64-rxlt.txt && grep -q 'DETERMINISTIC RESERVE' /tmp/n64-rxlt.txt"
+expect "max-sessions 100: B's 120 flows were held to 100" \
+  sh -c "[ \$(grep -c . /tmp/n64-ports.txt) -eq 170 ] && grep -q 'session cap 20' /tmp/n64-bsub.txt"
+expect "utilisation-alarm 50: A's block crossing half full raised it" \
+  test -s /tmp/n64-alarm.txt
+expect "the settings read back from the box" \
+  sh -c "grep -q 'reserve 8' /tmp/n64-cfg4.txt && grep -q 'tcp-mss 1300' /tmp/n64-cfg4.txt && grep -q 'utilisation-alarm 50' /tmp/n64-cfg4.txt && grep -q 'max-sessions 100' /tmp/n64-cfg4.txt"
+expect "a second tenant's pool in VRF 10, the same inside prefix: it crossed" \
+  test "$T2" = ok
+expect "  on that pool's own public address, 203.0.113.4" \
+  sh -c "echo '$T2SRV' | grep -q '^203.0.113.4 '"
+expect "with the NAT64 prefix blackholed for BGP, translation still crosses" \
+  test "$BH" = ok
+expect "a forward on a NAT64 pool: IPv4 reached the IPv6 host and back" \
+  test "$FWD" = ok
+expect "  and the host saw the server under the NAT64 prefix" \
+  sh -c "echo '$FWD_HOST' | grep -q '^64:ff9b:1:c000:2:200:: inbound'"
+expect "  and the box reads the forward back by its host" \
+  grep -q "forward tcp 12000 to 2001:db8:1200:ab00::10 8080" /tmp/n64-fwd-cfg.txt
+expect "  and the configuration trail names the host, not an index" \
+  grep -q "forward tcp/12000->2001:db8:1200:ab00::10:8080" /tmp/n64-fwd-trail.txt
 expect "show bpa config gives the pool back as configured" \
   sh -c "grep -q 'inside 2001:db8:1200::/40' /tmp/n64-config.txt && grep -q 'subscriber-length 56' /tmp/n64-config.txt && grep -q 'nat64-prefix 64:ff9b:1::/48' /tmp/n64-config.txt"
 verdict

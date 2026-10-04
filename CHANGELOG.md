@@ -130,6 +130,19 @@ version has a chance of seeing it.
   `lab/nat64.sh` reads the dynamic pool's records off IPFIX and syslog
   collectors, with the dataplane carrying the log and then the container.
 
+* **NAT64, phase 4: every per-pool setting on a NAT64 pool.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  `reserve`, `tcp-mss` (the automatic clamp 20 less than IPv4's, for the IPv6
+  header), `vrf` and `outside-vrf` (two tenants' NAT64 pools may share an
+  inside prefix in different VRFs), `max-sessions`, `max-session-rate` and
+  `utilisation-alarm` work on a NAT64 pool, and a port forward names an IPv6
+  host of a subscriber's prefix, reached from IPv4. `bypass` is refused for
+  good: an IPv6 packet to the NAT64 prefix reaches IPv4 only translated. The
+  ALGs stay refused until their phase. `commit check` warns when nothing
+  announces a NAT64 pool's NAT64 prefix in BGP's IPv6 family, and when a NAT64
+  pool is on a box in a VRRP pair, whose failover does not carry the IPv6
+  side. `lab/nat64.sh` proves each setting on the wire.
+
 ### Fixed
 
 * **RADIUS accounting was not read until the log was exporting.**
@@ -139,6 +152,17 @@ version has a chance of seeing it.
   gone out after `logging enable` - up to the template interval. Every block
   allocated in that window was recorded `unknown` although the BNG had named
   the subscriber. It is read every second now, whatever the log is doing.
+* **A pool created with `utilisation-alarm` had no alarm.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  The creation message has no field for it, and a pool being created was
+  given no settings: the alarm reached the dataplane only when a later commit
+  noticed the difference. The settings now follow the creation at once.
+* **The commit check could not see BGP statements in a second address
+  family.** ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  In the configuration read back from FRR, ` exit-address-family` closed
+  `router bgp` as well, so a `network` in the second family - the IPv6 one, as
+  FRR writes them - was read as outside BGP, and the announcement warnings
+  fired on prefixes that were announced.
 * **`clear cgnat subscriber` matched sessions by address across every pool.**
   ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
   It now clears by pool and subscriber index. With a NAT64 pool present the

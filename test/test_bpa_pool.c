@@ -619,7 +619,6 @@ main (void)
 	   bpa_nat64_unsupported (&c));
     {
       bpa_pool_t t;
-      bpa_static_t one = { 0 };
 
 #define NAT64_REFUSES(field_set, what)                                        \
   do                                                                          \
@@ -630,10 +629,38 @@ main (void)
       refused++;                                                              \
     }                                                                         \
   while (0)
-      NAT64_REFUSES (t.statics = &one, "a forward");
       NAT64_REFUSES (t.bypass_src.n_ranges = 1, "a bypass");
       NAT64_REFUSES (t.alg = 1, "an ALG");
 #undef NAT64_REFUSES
+      /* A forward's subscriber from its host (#485 phase 4). */
+      {
+	bpa_static_t f = { 0 };
+	static const u8 h[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab,
+				  0,	0,    0,    0,	  0,	0,    0,
+				  0,	0x10 };
+	static const u8 out[16] = { 0x20, 0x01, 0x0d, 0xb9 };
+	bpa_pool_t v4 = { 0 };
+
+	f.has_host6 = 1;
+	memcpy (f.host6, h, 16);
+	CHECK (bpa_nat64_static_resolve (&c, &f) == 0 && f.ip_priv == 171,
+	       "a host of 2001:db8:1200:ab00::/56 is subscriber 171: %u",
+	       f.ip_priv);
+	memcpy (f.host6, out, 16);
+	CHECK (bpa_nat64_static_resolve (&c, &f) == -1,
+	       "a host outside every inside prefix is refused");
+	f.has_host6 = 0;
+	CHECK (bpa_nat64_static_resolve (&c, &f) == -3,
+	       "an IPv4 host on a NAT64 pool is refused");
+	f.has_host6 = 1;
+	CHECK (bpa_nat64_static_resolve (&v4, &f) == -2,
+	       "an IPv6 host on an IPv4 pool is refused");
+	f.has_host6 = 0;
+	f.ip_priv = 0x64400005;
+	CHECK (bpa_nat64_static_resolve (&v4, &f) == 0
+		 && f.ip_priv == 0x64400005,
+	       "and an IPv4 forward on an IPv4 pool is left as it was");
+      }
       /* Phase 3: dynamic, and what a dynamic pool's allocation takes. */
       t = c;
       t.mode = BPA_MODE_DYNAMIC;

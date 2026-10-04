@@ -29,13 +29,15 @@ generated from the VTY's grammar.
 
 ## Next (0.150.x) - NAT64 (#485)
 
-* **Contract:** additive. `prisma.proto` sha256 `0a50f407fb0fc7e4d13639c1b1b43a2111b9b8ead48e913c2ec9e83144aca2a7`.
+* **Contract:** additive. `prisma.proto` sha256 `7905cf993bf993f40ec0d2026697ac216719ff16861cdc41e232d7cbec357ea2`.
 * **`PoolConfig`** gains 25 `subscriber_length` (0 on an IPv4 pool) and 26
   `nat64_prefix` ("" is the well-known `64:ff9b::/96`). A pool whose
   `prefix_inside` is IPv6 is a NAT64 pool; GetSchema offers both statements,
   and `prefix-inside` takes either family. `mode` may be `dynamic` on one.
-  SetConfig refuses what a NAT64 pool does not take yet - reserve, forwards,
-  bypass, VRF, tcp-mss, the ALGs - with the VTY's own commit-check sentence.
+  Every other pool field works on one; SetConfig refuses `bypass` (for good)
+  and an ALG (for now) with the VTY's own commit-check sentence.
+* **`PortForwardConfig.private_address`** on a NAT64 pool is an IPv6 host of
+  one of its subscribers' prefixes; on an IPv4 pool it is IPv4 as before.
 * **`LogEvent.subscriber`** (WatchLogging) is a NAT64 subscriber's delegated
   prefix, `2001:db8:1200:ab00::/56`, where it was always an IPv4 address: a
   client that parses it as one must take either form.
@@ -43,8 +45,9 @@ generated from the VTY's grammar.
   prefix. No field moved; the comments say it.
 * **`Clear`** with `TARGET_CGNAT_SUBSCRIBER` takes an IPv6 address: a NAT64
   subscriber, by any address in its prefix.
-* **Dataplane API:** `bpa.api` 0.19.0 adds `bpa_nat64_pool_add`, a new
-  message; no existing layout moves.
+* **Dataplane API:** `bpa.api` 0.19.0 adds two messages,
+  `bpa_nat64_pool_add` (with its VRFs and reserve) and
+  `bpa_nat64_forward_add_del`; no existing layout moves.
 
 ## 0.149.33 - a restart that came back is reported as one
 

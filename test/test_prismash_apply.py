@@ -818,6 +818,32 @@ check(sets.get("six", {}).get("tcp_mss") == 1400,
 check(len(n64) == 1 and n64[0]["block_reserve"] == 2 and n64[0]["vrf_id"] == 10,
       f"the NAT64 pool's reserve and VRF on its creation message: {n64}")
 
+# And when the dataplane refuses those settings, the commit says so and
+# stops: a pool applied without its alarm is the defect this closes.
+class RefusesSettings(FakeDataplane):
+    def call(self, message, args):
+        if message == "bpa_pool_settings_set":
+            self.calls.append((message, args))
+            return vppapi.Reply(vppapi.REFUSED, reason="no such pool")
+        return super().call(message, args)
+
+
+api = RefusesSettings()
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("nat\n cgnat\n  pool four\n   prefix-inside 100.64.0.0/22\n"
+             "   prefix-outside 200.150.0.16/30\n   utilisation-alarm 80\n"
+             "   exit\n  exit\n exit\n")
+    saved = fh.name
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.load(saved)
+os.unlink(saved)
+check("pool 'four': settings: no such pool" in buf.getvalue(),
+      f"a refused setting after the creation is said, naming the pool: "
+      f"{buf.getvalue()!r}")
+
 print("\n=== a file's own address makes its own static route reachable (#294) ===")
 # The most serious shape this repository has had: `prismash --load` refusing a
 # box's ENTIRE configuration over a static route that is correct.

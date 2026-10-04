@@ -667,6 +667,11 @@ bpa_next_after (u16 *next, vlib_buffer_t *b, u16 lookup)
 }
 
 /* NAT64 (#485), bpa_nat64.c */
+/* A forward's host, and a pool's private address, as screens and refusals
+ * name them: a NAT64 pool's by its IPv6 host or prefix, never by the index
+ * its pseudo inside holds (#485). */
+format_function_t format_bpa_static_host;
+format_function_t format_bpa_priv;
 int bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 fib,
 			 u32 *pool_index,
 			 u32 *sub_idx);

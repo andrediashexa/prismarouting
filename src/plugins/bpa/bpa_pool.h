@@ -378,6 +378,16 @@ typedef struct
   u16 port_priv;
   u16 port_off;	 /* port_pub - block.port_lo, the bit reserved in the map */
   u8 proto;	 /* bpa_proto_t; TCP or UDP, the only two with ports to pin */
+  /*
+   * A NAT64 pool's forward (#485 phase 4): the host it points at, one /128
+   * of the subscriber's delegated prefix. ip_priv is then the subscriber's
+   * INDEX - its pseudo inside address - so the validation, the pin and the
+   * reply's agreement check are the IPv4 ones; the host is what the NAT64
+   * session is keyed and translated on. bpa_nat64_static_resolve() fills
+   * ip_priv from it.
+   */
+  u8 has_host6;
+  u8 host6[16];
 } bpa_static_t;
 
 typedef struct
@@ -657,6 +667,7 @@ clib_error_t *bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride);
 clib_error_t *bpa_pool_initial_refusal (const bpa_pool_t *p, u32 initial,
 					u32 max_blocks);
 clib_error_t *bpa_nat64_cfg_finish (bpa_pool_t *cfg, u8 sub_len);
+int bpa_nat64_static_resolve (const bpa_pool_t *p, bpa_static_t *sf);
 const char *bpa_nat64_unsupported (const bpa_pool_t *cfg);
 clib_error_t *bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases,
 				  const u32 *counts, u32 n);
@@ -1308,7 +1319,7 @@ bpa_static_by_pub (const bpa_pool_t *p, u32 ip_pub, u16 port_pub, u8 proto)
  */
 static_always_inline const bpa_static_t *
 bpa_static_by_priv (const bpa_pool_t *p, const bpa_block_t *b, u32 ip_priv,
-		    u16 port_priv, u8 proto)
+		    u16 port_priv, u8 proto, const u8 *host6)
 {
   u32 n = vec_len (p->statics);
   u32 i = bpa_static_lower (p->statics, n, b->port_lo);
@@ -1316,7 +1327,10 @@ bpa_static_by_priv (const bpa_pool_t *p, const bpa_block_t *b, u32 ip_priv,
   for (; i < n && p->statics[i].port_pub <= b->port_hi; i++)
     if (p->statics[i].ip_priv == ip_priv
 	&& p->statics[i].port_priv == port_priv
-	&& p->statics[i].proto == proto)
+	&& p->statics[i].proto == proto
+	/* On a NAT64 pool the subscriber is a prefix: its forward is one
+	 * host of it, and another host on the same port is not it (#485). */
+	&& (!host6 || !memcmp (p->statics[i].host6, host6, 16)))
       return &p->statics[i];
   return 0;
 }

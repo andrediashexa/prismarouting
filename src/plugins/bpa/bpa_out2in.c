@@ -498,6 +498,10 @@ VLIB_NODE_FN (bpa_out2in_node)
 
 	  if (PREDICT_FALSE (sf != 0 && sf->ip_priv == ip_priv))
 	    s = bpa_session_static_open (pt, p, pool_index, sf, now);
+	  /* A NAT64 pool's forward opens a session on its host: keyed for the
+	   * host's own replies, and translated to it below (#485). */
+	  if (PREDICT_FALSE (s != 0 && s->is_nat64 && sf->has_host6))
+	    bpa_nat64_session_key (pt, s, (const ip6_address_t *) sf->host6);
 
 	  if (PREDICT_TRUE (s == 0))
 	    {

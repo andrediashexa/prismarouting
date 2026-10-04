@@ -2280,7 +2280,8 @@ check(" subscriber-length 56" in lines and " nat64-prefix 64:ff9b::/96" in lines
 for setup, needle in (
         (lambda p: p.bypass_src.append("10.0.0.0/8"), "no bypass"),
         (lambda p: p.algs.update({"ftp": True}), "no alg"),
-        (lambda p: p.forwards.append(("tcp", 80, "10.0.0.1", 80)), "no forward"),
+        (lambda p: p.forwards.append(("tcp", 80, "10.0.0.1", 80)),
+         "names an IPv4 host"),
         (lambda p: p.inside.append("100.64.0.0/10"), "not both"),
         (lambda p: setattr(p, "subscriber_length", 32), "longer than")):
     t = copy.deepcopy(v6)
@@ -2297,6 +2298,27 @@ t = base_pool()
 t.subscriber_length = 56
 check(t.nat64_fits() is not None, "subscriber-length on an IPv4 pool is refused")
 check(base_pool().nat64_fits() is None, "an IPv4 pool is not asked")
+# Forwards (#485 phase 4): an IPv6 host on a NAT64 pool, by its own message.
+t = copy.deepcopy(v6)
+check(config.Config._pool_line(t, "forward tcp 12000 to 2001:DB8:1200:AB00::10 "
+                                  "8080") is None
+      and t.forwards == [("tcp", 12000, "2001:db8:1200:ab00::10", 8080)],
+      f"an IPv6 forward is taken, in RFC 5952's form: {t.forwards}")
+check(t.nat64_fits() is None, f"and fits a NAT64 pool: {t.nat64_fits()}")
+m, a = t.forward_message(t.forwards[0])
+check(m == "bpa_nat64_forward_add_del" and a["host"] == "2001:db8:1200:ab00::10"
+      and a["port_pub"] == 12000 and a["is_add"],
+      f"it goes by the NAT64 forward message: {m} {a}")
+check(base_pool().forward_message(("tcp", 80, "100.64.0.5", 80))[0]
+      == "bpa_forward_add_del", "an IPv4 forward by the IPv4 one")
+check(config.Config._pool_line(t, "forward tcp 1 to 2001:zz::1 2") is not None,
+      "a word where an IPv6 host goes is refused")
+t4 = base_pool()
+t4.forwards.append(("tcp", 80, "2001:db8::1", 80))
+r = t4.nat64_fits()
+check(r is not None and "IPv6 host" in r[0],
+      f"an IPv6 forward on an IPv4 pool is refused: {r}")
+
 # alg_masks: none runs on a NAT64 pool, and it says so in both masks.
 alg, alg_set = v6.alg_masks()
 check(alg == 0 and alg_set == sum(config.Pool.ALG_BITS.values()),

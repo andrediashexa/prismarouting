@@ -4349,6 +4349,15 @@ check(prismash.prefix6_covers("64:ff9b::/32", "64:ff9b:1::/48")
       and not prismash.prefix6_covers("potato", "64:ff9b::/96"),
       "prefix6_covers: IPv6, the shorter covering the longer, words refused")
 
+# A NAT64 pool in a VRRP pair (#485): warned, never refused, and only there.
+ha = prismash.nat64_ha_findings({"v6": n64, "four": _pool("four", ("200.150.0.32/28",))},
+                                {"ge0": {1: {}}})
+check(len(ha) == 1 and "pool v6" in ha[0][1] and ha[0][0] == "warning"
+      and "IPv4 virtual routers only" in ha[0][2],
+      f"the NAT64 pool and not the IPv4 one is warned about: {ha}")
+check(prismash.nat64_ha_findings({"v6": n64}, {}) == [],
+      "and a box in no pair is told nothing")
+
 # Never an error. The reason is in pool_announce_findings' docstring and is
 # measured: `network <prefix>` with no matching route in the RIB is stored by
 # FRR 10.7.1 and advertised by nothing, so the condition this can test is a

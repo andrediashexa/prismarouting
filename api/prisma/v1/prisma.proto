@@ -438,6 +438,8 @@ message PortForwardConfig {
   // "tcp" or "udp".
   string protocol = 1;
   uint32 public_port = 2;
+  // An IPv4 address, or on a NAT64 pool an IPv6 host of one of its
+  // subscribers' prefixes (#485).
   string private_address = 3;
   uint32 private_port = 4;
 }

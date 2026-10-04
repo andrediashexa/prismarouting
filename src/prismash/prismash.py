@@ -7396,6 +7396,41 @@ def pool_announce_findings(routing, pools):
     return out
 
 
+def nat64_ha_findings(pools, vrrp):
+    """
+    NAT64 pools on a box that stands in a VRRP pair (#485 phase 4).
+
+    The pair's mapping comparison covers a NAT64 pool like any other - its
+    subscriber-length and nat64-prefix are mapping fields, and
+    test_prismash_config.py holds that they move the fingerprint - so two
+    boxes that would map an IPv6 subscriber differently are found. What a
+    NAT64 pool does not get is the failover itself: the pair moves by VRRP,
+    this box takes IPv4 virtual routers only (vrrp_statement), and an IPv6
+    subscriber's gateway is therefore no virtual address that follows the
+    master. Its traffic keeps going to a dead box, or to the standby while
+    the public addresses' replies go to the master.
+
+    WARNED, NEVER REFUSED: a pair whose IPv6 side follows the master by
+    routing - each box announcing the NAT64 prefix only while it is up - is a
+    correct design this box cannot see, which is #208's shape. No lab
+    measures a NAT64 failover; the warning says what has to be true for one
+    to work.
+
+    Returns [(severity, statement, why)], the shape say_finding() prints.
+    """
+    if not vrrp:
+        return []
+    return [("warning", f"nat / cgnat / pool {name}",
+             "a NAT64 pool on a box in a VRRP pair: its IPv6 subscribers' "
+             "gateway is no virtual address, because this box takes IPv4 "
+             "virtual routers only. On a failover their route to the NAT64 "
+             "prefix has to follow the master some other way - announce it "
+             "from each box only while that box is up - or their traffic "
+             "goes to a box that no longer holds the public addresses")
+            for name, p in sorted((pools or {}).items())
+            if getattr(p, "is_nat64", False)]
+
+
 def dynamic_export_findings(pools, globals_):
     """
     Pools whose blocks only an export can account for, on a box that
@@ -12172,6 +12207,11 @@ class Shell:
             for sev, stmt, why in dynamic_export_findings(target.pools,
                                                          target.globals):
                 self.say_finding(sev, stmt, why)
+            # A NAT64 pool in a VRRP pair, whose IPv6 side no virtual address
+            # carries (#485). Warned, for the reason the function gives.
+            for sev, stmt, why in nat64_ha_findings(target.pools,
+                                                    target.vrrp):
+                self.say_finding(sev, stmt, why)
 
             # Would this commit leave the two boxes mapping subscribers
             # differently? Asked only when a peer configuration has been put
@@ -12256,26 +12296,22 @@ class Shell:
                 # operator to read the whole candidate.
                 self.err_dataplane(f"pool '{pool.name}': {r.reason}")
                 return False
-            # What the creation message cannot carry, sent at once after it.
-            # bpa_pool_add_del has no utilisation alarm, and delta_to() gives
-            # a pool being created no settings_set - so a pool created with
-            # `utilisation-alarm` had none, on IPv4 as well, until a later
-            # commit noticed the difference (#485 phase 4, measured with
-            # Config.delta_to). A NAT64 pool's message carries no in-place
-            # setting at all, the MSS clamp included.
-            if pool.util_alarm or pool.is_nat64:
-                r = self.api_call("bpa_pool_settings_set",
-                                  pool.settings_api_args())
-                if not r.ok:
-                    self.err_dataplane(
-                        f"pool '{pool.name}': settings: {r.reason}")
-                    return False
 
         # The settings the dataplane can change in place, before the lists
         # and the bounds: they are the ones an operator changes while looking
         # at a live problem, and a commit that applied them last would leave
         # them behind whatever else in the same commit failed.
-        for name, pool in d["settings_set"].items():
+        #
+        # And what a creation message cannot carry, sent right after it:
+        # bpa_pool_add_del has no utilisation alarm, and delta_to() gives a
+        # pool being created no settings_set - so a pool created with
+        # `utilisation-alarm` had none, on IPv4 as well, until a later commit
+        # noticed the difference (#485 phase 4, measured with
+        # Config.delta_to). A NAT64 pool's message carries no in-place
+        # setting at all, the MSS clamp included.
+        created = [(p.name, p) for p in d["pool_add"] + d["pool_replace"]
+                   if p.util_alarm or p.is_nat64]
+        for name, pool in list(d["settings_set"].items()) + created:
             r = self.api_call("bpa_pool_settings_set",
                               pool.settings_api_args())
             if not r.ok:
@@ -12305,15 +12341,13 @@ class Shell:
         # a removal and an addition, and doing the addition first would be
         # refused for colliding with the entry it is replacing.
         for pool, fwd in d["fwd_del"]:
-            r = self.api_call("bpa_forward_add_del",
-                              pool.forward_api_args(fwd, is_add=False))
+            r = self.api_call(*pool.forward_message(fwd, is_add=False))
             if not r.ok and r.state != vppapi.REFUSED:
                 self.err_dataplane(f"pool '{pool.name}': removing forward "
                                    f"{fwd[0]} {fwd[1]}: {r.reason}")
                 return False
         for pool, fwd in d["fwd_add"]:
-            r = self.api_call("bpa_forward_add_del",
-                              pool.forward_api_args(fwd))
+            r = self.api_call(*pool.forward_message(fwd))
             if not r.ok:
                 self.err_dataplane(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
                                    f"to {fwd[2]} {fwd[3]}: {r.reason}")

@@ -364,7 +364,21 @@ Cada /56 de `2001:db8:1200::/40` recebe um bloco de 2048 portas pela mesma fórm
 
 `subscriber-length` e `nat64-prefix` são campos de **mapeamento**: mudar qualquer um reconstrói o pool.
 
-**Determinístico ou dinâmico.** Em `mode dynamic`, com `max-blocks`, `initial-allocation` e `block-stride`, o pool NAT64 aloca blocos sob demanda como um pool IPv4, e cada alocação e liberação sai no log nomeando o assinante pelo prefixo delegado (veja [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq)). O `commit check` ainda recusa pelo nome `reserve`, `forward`, `bypass`, `vrf`, `tcp-mss` e os ALGs num pool NAT64: são as próximas fases. Timeouts e `filter` valem como num pool IPv4.
+**Determinístico ou dinâmico.** Em `mode dynamic`, com `max-blocks`, `initial-allocation` e `block-stride`, o pool NAT64 aloca blocos sob demanda como um pool IPv4, e cada alocação e liberação sai no log nomeando o assinante pelo prefixo delegado (veja [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq)). Os outros ajustes do pool valem num pool NAT64 como num pool IPv4 — `reserve`, `tcp-mss`, `vrf` e `outside-vrf`, `max-sessions`, `max-session-rate`, `utilisation-alarm`, timeouts e `filter` —, com duas diferenças. O `tcp-mss auto` fica 20 bytes abaixo do de um pool IPv4, porque o cabeçalho IPv6 do lado do assinante é 20 bytes maior. E o `vrf` de um pool NAT64 é uma tabela IPv6: dois clientes podem ter o mesmo prefixo interno em VRFs diferentes, cada um com o seu pool.
+
+**Encaminhamento de porta para um host IPv6.** Num pool NAT64 o `forward` aponta para um host do prefixo do assinante, e quem está na internet IPv4 alcança esse host pela porta pública:
+
+```
+forward tcp 12000 to 2001:db8:1200:ab00::10 8080
+```
+
+A porta pública tem de estar no bloco do próprio assinante, como num pool IPv4. Um segundo host do mesmo prefixo com a mesma porta privada é recusado.
+
+**Recusados num pool NAT64:** `bypass`, para sempre — um pacote IPv6 para o prefixo NAT64 só chega ao IPv4 traduzido, então não existe caminho sem tradução —, e os ALGs, por enquanto.
+
+**Rotas.** Um pool NAT64 deve ao roteamento dois prefixos: o `prefix-outside`, como qualquer pool, e o `nat64-prefix`, do lado IPv6 — é para ele que os assinantes mandam o tráfego para o IPv4. Com BGP configurado, o `commit check` avisa quando nada anuncia o `nat64-prefix` na família IPv6, e o aviso traz as duas linhas que resolvem: `ipv6 route <prefixo> blackhole` e `network <prefixo>`.
+
+**Par de alta disponibilidade.** A comparação de mapeamento do par cobre o pool NAT64, mas o failover não leva o lado IPv6: esta caixa só cria roteador virtual IPv4, então o gateway dos assinantes IPv6 não acompanha o mestre. O `commit check` avisa sobre todo pool NAT64 numa caixa com VRRP; a rota dos assinantes para o `nat64-prefix` precisa seguir o mestre por outro caminho, por exemplo cada caixa anunciando o prefixo só enquanto está de pé.
 
 Quem estava atrás de uma porta pública: `show cgnat translation 203.0.113.3 44100` responde com o prefixo IPv6 do assinante, pela fórmula. O inverso: `show cgnat subscriber 2001:db8:1200:ab00::10` dá o bloco do assinante, e `show cgnat top` lista os assinantes pelo prefixo.
 

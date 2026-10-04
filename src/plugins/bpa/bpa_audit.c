@@ -127,10 +127,12 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
    */
   for (i = 0; i < vec_len (p->statics); i++)
     {
-      a.as_u32 = clib_host_to_net_u32 (p->statics[i].ip_priv);
+      /* A NAT64 forward by its host (#485): the trail is what answers who
+       * held a forwarded port, and an index answers nobody. */
       s = format (s, " forward %U/%u->%U:%u", format_bpa_proto,
 		  p->statics[i].proto, p->statics[i].port_pub,
-		  format_ip4_address, &a, p->statics[i].port_priv);
+		  format_bpa_static_host, &p->statics[i],
+		  p->statics[i].port_priv);
     }
   return s;
 }

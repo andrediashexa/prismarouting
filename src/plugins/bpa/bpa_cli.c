@@ -480,13 +480,22 @@ format_bpa_pool (u8 *s, va_list *args)
  * a clib_error_t for the CLI (#472) */
 static clib_error_t *
 bpa_static_clause (bpa_pool_t *cfg, u8 proto, u32 port_pub,
-		   const ip4_address_t *priv, u32 port_priv)
+		   const ip4_address_t *priv, const ip6_address_t *priv6,
+		   u32 port_priv)
 {
   bpa_static_t sf;
 
-  if (bpa_static_make (proto, port_pub, clib_net_to_host_u32 (priv->as_u32),
+  if (bpa_static_make (proto, port_pub,
+		       priv ? clib_net_to_host_u32 (priv->as_u32) : 0,
 		       port_priv, &sf))
     return clib_error_return (0, "forward: port out of range");
+  /* A NAT64 pool's forward names a host; its subscriber is resolved once
+   * the pool's IPv6 inside is built (#485). */
+  if (priv6)
+    {
+      sf.has_host6 = 1;
+      clib_memcpy (sf.host6, priv6->as_u8, 16);
+    }
   vec_add1 (cfg->statics, sf);
   return 0;
 }
@@ -749,9 +758,25 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * this line and nowhere else.
        */
       else if (unformat (line_input, "forward tcp %u to %U %u", &fwd_pub,
+			 unformat_ip6_address, &addr6, &fwd_priv))
+	{
+	  error = bpa_static_clause (&cfg, BPA_PROTO_TCP, fwd_pub, 0, &addr6,
+				     fwd_priv);
+	  if (error)
+	    goto done;
+	}
+      else if (unformat (line_input, "forward udp %u to %U %u", &fwd_pub,
+			 unformat_ip6_address, &addr6, &fwd_priv))
+	{
+	  error = bpa_static_clause (&cfg, BPA_PROTO_UDP, fwd_pub, 0, &addr6,
+				     fwd_priv);
+	  if (error)
+	    goto done;
+	}
+      else if (unformat (line_input, "forward tcp %u to %U %u", &fwd_pub,
 			 unformat_ip4_address, &addr, &fwd_priv))
 	{
-	  error = bpa_static_clause (&cfg, BPA_PROTO_TCP, fwd_pub, &addr,
+	  error = bpa_static_clause (&cfg, BPA_PROTO_TCP, fwd_pub, &addr, 0,
 				     fwd_priv);
 	  if (error)
 	    goto done;
@@ -759,7 +784,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       else if (unformat (line_input, "forward udp %u to %U %u", &fwd_pub,
 			 unformat_ip4_address, &addr, &fwd_priv))
 	{
-	  error = bpa_static_clause (&cfg, BPA_PROTO_UDP, fwd_pub, &addr,
+	  error = bpa_static_clause (&cfg, BPA_PROTO_UDP, fwd_pub, &addr, 0,
 				     fwd_priv);
 	  if (error)
 	    goto done;
@@ -2328,6 +2353,7 @@ bpa_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   bpa_static_t sf = { 0 };
   ip4_address_t priv = { 0 };
+  ip6_address_t priv6;
   u32 port_pub = 0, port_priv = 0;
   int is_del = 0, is_check = 0, have_proto = 0, have_pub = 0, have_to = 0;
   u8 *name = 0;
@@ -2349,6 +2375,14 @@ bpa_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	sf.proto = BPA_PROTO_TCP, have_proto = 1;
       else if (unformat (line_input, "udp"))
 	sf.proto = BPA_PROTO_UDP, have_proto = 1;
+      /* A NAT64 pool's forward names an IPv6 host (#485). */
+      else if (unformat (line_input, "to %U %u", unformat_ip6_address, &priv6,
+			 &port_priv))
+	{
+	  have_to = 1;
+	  sf.has_host6 = 1;
+	  clib_memcpy (sf.host6, priv6.as_u8, 16);
+	}
       else if (unformat (line_input, "to %U %u", unformat_ip4_address, &priv,
 			 &port_priv))
 	have_to = 1;
@@ -2496,10 +2530,9 @@ bpa_show_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  const bpa_static_t *sf = &p->statics[i];
 
 	  pub.as_u32 = clib_host_to_net_u32 (sf->ip_pub);
-	  priv.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
 	  vlib_cli_output (vm, "  %U %U:%u -> %U:%u", format_bpa_proto,
 			   sf->proto, format_ip4_address, &pub, sf->port_pub,
-			   format_ip4_address, &priv, sf->port_priv);
+			   format_bpa_static_host, sf, sf->port_priv);
 	  total++;
 	}
     }
@@ -3519,9 +3552,17 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  ip4_address_t priv;
 
 	  priv.as_u32 = clib_host_to_net_u32 (p->statics[i].ip_priv);
-	  s = format (s, " forward %U %u to %U %u\n", format_bpa_proto,
-		      p->statics[i].proto, p->statics[i].port_pub,
-		      format_ip4_address, &priv, p->statics[i].port_priv);
+	  /* A NAT64 forward by its host, never by the index (#485). */
+	  if (p->statics[i].has_host6)
+	    s = format (s, " forward %U %u to %U %u\n", format_bpa_proto,
+			p->statics[i].proto, p->statics[i].port_pub,
+			format_ip6_address,
+			(ip6_address_t *) p->statics[i].host6,
+			p->statics[i].port_priv);
+	  else
+	    s = format (s, " forward %U %u to %U %u\n", format_bpa_proto,
+			p->statics[i].proto, p->statics[i].port_pub,
+			format_ip4_address, &priv, p->statics[i].port_priv);
 	}
       s = format (s, " exit\n");
     }

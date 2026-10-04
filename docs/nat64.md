@@ -5,7 +5,7 @@
 | **Who** | Whoever builds the NAT64 phases of #485; read by whoever reviews them. |
 | **What** | What a NAT64 pool is in this product, what exists today, and what each phase adds. |
 | **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; the plan is on issue #485. |
-| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab) and 3 (dynamic mode and the log) are on the branch for 0.150.0. |
+| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) are on the branch for 0.150.0. |
 | **How** | One release per phase; nothing configurable before the datapath that serves it. |
 
 ## What it is
@@ -66,10 +66,10 @@ family, never both. Without `nat64-prefix` the pool takes `64:ff9b::/96`.
 The pool is created by its own dataplane message, `bpa_nat64_pool_add`, and
 deleted like any other.
 
-What a NAT64 pool does not take yet is refused by name at `commit check` -
-reserve, forwards, bypass, VRF, tcp-mss, an ALG - and refused again by the
-dataplane at creation and on every in-place door (settings, bypass,
-forwards), so no route reaches a NAT64 pool with one of them set.
+What a NAT64 pool does not take is refused by name at `commit check` - a
+bypass, for good, and an ALG, for now - and refused again by the dataplane at
+creation and on every in-place door, so no route reaches a NAT64 pool with
+one of them set.
 
 ## The datapath (phase 2)
 
@@ -138,6 +138,44 @@ deterministic NAT64 pool the formula answers any instant, and the
 configuration trail (`show cgnat history`) records the pool's IPv6 inside,
 `subscriber-length` and `nat64-prefix`, which is what lets it be recomputed.
 
+## Every other per-pool setting (phase 4)
+
+| Setting | On a NAT64 pool |
+|---|---|
+| `reserve` | A deterministic pool's extension, out of the reserve, through the same allocator; logged by prefix |
+| `forward <proto> <port> to <IPv6 host> <port>` | Pins a public port of the subscriber's own block to one host of its prefix. Its own dataplane message, `bpa_nat64_forward_add_del` |
+| `tcp-mss` | Clamped both ways, on the original header. A configured value is used as written; `auto` is 20 less than IPv4's, the IPv6 header's extra |
+| `vrf`, `outside-vrf` | The subscribers' IPv6 table, and the IPv4 table translated traffic leaves by. Two tenants' NAT64 pools may share an inside prefix and a NAT64 prefix in different VRFs |
+| `max-sessions`, `max-session-rate`, `utilisation-alarm` | As on an IPv4 pool: they act in the generic session code |
+| `bypass` | **Refused for good**: an IPv6 packet to the NAT64 prefix reaches IPv4 only translated, so there is no untranslated path for a bypass to name |
+| `alg` | Refused until the ALG phase |
+
+A forward names a HOST, one /128 of the subscriber's delegated prefix; the
+subscriber is the prefix's index, so the validation, the pin and the reply's
+agreement check are the IPv4 code. The screens, the refusals and the
+configuration trail name the host. One forward per subscriber and private
+port: a second host of the same prefix on the same private port is refused as
+a clash, never translated to the first.
+
+**Routing.** A NAT64 pool owes the routing two prefixes: its outside, like
+any pool, and its NAT64 prefix on the IPv6 side - subscribers reach IPv4 by
+sending to it. `commit check` warns when BGP is configured and nothing
+announces the NAT64 prefix in the IPv6 family, with the two lines that do:
+`ipv6 route <prefix> blackhole` and `network <prefix>`. The blackhole
+catches nothing a pool takes - the translation runs on `ip6-unicast` before
+the lookup, which `lab/nat64.sh` measures. The subscribers' own inside
+prefix needs a route back, as IPv4 subscribers behind a BNG do.
+
+**High availability.** The pair's mapping comparison covers a NAT64 pool:
+`subscriber-length` and `nat64-prefix` are mapping fields, so `show cgnat ha`
+and the commit refusal on a diverging pair see them. The failover does not
+carry the IPv6 side: the pair moves by VRRP and this box takes IPv4 virtual
+routers only, so an IPv6 subscriber's gateway is no virtual address that
+follows the master. `commit check` warns when a NAT64 pool is on a box in a
+VRRP pair; it does not refuse, because a pair whose IPv6 side follows the
+master by routing is a correct design this box cannot see. No lab measures a
+NAT64 failover.
+
 ## How it is tested
 
 `ref/bpa_model.py` computes the subscriber index and the RFC 6052 embedding
@@ -153,17 +191,19 @@ table's delegations by `test/test_bpa_identity.c`, the RADIUS attribute by
 `test/test_bpa_radius.c`, the monitor's decoding by `test/test_logmon.py`.
 
 `lab/nat64.sh` puts an IPv6-only subscriber in one network namespace and an
-IPv4 server in another, builds the pool through the VTY, and checks 32
+IPv4 server in another, builds the pool through the VTY, and checks 46
 things on both sides of the box: the deterministic datapath, the
-subscriber's block against `ref/bpa_model.py`, and then the dynamic pool's
-log read off IPFIX and syslog collectors - once with VPP carrying it and once
-with the log container. It passes single-threaded and with two workers, and
-its off run goes red on all 32. `lab/nat64-scale.sh`
+subscriber's block against `ref/bpa_model.py`, the dynamic pool's log read
+off IPFIX and syslog collectors - once with VPP carrying it and once with the
+log container - and then each per-pool setting: the reserve, the MSS clamp,
+the session cap, the alarm, a second tenant in a VRF, the blackholed NAT64
+prefix and a forward reached from IPv4. It passes single-threaded and with
+two workers, and its off run goes red on all 46. `lab/nat64-scale.sh`
 measures the memory and the clocks (docs/architecture.md, "Memory").
 
 ## Phases
 
 The plan, phase by phase from 0.150 on, is on issue #485: the arithmetic;
 the deterministic datapath with the pool's VTY grammar and a lab; dynamic
-mode and the log (all three on this page); every per-pool statement
-supported or refused; the ALGs; PREF64 and a 464XLAT lab.
+mode and the log; every per-pool statement supported or refused (all four on
+this page); the ALGs; PREF64 and a 464XLAT lab.

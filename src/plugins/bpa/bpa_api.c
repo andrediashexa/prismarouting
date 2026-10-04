@@ -769,6 +769,41 @@ vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
   REPLY_MACRO (VL_API_BPA_FORWARD_ADD_DEL_REPLY);
 }
 
+/* not a unit: a binary API message handler, VPP's machinery on both sides.
+ * What the VTY sends through it is driven on a box by lab/nat64.sh. */
+static void
+vl_api_bpa_nat64_forward_add_del_t_handler (
+  vl_api_bpa_nat64_forward_add_del_t *mp)
+{
+  vl_api_bpa_nat64_forward_add_del_reply_t *rmp;
+  bpa_static_t sf = { 0 };
+  clib_error_t *e;
+  u8 *name;
+  int rv = 0;
+
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
+  name = format (0, "%s", mp->name);
+  sf.proto = (mp->proto == BPA_API_FWD_UDP) ? BPA_PROTO_UDP : BPA_PROTO_TCP;
+  sf.port_pub = clib_net_to_host_u16 (mp->port_pub);
+  sf.port_priv = clib_net_to_host_u16 (mp->port_priv);
+  /* The host on an add; a removal names the public port alone. */
+  if (mp->is_add)
+    {
+      sf.has_host6 = 1;
+      clib_memcpy (sf.host6, mp->host, 16);
+    }
+  e = bpa_static_add_del (name, &sf, mp->is_add, 0);
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+  vec_free (name);
+  bpa_actor_clear ();
+  REPLY_MACRO (VL_API_BPA_NAT64_FORWARD_ADD_DEL_REPLY);
+}
+
 /* not a unit: a binary API message handler. VPP's API machinery dispatches it
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.

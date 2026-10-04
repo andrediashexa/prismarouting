@@ -566,9 +566,26 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 				     blk.ip_pub, blk.port_lo, blk.port_hi,
 				     pool_index);
 	    }
-	  s = bpa_session_create (pt, p, pool_index, &blk, port,
-				  (u8) bpa_proto_of ((u8) key_proto), fib, now,
-				  BPA_CREATE_TRAFFIC, &why);
+	  /* A forward on this host's own socket (#485 phase 4), before the
+	   * allocator, as bpa_in2out has it: the subscriber's traffic from the
+	   * forwarded socket leaves on the forwarded public port, or one socket
+	   * would have two public ports (RFC 4787 REQ-1). Matched on the host
+	   * too - another host of the same prefix is not the forward's. */
+	  s = 0;
+	  if (PREDICT_FALSE (vec_len (p->statics) != 0))
+	    {
+	      const bpa_static_t *sf = bpa_static_by_priv (
+		p, &blk, sub_idx, port, (u8) bpa_proto_of ((u8) key_proto),
+		ip6->src_address.as_u8);
+
+	      if (sf)
+		s = bpa_session_static_open (pt, p, pool_index, sf, now);
+	    }
+	  why = BPA_CREATE_OK;
+	  if (!s)
+	    s = bpa_session_create (pt, p, pool_index, &blk, port,
+				    (u8) bpa_proto_of ((u8) key_proto), fib,
+				    now, BPA_CREATE_TRAFFIC, &why);
 	  /* Every block the subscriber holds is full: another, when the pool
 	   * allows more - bpa_in2out's extension, the same allocator and the
 	   * same record. Only after a port refusal: after a cap refusal it

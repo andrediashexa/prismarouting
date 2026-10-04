@@ -427,6 +427,26 @@ autoreply define bpa_forward_add_del
   u32 audit_uid;
 };
 
+/** \brief A forward on a NAT64 pool (#485): bpa_forward_add_del with an
+    IPv6 host, one /128 of a subscriber's delegated prefix. A new message,
+    as bpa_nat64_pool_add is. Removing names the public port and protocol
+    alone, as on the IPv4 message.
+*/
+autoreply define bpa_nat64_forward_add_del
+{
+  u32 client_index;
+  u32 context;
+
+  bool is_add;
+  string name[64];
+  vl_api_bpa_fwd_proto_t proto;
+  u16 port_pub;
+  u16 port_priv;
+  vl_api_ip6_address_t host;
+  string audit_user[64];
+  u32 audit_uid;
+};
+
 /** \brief Enables or disables CGNAT on an interface.
 
     Attaching is a change with the same consequence as a pool change and is

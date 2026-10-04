@@ -1379,6 +1379,10 @@ class Pool:
         """
         v6 = [p for p in self.inside if ":" in p]
         n = f"pool '{self.name}'"
+        if not v6 and any(":" in f[2] for f in self.forwards):
+            return (f"{n}: a forward names an IPv6 host",
+                    "an IPv6 host is a NAT64 pool's, whose prefix-inside is "
+                    "IPv6")
         if not v6:
             if self.subscriber_length or self.nat64_prefix:
                 return (f"{n}: subscriber-length and nat64-prefix need an "
@@ -1408,15 +1412,19 @@ class Pool:
             return (f"{n}: a NAT64 pool takes no bypass",
                     "an IPv6 packet to the NAT64 prefix reaches IPv4 only "
                     "translated, so there is no path to leave untranslated")
+        # A forward names a host of the pool's own family (#485 phase 4).
+        for f in self.forwards:
+            if ":" not in f[2]:
+                return (f"{n}: forward {f[0]} {f[1]} names an IPv4 host",
+                        "a NAT64 pool's forward names an IPv6 host of one "
+                        "of its subscribers")
         unsupported = (
-            (self.forwards, "forward"),
             (any(self.algs.values()), "alg"),
         )
         for present, word in unsupported:
             if present:
                 return (f"{n}: a NAT64 pool takes no {word} yet",
-                        "a NAT64 pool has no forwards, VRF, MSS clamp or ALG "
-                        "yet")
+                        "the ALGs over NAT64 are the next phase")
         return None
 
     def nat64_api_args(self) -> dict:
@@ -1448,6 +1456,17 @@ class Pool:
             "max_sessions": int(self.max_sessions),
             "max_rate": int(self.max_rate),
         }
+
+    def forward_message(self, fwd, is_add=True):
+        """(message, arguments) for one forward (#485): a NAT64 pool's names
+        an IPv6 host, and goes by its own message."""
+        if ":" in fwd[2]:
+            proto, pub, ip, priv = fwd
+            return "bpa_nat64_forward_add_del", {
+                "is_add": bool(is_add), "name": self.name,
+                "proto": "BPA_API_FWD_" + proto.upper(),
+                "port_pub": int(pub), "port_priv": int(priv), "host": ip}
+        return "bpa_forward_add_del", self.forward_api_args(fwd, is_add)
 
     def forward_api_args(self, fwd, is_add=True) -> dict:
         proto, pub, ip, priv = fwd
@@ -4075,10 +4094,21 @@ class Config:
             # that knows the pool arithmetic. Refusing a malformed address
             # here is not that check - it is the one the device would report
             # as a parse error a commit later.
-            octets = w[4].split(".")
-            if len(octets) != 4 or not all(
-                    is_number(o) and int(o) < 256 for o in octets):
-                return f"forward: '{w[4]}' is not an IPv4 address"
+            # Either family: a NAT64 pool's forward names an IPv6 host
+            # (#485), written in RFC 5952's form because that is how the
+            # dataplane prints it back. Whether the family is the POOL's is
+            # asked of the finished pool, Pool.nat64_fits(): the forward may
+            # be typed before prefix-inside.
+            if ":" in w[4]:
+                try:
+                    w[4] = str(ipaddress.IPv6Address(w[4]))
+                except ValueError:
+                    return f"forward: '{w[4]}' is not an IPv6 address"
+            else:
+                octets = w[4].split(".")
+                if len(octets) != 4 or not all(
+                        is_number(o) and int(o) < 256 for o in octets):
+                    return f"forward: '{w[4]}' is not an IPv4 address"
             # Refused rather than deduplicated. Silently dropping the second
             # line leaves a configuration whose text does not round-trip, and
             # the device refuses it for the same reason: one public socket

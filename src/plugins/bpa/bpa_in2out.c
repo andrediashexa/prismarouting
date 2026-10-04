@@ -391,7 +391,7 @@ VLIB_NODE_FN (bpa_in2out_node)
       if (PREDICT_FALSE (vec_len (p->statics) != 0))
 	{
 	  const bpa_static_t *sf =
-	    bpa_static_by_priv (p, &blk, src_host, port_priv, (u8) proto);
+	    bpa_static_by_priv (p, &blk, src_host, port_priv, (u8) proto, 0);
 
 	  if (sf)
 	    {
