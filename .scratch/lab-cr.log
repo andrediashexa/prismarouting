@@ -1,0 +1,8 @@
+building the plugin once, so no lab races another to do it... ok
+
+  commit-readback    pass
+  commit-readback+off pass (16 check(s) red, floor 16)
+
+  pass=2  fail=0  notmeasured=0  novpp=0  ran=0
+  machine: 16 cpu(s)
+  load 1.43 at the start, 2.12 at the highest batch boundary

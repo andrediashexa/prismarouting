@@ -1,0 +1,88 @@
+=== the registry, the default mask and what the document claims ===
+  [ ok ] read 5 registered ALG(s) and 5 in the default mask
+  [ ok ] every registered ALG is in BPA_ALG_DEFAULT: ['esp', 'ftp', 'pptp', 'rtsp', 'sip'], which is what the section says in as many words
+  [ ok ] and the roadmap names every one of them
+
+=== no document times or counts make test for itself ===
+  [ ok ] README, TESTING and CONTRIBUTING leave the count and the clock to the run that produces them
+
+=== the sizing an ISP buys a prefix on ===
+  [ ok ] 200,000 subscribers at 512 ports fit in a /21 (258,048) and not in a /22 (129,024)
+
+=== the VPP version is pinned in one place and quoted in another ===
+  [ ok ] both say VPP 26.06
+
+=== and no document states the same thing twice ===
+  [ ok ] docs/roadmap.md: 1700 sentence(s), none repeated
+  [ ok ] docs/architecture.md: 694 sentence(s), none repeated
+  [ ok ]     and 7 listing row(s), none repeated
+  [ ok ] docs/logging.md: 408 sentence(s), none repeated
+  [ ok ]     and 2 listing row(s), none repeated
+  [ ok ] docs/appliance.md: 1153 sentence(s), none repeated
+  [ ok ]     and 4 listing row(s), none repeated
+  [ ok ] README.md: 40 sentence(s), none repeated
+  [ ok ]     and 20 listing row(s), none repeated
+
+=== nothing is blocked and delivered in the same document ===
+  [ ok ] the blocked table names 12 issue(s) and the file calls 16 delivered, with no issue in both
+
+=== a counted list says how many it has ===
+  [ ok ] the release procedure says 'all six of' and lists 6, numbered 1 to 6
+
+=== a document that quotes install.sh's own line quotes it right ===
+  [ ok ] docs/roadmap.md: install.sh line 4 still says 'for updating a box in production without reins'...
+  [ ok ] lab/upgrade.sh: install.sh line 4 still says 'for updating a box in production without reins'...
+  [ ok ] 2 quotation(s) of install.sh's own words, each held against the line it cites
+
+=== the RFC timeout floors, in three places ===
+  [ ok ] docs/architecture.md: all 4, by name, seconds and RFC
+  [ ok ] wiki/referencia/timeouts-e-os-pisos-das-rfcs.md: all 4, by name, seconds and RFC
+
+=== a figure this project has published a correction for ===
+  [ ok ] docs/appliance.md holds the correction, so there is something to compare against
+  [ ok ] and none of the other 72 document(s) restates it
+
+=== the off-run counts TESTING.md states, against the labs' floors ===
+  [ ok ] ipfix no-exporter: 20, which is the floor lab/ipfix.sh declares
+  [ ok ] and 53 lab(s) declare a floor for this to read
+
+=== TESTING.md does not claim a CI this repository has not got ===
+  [ ok ] no CI, and the document says so
+
+=== a width a document states for a line it quotes ===
+  [ ok ] both of them, measured off the quoted text
+
+=== the volume tables do their own arithmetic ===
+  [ ok ] 4 row(s) across 2 table(s), each against the bytes-per-record its own page states
+
+=== a '?' listing a document prints, against the tree that answers it ===
+  FAIL: docs/routing.md: 'prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?' does not list ['bfd'], and the box offers them: the page is a screen this VTY would not print, on the one screen whose job is saying what is there
+  [ ok ] docs/routing.md: 'prisma# [edit interface GigabitEthernet0/12/0] ?' - all 22 option(s), name and description
+  [ ok ] docs/routing.md: 'prisma# [edit interface GigabitEthernet0/12/0] ?' - all 22 option(s), name and description
+  [ ok ] docs/routing.md: 'prisma> show cgnat ?' - all 14 option(s), name and description
+  FAIL: wiki/referencia/vty-prismash-guia-de-uso/index.md: 'prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?' does not list ['bfd'], and the box offers them: the page is a screen this VTY would not print, on the one screen whose job is saying what is there
+  [ ok ] wiki/referencia/vty-prismash-guia-de-uso/index.md: 'prisma# [edit interface ens18] ?' - all 22 option(s), name and description
+
+=== the reserve's cost, against the model that is its definition ===
+  [ ok ] blocked: 750 of 882 moved and 7 dropped, recomputed from ref/bpa_model.py
+  [ ok ] interleaved: nobody moves and the same 7 are dropped, which is the outside set's 7 addresses times a reserve of 1
+
+=== the release the gate starts at, against the git history ===
+  [ ok ] the gate starts at v0.28.0, which is the first tag containing the commit that added it
+
+=== what the README claims the trail can answer, against the trail ===
+  [ ok ] the trail has an unattributed shape and the README does not claim otherwise
+
+=== every mapping in the pool, or a sample of them ===
+  [ ok ] 5031 forward mapping(s), which is every mapping the 9 pool(s) hold, one by one
+
+=== the filesystem the connection records are promised ===
+  [ ok ] the installer mounts / from $ROOT_UUID and /var/log/prisma-routing from $LOG_UUID, which is the row's claim
+
+=== the feature the state table says this product has not got ===
+  [ ok ] the acceptance test for HA runs in the suite, and the state table no longer says the feature is missing
+
+=== the performance figure the state table says nobody has taken ===
+  [ ok ] the per-packet cost is measured by a lab the release suite runs, and the state table does not claim every performance figure is untested
+
+2 FAILURES

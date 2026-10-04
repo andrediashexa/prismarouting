@@ -1,0 +1,168 @@
+=== an interface the dataplane has not got, on every verb that touches one ===
+  9 verbs, each refusing a name the dataplane has not got
+
+=== and the same verbs when the dataplane answers and says no ===
+  19 verbs, each naming the dataplane's own refusal
+
+=== a bundle member the dataplane does not have (#455) ===
+  pg9 refused as a member, by name
+
+=== a sub-interface whose parent is not on this box ===
+  pg9.10 refused for its parent, not for itself
+
+=== a pool with one half of its mapping ===
+  a pool with an inside and no outside is refused at check time
+
+=== a block-stride on a deterministic pool, by all three routes ===
+  refused on a pool created, on a pool rebuilt, on one that stays put, and at the commit after a rollback; accepted in dynamic mode
+
+=== a pool the dataplane itself would refuse ===
+  the device's own verdict reaches the prompt, named by pool
+
+=== a port forward on a pool that is not being redefined ===
+  a forward added to a pool that stays put is checked on its own
+
+=== an ssh setting nobody could log in through ===
+  a port no daemon can bind is refused before it is written
+
+=== the pool writes, one message at a time ===
+  6 pool writes, each refused by name
+
+=== the box's own configuration, which the commit applies after the dataplane ===
+  ssh, snmp and the accounts, each refused by name
+
+=== an MTU the dataplane took and an MTU it did not ===
+  a refused MTU and an MTU that was accepted and not applied
+
+=== uRPF asked for and not applied, and uRPF taken off and still on ===
+  the dataplane disagreeing in either direction refuses the commit
+
+=== routing, and a box with nothing to apply it with ===
+  FRR refusing, FRR absent at commit, and FRR absent at check
+
+=== a read-only account reaching for configuration mode ===
+  refused, and told which membership allows everything
+
+=== the CGNAT globals, sent one setting at a time ===
+  5 globals, each refused rather than applied to nothing
+
+=== the IPFIX export, which in dynamic mode IS the connection record ===
+  7 ways the export does not arrive, each said out loud
+  and the 5 shapes it does take, each out of the table `?` answers from
+
+=== a commit that would move subscribers, and the ones that cannot run at all ===
+  [ ok ] the widest remap row is 178 columns as the plugin answers it and the 13 rows printed all fit 79, the words whole
+  a re-mapping commit, a window that is not a number, and two commits with nothing to apply
+
+=== the rollback store, and the revert that runs unattended ===
+  a revert that does not validate, and two revisions that cannot be loaded
+
+=== a pool statement, typed ===
+  a word with no setting behind it and a value with no meaning
+
+=== the accounts block, where a refusal that does not fire locks somebody out ===
+  8 account statements, each refused at the prompt
+
+=== the box's own settings, refused while the operator is still typing ===
+  10 settings, each refused before it reaches the candidate
+
+=== an interface statement, typed ===
+  30 interface statements, each kept off FRR's pile
+
+=== an abbreviation that begins more than one statement (#393) ===
+  ambiguity is refused with its candidates, never resolved by position
+
+=== and the two interface statements that are refused outside a block ===
+  an attachment with no direction and a port a configuration cannot remove
+
+=== a sub-interface whose parent is not on the box, at commit ===
+  a tag that is fine on a port that is not there
+
+=== what `commit check` reads about a virtual router (#7) ===
+  three refusals a check used to leave for the commit to discover
+
+=== a virtual router the dataplane did not take, at commit (#7) ===
+  asked for, accepted, and absent from the box that answered
+
+=== an interface name FRR cannot take, at commit (#389) ===
+  21 characters refused with the limit; 16 is FRR's own and passes
+  a name the box has not got: one verdict, the one that says what it has
+
+=== a policy that would commit and store nothing ===
+  a route-map refused because nothing is running to hold it
+
+=== BFD that would commit and watch nothing (#559) ===
+  BFD refused while bfdd is not running, and only then
+
+=== show bfd, each of its refusals (#559) ===
+  the usage, a word that is not an address, bfdd down or garbled, and an address with no session
+
+=== IS-IS frames that would never reach the kernel ===
+  the punt refused, and said at the commit rather than in a counter
+
+=== a routing daemon that is not answering, protocol by protocol ===
+  four daemons asked and not answering, and the FIB behind them
+
+=== clear and show, when the words are wrong ===
+  6 commands refused for the words they were given
+
+=== the interface sampler, which takes seconds to answer ===
+  4 ways to have no rate, and none of them prints one
+
+=== the shell escape and the installer ===
+  a shell that will not start, an installer that is not there, and an installer that must not run
+
+=== the box itself: reboot and shutdown, and what refuses them ===
+  refused by role before the ask, refused by systemd after it, and a verb it has not got
+
+=== a filter this box has not got ===
+  a filter nobody has refuses the answer rather than reshaping it
+
+=== the suites that drive this VTY, run with the refusals recorded ===
+  [ ok ] 48 suites run, 3 of them red: test_doc_commands.py test_doc_copies.py test_every_function.py
+
+=== every refusal the VTY can print, against the ones a box has made it print ===
+  [ ok ] 270 refusals in the VTY (228 through err, 42 through err_dataplane)
+  [ ok ] 270 of them have been printed by a box here or in one of the 48 suites above
+  [ ok ] and the 0 that have not are named, at the floor of 0
+
+=== every row these boxes made the VTY print, measured against the widest ===
+=== value that can reach it (#363) ===
+  [ ok ] a verdict reaches the console 7 columns wider than it is written, driven out of Shell.err: 'error: '
+  [ ok ] 693 of the 763 row-building sites in the VTY printed here (392 verdict(s), 371 print(s))
+      10  assembled elsewhere, and driven over
+     177  assembled elsewhere, driven inside
+      88  bounded, and fits at its widest
+       9  bounded, and over at its widest
+       5  measured at runtime, driven inside
+      70  never printed here
+     195  no value in it
+       1  the words alone are over
+       2  the words before the unbounded value are over
+     153  unbounded, and last on its row
+      48  unbounded, with the VTY's own words behind it
+       5  wrapped to the budget by console_prose
+  the widest values, read from the product: an IP address is 39 columns
+  and a prefix 43, both computed; a decimal is 10, the widest range this VTY's
+  own grammar declares; an interface name is 28, VPP's longest card name
+  plus a tag out of config.VLAN_RANGE; a closed set is its own widest member,
+  out of the 92 collections of strings the product declares.
+
+  NOT MEASURED HERE, and these are the whole of what is not:
+  70 site(s) printed nothing while this ran, so there was no row to
+  measure. Most are inside a 'show' that needs a dataplane, which is the
+  labs' half and cannot run in `make test`.
+  5 site(s) build their columns at runtime, from the values the box holds,
+  and were measured as they were driven. What keeps those inside the console
+  is route_column_widths() and the block it falls back to, which test_prismash_units.py
+  drives at an IPv6 route's widest.
+  187 site(s) print a row assembled somewhere else - a name, a concatenation,
+  a '*rest' - and were measured as they were driven, which is a lower bound
+  on their width and not a bound on it.
+  a decimal is measured at 10 columns, which is the widest NUMBER this box
+  prints and not the widest thing an operator can type: 'mtu' followed by
+  fifty digits quotes all fifty back, and that row is not measured here.
+  [ ok ] 22 row(s) do not fit the console once driven, at the ceiling of 22
+  [ ok ] 48 row(s) carry a value with no widest and the VTY's own words behind it, at the ceiling of 48
+
+ALL TESTS PASSED

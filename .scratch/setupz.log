@@ -1,0 +1,7 @@
+host-veth-vpp
+  pair: commit complete
+2026/10/04 21:16:57 ZEBRA: [NFX3B-68SEX] FD Limit set: 1048576 is too large.  Is this intentional?  Consider using --limit-fds. Limiting size to 100000
+2026/10/04 21:16:57 ZEBRA: [SAPXX-HP5B5][EC 4043309108] Extended Error: failed to retrieve link settings
+2026/10/04 21:16:57 ZEBRA: [WVJCK-PPMGD][EC 4043309093] generic-netlink-cmd (NS 0) error: Operation not supported, type=RTM_NEWADDR(20), seq=3, pid=97
+2026/10/04 21:16:57 ZEBRA: [QBKSZ-0KHCW][EC 4043309138] Disabling MPLS support (no kernel support)
+2026/10/04 21:16:57 BFD: [NFX3B-68SEX] FD Limit set: 1048576 is too large.  Is this intentional?  Consider using --limit-fds. Limiting size to 100000

@@ -1,0 +1,60 @@
+/src/lab/bfd-measure.sh: 28: cd: can't cd to /src/.build-vpp
+[1/33] stamping the plugin with this tree's version
+[2/33] Generating API header /src/.build-vpp/src/plugins/bpa/bpa.api.json
+[3/33] Generating API header /src/.build-vpp/src/plugins/bpa/bpa.api.h
+[4/33] Generating VAPI C header /src/.build-vpp/CMakeFiles/vpp-api/vapi/bpa.api.vapi.h
+[5/33] Generating VAPI C++ header /src/.build-vpp/CMakeFiles/vpp-api/vapi/bpa.api.vapi.hpp
+[6/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_rebalance.c.o
+[7/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_block_ident.c.o
+[8/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_pool.c.o
+[9/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_lent.c.o
+[10/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_radius.c.o
+[11/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_md5.c.o
+[12/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_identity.c.o
+[13/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_log_syslog.c.o
+[14/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_log.c.o
+[15/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_identity_table.c.o
+[16/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_dyn.c.o
+[17/33] Building C object src/plugins/bpa/CMakeFiles/bpa_test_plugin_bpa_plugin.dir/bpa.api_test2.c.o
+[18/33] Linking C shared library /vat2_plugins/bpa_test_plugin_bpa_plugin.so
+[19/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_pptp.c.o
+[20/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_log_tcp.c.o
+[21/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_ra.c.o
+[22/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_audit.c.o
+[23/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_stats.c.o
+[24/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_handoff.c.o
+[25/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_session.c.o
+[26/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_ftp.c.o
+[27/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa.c.o
+[28/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_api.c.o
+[29/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_in2out.c.o
+[30/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_out2in.c.o
+[31/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_nat64.c.o
+[32/33] Building C object src/plugins/bpa/CMakeFiles/bpa_plugin.dir/bpa_cli.c.o
+[33/33] Linking C shared library /vpp_plugins/bpa_plugin.so
+host-veth-vpp
+  pair: commit complete
+2026/10/04 21:00:09 ZEBRA: [NFX3B-68SEX] FD Limit set: 1048576 is too large.  Is this intentional?  Consider using --limit-fds. Limiting size to 100000
+2026/10/04 21:00:09 ZEBRA: [SAPXX-HP5B5][EC 4043309108] Extended Error: failed to retrieve link settings
+2026/10/04 21:00:09 ZEBRA: [WVJCK-PPMGD][EC 4043309093] generic-netlink-cmd (NS 0) error: Operation not supported, type=RTM_NEWADDR(20), seq=3, pid=5372
+2026/10/04 21:00:09 ZEBRA: [QBKSZ-0KHCW][EC 4043309138] Disabling MPLS support (no kernel support)
+2026/10/04 21:00:09 BFD: [NFX3B-68SEX] FD Limit set: 1048576 is too large.  Is this intentional?  Consider using --limit-fds. Limiting size to 100000
+=========== does BFD reach FRR's bfdd through linux_cp at all ===========
+  [FAIL] bfdd over linux_cp never came up: down
+  -- the dataplane's errors:
+  -- the dataplane's own BFD state while bfdd owns the session:
+
+=========== row A: bfdd behind linux_cp ===========
+  bfdd     300 ms x3  idle    never came up
+  bfdd     300 ms x3  loaded  never came up
+  bfdd     100 ms x3  idle    never came up
+  bfdd     100 ms x3  loaded  never came up
+  bfdd      50 ms x3  idle    never came up
+  bfdd      50 ms x3  loaded  never came up
+  bfdd      20 ms x3  idle    never came up
+  bfdd      20 ms x3  loaded  never came up
+  bfdd      10 ms x3  idle    never came up
+  bfdd      10 ms x3  loaded  never came up
+
+=========== row B: VPP's own BFD ===========
+/src/lab/bfd-measure.sh: 138: Illegal number: up
