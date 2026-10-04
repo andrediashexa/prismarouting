@@ -401,4 +401,24 @@ bpa_in6_key_unpack (const bpa_kv_24_8_t *kv, u8 addr[16], u16 *port,
   *fib = (u32) (kv->key[2] >> 32);
 }
 
+/*
+ * The MSS a NAT64 pool clamps a handshake to (#485 phase 4), or 0 for none.
+ *
+ * A configured `tcp-mss` is the operator's number and is used as it was
+ * written. The automatic one is derived from the interface MTUs for IPv4 -
+ * MTU less 40 - and a NAT64 subscriber's side carries a header 20 bytes
+ * longer, so a NAT64 pool's is 20 less, in both directions: the SYN's MSS is
+ * what the IPv6 host can receive, and the SYN/ACK's limits what it sends,
+ * both over IPv6. Never below the RFC 1122 floor the clamp keeps, 536.
+ */
+static inline u16
+bpa_nat64_mss_for (u16 configured, u8 is_auto, u16 auto_mss)
+{
+  if (!is_auto)
+    return configured;
+  if (auto_mss == 0)
+    return 0;
+  return auto_mss > 536 + 20 ? (u16) (auto_mss - 20) : 536;
+}
+
 #endif /* __included_bpa_nat64_h__ */

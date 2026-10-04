@@ -775,6 +775,49 @@ print(f"  loaded; strides applied: "
       f"{ {n: a.get('block_stride') for n, a in sorted(adds.items())} }")
 os.unlink(saved)
 
+print("\n=== what a pool's creation cannot carry is sent with it (#485) ===")
+# bpa_pool_add_del has no utilisation alarm, and a pool being created gets no
+# settings_set from delta_to(): a pool created with `utilisation-alarm` had
+# none on the dataplane until a later commit noticed - IPv4 included. A NAT64
+# pool's creation message carries no in-place setting at all, so its MSS
+# clamp went the same way. Both are sent right after the creation now; the
+# reserve and the VRFs, which re-map, ride on the NAT64 message itself.
+api = FakeDataplane()
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("""nat
+ cgnat
+  pool four
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/30
+   utilisation-alarm 80
+   exit
+  pool six
+   prefix-inside 2001:db8:1200::/40
+   subscriber-length 56
+   prefix-outside 200.150.0.20/30
+   reserve 2
+   max-blocks 2
+   tcp-mss 1400
+   vrf 10
+   exit
+  exit
+ exit
+""")
+    saved = fh.name
+with contextlib.redirect_stdout(io.StringIO()):
+    sh.load(saved)
+os.unlink(saved)
+sets = {a["name"]: a for m, a in api.calls if m == "bpa_pool_settings_set"}
+n64 = [a for m, a in api.calls if m == "bpa_nat64_pool_add"]
+check(sets.get("four", {}).get("util_alarm") == 80,
+      f"the IPv4 pool's alarm reached the dataplane: {sets.get('four')}")
+check(sets.get("six", {}).get("tcp_mss") == 1400,
+      f"and the NAT64 pool's clamp: {sets.get('six')}")
+check(len(n64) == 1 and n64[0]["block_reserve"] == 2 and n64[0]["vrf_id"] == 10,
+      f"the NAT64 pool's reserve and VRF on its creation message: {n64}")
+
 print("\n=== a file's own address makes its own static route reachable (#294) ===")
 # The most serious shape this repository has had: `prismash --load` refusing a
 # box's ENTIRE configuration over a static route that is correct.

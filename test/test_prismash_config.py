@@ -522,6 +522,25 @@ check("router static" not in bang,
 check(" ip route 10.0.0.0/8 192.0.2.1" in bang,
       f"and the route is left exactly where FRR put it: {bang}")
 
+# A SECOND address-family, as FRR writes it back (#485): ` exit-address-family`
+# one column in. The indentation closed the family and the closer then closed
+# `router bgp` as well, so every statement of the second family read as top
+# level - the IPv6 family's `network` for a NAT64 prefix was never seen. And
+# ` exit-vrf` beside a vrf's statements still closes the vrf, not the last of
+# them.
+two = ["router bgp 65000", " address-family ipv4 unicast",
+       "  network 203.0.113.0/29", " exit-address-family",
+       " address-family ipv6 unicast", "  network 64:ff9b::/96",
+       " exit-address-family", "exit", "!", "ip route 1.0.0.0/8 Null0"]
+paths = config.block_paths(two)
+check(paths[5] == ["router bgp 65000", "address-family ipv6 unicast"],
+      f"the second family's statement is inside router bgp: {paths[5]}")
+check(paths[9] == [], f"and the router ends at its exit: {paths[9]}")
+vp = config.block_paths(["vrf red", " ip route 10.0.0.0/8 Null0", " exit-vrf",
+                         "ip route 1.0.0.0/8 Null0"])
+check(vp[1] == ["vrf red"] and vp[3] == [],
+      f"an indented exit-vrf closes the vrf: {vp}")
+
 # The third thing that `!` broke, and the one no lab holds: `show this` inside
 # `router bgp`, on a configuration READ BACK from FRR rather than typed.
 #
@@ -2259,10 +2278,7 @@ check(" subscriber-length 56" in lines and " nat64-prefix 64:ff9b::/96" in lines
       f"the statements are rendered, the prefix with it: {lines}")
 # Each thing the first release does not do, refused by name.
 for setup, needle in (
-        (lambda p: setattr(p, "block_reserve", 1), "no reserve"),
         (lambda p: p.bypass_src.append("10.0.0.0/8"), "no bypass"),
-        (lambda p: setattr(p, "tcp_mss", "1400"), "no tcp-mss"),
-        (lambda p: setattr(p, "vrf", "1"), "no vrf"),
         (lambda p: p.algs.update({"ftp": True}), "no alg"),
         (lambda p: p.forwards.append(("tcp", 80, "10.0.0.1", 80)), "no forward"),
         (lambda p: p.inside.append("100.64.0.0/10"), "not both"),
@@ -2275,6 +2291,7 @@ for setup, needle in (
 # Phase 3: a dynamic NAT64 pool, and what its allocation takes.
 t = copy.deepcopy(v6)
 t.mode, t.max_blocks, t.initial_ports, t.block_stride = "dynamic", 4, 1024, 1
+t.block_reserve = 2
 check(t.nat64_fits() is None, f"a dynamic NAT64 pool: {t.nat64_fits()}")
 t = base_pool()
 t.subscriber_length = 56
@@ -2294,8 +2311,8 @@ check(a == v6.nat64_api_args(), "add_message carries nat64_api_args")
 check(a["subscriber_length"] == 56 and a["nat64_prefix"] == "::/0"
       and a["n_inside"] == 1 and a["prefixes"][0] == "2001:db8:1200::/40",
       f"the message: {a}")
-check("alg" not in a and "block_reserve" not in a and "vrf_id" not in a,
-      "what a NAT64 pool takes no part of is not on its message")
+check("alg" not in a and a["vrf_id"] == 4294967295 and a["block_reserve"] == 0,
+      "no ALG on the message; every VRF and no reserve unless stated")
 check(base_pool().add_message()[0] == "bpa_pool_add_del",
       "an IPv4 pool is created as before")
 

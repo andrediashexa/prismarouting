@@ -7296,6 +7296,21 @@ def bgp_originations(routing):
     return announced, blind, has_bgp
 
 
+def prefix6_covers(outer, inner):
+    """
+    Whether IPv6 prefix `outer` contains the whole of `inner` (#485). Its own
+    function because routes.covers_prefix() is IPv4 by design - the public
+    side of a CGNAT is - and a NAT64 prefix is the one IPv6 prefix a pool
+    owes the routing.
+    """
+    try:
+        o = ipaddress.ip_network(outer, strict=False)
+        i = ipaddress.ip_network(inner, strict=False)
+    except ValueError:
+        return False
+    return o.version == i.version == 6 and i.subnet_of(o)
+
+
 def pool_announce_findings(routing, pools):
     """
     Pools whose public prefix nothing in this configuration would advertise.
@@ -7348,6 +7363,20 @@ def pool_announce_findings(routing, pools):
     if not pools or not has_bgp or blind:
         return out
     for pname, pool in sorted(pools.items()):
+        # A NAT64 pool owes the IPv6 side its NAT64 prefix as well (#485):
+        # subscribers reach IPv4 by sending to it, and a box nothing routes it
+        # to translates nothing. Same shape, same measurement as the outside.
+        if getattr(pool, "is_nat64", False):
+            pfx6 = pool.nat64_prefix_eff
+            if not any(prefix6_covers(a, pfx6) for a in announced):
+                out.append((
+                    "warning", f"pool '{pname}'",
+                    f"nothing here announces {pfx6}",
+                    ["its IPv6 subscribers reach IPv4 by sending to it, and "
+                     "nothing routes it here",
+                     "announce it from another box, or originate it here with",
+                     f"'ipv6 route {pfx6} blackhole' and 'network {pfx6}' "
+                     "under the BGP IPv6 address family"]))
         for pfx in pool.outside or ():
             if any(routes.covers_prefix(a, pfx) for a in announced):
                 continue
@@ -12227,6 +12256,20 @@ class Shell:
                 # operator to read the whole candidate.
                 self.err_dataplane(f"pool '{pool.name}': {r.reason}")
                 return False
+            # What the creation message cannot carry, sent at once after it.
+            # bpa_pool_add_del has no utilisation alarm, and delta_to() gives
+            # a pool being created no settings_set - so a pool created with
+            # `utilisation-alarm` had none, on IPv4 as well, until a later
+            # commit noticed the difference (#485 phase 4, measured with
+            # Config.delta_to). A NAT64 pool's message carries no in-place
+            # setting at all, the MSS clamp included.
+            if pool.util_alarm or pool.is_nat64:
+                r = self.api_call("bpa_pool_settings_set",
+                                  pool.settings_api_args())
+                if not r.ok:
+                    self.err_dataplane(
+                        f"pool '{pool.name}': settings: {r.reason}")
+                    return False
 
         # The settings the dataplane can change in place, before the lists
         # and the bounds: they are the ones an operator changes while looking

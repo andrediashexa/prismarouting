@@ -273,12 +273,16 @@ autoreply define bpa_pool_add_del
 /** \brief Creates a NAT64 pool: IPv6 subscribers, IPv4 public addresses (#485).
     Its own message rather than three more fields on bpa_pool_add_del, so
     that no client built against 0.18.0 has to be rebuilt for a feature it
-    does not use. Mode, max_blocks, initial_blocks and block_stride are here
-    for the dynamic NAT64 pool to come and refused until it does; a reserve,
-    forwards, bypass, VRFs, tcp-mss and the ALGs are not here at all.
+    does not use. The ALGs are not here. The in-place settings - the MSS
+    clamp, the utilisation alarm - reach a NAT64 pool by
+    bpa_pool_settings_set, and forwards by their own message, as for any
+    pool; the reserve re-maps subscribers and so is here.
     @param name - pool name
     @param subscriber_length - the prefix length one subscriber holds, 32-128
     @param nat64_prefix - RFC 6052's prefix; length 0 is 64:ff9b::/96
+    @param vrf_id - the IPv6 table the subscribers arrive in; ~0 is every one
+    @param out_vrf_id - the IPv4 table translated traffic leaves by; ~0
+                        leaves it where it was
     @param n_inside - how many of the prefixes are inside ones, IPv6
     @param prefixes - the inside ones first, then the public IPv4 ones
 */
@@ -297,9 +301,12 @@ autoreply define bpa_nat64_pool_add
   u8 max_blocks;
   u8 initial_blocks;
   u16 block_stride;
+  u16 block_reserve;
   vl_api_bpa_timeouts_t timeouts;
   u8 subscriber_length;
   vl_api_ip6_prefix_t nat64_prefix;
+  u32 vrf_id;
+  u32 out_vrf_id;
   string audit_user[64];
   u32 audit_uid;
   u8 n_inside;

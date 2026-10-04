@@ -111,6 +111,17 @@ test_prefix_rules (void)
   CHECK (!bpa_ip6_prefixes_overlap (pfx, 56, n56, 56),
 	 "two neighbouring /56s overlapped");
   CHECK (bpa_ip6_prefixes_overlap (pfx, 56, pfx, 56), "a prefix is itself");
+
+  /* The clamp (#485 phase 4): the operator's number as written; the
+   * automatic one 20 less, the IPv6 header's extra; never below 536. */
+  CHECK (bpa_nat64_mss_for (1400, 0, 1460) == 1400,
+	 "a configured tcp-mss is used as written");
+  CHECK (bpa_nat64_mss_for (0, 1, 1460) == 1440,
+	 "auto is the IPv4 figure less 20: %u", bpa_nat64_mss_for (0, 1, 1460));
+  CHECK (bpa_nat64_mss_for (0, 1, 0) == 0, "auto with no MTU known clamps "
+	 "nothing");
+  CHECK (bpa_nat64_mss_for (0, 1, 540) == 536, "and never below 536");
+  CHECK (bpa_nat64_mss_for (0, 0, 1460) == 0, "no tcp-mss, no clamp");
 }
 
 static void

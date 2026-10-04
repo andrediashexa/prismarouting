@@ -404,11 +404,9 @@ bpa_nat64_cfg_finish (bpa_pool_t *cfg, u8 sub_len)
 }
 
 /*
- * What a NAT64 pool does not do yet, refused rather than accepted and inert
+ * What a NAT64 pool does not do, refused rather than accepted and inert
  * (#485's rule: every per-pool statement is supported with a test or refused
- * with a test). Phase 2 is deterministic translation; dynamic mode, the
- * reserve, forwards, bypass, the MSS clamp, VRFs and the ALGs come later.
- * Returns the reason, or 0.
+ * with a test). Returns the reason, or 0.
  */
 const char *
 bpa_nat64_unsupported (const bpa_pool_t *cfg)
@@ -416,18 +414,17 @@ bpa_nat64_unsupported (const bpa_pool_t *cfg)
   if (!cfg->is_nat64)
     return 0;
   /* Dynamic mode, with max-blocks, initial-allocation and block-stride,
-   * since phase 3: bpa_in2out's allocator on the subscriber's index. A
-   * reserve is a deterministic pool's extension, and stays refused. */
-  if (cfg->block_reserve)
-    return "a NAT64 pool takes no reserve yet";
+   * since phase 3, and a deterministic pool's reserve since phase 4:
+   * bpa_in2out's allocator on the subscriber's index. */
   if (cfg->statics)
     return "a NAT64 pool takes no forward yet";
+  /* NOT "yet": there is nothing for a bypass to mean. A NAT64 subscriber's
+   * packet is addressed into the NAT64 prefix, and the only way it reaches
+   * an IPv4 host is translated - so neither an untranslated source nor an
+   * untranslated destination is a path that exists. */
   if (cfg->bypass_src.n_ranges || cfg->bypass_dst.n_ranges)
-    return "a NAT64 pool takes no bypass yet";
-  if (cfg->tcp_mss || cfg->tcp_mss_auto)
-    return "a NAT64 pool takes no tcp-mss yet";
-  if (cfg->vrf_id != ~0u || cfg->out_vrf_id != ~0u)
-    return "a NAT64 pool takes no vrf yet";
+    return "a NAT64 pool takes no bypass: an IPv6 packet reaches IPv4 only "
+	   "translated";
   if (cfg->alg)
     return "a NAT64 pool runs no ALG yet";
   return 0;

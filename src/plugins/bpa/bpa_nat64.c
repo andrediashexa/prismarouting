@@ -20,6 +20,7 @@
 #include "bpa.h"
 #include "bpa_exhaust.h"
 #include "bpa_log.h"
+#include "bpa_mss.h"
 #include <vnet/ip/ip6_to_ip4.h>
 #include <vnet/ip/ip4_to_ip6.h>
 #include <vnet/ip/reass/ip6_sv_reass.h>
@@ -34,8 +35,8 @@
  * bpa_set6_index_of(), which test/test_bpa_nat64.c holds, and lab/nat64.sh
  * drives this through a box. */
 int
-bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 *pool_index,
-		     u32 *sub_idx)
+bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 fib,
+		     u32 *pool_index, u32 *sub_idx)
 {
   bpa_pool_t *p;
 
@@ -44,6 +45,12 @@ bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 *pool_index,
   pool_foreach (p, bm->pools)
     {
       if (!p->is_nat64 || p->deleted)
+	continue;
+      /* A pool bound to an IPv6 table answers for that table only, which is
+       * what lets two tenants' NAT64 pools share an inside prefix; ~0 on
+       * either side is "every table", as bpa_pool_claims_inside() reads
+       * it for IPv4 (#485 phase 4). */
+      if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
 	continue;
       if (bpa_set6_index_of (&p->inside6, a, sub_idx) == 0)
 	{
@@ -469,7 +476,8 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 
       next[0] = BPA_NAT64_IN2OUT_NEXT_DROP;
 
-      if (bpa_pool_by_inside6 (bm, ip6->src_address.as_u8, &pool_index,
+      if (bpa_pool_by_inside6 (bm, ip6->src_address.as_u8,
+			       vlib_buffer_get_ip6_fib_index (b[0]), &pool_index,
 			       &sub_idx))
 	goto not_ours;
       p = pool_elt_at_index (bm->pools, pool_index);
@@ -565,8 +573,11 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 	   * allows more - bpa_in2out's extension, the same allocator and the
 	   * same record. Only after a port refusal: after a cap refusal it
 	   * would give a block to the subscriber the operator bounded. */
+	  /* And on a deterministic pool, out of its reserve (#485 phase 4):
+	   * the same test bpa_in2out makes, because the allocator in pt->dyn
+	   * is whichever the pool has. */
 	  if (PREDICT_FALSE (!s && why == BPA_CREATE_NO_PORT
-			     && p->mode == BPA_MODE_DYNAMIC
+			     && (p->mode == BPA_MODE_DYNAMIC || p->block_reserve)
 			     && bpa_sub_n_blocks (pt, pool_index, sub_idx)
 				  < p->max_blocks))
 	    {
@@ -620,7 +631,21 @@ VLIB_NODE_FN (bpa_nat64_in2out_node)
 	  if (l4_proto == IP_PROTOCOL_TCP && (!frag_off ||
 	      ip6_frag_hdr_offset ((ip6_frag_hdr_t *) ((u8 *) ip6 + frag_off))
 		== 0))
-	    bpa_tcp_track (s, ((tcp_header_t *) ((u8 *) ip6 + l4_off))->flags);
+	    {
+	      tcp_header_t *t = (tcp_header_t *) ((u8 *) ip6 + l4_off);
+	      u16 mss = bpa_nat64_mss_for (p->tcp_mss, p->tcp_mss_auto,
+					   bm->auto_mss);
+
+	      bpa_tcp_track (s, t->flags);
+	      /* The clamp on the original header, before translation: it is
+	       * an incremental update of the checksum the translation then
+	       * carries across, and neither reads what the other wrote. */
+	      if (PREDICT_FALSE ((t->flags & TCP_FLAG_SYN) && mss))
+		bpa_tcp_mss_clamp (t,
+				   (u8 *) vlib_buffer_get_current (b[0])
+				     + b[0]->current_length,
+				   mss);
+	    }
 	  bpa_nat64_in2out_l4 (b[0], ip6, l4_off, frag_off, l4_proto, s, dst4,
 			       &pt->nat64_ip_id);
 	}
@@ -720,7 +745,8 @@ VLIB_NODE_FN (bpa_nat64_in2out_handoff_node)
       u32 pool_index, sub_idx;
 
       ti[0] = (u16) this_thread;
-      if (bpa_pool_by_inside6 (bm, ip6->src_address.as_u8, &pool_index,
+      if (bpa_pool_by_inside6 (bm, ip6->src_address.as_u8,
+			       vlib_buffer_get_ip6_fib_index (b[0]), &pool_index,
 			       &sub_idx) == 0)
 	ti[0] = (u16) bpa_sub_thread (bm, sub_idx);
       b++;
@@ -803,9 +829,19 @@ bpa_nat64_out2in (vlib_main_t *vm, vlib_buffer_t *b, bpa_per_thread_t *pt,
       if (proto == IP_PROTOCOL_TCP)
 	{
 	  tcp_header_t *t = (tcp_header_t *) l4;
+	  u16 mss = bpa_nat64_mss_for (p->tcp_mss, p->tcp_mss_auto,
+				       bm->auto_mss);
+
+	  bpa_tcp_track (s, t->flags);
+	  /* The SYN/ACK's half: it limits what the subscriber sends. On the
+	   * IPv4 header still, before the checksum below is carried over. */
+	  if (PREDICT_FALSE ((t->flags & TCP_FLAG_SYN) && mss))
+	    bpa_tcp_mss_clamp (t,
+			       (u8 *) vlib_buffer_get_current (b)
+				 + b->current_length,
+			       mss);
 	  csum = &t->checksum;
 	  dport = &t->dst_port;
-	  bpa_tcp_track (s, t->flags);
 	}
       else
 	{

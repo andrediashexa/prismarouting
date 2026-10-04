@@ -847,7 +847,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
    * pool that quietly matches nothing. */
   if (cfg.vrf_id != ~0u)
     {
-      cfg.fib_index = fib_table_find (FIB_PROTOCOL_IP4, cfg.vrf_id);
+      /* A NAT64 pool's subscribers arrive in an IPv6 table (#485). */
+      cfg.fib_index = fib_table_find (cfg.n_inside6 ? FIB_PROTOCOL_IP6
+					: FIB_PROTOCOL_IP4,
+				      cfg.vrf_id);
       if (cfg.fib_index == ~0u)
 	{
 	  error = clib_error_return (
@@ -1425,7 +1428,7 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
       /* A NAT64 subscriber (#485): any address in its prefix names it, and
        * the pool's pseudo inside is [0, N), so its "address" there is its
        * index - which is what everything below hands the arithmetic. */
-      if (bpa_pool_by_inside6 (bm, addr6.as_u8, &pool_index, &sub_idx))
+      if (bpa_pool_by_inside6 (bm, addr6.as_u8, ~0u, &pool_index, &sub_idx))
 	{
 	  error = clib_error_return (0, "%U is not inside any NAT64 pool",
 				     format_ip6_address, &addr6);
@@ -1600,7 +1603,7 @@ bpa_clear_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
   /* A NAT64 subscriber by any address in its prefix (#485). */
   else if (unformat (input, "%U", unformat_ip6_address, &addr6))
     {
-      if (bpa_pool_by_inside6 (bm, addr6.as_u8, &pool_index, &sub_idx))
+      if (bpa_pool_by_inside6 (bm, addr6.as_u8, ~0u, &pool_index, &sub_idx))
 	return clib_error_return (0, "%U is not inside any NAT64 pool",
 				  format_ip6_address, &addr6);
     }

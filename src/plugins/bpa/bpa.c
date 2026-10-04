@@ -1537,7 +1537,8 @@ bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
 
   p = pool_elt_at_index (bm->pools, q[0]);
   if (n && p->is_nat64)
-    return clib_error_return (0, "a NAT64 pool takes no bypass yet");
+    return clib_error_return (0, "a NAT64 pool takes no bypass: an IPv6 "
+				 "packet reaches IPv4 only translated");
   vlib_worker_thread_barrier_sync (bm->vlib_main);
   if (is_dst)
     p->bypass_dst = built;
@@ -1598,6 +1599,11 @@ bpa_nat64_check_overlap (const bpa_pool_t *cfg)
       /* The same name is the pool this one replaces, when it is a commit
        * check asking; bpa_pool_add() has refused a live name already. */
       if (!p->is_nat64 || p->deleted || vec_is_equal (p->name, cfg->name))
+	continue;
+      /* Two tenants: pools bound to different IPv6 tables may share an
+       * inside prefix and a NAT64 prefix, as IPv4 pools in different VRFs
+       * share an inside (#485 phase 4). */
+      if (cfg->vrf_id != ~0u && p->vrf_id != ~0u && cfg->vrf_id != p->vrf_id)
 	continue;
       if (p->nat64_len == cfg->nat64_len
 	  && !memcmp (p->nat64_prefix, cfg->nat64_prefix, 16))

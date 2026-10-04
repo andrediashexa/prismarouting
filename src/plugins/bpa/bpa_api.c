@@ -233,6 +233,24 @@ vl_api_bpa_nat64_pool_add_t_handler (vl_api_bpa_nat64_pool_add_t *mp)
   e = bpa_nat64_cfg_finish (&cfg, mp->subscriber_length);
   if (e)
     goto done;
+  /* The subscribers' table is IPv6, the translated traffic's IPv4. */
+  cfg.vrf_id = clib_net_to_host_u32 (mp->vrf_id);
+  cfg.out_vrf_id = clib_net_to_host_u32 (mp->out_vrf_id);
+  if (cfg.vrf_id != ~0u
+      && (cfg.fib_index = fib_table_find (FIB_PROTOCOL_IP6, cfg.vrf_id))
+	   == ~0u)
+    {
+      rv = VNET_API_ERROR_NO_SUCH_FIB;
+      goto done;
+    }
+  if (cfg.out_vrf_id != ~0u
+      && (cfg.out_fib_index = fib_table_find (FIB_PROTOCOL_IP4,
+					      cfg.out_vrf_id))
+	   == ~0u)
+    {
+      rv = VNET_API_ERROR_NO_SUCH_FIB;
+      goto done;
+    }
 
   cfg.name = name;
   cfg.block_size = clib_net_to_host_u16 (mp->block_size);
@@ -244,6 +262,7 @@ vl_api_bpa_nat64_pool_add_t_handler (vl_api_bpa_nat64_pool_add_t *mp)
   cfg.max_blocks = mp->max_blocks;
   cfg.initial_blocks = mp->initial_blocks;
   cfg.block_stride = clib_net_to_host_u16 (mp->block_stride);
+  cfg.block_reserve = clib_net_to_host_u16 (mp->block_reserve);
   cfg.timeouts.udp = clib_net_to_host_u32 (mp->timeouts.udp);
   cfg.timeouts.icmp = clib_net_to_host_u32 (mp->timeouts.icmp);
   cfg.timeouts.tcp_syn = clib_net_to_host_u32 (mp->timeouts.tcp_syn);

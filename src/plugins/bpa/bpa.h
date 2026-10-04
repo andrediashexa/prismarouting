@@ -667,7 +667,8 @@ bpa_next_after (u16 *next, vlib_buffer_t *b, u16 lookup)
 }
 
 /* NAT64 (#485), bpa_nat64.c */
-int bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 *pool_index,
+int bpa_pool_by_inside6 (bpa_main_t *bm, const u8 a[16], u32 fib,
+			 u32 *pool_index,
 			 u32 *sub_idx);
 void bpa_nat64_session_key (bpa_per_thread_t *pt, bpa_session_t *s,
 			    const ip6_address_t *host);

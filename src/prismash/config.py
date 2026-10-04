@@ -440,7 +440,23 @@ def block_paths(routing: list) -> list:
             out.append(None)
             continue
         if indent:
-            while stack and stack[-1][0] >= indent:
+            # An indented CLOSER ends the block written at its own level -
+            # FRR writes ` exit-address-family` one column in, under the
+            # ` address-family` it closes - so only what is nested deeper goes
+            # here, and the closer below takes its own block. Popping at its
+            # level as well closed that block here and the closer then closed
+            # `router bgp` too: every statement of a second address family read
+            # as outside BGP, so the IPv6 family's `network` for a NAT64 prefix
+            # was never seen (#485, measured with block_paths itself).
+            # And at its own level only what is not a block: ` exit-vrf` sits
+            # one column in under a `vrf` at column 0, beside the statements
+            # of that vrf, and has to close the vrf rather than the last of
+            # them.
+            closer = stmt in FRR_BLOCK_CLOSERS
+            while stack and (stack[-1][0] > indent
+                             or (stack[-1][0] == indent
+                                 and (not closer
+                                      or not opens_frr_block(stack[-1][1])))):
                 stack.pop()
             if stack:
                 stack[-1][2] = True
@@ -1385,19 +1401,22 @@ class Pool:
             return (f"{n}: prefix-outside is IPv4 on a NAT64 pool", "")
         # Dynamic, with max-blocks, initial-allocation and block-stride,
         # since #485's phase 3; what is below is still refused by name.
+        # Refused for good, not "yet": a NAT64 subscriber's packet is
+        # addressed into the NAT64 prefix and reaches an IPv4 host only
+        # translated, so there is no untranslated path for a bypass to name.
+        if self.bypass_src or self.bypass_dst:
+            return (f"{n}: a NAT64 pool takes no bypass",
+                    "an IPv6 packet to the NAT64 prefix reaches IPv4 only "
+                    "translated, so there is no path to leave untranslated")
         unsupported = (
-            (self.block_reserve, "reserve"),
             (self.forwards, "forward"),
-            (self.bypass_src or self.bypass_dst, "bypass"),
-            (self.tcp_mss, "tcp-mss"),
-            (self.vrf != "" or self.outside_vrf != "", "vrf"),
             (any(self.algs.values()), "alg"),
         )
         for present, word in unsupported:
             if present:
                 return (f"{n}: a NAT64 pool takes no {word} yet",
-                        "a NAT64 pool has no reserve, forwards, bypass, VRF, "
-                        "MSS clamp or ALG yet")
+                        "a NAT64 pool has no forwards, VRF, MSS clamp or ALG "
+                        "yet")
         return None
 
     def nat64_api_args(self) -> dict:
@@ -1409,8 +1428,8 @@ class Pool:
         n64 = self.nat64_prefix or "::/0"
         keep = ("name", "block_size", "port_min", "port_max", "policy",
                 "mode", "filter", "max_blocks", "initial_blocks",
-                "block_stride", "timeouts", "n_inside", "n_prefixes",
-                "prefixes")
+                "block_stride", "block_reserve", "timeouts", "vrf_id",
+                "out_vrf_id", "n_inside", "n_prefixes", "prefixes")
         out = {k: a[k] for k in keep}
         out["subscriber_length"] = int(self.subscriber_length)
         out["nat64_prefix"] = n64
