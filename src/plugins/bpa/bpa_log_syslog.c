@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <arpa/inet.h>
 
 #ifdef BPA_STANDALONE
 #include "bpa_shim.h"
@@ -130,15 +131,45 @@ bpa_syslog_timestamp (char *out, u32 cap, f64 wall)
  * have to write a parser for first.
  */
 u32
+bpa_log_subscriber_str (char *out, u32 cap, u32 ip_priv,
+			const bpa_log_sub6_t *v6)
+{
+  int n;
+
+  if (v6 && v6->len)
+    {
+      char a[INET6_ADDRSTRLEN];
+
+      if (v6->len > 128 || !inet_ntop (AF_INET6, v6->addr, a, sizeof (a)))
+	return 0;
+      n = snprintf (out, cap, "%s/%u", a, v6->len);
+    }
+  else
+    n = snprintf (out, cap, "%u.%u.%u.%u", (ip_priv >> 24) & 0xff,
+		  (ip_priv >> 16) & 0xff, (ip_priv >> 8) & 0xff,
+		  ip_priv & 0xff);
+  if (n < 0 || (u32) n >= cap)
+    return 0;
+  return (u32) n;
+}
+
+u32
 bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
 		 u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id,
-		 const char *hostname, u32 pen, u32 pri, const char *identity)
+		 const char *hostname, u32 pen, u32 pri, const char *identity,
+		 const bpa_log_sub6_t *v6)
 {
   char ts[32], host[256], who[BPA_IDENTITY_MAX * 2 + 2];
+  char sub[INET6_ADDRSTRLEN + 8];
   const char *msgid = bpa_syslog_msgid (event);
   int n;
 
   if (!msgid || !bpa_syslog_timestamp (ts, sizeof (ts), wall))
+    return 0;
+  /* The subscriber as the operator configured it: an IPv4 address, or a
+   * NAT64 subscriber's delegated prefix - the thing RADIUS attributes to a
+   * person, which a /128 inside it is not (#485). */
+  if (!bpa_log_subscriber_str (sub, sizeof (sub), ip_priv, v6))
     return 0;
   if (!bpa_syslog_escape (host, sizeof (host), hostname ? hostname : "-"))
     return 0;
@@ -158,17 +189,13 @@ bpa_syslog_line (char *out, u32 cap, f64 wall, u8 event, u32 ip_priv,
   n = snprintf (
     out, cap,
     "<%u>1 %s %s prisma-cgnat - %s "
-    "[cgnat@%u natEvent=\"%u\" subscriber=\"%u.%u.%u.%u\" "
+    "[cgnat@%u natEvent=\"%u\" subscriber=\"%s\" "
     "public=\"%u.%u.%u.%u\" portStart=\"%u\" portEnd=\"%u\" pool=\"%u\" "
     "subscriberId=\"%s\"] "
-    "%u.%u.%u.%u %s %u.%u.%u.%u ports %u-%u pool %u",
-    pri, ts, host, msgid, pen, event,
-    (ip_priv >> 24) & 0xff, (ip_priv >> 16) & 0xff, (ip_priv >> 8) & 0xff,
-    ip_priv & 0xff,
+    "%s %s %u.%u.%u.%u ports %u-%u pool %u",
+    pri, ts, host, msgid, pen, event, sub,
     (ip_pub >> 24) & 0xff, (ip_pub >> 16) & 0xff, (ip_pub >> 8) & 0xff,
-    ip_pub & 0xff, port_lo, port_hi, pool_id, who,
-    (ip_priv >> 24) & 0xff, (ip_priv >> 16) & 0xff, (ip_priv >> 8) & 0xff,
-    ip_priv & 0xff,
+    ip_pub & 0xff, port_lo, port_hi, pool_id, who, sub,
     event == BPA_NAT_EVENT_BLOCK_DEALLOC ? "released" : "->",
     (ip_pub >> 24) & 0xff, (ip_pub >> 16) & 0xff, (ip_pub >> 8) & 0xff,
     ip_pub & 0xff, port_lo, port_hi, pool_id);

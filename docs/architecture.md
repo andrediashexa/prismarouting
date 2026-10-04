@@ -627,6 +627,32 @@ the memory size it is given: `bpa session-table ... memory <MB>` sizes nothing,
 and the tables, the session pool and the subscriber records all live in the
 main heap.
 
+**A NAT64 SESSION COSTS ABOUT A THIRD MORE** (#485). Measured by
+`lab/nat64-scale.sh` on 2026-10-04, one thread, a deterministic pool with
+blocks of 512, NAT44 as the control in the same run on the same 2 GB heap,
+each flow one UDP packet replayed from a pcap; three runs, heap figures equal
+to 0.1 MB between them except where two are given:
+
+| Load | NAT44 main heap | NAT64 main heap | NAT44 resident | NAT64 resident |
+|---|---|---|---|---|
+| idle | 237.6 MB | 237.6 MB | 365 MB | 365 MB |
+| 401 subscribers x 499 ports = 200,099 sessions | 272.3 MB | 277.8 MB | 425 MB | 433 MB |
+| 4,001 subscribers x 500 ports = 2,000,500 sessions | 747.9 MB | 914.7 / 912.6 MB | 1,033 MB | 1,299 MB |
+
+So about 173 bytes a NAT44 session and 201 a NAT64 one at two hundred
+thousand, and 255 against 338 at two million. What the difference is: the
+inside key is the 24-byte bihash (the subscriber's whole IPv6 address) rather
+than the 16-byte one, and the IPv6 host is kept beside the session in a
+per-thread vector indexed like the session pool, 16 bytes a slot, which grows
+in steps with the pool. The outside key, the session record and the
+subscriber's block are the NAT44 ones.
+
+The translation node on established sessions, at 2,000,500 flows, in clocks
+per packet as VPP's runtime counts them, three runs: `bpa-in2out` 596, 646
+and 723; `bpa-nat64-in2out` 921, 938 and 1,000 - between 1.3 and 1.6 times,
+the runs' own spread being about a fifth for NAT44. Not a throughput: `lab/throughput.sh`'s header says
+why a generator on this machine is not a NIC.
+
 **A heap that fills used to abort the dataplane**: with 512 MB and two million
 sessions offered, VPP was gone within ten seconds, in `_vec_realloc_internal`
 from `bpa_session_bind`. `bpa_session_room()` now asks for the pool's next
@@ -2326,3 +2352,10 @@ out: with the right address and the wrong session.
 What is still missing, and why each item matters, is in
 [roadmap.md](roadmap.md) — including the items that turn out to be already
 satisfied by this design rather than needing to be built.
+
+## NAT64 (#485, in progress)
+
+A pool whose inside is IPv6 is being built in phases; what exists and what
+each phase adds is in [docs/nat64.md](nat64.md). Phase 1 is arithmetic only
+(`src/plugins/bpa/bpa_nat64.h`): the subscriber index over IPv6 prefixes, RFC
+6052 and the 24-byte inside key. No datapath uses it yet.

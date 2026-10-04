@@ -73,6 +73,38 @@ answer and gets it confidently.
 `natEvent` values used: **16** allocation, **17** de-allocation, **12** ports
 exhausted.
 
+**A NAT64 subscriber has a template of its own**
+([#485](https://github.com/andrediashexa/hexarouting/issues/485)), because
+IPFIX has no field that is "an IPv4 or an IPv6 address". It is Table 21 with
+the IPv6 source where the IPv4 one was, as RFC 8158 section 4.6.10 says -
+plus `sourceIPv6PrefixLength`, which the RFC does not list and this box needs:
+the subscriber is the delegated prefix, and an address alone names one /128 of
+it. A template describes itself, so a collector decoding by template reads
+the extra octet like any other field.
+
+| IE | Name | Bits | Content |
+|---:|------|-----:|---------|
+| 323 | `observationTimeMilliseconds` | 64 | event time, UTC |
+| 230 | `natEvent` | 8 | 16, 17 or 12 |
+| 27 | `sourceIPv6Address` | 128 | the subscriber's delegated prefix, network address |
+| 29 | `sourceIPv6PrefixLength` | 8 | its length, the pool's `subscriber-length` |
+| 225 | `postNATSourceIPv4Address` | 32 | assigned public address |
+| 361 | `portRangeStart` | 16 | block start |
+| 362 | `portRangeEnd` | 16 | block end |
+| 283 | `natPoolId` | 32 | pool index |
+
+38 bytes a record over UDP, a third report on the same stream so one sequence
+number covers all three templates; over TCP template 259, with `userName`
+after it as on 258. Syslog names the subscriber the same way,
+`subscriber="2001:db8:1200:ab00::/56"`, and never by the index the pool's
+arithmetic gives it.
+
+**Deterministic NAT64 logs no block events**, as deterministic NAT44 does: the
+mapping is the formula and the dated configuration trail, and the trail
+records a NAT64 pool by its IPv6 inside, its `subscriber-length` and its
+`nat64-prefix` - not by the pseudo IPv4 range `[0, N)` the arithmetic runs on,
+which would be a definition nobody could recompute a subscriber from.
+
 VPP already knows these information elements in
 `vnet/ipfix-export/ipfix_info_elements.h`, and `flow_report.h` handles
 templates, sequence numbers and transport. There is no IPFIX to write from
@@ -430,6 +462,25 @@ or `Interim-Update` carrying a `Framed-IP-Address` and a `User-Name` names the
 subscriber on that address; a `Stop` takes the name away; an `Interim` with no
 address changes nothing, because guessing which address it meant is how one
 subscriber comes to be named in another's record.
+
+**An IPv6-only subscriber is named by `Delegated-IPv6-Prefix`** (attribute
+123, RFC 4818), the prefix a BNG delegates and the thing a NAT64 pool's
+subscriber is ([#485](https://github.com/andrediashexa/hexarouting/issues/485)).
+A record names the delegation that **covers** the subscriber's prefix: a /56
+delegated to each customer of a pool cut into /56s, or one /48 covering all
+of a business's /56s. A delegation longer than the subscriber - a /60 inside a
+/56 - covers part of it and so names nobody, and the record says `unknown`.
+Delegations never overlap in the table: a new one replaces any it overlaps,
+because the prefix delegated now is that customer's and an older entry
+covering it is a Stop that never reached this box.
+
+**The accounting is read every second whatever the log is doing.** It was
+read only at the end of the log's drain, so not at all while no transport was
+enabled, nor until the first IPFIX template had gone out after `logging
+enable` - up to the template interval. The datagrams waited in the socket and
+every block allocated meanwhile was recorded `unknown` though the BNG had said
+who it was. Found by `lab/nat64.sh`: the allocations unknown, their releases
+named, the NAS unanswered for three seconds.
 
 **The shared secret is required and is checked on every packet.** RFC 2866's
 Request Authenticator is MD5 over the packet and the secret, and a packet that

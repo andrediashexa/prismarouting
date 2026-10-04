@@ -28,6 +28,7 @@ typedef struct
   u32 n_blocks;
   u32 n_refused;
   u32 pool_index;
+  u32 sub_idx; /* who, on a NAT64 pool: its prefix, by index (#485) */
 } bpa_top_t;
 
 /*

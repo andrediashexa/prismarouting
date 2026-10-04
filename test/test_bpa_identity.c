@@ -325,6 +325,83 @@ main (void)
     CHECK (v[0].ip == ip (10, 0, 0, 1), "and one entry is where it was after the sort");
   }
 
+  printf ("\n--- NAT64: delegations, and the subscriber they cover (#485) ---\n");
+  {
+    bpa_identity_table_t t = { 0 };
+    char out[BPA_IDENTITY_MAX];
+    u8 a56[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab };
+    u8 b56[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xac };
+    u8 c48[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x13, 0x00 };
+    u8 c56[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x13, 0x00, 0x05 };
+    u8 a60[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab, 0x10 };
+    u8 host[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab, 0, 0, 0,
+		    0, 0, 0, 0, 0, 0x10 };
+
+    CHECK (bpa_identity6_upsert (&t, a56, 56, "ana@isp") == 1
+	     && bpa_identity6_upsert (&t, c48, 48, "corp@isp") == 1
+	     && bpa_identity6_upsert (&t, b56, 56, "bia@isp") == 1 && t.n6 == 3,
+	   "three delegations, in any order: %u", t.n6);
+    CHECK (memcmp (t.e6[0].prefix, a56, 16) == 0
+	     && memcmp (t.e6[0].prefix, t.e6[1].prefix, 16) < 0
+	     && memcmp (t.e6[1].prefix, t.e6[2].prefix, 16) < 0,
+	   "kept sorted, which the bisection depends on");
+    bpa_identity_lookup6 (&t, a56, 56, out, sizeof (out));
+    CHECK (!strcmp (out, "ana@isp"), "a /56 subscriber delegated a /56: %s",
+	   out);
+    bpa_identity_lookup6 (&t, c56, 56, out, sizeof (out));
+    CHECK (!strcmp (out, "corp@isp"), "a /56 inside a delegated /48: %s", out);
+    bpa_identity_lookup6 (&t, host, 56, out, sizeof (out));
+    CHECK (!strcmp (out, "ana@isp"),
+	   "host bits in the subscriber's address do not matter: %s", out);
+    CHECK (bpa_identity6_upsert (&t, a56, 56, "ana@isp") == 0,
+	   "the same delegation again changes nothing");
+
+    /* A /60 inside A's /56 replaces it: the newer delegation is the one in
+     * force, and two overlapping entries would break the bisection. */
+    CHECK (bpa_identity6_upsert (&t, a60, 60, "ana2@isp") == 1 && t.n6 == 3,
+	   "an overlapping delegation replaces the one it overlaps: %u", t.n6);
+    bpa_identity_lookup6 (&t, a56, 56, out, sizeof (out));
+    CHECK (!strcmp (out, bpa_identity_unknown),
+	   "and a /60 covers only part of a /56 subscriber, so it names it "
+	   "not at all: %s", out);
+    CHECK (bpa_identity6_remove (&t, b56, 56) == 1
+	   && bpa_identity6_remove (&t, b56, 56) == 0 && t.n6 == 2,
+	   "a Stop removes its delegation, once");
+    bpa_identity_lookup6 (&t, b56, 56, out, sizeof (out));
+    CHECK (!strcmp (out, bpa_identity_unknown), "and its subscriber is unknown "
+	   "again: %s", out);
+    CHECK (bpa_identity6_at (&t, c48) == 2,
+	   "at() is the first entry starting after the address");
+    vec_free (t.e6);
+  }
+  {
+    /* The four helpers the table is made of, each on its own. */
+    u8 a[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab, 0xcd, 0xff };
+    u8 m[16], n56[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab };
+    u8 n48[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00 };
+    u8 o56[16] = { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xac };
+    bpa_identity_table_t t = { 0 };
+
+    bpa_identity6_mask (m, a, 56);
+    CHECK (memcmp (m, n56, 16) == 0, "mask clears every bit past the length");
+    bpa_identity6_mask (m, a, 60);
+    CHECK (m[7] == 0xc0 && m[8] == 0, "and inside an octet: %02x", m[7]);
+    CHECK (bpa_identity6_covers (n48, 48, n56, 56)
+	     && !bpa_identity6_covers (n56, 56, n48, 48)
+	     && !bpa_identity6_covers (o56, 56, n56, 56),
+	   "covers: a /48 covers its /56, not the other way, not a neighbour");
+    CHECK (bpa_identity6_overlap (n48, 48, n56, 56)
+	     && bpa_identity6_overlap (n56, 56, n48, 48)
+	     && !bpa_identity6_overlap (o56, 56, n56, 56),
+	   "overlap: either containing the other, never neighbours");
+    bpa_identity6_upsert (&t, n56, 56, "a");
+    bpa_identity6_upsert (&t, o56, 56, "b");
+    bpa_identity6_cut (&t, 0);
+    CHECK (t.n6 == 1 && !strcmp (t.e6[0].name, "b"),
+	   "cut takes one entry out and keeps the order of the rest");
+    vec_free (t.e6);
+  }
+
   printf ("\n%s\n", fail ? "FAILURES" : "ALL TESTS PASSED");
   return fail ? 1 : 0;
 }

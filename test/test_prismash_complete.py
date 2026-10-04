@@ -89,7 +89,8 @@ print(f"  policy -> {sorted(o)} ; mode has two options")
 
 print("\n=== a free argument becomes a hint, not an empty list ===")
 o, hint, _ = opts("pool", "prefix-inside ")
-check(hint == prismash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
+# Either family since #485: an IPv6 inside is a NAT64 pool.
+check(hint == prismash.ARG_PREFIX46, f"expected a prefix hint, got {hint!r}")
 check(not o, f"should not list options after 'prefix-inside': {o}")
 o, hint, _ = opts("config", "block-holddown ", nat=("nat", "cgnat"))
 check(hint == prismash.ARG_SECONDS, f"expected a numeric hint, got {hint!r}")
@@ -4323,6 +4324,40 @@ check("nothing here announces 200.150.0.16/28" in b0[2],
 check(any("cannot route back" in l for l in b0[3]),
       f"and the message says what it costs: {bare}")
 check("clientes" in b0[1], f"and which pool it is: {bare}")
+# A NAT64 pool owes the IPv6 side its NAT64 prefix too (#485), in BGP's
+# IPv6 family - FRR's read-back shape, the family written second.
+n64 = _pool("v6", ("200.150.0.16/28",), inside="2001:db8:1200::/40")
+n64.subscriber_length = 56
+n64.nat64_prefix = "64:ff9b:1::/48"
+v4_only = ["router bgp 65000", " address-family ipv4 unicast",
+           "  network 200.150.0.16/28", " exit-address-family"]
+f = pool_announce_findings(v4_only, {"v6": n64})
+check(len(f) == 1 and "64:ff9b:1::/48" in f[0][2]
+      and "ipv6 route 64:ff9b:1::/48 blackhole" in f[0][3][2],
+      f"an unannounced NAT64 prefix is said, with the lines that fix it: {f}")
+both = v4_only + [" address-family ipv6 unicast", "  network 64:ff9b::/32",
+                  " exit-address-family"]
+check(pool_announce_findings(both, {"v6": n64}) == [],
+      "and a covering IPv6 network in the second family answers it")
+n64.nat64_prefix = ""
+f = pool_announce_findings(v4_only, {"v6": n64})
+check(f and "64:ff9b::/96" in f[0][2],
+      f"with no nat64-prefix it is the well-known one that is owed: {f}")
+check(prismash.prefix6_covers("64:ff9b::/32", "64:ff9b:1::/48")
+      and not prismash.prefix6_covers("64:ff9b:1::/48", "64:ff9b::/32")
+      and not prismash.prefix6_covers("200.150.0.0/24", "200.150.0.16/28")
+      and not prismash.prefix6_covers("potato", "64:ff9b::/96"),
+      "prefix6_covers: IPv6, the shorter covering the longer, words refused")
+
+# A NAT64 pool in a VRRP pair (#485): warned, never refused, and only there.
+ha = prismash.nat64_ha_findings({"v6": n64, "four": _pool("four", ("200.150.0.32/28",))},
+                                {"ge0": {1: {}}})
+check(len(ha) == 1 and "pool v6" in ha[0][1] and ha[0][0] == "warning"
+      and "IPv4 virtual routers only" in ha[0][2],
+      f"the NAT64 pool and not the IPv4 one is warned about: {ha}")
+check(prismash.nat64_ha_findings({"v6": n64}, {}) == [],
+      "and a box in no pair is told nothing")
+
 # Never an error. The reason is in pool_announce_findings' docstring and is
 # measured: `network <prefix>` with no matching route in the RIB is stored by
 # FRR 10.7.1 and advertised by nothing, so the condition this can test is a

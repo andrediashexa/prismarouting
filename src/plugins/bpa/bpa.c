@@ -77,6 +77,44 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
   return 0;
 }
 
+/* not a unit: VPP format functions; the prefix is bpa_set6_prefix_of(),
+ * held by test/test_bpa_nat64.c, and lab/nat64.sh reads the forward's
+ * readback and refusals they word (#485). */
+u8 *
+format_bpa_static_host (u8 *s, va_list *args)
+{
+  const bpa_static_t *sf = va_arg (*args, const bpa_static_t *);
+  ip4_address_t a;
+
+  if (sf->has_host6)
+    return format (s, "%U", format_ip6_address, (ip6_address_t *) sf->host6);
+  a.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
+  return format (s, "%U", format_ip4_address, &a);
+}
+
+/* not a unit: a VPP format function, as format_bpa_static_host above; the
+ * prefix is bpa_set6_prefix_of(), held by test/test_bpa_nat64.c. */
+u8 *
+format_bpa_priv (u8 *s, va_list *args)
+{
+  const bpa_pool_t *p = va_arg (*args, const bpa_pool_t *);
+  u32 ip_priv = va_arg (*args, u32);
+  ip4_address_t a;
+
+  if (p->is_nat64)
+    {
+      ip6_address_t pfx;
+
+      /* The pseudo inside address IS the subscriber's index. */
+      if (bpa_set6_prefix_of (&p->inside6, ip_priv, pfx.as_u8))
+	return format (s, "?");
+      return format (s, "%U/%u", format_ip6_address, &pfx,
+		     p->inside6.sub_len);
+    }
+  a.as_u32 = clib_host_to_net_u32 (ip_priv);
+  return format (s, "%U", format_ip4_address, &a);
+}
+
 /* not a unit: it turns bpa_static_check()'s answer into the sentence an
  * operator reads, which needs VPP's format() and a clib_error_t. WHICH
  * refusal it is - and the two fields a legal forward is completed with - is
@@ -134,13 +172,13 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 	  "pins the block the pool's arithmetic gives the subscriber, and "
 	  "there is none this far in: enlarge the public set, or serve this "
 	  "customer from a pool that reaches it",
-	  format_ip4_address, &priv, other, p->name, p->capacity);
+	  format_bpa_static_host, sf, other, p->name, p->capacity);
 
       return clib_error_return (
 	0,
 	"%U is not a subscriber of pool '%v', or is beyond its capacity of "
 	"%u",
-	format_ip4_address, &priv, p->name, p->capacity);
+	format_bpa_static_host, sf, p->name, p->capacity);
 
     case BPA_STATIC_WRONG_BLOCK:
       /*
@@ -157,13 +195,13 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
 	    0,
 	    "public port %u belongs to %U's block, not to %U's. %U holds "
 	    "%U:%u-%u",
-	    sf->port_pub, format_ip4_address, &o, format_ip4_address, &priv,
-	    format_ip4_address, &priv, format_ip4_address, &pub, blk.port_lo,
-	    blk.port_hi);
+	    sf->port_pub, format_bpa_priv, p, other, format_bpa_static_host,
+	    sf, format_bpa_static_host, sf, format_ip4_address, &pub,
+	    blk.port_lo, blk.port_hi);
 	}
       return clib_error_return (
 	0, "public port %u is not in %U's block, which is %U:%u-%u",
-	sf->port_pub, format_ip4_address, &priv, format_ip4_address, &pub,
+	sf->port_pub, format_bpa_static_host, sf, format_ip4_address, &pub,
 	blk.port_lo, blk.port_hi);
 
     case BPA_STATIC_OK:
@@ -213,16 +251,14 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *prior,
   switch (bpa_static_clash (prior, n_prior, sf, &o))
     {
     case BPA_STATIC_CLASH_PUB:
-      a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
       pub.as_u32 = clib_host_to_net_u32 (o->ip_pub);
       return clib_error_return (
 	0, "public port %u on %U is already forwarded to %U:%u", sf->port_pub,
-	format_ip4_address, &pub, format_ip4_address, &a, o->port_priv);
+	format_ip4_address, &pub, format_bpa_static_host, o, o->port_priv);
     case BPA_STATIC_CLASH_PRIV:
-      a.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
       return clib_error_return (
 	0, "%U:%u is already forwarded from public port %u",
-	format_ip4_address, &a, sf->port_priv, o->port_pub);
+	format_bpa_static_host, sf, sf->port_priv, o->port_pub);
     case BPA_STATIC_CLASH_NONE:
       break;
     }
@@ -236,6 +272,32 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *prior,
  * by the block sizing and address sets the operator is about to commit, not by
  * the ones currently running.
  */
+/*
+ * Every forward's subscriber from its host, on a NAT64 pool (#485 phase 4),
+ * worded. bpa_nat64_static_resolve() is the rule, and test_bpa_pool.c
+ * holds it.
+ */
+/* not a unit: it words bpa_nat64_static_resolve()'s answer with format(). */
+static clib_error_t *
+bpa_static_resolve_say (const bpa_pool_t *p, bpa_static_t *sf)
+{
+  switch (bpa_nat64_static_resolve (p, sf))
+    {
+    case 0:
+      return 0;
+    case -1:
+      return clib_error_return (0, "forward to %U: not inside pool '%v'",
+				format_ip6_address,
+				(ip6_address_t *) sf->host6, p->name);
+    case -2:
+      return clib_error_return (0, "pool '%v' translates IPv4 subscribers: "
+				   "a forward names an IPv4 host", p->name);
+    default:
+      return clib_error_return (0, "pool '%v' is a NAT64 pool: a forward "
+				   "names an IPv6 host of it", p->name);
+    }
+}
+
 /* not a unit: it words the refusal bpa_statics_complete() found, through
  * bpa_static_validate() and bpa_static_conflict(), which need VPP's format()
  * and a clib_error_t. Which forward fails, and that each is judged against
@@ -244,7 +306,14 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *prior,
 static clib_error_t *
 bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
 {
-  u32 bad = bpa_statics_complete (p, in, vec_len (in));
+  u32 bad, i;
+  clib_error_t *re;
+
+  /* A NAT64 pool's forwards name hosts: their subscriber first (#485). */
+  for (i = 0; i < vec_len (in); i++)
+    if ((re = bpa_static_resolve_say (p, &in[i])))
+      return re;
+  bad = bpa_statics_complete (p, in, vec_len (in));
   bpa_static_t sf;
   clib_error_t *e;
 
@@ -534,10 +603,8 @@ bpa_static_only_on_port (const bpa_pool_t *p, const bpa_static_t *sf,
       return 0;
     }
 
-  a.as_u32 = clib_host_to_net_u32 (first->ip_priv);
-  who = format (who, "%U", format_ip4_address, &a);
-  a.as_u32 = clib_host_to_net_u32 (second->ip_priv);
-  who = format (who, " and %U", format_ip4_address, &a);
+  who = format (who, "%U", format_bpa_static_host, first);
+  who = format (who, " and %U", format_bpa_static_host, second);
   if (n_match > 2)
     who = format (who, " and %u more", n_match - 2);
 
@@ -580,6 +647,14 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
 
   pool_index = q[0];
   p = pool_elt_at_index (bm->pools, pool_index);
+  /* The forward's subscriber from its host on a NAT64 pool - and not on a
+   * delete that names only the public port, which is a forward whole. */
+  if (sf->has_host6 || (is_add && p->is_nat64))
+    {
+      e = bpa_static_resolve_say (p, sf);
+      if (e)
+	return e;
+    }
 
   /*
    * Removing is identified by the public port and the protocol, and nothing
@@ -762,6 +837,17 @@ bpa_pool_validate (bpa_pool_t *cfg)
   e = bpa_check_pool_overlap (cfg);
   if (e)
     return e;
+  /* The NAT64 refusals bpa_pool_add() makes, so a check does not approve a
+   * pool the commit then cannot create (#485). */
+  {
+    const char *why = bpa_nat64_unsupported (cfg);
+
+    if (why)
+      return clib_error_return (0, "%s", why);
+    e = bpa_nat64_check_overlap (cfg);
+    if (e)
+      return e;
+  }
 
   /* run the derived-value computation on a copy, so nothing is retained */
   probe = *cfg;
@@ -1045,6 +1131,9 @@ bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
    * THIS interface and not all of them: see bpa_auto_mss.h for why that
    * distinction is the difference between an attach and 83 seconds of them. */
   bpa_auto_mss_interface_update (sw_if_index);
+  /* Its IPv6 half, while a NAT64 pool exists (#485). */
+  if (is_inside)
+    bpa_nat64_interfaces_update ();
 
   /*
    * Recorded only once the dataplane has accepted it, and by NAME: an entry
@@ -1433,6 +1522,23 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks,
     if (e)
       return e;
   }
+  /* A NAT64 pool refuses here what it refuses at creation (#485): this is
+   * the door every one of these settings reaches a live pool by. */
+  if (p->is_nat64)
+    {
+      bpa_pool_t probe = *p;
+      const char *why;
+
+      probe.max_blocks = max_blocks;
+      probe.initial_blocks = initial_blocks;
+      probe.alg = alg;
+      probe.tcp_mss = tcp_mss;
+      probe.tcp_mss_auto = tcp_mss_auto;
+      probe.block_stride = block_stride;
+      why = bpa_nat64_unsupported (&probe);
+      if (why)
+	return clib_error_return (0, "%s", why);
+    }
 
   /* Under the barrier: the datapath reads the filtering mode, the ALG mask and
    * the clamp on the packet path, and a half-applied set of them is a pool
@@ -1503,6 +1609,9 @@ bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
     }
 
   p = pool_elt_at_index (bm->pools, q[0]);
+  if (n && p->is_nat64)
+    return clib_error_return (0, "a NAT64 pool takes no bypass: an IPv6 "
+				 "packet reaches IPv4 only translated");
   vlib_worker_thread_barrier_sync (bm->vlib_main);
   if (is_dst)
     p->bypass_dst = built;
@@ -1541,6 +1650,49 @@ bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate)
   return 0;
 }
 
+/*
+ * NAT64 pools against each other (#485): an IPv6 subscriber prefix belongs
+ * to one pool, and one NAT64 prefix to one pool - the reverse direction
+ * derives a reply's source from the pool's prefix, so two pools on one would
+ * leave the second's replies unattributable.
+ */
+/* not a unit: it walks bpa_main's pools; the overlap rule is
+ * bpa_ip6_prefixes_overlap(), which test/test_bpa_nat64.c holds. */
+clib_error_t *
+bpa_nat64_check_overlap (const bpa_pool_t *cfg)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  u32 i, j;
+
+  if (!cfg->is_nat64)
+    return 0;
+  pool_foreach (p, bm->pools)
+    {
+      /* The same name is the pool this one replaces, when it is a commit
+       * check asking; bpa_pool_add() has refused a live name already. */
+      if (!p->is_nat64 || p->deleted || vec_is_equal (p->name, cfg->name))
+	continue;
+      /* Two tenants: pools bound to different IPv6 tables may share an
+       * inside prefix and a NAT64 prefix, as IPv4 pools in different VRFs
+       * share an inside (#485 phase 4). */
+      if (cfg->vrf_id != ~0u && p->vrf_id != ~0u && cfg->vrf_id != p->vrf_id)
+	continue;
+      if (p->nat64_len == cfg->nat64_len
+	  && !memcmp (p->nat64_prefix, cfg->nat64_prefix, 16))
+	return clib_error_return (0, "NAT64 prefix already used by pool %v",
+				  p->name);
+      for (i = 0; i < cfg->n_inside6; i++)
+	for (j = 0; j < p->n_inside6; j++)
+	  if (bpa_ip6_prefixes_overlap (cfg->inside6_addr[i],
+					cfg->inside6_len[i],
+					p->inside6_addr[j], p->inside6_len[j]))
+	    return clib_error_return (0, "inside IPv6 prefix overlaps pool %v",
+				      p->name);
+    }
+  return 0;
+}
+
 /* not a unit: it inserts a pool into bpa_main's pool and hash under the
  * worker barrier. What it validates with is bpa_pool_validate() above and
  * bpa_pool_init(), which test/test_bpa_pool.c drives against
@@ -1563,6 +1715,17 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   e = bpa_check_pool_overlap (cfg);
   if (e)
     return e;
+  /* NAT64 (#485): what phase 2 does not do is refused, not accepted inert,
+   * and its IPv6 prefixes against every other NAT64 pool's. */
+  {
+    const char *why = bpa_nat64_unsupported (cfg);
+
+    if (why)
+      return clib_error_return (0, "%s", why);
+    e = bpa_nat64_check_overlap (cfg);
+    if (e)
+      return e;
+  }
 
   /* Workers read bm->pools on the datapath; mutate it under the barrier. */
   vlib_worker_thread_barrier_sync (bm->vlib_main);
@@ -1660,7 +1823,12 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	bpa_static_pin (p - bm->pools, p, &p->statics[i], 1);
     }
 
+  if (p->is_nat64)
+    bm->n_nat64++;
   vlib_worker_thread_barrier_release (bm->vlib_main);
+  /* The inside interfaces take their IPv6 half with the first NAT64 pool. */
+  if (p->is_nat64)
+    bpa_nat64_interfaces_update ();
 
   /*
    * A reserve too small for this box's workers is warned about HERE, and here
@@ -1996,11 +2164,15 @@ bpa_pool_del (u8 *name)
    */
   bpa_lent_clear_pool (bm, pool_index);
   bpa_stats_pool_del (pool_index);
+  if (p->is_nat64 && bm->n_nat64)
+    bm->n_nat64--;
   vec_free (p->name);
   vec_free (p->statics);
   pool_put (bm->pools, p);
   bpa_outside_window_update ();
   vlib_worker_thread_barrier_release (vm);
+  /* The last NAT64 pool gone: the inside interfaces drop their IPv6 half. */
+  bpa_nat64_interfaces_update ();
   return 0;
 }
 

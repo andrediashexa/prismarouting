@@ -267,12 +267,12 @@ main (void)
      * for. */
     reset (0);
     bpa_log_tcp_record (1700000000.5, BPA_NAT_EVENT_BLOCK_DEALLOC, 1, 2, 3, 4,
-			5);
+			5, 0);
     while_off = vec_len (bpa_log_tcp.outbuf);
 
     reset (1);
     bpa_log_tcp_record (1700000000.5, BPA_NAT_EVENT_BLOCK_ALLOC, 0x0a000001,
-			0xc6336401, 2048, 3071, 9);
+			0xc6336401, 2048, 3071, 9, 0);
     /* 53 and not 45 since #21: the eighth element, userName, is variable
      * length - one octet of length and the value, and with no identity table
      * the value is the unknown marker (7 bytes). The set length and the
@@ -294,6 +294,53 @@ main (void)
 	   while_off, vec_len (bpa_log_tcp.outbuf), rd16 (16), rd16 (18),
 	   (unsigned long long) rd64 (20), bpa_log_tcp.outbuf[28], rd32 (29),
 	   rd32 (33), rd16 (37), rd16 (39), rd32 (41));
+  }
+
+  printf ("\n--- a NAT64 subscriber's block on the wire (#485) ---\n");
+  {
+    bpa_log_sub6_t v6 = { { 0x20, 0x01, 0x0d, 0xb8, 0x12, 0x00, 0xab }, 56 };
+
+    reset (1);
+    bpa_log_tcp_record (1700000000.5, BPA_NAT_EVENT_BLOCK_ALLOC, 171,
+			0xcb007103, 1024, 1087, 2, &v6);
+    /* 66: the 53 of an IPv4 record, with 16 octets of address and one of
+     * prefix length where the IPv4 address's four were - and its own
+     * template id, since a set carries one template's records. */
+    CHECK (vec_len (bpa_log_tcp.outbuf) == 66 && rd16 (2) == 66
+	     && rd16 (16) == BPA_TCP_NAT64_TEMPLATE_ID && rd16 (18) == 50
+	     && bpa_log_tcp.outbuf[28] == 16
+	     && memcmp (bpa_log_tcp.outbuf + 29, v6.addr, 16) == 0
+	     && bpa_log_tcp.outbuf[45] == 56 && rd32 (46) == 0xcb007103
+	     && rd16 (50) == 1024 && rd16 (52) == 1087 && rd32 (54) == 2
+	     && bpa_log_tcp.outbuf[58] == 7,
+	   "a 66-byte message: template %u, the prefix and its length, never "
+	   "the index (len=%u set=%u)",
+	   rd16 (16), vec_len (bpa_log_tcp.outbuf), rd16 (18));
+  }
+
+  printf ("\n--- the template set names the NAT64 block too (#485) ---\n");
+  {
+    u32 i, at = 0, found = 0;
+
+    reset (1);
+    bpa_log_tcp.need_template = 1;
+    bpa_tcp_prepend_template (&bpa_log_tcp, 100.0);
+    /* Walk the template records of the one set: id, count, then count
+     * (IE, length) pairs. */
+    for (i = 20; i + 4 <= vec_len (bpa_log_tcp.outbuf); i += 4 + 4 * rd16 (i + 2))
+      if (rd16 (i) == BPA_TCP_NAT64_TEMPLATE_ID)
+	{
+	  at = i;
+	  found = 1;
+	  break;
+	}
+    CHECK (found && rd16 (at + 2) == 9 && rd16 (at + 8) == 230
+	     && rd16 (at + 12) == 27 && rd16 (at + 14) == 16
+	     && rd16 (at + 16) == 29 && rd16 (at + 18) == 1
+	     && rd16 (at + 20) == 225,
+	   "template %u: nine fields, sourceIPv6Address(16) and "
+	   "sourceIPv6PrefixLength(1) where sourceIPv4Address was",
+	   BPA_TCP_NAT64_TEMPLATE_ID);
   }
 
   printf ("\n--- the boot marker ---\n");
@@ -647,7 +694,7 @@ main (void)
     for (i = 0; i < events; i++)
       {
 	bpa_log_tcp_record (1700000000.5, 12, 0x64400000 + (i & 1023),
-			    0xcb007100, 0, 0, 1);
+			    0xcb007100, 0, 0, 1, 0);
 	if (vec_len (bpa_log_tcp.outbuf) > peak)
 	  peak = vec_len (bpa_log_tcp.outbuf);
 	if (i % 20000 == 0)
@@ -966,7 +1013,7 @@ main (void)
     sys.hostname = (u8 *) "cgnat-sp-01";
 
     bpa_log_stream_record (&sys, 1789699259.123, 16, 0x64400005, 0xC8960010,
-			   1024, 1027, 0, "joao.silva@isp");
+			   1024, 1027, 0, "joao.silva@isp", 0);
     /* The frame says how many bytes follow, and what follows is exactly that
      * many - read here rather than assumed, because a collector that trusts
      * the count and is given another number reads the next line's first
@@ -1004,7 +1051,7 @@ main (void)
       u64 dropped = sys.n_dropped;
 
       bpa_log_stream_record (&sys, 1789699259.123, 18, 0x64400005,
-			     0xC8960010, 1024, 1027, 0, "joao.silva@isp");
+			     0xC8960010, 1024, 1027, 0, "joao.silva@isp", 0);
       CHECK (vec_len (sys.outbuf) == before && sys.n_dropped == dropped + 1,
 	     "an event with no name is counted as dropped, not written: "
 	     "buffer %u -> %u, dropped %llu -> %llu",

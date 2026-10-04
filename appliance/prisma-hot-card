@@ -244,8 +244,29 @@ restart_dataplane() {
   # dataplane interface, no way in until a reboot. So the unit's own state
   # decides: still active is a refusal and nothing changed; anything else is
   # a dataplane on its way down, and it is brought back.
-  if ! $SYSTEMCTL stop prisma-routing-containers.service; then
-    if $SYSTEMCTL is-active --quiet prisma-routing-containers.service; then
+  #
+  # THE DATAPLANE THIS BOX RUNS, and not always the containers. Measured in the
+  # 0.150.0 install lab: on a box put back on vpp.service, the stop of the
+  # containers unit was a no-op, the cards were given back while vpp.service
+  # still held them through vfio-pci, the kernel waited on VPP to release the
+  # device ("vfio-pci 0000:00:09.0: Relaying device request to user"), and the
+  # box hung - journald blocked in uevent_show, no prompt, no way in.
+  dp=prisma-routing-containers.service
+  if ! $SYSTEMCTL is-active --quiet prisma-routing-containers.service \
+     && $SYSTEMCTL is-active --quiet vpp.service; then
+    dp=vpp.service
+  fi
+  # AND THE LOADER WITH IT, by name. Its PartOf=vpp.service is a drop-in
+  # install.sh writes only on a box without images; a box that has them and
+  # was put back on the units by hand has no drop-in, so the loader stayed
+  # `active (exited)` through the stop, config_loaded found it active, and
+  # the new VPP ran with nothing configured - every interface down (the
+  # 0.150.0 install lab, second gate).
+  if [ "$dp" = vpp.service ]; then
+    $SYSTEMCTL stop prisma-routing.service
+  fi
+  if ! $SYSTEMCTL stop "$dp"; then
+    if $SYSTEMCTL is-active --quiet "$dp"; then
       say "the dataplane could not be stopped; nothing was changed"
       rm -f "$names"
       return 1
@@ -282,7 +303,7 @@ restart_dataplane() {
   $SYSTEMCTL restart prisma-routing-tune.service || rc=1
   # Started whatever the tuner said: a box whose tuner failed still has the
   # startup.conf it had, and a dataplane on it beats none.
-  $SYSTEMCTL start prisma-routing-containers.service || rc=1
+  $SYSTEMCTL start "$dp" || rc=1
   # PartOf stopped it with the containers and nothing starts it again: it is
   # what replays the saved configuration onto the dataplane.
   # The restart checks its own result (#564): the saved configuration has to

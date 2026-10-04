@@ -45,10 +45,13 @@ from system import is_number
 
 SEGMENT = os.environ.get("PRISMA_LOG_SEGMENT", "/dev/shm/prisma-bpa-log")
 MAGIC = b"PRBALOG1"
-VERSION = 3
+# 4 (#485): the event grew a NAT64 subscriber's prefix, 52 -> 68 bytes,
+# and the export and watch rings' slot with it, 64 -> 80.
+VERSION = 4
 HDR_BYTES = 1024
 RING_HDR_BYTES = 192
-EVENT_BYTES = 52
+EVENT_BYTES = 68
+SUB6_OFF = 49           # bpa_log_sub6_t: 16 bytes of prefix, then its length
 IDENTITY_MAX = 32
 # Offsets in bpa_log_seg_hdr_t and bpa_log_ring_t (test/test_logmon.py
 # compiles bpa_log_ring.h and compares).
@@ -56,7 +59,7 @@ OFF = {"magic": 0, "version": 8, "hdr_bytes": 12, "n_rings": 16,
        "ring_slots": 20, "event_bytes": 24, "ring_bytes": 28,
        "generation": 32, "boot_wall": 48, "cfg": 88, "mring_offset": 640,
        "mring_slots": 648, "ring_head": 0, "ring_written": 136}
-XEV_BYTES = 64
+XEV_BYTES = 80
 XEV_RECORD, XEV_MARKER = 1, 2
 CFG_BYTES = 96
 STREAM_SYSLOG = 1
@@ -125,11 +128,21 @@ def ring_head(buf, h, i):
 
 
 def decode_event(raw):
-    """One 52-byte bpa_log_event_t as a dict."""
+    """
+    One 68-byte bpa_log_event_t as a dict. A NAT64 subscriber (#485) is its
+    delegated prefix, "2001:db8:1200:ab00::/56", and "sub6" says so: its
+    ip_priv is the subscriber's index in the pool, which nobody is shown.
+    """
     ip_priv, ip_pub, pool_id, lo, hi, ev = struct.unpack_from("<IIIHHB", raw, 0)
     ident = bytes(raw[17:17 + IDENTITY_MAX]).split(b"\0", 1)[0]
-    return {"event": ev, "priv": ip4(ip_priv), "pub": ip4(ip_pub),
-            "pool": pool_id, "lo": lo, "hi": hi,
+    plen = raw[SUB6_OFF + 16]
+    if 0 < plen <= 128:
+        addr = ipaddress.IPv6Address(bytes(raw[SUB6_OFF:SUB6_OFF + 16]))
+        priv, sub6 = f"{addr}/{plen}", True
+    else:
+        priv, sub6 = ip4(ip_priv), False
+    return {"event": ev, "priv": priv, "pub": ip4(ip_pub),
+            "pool": pool_id, "lo": lo, "hi": hi, "sub6": sub6,
             "identity": ident.decode("utf-8", "replace")}
 
 
@@ -176,13 +189,13 @@ class RingReader:
 
 def decode_xev(raw):
     """
-    One 64-byte bpa_log_xev_t of the watch ring: the event, its kind (a
+    One 80-byte bpa_log_xev_t of the watch ring: the event, its kind (a
     record or the boot marker) and the wall clock the dataplane stamped -
     the time its exported record carries.
     """
     ev = decode_event(raw[:EVENT_BYTES])
     ev["kind"] = raw[EVENT_BYTES]
-    ev["wall"] = struct.unpack_from("<d", raw, 56)[0]
+    ev["wall"] = struct.unpack_from("<d", raw, EVENT_BYTES + 4)[0]
     return ev
 
 
@@ -251,9 +264,15 @@ def parse_args(args):
         if w in ("subscriber", "public"):
             addr, _, port = v.partition(":") if w == "public" else (v, "", "")
             try:
-                o[w] = str(ipaddress.IPv4Address(addr))
+                # A subscriber may be IPv6: any address of a NAT64
+                # subscriber's prefix names it (#485). A public address is
+                # IPv4 always.
+                o[w] = str(ipaddress.ip_address(addr) if w == "subscriber"
+                           else ipaddress.IPv4Address(addr))
             except ValueError:
-                return None, f"{w} needs an IPv4 address: {v}"
+                return None, (f"{w} needs an IPv4 or IPv6 address: {v}"
+                              if w == "subscriber"
+                              else f"{w} needs an IPv4 address: {v}")
             if port:
                 if not is_number(port) or not 0 < int(port) < 65536:
                     return None, f"a port is 1 to 65535: {port}"
@@ -276,7 +295,7 @@ def matches(ev, o, pools):
     """Does event ev pass the filters in o? pools maps id -> name."""
     if o["event"] is not None and o["event"] != ev["event"]:
         return False
-    if o["subscriber"] and ev["priv"] != o["subscriber"]:
+    if o["subscriber"] and not subscriber_is(ev, o["subscriber"]):
         return False
     if o["public"] and ev["pub"] != o["public"]:
         return False
@@ -285,6 +304,16 @@ def matches(ev, o, pools):
     if o["pool"] and pool_name(ev["pool"], pools) != o["pool"]:
         return False
     return True
+
+
+def subscriber_is(ev, addr):
+    """Is addr the event's subscriber - its address, or in its prefix?"""
+    if ev.get("sub6"):
+        try:
+            return ipaddress.ip_address(addr) in ipaddress.ip_network(ev["priv"])
+        except ValueError:
+            return False
+    return ev["priv"] == addr
 
 
 def pool_name(pid, pools):
@@ -339,7 +368,14 @@ def event_lines(ev, seen, pools):
     """
     word = EVENT_WORD.get(ev["event"], f"EVENT {ev['event']}")
     pool = f"pool {pool_name(ev['pool'], pools)}"
-    if ev["event"] == EVENT_EXHAUSTED:
+    if ev.get("sub6"):
+        # A prefix is up to 43 columns: the subscriber alone on the head,
+        # and what it holds as parts fit() may carry to the next line.
+        head = f"{clock(seen)} {word:<9} {ev['priv']}"
+        parts = ([f"no free block in {pool}"]
+                 if ev["event"] == EVENT_EXHAUSTED
+                 else [f"> {ev['pub']} {ev['lo']}-{ev['hi']}", pool])
+    elif ev["event"] == EVENT_EXHAUSTED:
         head = f"{clock(seen)} {word:<9} {ev['priv']:<15} no free block in"
         head, parts = f"{head} {pool}", []
     else:
@@ -408,7 +444,10 @@ def raw_lines(ev, seen, h):
     ms = int(seen * 1000)
     ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(seen)) + f".{ms % 1000:03d}Z"
     who = ev["identity"] or "unknown"
-    out = [f"{clock(seen)}  IPFIX 323={ms} 230={ev['event']} 8={ev['priv']} "
+    # IE 27 and 29 for a NAT64 subscriber, as its record carries them.
+    src = (f"27={ev['priv'].split('/')[0]} 29={ev['priv'].split('/')[1]}"
+           if ev.get("sub6") else f"8={ev['priv']}")
+    out = [f"{clock(seen)}  IPFIX 323={ms} 230={ev['event']} {src} "
            f"225={ev['pub']} 361={ev['lo']} 362={ev['hi']} 283={ev['pool']} "
            f"371={who}"]
     s = h["syslog"]

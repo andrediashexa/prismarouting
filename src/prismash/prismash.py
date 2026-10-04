@@ -54,7 +54,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     is_static_route, static_route, static_route_key,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     _is_bundle, new_bundle, bundle_statement,
-                    prefix_error, prefix_why, address_error,
+                    prefix_error, prefix6_error, nat64_prefix_error,
+                    canonical_prefix, prefix_why, address_error,
                     text_error, text_why,
                     mac_error, mac_normal,
                     asn_error, asn_why, asn_note,
@@ -1628,6 +1629,8 @@ ARG_PREFIX = "<A.B.C.D/M>"
 #: operator the wrong thing about the one argument they were asking about
 #: (#557).
 ARG_PREFIX6 = "<X:X::X:X/M>"
+#: Either family: a pool's inside, IPv6 being a NAT64 pool (#485).
+ARG_PREFIX46 = "<A.B.C.D/M|X:X::X:X/M>"
 #: An address of this box's own, either family: where a daemon listens.
 #: Completed from the addresses the configuration gives the box (#557).
 ARG_LOCAL_ADDRESS = "<A.B.C.D|X:X::X:X>"
@@ -2596,9 +2599,15 @@ CGNAT_POOL = {
     # prefix-inside / prefix-outside, not inside / outside (#531): those two
     # words are also an interface's role under `cgnat`. The old spellings are
     # still read - see do_pool and Config._pool_line - and offered by nothing.
-    "prefix-inside": ("the subscribers' prefix, may repeat", ARG_PREFIX),
+    "prefix-inside": ("the subscribers' prefix, may repeat; IPv6 makes a "
+                      "NAT64 pool", ARG_PREFIX46),
     "prefix-outside": ("the public prefix they are translated to, may repeat",
                        ARG_PREFIX),
+    # NAT64 (#485): the two statements an IPv6 inside needs, and only it.
+    "subscriber-length": ("NAT64: the IPv6 prefix length one subscriber "
+                          "holds", "<32-128>"),
+    "nat64-prefix": ("NAT64: where IPv4 destinations are, RFC 6052; "
+                     "64:ff9b::/96 if not given", ARG_PREFIX6),
     # <64-65536> was wrong at BOTH ends and the top end was the expensive
     # one: the dataplane carries block_size in a u16, `bpa_cli.c` casts to it,
     # and 65536 arrives as 0 - so the documented maximum came back as "block
@@ -2799,8 +2808,12 @@ def _pool_no_clear(attr, value):
 
 
 POOL_NEGATE = {
-    "prefix-inside": ("remove one subscriber prefix", ARG_PREFIX,
+    "prefix-inside": ("remove one subscriber prefix", ARG_PREFIX46,
                       lambda p, w: _pool_no_item(p.inside, "prefix-inside", w)),
+    "subscriber-length": ("no subscriber length; an IPv6 inside needs one",
+                          None, _pool_no_clear("subscriber_length", 0)),
+    "nat64-prefix": ("go back to the well-known 64:ff9b::/96", None,
+                     _pool_no_clear("nat64_prefix", "")),
     "prefix-outside": ("remove one public prefix", ARG_PREFIX,
                        lambda p, w: _pool_no_item(p.outside, "prefix-outside",
                                                   w)),
@@ -7283,6 +7296,21 @@ def bgp_originations(routing):
     return announced, blind, has_bgp
 
 
+def prefix6_covers(outer, inner):
+    """
+    Whether IPv6 prefix `outer` contains the whole of `inner` (#485). Its own
+    function because routes.covers_prefix() is IPv4 by design - the public
+    side of a CGNAT is - and a NAT64 prefix is the one IPv6 prefix a pool
+    owes the routing.
+    """
+    try:
+        o = ipaddress.ip_network(outer, strict=False)
+        i = ipaddress.ip_network(inner, strict=False)
+    except ValueError:
+        return False
+    return o.version == i.version == 6 and i.subnet_of(o)
+
+
 def pool_announce_findings(routing, pools):
     """
     Pools whose public prefix nothing in this configuration would advertise.
@@ -7335,6 +7363,20 @@ def pool_announce_findings(routing, pools):
     if not pools or not has_bgp or blind:
         return out
     for pname, pool in sorted(pools.items()):
+        # A NAT64 pool owes the IPv6 side its NAT64 prefix as well (#485):
+        # subscribers reach IPv4 by sending to it, and a box nothing routes it
+        # to translates nothing. Same shape, same measurement as the outside.
+        if getattr(pool, "is_nat64", False):
+            pfx6 = pool.nat64_prefix_eff
+            if not any(prefix6_covers(a, pfx6) for a in announced):
+                out.append((
+                    "warning", f"pool '{pname}'",
+                    f"nothing here announces {pfx6}",
+                    ["its IPv6 subscribers reach IPv4 by sending to it, and "
+                     "nothing routes it here",
+                     "announce it from another box, or originate it here with",
+                     f"'ipv6 route {pfx6} blackhole' and 'network {pfx6}' "
+                     "under the BGP IPv6 address family"]))
         for pfx in pool.outside or ():
             if any(routes.covers_prefix(a, pfx) for a in announced):
                 continue
@@ -7352,6 +7394,41 @@ def pool_announce_findings(routing, pools):
                  f"'ip route {pfx} blackhole' and 'network {pfx}' under the "
                  "BGP address family"]))
     return out
+
+
+def nat64_ha_findings(pools, vrrp):
+    """
+    NAT64 pools on a box that stands in a VRRP pair (#485 phase 4).
+
+    The pair's mapping comparison covers a NAT64 pool like any other - its
+    subscriber-length and nat64-prefix are mapping fields, and
+    test_prismash_config.py holds that they move the fingerprint - so two
+    boxes that would map an IPv6 subscriber differently are found. What a
+    NAT64 pool does not get is the failover itself: the pair moves by VRRP,
+    this box takes IPv4 virtual routers only (vrrp_statement), and an IPv6
+    subscriber's gateway is therefore no virtual address that follows the
+    master. Its traffic keeps going to a dead box, or to the standby while
+    the public addresses' replies go to the master.
+
+    WARNED, NEVER REFUSED: a pair whose IPv6 side follows the master by
+    routing - each box announcing the NAT64 prefix only while it is up - is a
+    correct design this box cannot see, which is #208's shape. No lab
+    measures a NAT64 failover; the warning says what has to be true for one
+    to work.
+
+    Returns [(severity, statement, why)], the shape say_finding() prints.
+    """
+    if not vrrp:
+        return []
+    return [("warning", f"nat / cgnat / pool {name}",
+             "a NAT64 pool on a box in a VRRP pair: its IPv6 subscribers' "
+             "gateway is no virtual address, because this box takes IPv4 "
+             "virtual routers only. On a failover their route to the NAT64 "
+             "prefix has to follow the master some other way - announce it "
+             "from each box only while that box is up - or their traffic "
+             "goes to a box that no longer holds the public addresses")
+            for name, p in sorted((pools or {}).items())
+            if getattr(p, "is_nat64", False)]
 
 
 def dynamic_export_findings(pools, globals_):
@@ -12002,7 +12079,26 @@ class Shell:
                             "block-stride, or put the pool in dynamic mode")
                 ok = False
 
+            # A NAT64 POOL (#485), of the finished pool for the stride's
+            # reason above, and over every route for it too: a forward, a
+            # bypass or an ALG reaches a live pool by the in-place messages,
+            # which the device check below never sees.
+            nat64_refused = set()
+            for pool in (d["pool_add"] + d["pool_replace"]
+                         + list(d["settings_set"].values())
+                         + [p for p, _ in d["bypass_set"]]
+                         + [p for p, _ in d["fwd_add"]]):
+                if pool.name in nat64_refused:
+                    continue
+                why = pool.nat64_fits()
+                if why:
+                    nat64_refused.add(pool.name)
+                    self.err_prose(*why)
+                    ok = False
+
             for pool in d["pool_add"] + d["pool_replace"]:
+                if pool.name in nat64_refused:
+                    continue
                 # Already refused above. The device refuses it too and the
                 # check below would print its sentence as well, which is two
                 # verdicts and two paragraphs for one fault - and the operator
@@ -12111,6 +12207,11 @@ class Shell:
             for sev, stmt, why in dynamic_export_findings(target.pools,
                                                          target.globals):
                 self.say_finding(sev, stmt, why)
+            # A NAT64 pool in a VRRP pair, whose IPv6 side no virtual address
+            # carries (#485). Warned, for the reason the function gives.
+            for sev, stmt, why in nat64_ha_findings(target.pools,
+                                                    target.vrrp):
+                self.say_finding(sev, stmt, why)
 
             # Would this commit leave the two boxes mapping subscribers
             # differently? Asked only when a peer configuration has been put
@@ -12188,7 +12289,7 @@ class Shell:
         for pool in d["pool_replace"]:
             self.api_call("bpa_pool_add_del", pool.api_args(is_add=False))
         for pool in d["pool_add"] + d["pool_replace"]:
-            r = self.api_call("bpa_pool_add_del", pool.api_args())
+            r = self.api_call(*pool.add_message())
             if not r.ok:
                 # Named, because a commit carrying several pools has to say
                 # which one the dataplane refused. "commit failed" sends the
@@ -12200,7 +12301,17 @@ class Shell:
         # and the bounds: they are the ones an operator changes while looking
         # at a live problem, and a commit that applied them last would leave
         # them behind whatever else in the same commit failed.
-        for name, pool in d["settings_set"].items():
+        #
+        # And what a creation message cannot carry, sent right after it:
+        # bpa_pool_add_del has no utilisation alarm, and delta_to() gives a
+        # pool being created no settings_set - so a pool created with
+        # `utilisation-alarm` had none, on IPv4 as well, until a later commit
+        # noticed the difference (#485 phase 4, measured with
+        # Config.delta_to). A NAT64 pool's message carries no in-place
+        # setting at all, the MSS clamp included.
+        created = [(p.name, p) for p in d["pool_add"] + d["pool_replace"]
+                   if p.util_alarm or p.is_nat64]
+        for name, pool in list(d["settings_set"].items()) + created:
             r = self.api_call("bpa_pool_settings_set",
                               pool.settings_api_args())
             if not r.ok:
@@ -12230,15 +12341,13 @@ class Shell:
         # a removal and an addition, and doing the addition first would be
         # refused for colliding with the entry it is replacing.
         for pool, fwd in d["fwd_del"]:
-            r = self.api_call("bpa_forward_add_del",
-                              pool.forward_api_args(fwd, is_add=False))
+            r = self.api_call(*pool.forward_message(fwd, is_add=False))
             if not r.ok and r.state != vppapi.REFUSED:
                 self.err_dataplane(f"pool '{pool.name}': removing forward "
                                    f"{fwd[0]} {fwd[1]}: {r.reason}")
                 return False
         for pool, fwd in d["fwd_add"]:
-            r = self.api_call("bpa_forward_add_del",
-                              pool.forward_api_args(fwd))
+            r = self.api_call(*pool.forward_message(fwd))
             if not r.ok:
                 self.err_dataplane(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
                                    f"to {fwd[2]} {fwd[3]}: {r.reason}")
@@ -17214,8 +17323,12 @@ class Shell:
                 # The same rule as the saved file's, from the same function.
                 # A second copy is what lets the two doors disagree, which is
                 # #417 - and `inside potato` reached a commit through this one
-                # while the file's half only asked for a slash.
-                why = prefix_error(w[0], w[1])
+                # while the file's half only asked for a slash. An IPv6 inside
+                # is a NAT64 pool (#485), and an outside is IPv4 always.
+                if w[0] == "prefix-inside" and ":" in w[1]:
+                    why = prefix6_error(w[0], w[1])
+                else:
+                    why = prefix_error(w[0], w[1])
                 if why:
                     # SAID and not raised, the way block-size above is: the
                     # chain answers a ValueError with "invalid argument: " in
@@ -17224,7 +17337,16 @@ class Shell:
                     self.err_prose(*why)
                     return True
                 (p.inside if w[0] == "prefix-inside"
-                 else p.outside).append(w[1])
+                 else p.outside).append(canonical_prefix(w[1]))
+            elif w[0] == "subscriber-length":
+                self.pool_range("subscriber-length", w[1])
+                p.subscriber_length = int(w[1])
+            elif w[0] == "nat64-prefix":
+                why = nat64_prefix_error(w[1])
+                if why:
+                    self.err_prose(*why)
+                    return True
+                p.nat64_prefix = canonical_prefix(w[1])
             elif w[0] == "block-size":
                 self.pool_range("block-size", w[1])
                 # The range is one of TWO things `?` promises about this
@@ -21350,10 +21472,12 @@ class Shell:
         if rest[:1] != ["subscriber"] or len(rest) != 2:
             self.err("usage: clear cgnat subscriber <A.B.C.D>")
             return
+        # Either family: a NAT64 subscriber by any address in its prefix
+        # (#485). Still parsed here, so a word never reaches the dataplane.
         try:
-            addr = str(ipaddress.IPv4Address(rest[1]))
+            addr = str(ipaddress.ip_address(rest[1]))
         except ValueError:
-            self.err(f"a subscriber is an IPv4 address: {rest[1]}")
+            self.err(f"a subscriber is an IPv4 or IPv6 address: {rest[1]}")
             return
         if not self.require(CAP_CGNAT, "clear cgnat subscriber"):
             return

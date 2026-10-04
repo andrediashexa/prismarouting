@@ -14,6 +14,7 @@
 .build/test_bpa_top
 .build/test_bpa_rate
 .build/test_bpa_keys
+.build/test_bpa_nat64
 .build/test_bpa_subblock
 .build/test_bpa_workers
 .build/test_bpa_local
@@ -98,6 +99,7 @@ sh test/test_load_the_images.sh
 sh test/test_refresh_the_vty.sh
 sh test/test_schedule_vty_refresh.sh
 python3 test/test_install_manifest.py
+python3 test/test_install_groups.py
 sh test/test_manifest.sh
 sh test/test_prisma_identity.sh
 sh test/test_prisma_backplane.sh

@@ -21,6 +21,7 @@
 #include <vlib/vlib.h>
 #include <vnet/ip/ip4_packet.h>
 #endif
+#include "bpa_nat64.h"
 
 /* Ranges are inlined in the pool, so no allocation sits on the datapath.
  * A provider with more than this many separate prefixes is rejected with a
@@ -377,6 +378,16 @@ typedef struct
   u16 port_priv;
   u16 port_off;	 /* port_pub - block.port_lo, the bit reserved in the map */
   u8 proto;	 /* bpa_proto_t; TCP or UDP, the only two with ports to pin */
+  /*
+   * A NAT64 pool's forward (#485 phase 4): the host it points at, one /128
+   * of the subscriber's delegated prefix. ip_priv is then the subscriber's
+   * INDEX - its pseudo inside address - so the validation, the pin and the
+   * reply's agreement check are the IPv4 ones; the host is what the NAT64
+   * session is keyed and translated on. bpa_nat64_static_resolve() fills
+   * ip_priv from it.
+   */
+  u8 has_host6;
+  u8 host6[16];
 } bpa_static_t;
 
 typedef struct
@@ -605,6 +616,23 @@ typedef struct
    * goes through the #23 procedure.
    */
   bpa_divisor_t div;
+
+  /*
+   * NAT64 (#485). A pool whose inside is IPv6: `inside` then holds a dense
+   * pseudo set [0, inside6.count) so every block, capacity and worker rule
+   * that reads sub_idx works unchanged, and no IPv4 packet ever matches it -
+   * bpa_pool_by_inside() skips a NAT64 pool. The subscriber is a prefix of
+   * nat64_sub_len bits out of inside6; the destination is the IPv4 address
+   * embedded under nat64_prefix (RFC 6052). The prefixes are kept as typed,
+   * for `show bpa config` to give back what was configured.
+   */
+  u8 is_nat64;
+  u8 nat64_len;
+  u8 nat64_prefix[16];
+  bpa_set6_t inside6;
+  u8 n_inside6;
+  u8 inside6_addr[BPA_NAT64_MAX_PREFIXES][16];
+  u8 inside6_len[BPA_NAT64_MAX_PREFIXES];
 } bpa_pool_t;
 
 typedef struct
@@ -638,6 +666,9 @@ clib_error_t *bpa_pool_stride_refusal (const bpa_pool_t *p, u32 stride);
  */
 clib_error_t *bpa_pool_initial_refusal (const bpa_pool_t *p, u32 initial,
 					u32 max_blocks);
+clib_error_t *bpa_nat64_cfg_finish (bpa_pool_t *cfg, u8 sub_len);
+int bpa_nat64_static_resolve (const bpa_pool_t *p, bpa_static_t *sf);
+const char *bpa_nat64_unsupported (const bpa_pool_t *cfg);
 clib_error_t *bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases,
 				  const u32 *counts, u32 n);
 
@@ -847,6 +878,10 @@ bpa_pool_claims_inside (const bpa_pool_t *p, u32 addr, u32 fib, u32 *sub_idx)
    */
   if (PREDICT_FALSE (p->deleted))
     return 0;
+  /* A NAT64 pool's `inside` is the pseudo set its sub_idx arithmetic runs on,
+   * not addresses: no IPv4 source belongs to it (#485). */
+  if (PREDICT_FALSE (p->is_nat64))
+    return 0;
   return bpa_set_index_of (&p->inside, addr, sub_idx) == 0;
 }
 
@@ -935,6 +970,11 @@ bpa_pools_collide (const bpa_pool_t *cfg, const bpa_pool_t *p, u32 *addr,
 
   if (p->fib_index != ~0u && cfg->fib_index != ~0u
       && p->fib_index != cfg->fib_index)
+    return 0;
+
+  /* The pseudo inside of a NAT64 pool overlaps every other one by
+   * construction; bpa_nat64_collide() compares the IPv6 prefixes instead. */
+  if (cfg->is_nat64 || p->is_nat64)
     return 0;
 
   for (i = 0; i < cfg->inside.n_ranges; i++)
@@ -1279,7 +1319,7 @@ bpa_static_by_pub (const bpa_pool_t *p, u32 ip_pub, u16 port_pub, u8 proto)
  */
 static_always_inline const bpa_static_t *
 bpa_static_by_priv (const bpa_pool_t *p, const bpa_block_t *b, u32 ip_priv,
-		    u16 port_priv, u8 proto)
+		    u16 port_priv, u8 proto, const u8 *host6)
 {
   u32 n = vec_len (p->statics);
   u32 i = bpa_static_lower (p->statics, n, b->port_lo);
@@ -1287,7 +1327,10 @@ bpa_static_by_priv (const bpa_pool_t *p, const bpa_block_t *b, u32 ip_priv,
   for (; i < n && p->statics[i].port_pub <= b->port_hi; i++)
     if (p->statics[i].ip_priv == ip_priv
 	&& p->statics[i].port_priv == port_priv
-	&& p->statics[i].proto == proto)
+	&& p->statics[i].proto == proto
+	/* On a NAT64 pool the subscriber is a prefix: its forward is one
+	 * host of it, and another host on the same port is not it (#485). */
+	&& (!host6 || !memcmp (p->statics[i].host6, host6, 16)))
       return &p->statics[i];
   return 0;
 }

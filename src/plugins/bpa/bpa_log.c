@@ -183,6 +183,7 @@ bpa_log_udp_publish (void)
   c.path_mtu = exp->path_mtu;
   c.block_template_id = lm->template_id;
   c.marker_template_id = lm->marker_template_id;
+  c.nat64_template_id = lm->nat64_template_id;
   c.template_interval = exp->template_interval;
   /* ~0 is VPP's "no table given": the default table, as 0 is. Measured in
    * lab/log-container.sh: an exporter set with no vrf holds ~0, and the
@@ -268,7 +269,8 @@ bpa_log_handover (void)
  * in the ring, the same rule as a worker's (#547). */
 static void
 bpa_log_xpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
-	       u16 port_lo, u16 port_hi, u32 pool_id, const char *identity)
+	       u16 port_lo, u16 port_hi, u32 pool_id, const char *identity,
+	       const bpa_log_sub6_t *v6)
 {
   bpa_log_ring_t *x = bpa_log_seg_xring (bpa_log_seg.base);
   bpa_log_xev_t *v =
@@ -287,6 +289,8 @@ bpa_log_xpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
   v->ev.pool_id = pool_id;
   if (identity)
     strncpy (v->ev.identity, identity, sizeof (v->ev.identity) - 1);
+  if (v6)
+    v->ev.sub6 = *v6;
   bpa_log_ring_publish (x);
 }
 
@@ -336,6 +340,24 @@ static ipfix_report_element_t bpa_block_elements[] = {
   { observationTimeMilliseconds, 8 },
   { natEvent, 1 },
   { sourceIPv4Address, 4 },
+  { postNATSourceIPv4Address, 4 },
+  { portRangeStart, 2 },
+  { portRangeEnd, 2 },
+  { natPoolId, 4 },
+};
+
+/*
+ * The NAT64 block (#485): Table 21 with sourceIPv6Address where
+ * sourceIPv4Address is, as RFC 8158 4.6.10 says, and
+ * sourceIPv6PrefixLength beside it - the subscriber is a delegated prefix,
+ * and the RFC's address alone would name one /128 of it. bpa_log_tcp.c's
+ * bpa_tcp_nat64_ies is the same list over TCP, and says the same.
+ */
+static ipfix_report_element_t bpa_nat64_elements[] = {
+  { observationTimeMilliseconds, 8 },
+  { natEvent, 1 },
+  { sourceIPv6Address, 16 },
+  { sourceIPv6PrefixLength, 1 },
   { postNATSourceIPv4Address, 4 },
   { portRangeStart, 2 },
   { portRangeEnd, 2 },
@@ -436,6 +458,16 @@ bpa_log_enable (int enable)
 
   lm->marker_template_id = template_id;
   lm->marker_report_index = a.flow_report_index;
+
+  /* The NAT64 block's, on the same stream for the marker's reason. */
+  a.report_elements = bpa_nat64_elements;
+  a.n_report_elements = ARRAY_LEN (bpa_nat64_elements);
+  a.opaque.as_uword = 2;
+  rv = vnet_flow_report_add_del (exp, &a, &template_id);
+  if (rv)
+    return flow_report_add_del_error_to_clib_error (rv);
+  lm->nat64_template_id = template_id;
+  lm->nat64_report_index = a.flow_report_index;
   lm->enabled = enable ? 1 : 0;
 
   /* A transport coming up where there was none: every block that is pinned
@@ -451,6 +483,30 @@ bpa_log_enable (int enable)
       bpa_log_pins_replay ();
     }
   return 0;
+}
+
+/*
+ * The NAT64 subscriber an event is about, or len 0 for an IPv4 one (#485).
+ * pool_id is the pool's index - every caller passes it - and on a NAT64 pool
+ * ip_priv is the subscriber's index in it, which the pool's IPv6 set turns
+ * back into the delegated prefix.
+ */
+/* not a unit: it reads bpa_main's pool of pools; the prefix is
+ * bpa_set6_prefix_of(), held by test/test_bpa_nat64.c, and lab/nat64.sh
+ * reads the records it fills off a collector. */
+void
+bpa_log_sub6_of (u32 pool_id, u32 ip_priv, bpa_log_sub6_t *out)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+
+  memset (out, 0, sizeof (*out));
+  if (PREDICT_TRUE (bm->n_nat64 == 0) || pool_is_free_index (bm->pools, pool_id))
+    return;
+  p = pool_elt_at_index (bm->pools, pool_id);
+  if (!p->is_nat64 || bpa_set6_prefix_of (&p->inside6, ip_priv, out->addr))
+    return;
+  out->len = p->inside6.sub_len;
 }
 
 /*
@@ -485,11 +541,19 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 			    sizeof (bpa_log_event_t));
   if (PREDICT_FALSE (!e))
     return;
+  /* The NAT64 prefix FIRST: on a NAT64 pool ip_priv is the subscriber's
+   * index, and looking that up as an IPv4 address would name whoever the
+   * identity table has at 0.0.<index> - somebody, and the wrong one (#485). */
+  bpa_log_sub6_of (pool_id, ip_priv, &e->sub6);
   /* THE IDENTITY IS TAKEN HERE, at the instant of the allocation, for the
    * reason the field's own comment gives: a lookup at drain time would name
    * whoever holds the address by then (#21). */
-  bpa_identity_lookup (&bpa_main.identity, ip_priv, e->identity,
-		       sizeof (e->identity));
+  if (e->sub6.len)
+    bpa_identity_lookup6 (&bpa_main.identity, e->sub6.addr, e->sub6.len,
+			  e->identity, sizeof (e->identity));
+  else
+    bpa_identity_lookup (&bpa_main.identity, ip_priv, e->identity,
+			 sizeof (e->identity));
   /*
    * AND THE BLOCK REMEMBERS IT, so that its release says the same thing
    * (#397). The maintainer's decision, of the three answers that issue sets
@@ -548,24 +612,29 @@ bpa_log_flush (vlib_main_t *vm)
 
   lm->n_flush_called++;
   exp = pool_elt_at_index (frm->exporters, 0);
-  fr = pool_elt_at_index (exp->reports, lm->flow_report_index);
+  /* The block report's buffer, and the NAT64 one's beside it (#485): each
+   * report writes its own, and one left behind is records left behind. */
+  {
+    u32 idx[2] = { lm->flow_report_index, lm->nat64_report_index }, k;
 
-  if (vm->thread_index >= vec_len (fr->per_thread_data))
-    return;
-
-  ptd = vec_elt_at_index (fr->per_thread_data, vm->thread_index);
-
-  if (ptd->buffer == 0 || ptd->next_data_offset <= exp->all_headers_size)
-    {
-      lm->n_flush_empty++;
-      return;
-    }
-
-  lm->n_flush_sent++;
-
-  vnet_ipfix_exp_send_buffer (
-    vm, exp, fr, pool_elt_at_index (exp->streams, fr->stream_index),
-    vm->thread_index, ptd->buffer);
+    for (k = 0; k < 2; k++)
+      {
+	fr = pool_elt_at_index (exp->reports, idx[k]);
+	if (vm->thread_index >= vec_len (fr->per_thread_data))
+	  continue;
+	ptd = vec_elt_at_index (fr->per_thread_data, vm->thread_index);
+	if (ptd->buffer == 0 || ptd->next_data_offset <= exp->all_headers_size)
+	  {
+	    if (k == 0)
+	      lm->n_flush_empty++;
+	    continue;
+	  }
+	lm->n_flush_sent++;
+	vnet_ipfix_exp_send_buffer (
+	  vm, exp, fr, pool_elt_at_index (exp->streams, fr->stream_index),
+	  vm->thread_index, ptd->buffer);
+      }
+  }
 }
 
 /*
@@ -594,7 +663,8 @@ bpa_log_flush (vlib_main_t *vm)
  * no reservation to fail - the oldest slot is written over. */
 static void
 bpa_log_mpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
-	       u16 port_lo, u16 port_hi, u32 pool_id, const char *identity)
+	       u16 port_lo, u16 port_hi, u32 pool_id, const char *identity,
+	       const bpa_log_sub6_t *v6)
 {
   bpa_log_ring_t *m = bpa_log_seg.base ? bpa_log_seg_mring (bpa_log_seg.base)
 					: 0;
@@ -614,6 +684,8 @@ bpa_log_mpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
   v->ev.pool_id = pool_id;
   if (identity)
     strncpy (v->ev.identity, identity, sizeof (v->ev.identity) - 1);
+  if (v6)
+    v->ev.sub6 = *v6;
   bpa_log_mring_publish (m);
 }
 
@@ -622,7 +694,8 @@ bpa_log_mpush (u8 kind, f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
  * test/test_ipfix_record.py and read off a collector by lab/ipfix.sh. */
 void
 bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
-	      u16 port_hi, u32 pool_id, const char *identity)
+	      u16 port_hi, u32 pool_id, const char *identity,
+	      const bpa_log_sub6_t *v6)
 {
   f64 wall = unix_time_now ();
   int owns = bpa_log_logger_owns ();
@@ -631,13 +704,13 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
   /* What is exported, for whoever watches it (#556) - with the wall clock
    * the records carry. */
   bpa_log_mpush (BPA_LOG_XEV_RECORD, wall, event, ip_priv, ip_pub, port_lo,
-		 port_hi, pool_id, identity);
+		 port_hi, pool_id, identity, v6);
 
   /* Each event goes to exactly ONE UDP sender, decided here: VPP's exporter,
    * or the container through the export ring (#550 step 3). */
   if (!udp_l)
     bpa_log_block_event (vm, vm->thread_index, wall, event, ip_priv, ip_pub,
-			 port_lo, port_hi, pool_id);
+			 port_lo, port_hi, pool_id, v6);
   /* The TCP streams, carried by the log container when there is one: VPP
    * only copies the event into the export ring, and the container formats,
    * sends and spills it (#550). */
@@ -645,15 +718,16 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
     {
       if (bpa_log_tcp.enabled || bpa_log_syslog.enabled || udp_l)
 	bpa_log_xpush (BPA_LOG_XEV_RECORD, wall, event, ip_priv, ip_pub,
-		       port_lo, port_hi, pool_id, identity);
+		       port_lo, port_hi, pool_id, identity, v6);
       return;
     }
-  bpa_log_tcp_record (wall, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
+  bpa_log_tcp_record (wall, event, ip_priv, ip_pub, port_lo, port_hi, pool_id,
+		      v6);
   /* The third transport, and the last line of the fan-out this function's
    * own comment exists for: a caller that reaches one exporter directly will
    * sooner or later reach only that one (#20). */
   bpa_log_stream_record (&bpa_log_syslog, wall, event, ip_priv, ip_pub,
-			 port_lo, port_hi, pool_id, identity);
+			 port_lo, port_hi, pool_id, identity, v6);
 }
 
 /*
@@ -682,11 +756,11 @@ bpa_log_marker_emit (vlib_main_t *vm)
   u8 *d;
   int udp_l = bpa_log_main.enabled && bpa_log_udp_by_logger ();
 
-  bpa_log_mpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0);
+  bpa_log_mpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0, 0);
   if (bpa_log_logger_owns ())
     {
       if (bpa_log_tcp.enabled || bpa_log_syslog.enabled || udp_l)
-	bpa_log_xpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0);
+	bpa_log_xpush (BPA_LOG_XEV_MARKER, wall, 0, 0, 0, 0, 0, 0, 0, 0);
     }
   else
     {
@@ -747,6 +821,22 @@ bpa_log_drain (vlib_main_t *vm)
   ipfix_exporter_t *exp;
   flow_report_t *fr;
   u32 i, j;
+
+  /*
+   * The accounting the BNG is sending, read from the same process for the
+   * same reason: it is a socket, it is a few packets a second, and the
+   * dataplane has no business parsing somebody else's protocol (#21).
+   *
+   * FIRST, before either return below. It sat at the end of this function,
+   * so it was never reached while no transport was enabled, nor until the
+   * block report's first template had gone out - up to the template
+   * interval after `logging enable`. The datagrams waited in the socket,
+   * and every block allocated meanwhile was recorded "unknown" although
+   * the BNG had said who it was. Measured in lab/nat64.sh (#485): the
+   * allocations unknown, their releases named, the NAS unanswered for 3 s.
+   * Reading who is on which address depends on no exporter.
+   */
+  bpa_radius_service ();
 
   if (!bpa_log_main.enabled && !bpa_log_tcp.enabled
       && !bpa_log_syslog.enabled)
@@ -830,7 +920,7 @@ bpa_log_drain (vlib_main_t *vm)
 	    pt->log_q, BPA_LOG_QUEUE_MAX, sizeof (bpa_log_event_t), tail + j);
 
 	  bpa_log_emit (vm, e->event, e->ip_priv, e->ip_pub, e->port_lo,
-			e->port_hi, e->pool_id, e->identity);
+			e->port_hi, e->pool_id, e->identity, &e->sub6);
 	}
       bpa_log_ring_consume (pt->log_q, n);
     }
@@ -842,10 +932,6 @@ bpa_log_drain (vlib_main_t *vm)
       bpa_log_tcp_service (vlib_time_now (vm));
       bpa_log_stream_service (&bpa_log_syslog, vlib_time_now (vm));
     }
-  /* And the accounting the BNG is sending, read from the same process for
-   * the same reason: it is a socket, it is a few packets a second, and the
-   * dataplane has no business parsing somebody else's protocol (#21). */
-  bpa_radius_service ();
 }
 
 /* not a unit: it turns one block event into a record on the
@@ -855,8 +941,10 @@ bpa_log_drain (vlib_main_t *vm)
 void
 bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall, u8 event,
 		     u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
-		     u32 pool_id)
+		     u32 pool_id, const bpa_log_sub6_t *v6)
 {
+  int is6 = v6 && v6->len;
+  u32 rec = is6 ? BPA_LOG_NAT64_RECORD_SIZE : BPA_LOG_RECORD_SIZE;
   bpa_log_main_t *lm = &bpa_log_main;
   flow_report_main_t *frm = &flow_report_main;
   flow_report_per_thread_t *ptd;
@@ -874,7 +962,10 @@ bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall, u8 event,
     }
 
   exp = pool_elt_at_index (frm->exporters, 0);
-  fr = pool_elt_at_index (exp->reports, lm->flow_report_index);
+  /* Its own report, so its own buffer and data set: a set carries one
+   * template's records (#485). */
+  fr = pool_elt_at_index (exp->reports, is6 ? lm->nat64_report_index
+					     : lm->flow_report_index);
 
   b0 = vnet_ipfix_exp_get_buffer (vm, exp, fr, thread_index);
   if (PREDICT_FALSE (b0 == 0))
@@ -899,8 +990,17 @@ bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall, u8 event,
   d += 8;
   d[0] = event;
   d += 1;
-  clib_memcpy_fast (d, &(u32){ clib_host_to_net_u32 (ip_priv) }, 4);
-  d += 4;
+  if (is6)
+    {
+      clib_memcpy_fast (d, v6->addr, 16);
+      d[16] = v6->len;
+      d += 17;
+    }
+  else
+    {
+      clib_memcpy_fast (d, &(u32){ clib_host_to_net_u32 (ip_priv) }, 4);
+      d += 4;
+    }
   clib_memcpy_fast (d, &(u32){ clib_host_to_net_u32 (ip_pub) }, 4);
   d += 4;
   clib_memcpy_fast (d, &(u16){ clib_host_to_net_u16 (port_lo) }, 2);
@@ -909,13 +1009,13 @@ bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall, u8 event,
   d += 2;
   clib_memcpy_fast (d, &(u32){ clib_host_to_net_u32 (pool_id) }, 4);
 
-  offset += BPA_LOG_RECORD_SIZE;
+  offset += rec;
   ptd->next_data_offset = offset;
   b0->current_length = offset;
   lm->n_records++;
 
   /* dispatch before the next record would not fit */
-  if (offset + BPA_LOG_RECORD_SIZE > exp->path_mtu)
+  if (offset + rec > exp->path_mtu)
     vnet_ipfix_exp_send_buffer (
       vm, exp, fr, pool_elt_at_index (exp->streams, fr->stream_index),
       thread_index, b0);

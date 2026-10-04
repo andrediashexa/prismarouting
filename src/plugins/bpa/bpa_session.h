@@ -17,6 +17,7 @@
 
 #include <vlib/vlib.h>
 #include <vppinfra/bihash_16_8.h>
+#include <vppinfra/bihash_24_8.h>
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa_pool.h"
@@ -177,6 +178,15 @@ typedef struct
    * between two connections.
    */
   u8 is_static;
+
+  /*
+   * A NAT64 session (#485): its inside is the IPv6 host in
+   * bpa_per_thread_t.nat64_host[session index], keyed in in2out6, and its
+   * ip_priv is the pool's pseudo address (sub_idx). One byte in what was
+   * padding; the 16-byte host is beside the session table rather than in
+   * it, so a NAT44-only box pays nothing for NAT64.
+   */
+  u8 is_nat64;
 } bpa_session_t;
 
 /* bpa_subblock_t moved to bpa_subblock.h (#472). */
@@ -280,6 +290,12 @@ typedef struct
   bpa_session_t *sessions;	  /* pool */
   clib_bihash_16_8_t in2out;	  /* (priv ip, priv port, proto) -> session */
   clib_bihash_16_8_t out2in;	  /* (pub ip, pub port, proto)  -> session */
+  /* NAT64 (#485): (host /128, port, proto, fib) -> session, and each NAT64
+   * session's host, indexed like `sessions` and only grown when one is
+   * made. */
+  clib_bihash_24_8_t in2out6;
+  ip6_address_t *nat64_host;
+  u16 nat64_ip_id; /* RFC 7915 5.1: IPv4 identification, DF clear */
   bpa_sub_t *subs;		  /* pool of per-subscriber port bitmaps */
   bpa_dyn_t *dyn;	  /* dynamic block state, indexed by pool index */
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
@@ -558,8 +574,10 @@ void bpa_static_install (u32 pool_index, const bpa_static_t *sf);
 void bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf);
 
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
-/* Every session of one subscriber (host order) ended, under the barrier. */
-u32 bpa_subscriber_clear (bpa_per_thread_t *pt, u32 ip_priv, f64 now);
+/* Every session of one subscriber - by its pool and index - ended, under
+ * the barrier. */
+u32 bpa_subscriber_clear (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+			  f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);
 /*

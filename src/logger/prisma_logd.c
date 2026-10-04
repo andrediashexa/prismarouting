@@ -183,7 +183,7 @@ logd_drain (logd_t *l, u32 max)
 	  else
 	    logd_udp_record (&l->udp, v->wall, v->wall, v->ev.event,
 			     v->ev.ip_priv, v->ev.ip_pub, v->ev.port_lo,
-			     v->ev.port_hi, v->ev.pool_id);
+			     v->ev.port_hi, v->ev.pool_id, &v->ev.sub6);
 	}
 
       for (i = 0; i < 2; i++)
@@ -200,7 +200,7 @@ logd_drain (logd_t *l, u32 max)
 	      v->ev.port_lo, v->ev.port_hi, v->ev.pool_id,
 	      /* The IPFIX record carries no identity yet (#21 step 4), the
 	       * same as VPP's bpa_log_tcp_record() gives it. */
-	      i == BPA_LOG_STREAM_SYSLOG ? v->ev.identity : 0);
+	      i == BPA_LOG_STREAM_SYSLOG ? v->ev.identity : 0, &v->ev.sub6);
 	}
     }
   bpa_log_ring_consume (x, n);

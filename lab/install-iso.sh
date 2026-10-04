@@ -1093,6 +1093,45 @@ live_field() {  # <name>
     | sed -n "s/^HXLAB $1=//p" | head -1
 }
 
+# A DATAPLANE RESTART COMES BACK (#564), on whichever dataplane the box runs.
+# On two boxes in 0.149.25-0.149.30 a `system dataplane restart` left the
+# dataplane down: the restart gave up mid-way, renamed the cards (eth0, eth1)
+# or never reported the load. And in 0.150.0's first gate, on a box put back
+# on vpp.service, it gave the card back while vpp.service still held it and
+# the guest's kernel hung. The box has to come back by itself with as many
+# interfaces up as before, a new dataplane process, the same card names in
+# startup.conf, the configuration loaded and nothing failed - typed at the
+# console as root, which takes the same detached host unit the API's
+# RestartDataplane does. Saved first: the restart reloads the SAVED
+# configuration, and this is about coming back, not about what was unsaved.
+dp_restart_check() {  # <which path, for the report>
+  send 'echo "HX""LAB dr-before=up:$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l) pid:$(pgrep -x vpp_main | head -1) $(grep -o "name [a-z0-9]*" /etc/vpp/startup.conf | sort | tr " \n" "=,")"'
+  wait_for "HXLAB dr-before=" 60 "the box to read its dataplane before the restart" || fail=1
+  _dr_b=$(live_field dr-before)
+  _dr_upb=$(echo "$_dr_b" | sed -n 's/^up:\([0-9]*\) .*/\1/p')
+  send '_p0=$(pgrep -x vpp_main | head -1); prismash -c "save" >/dev/null 2>&1; prismash -c "system dataplane restart" > /tmp/dprestart.log 2>&1; _rc=$?; _t=0; _up=0; while [ $_t -lt 240 ]; do sleep 2; _t=$((_t + 2)); _up=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l); [ "$_up" -ge "'"${_dr_upb:-1}"'" ] && systemctl is-active --quiet prisma-routing.service && break; done; _p1=$(pgrep -x vpp_main | head -1); echo "HX""LAB dr-after=rc:$_rc up:$_up after:${_t}s new:$([ -n "$_p1" ] && [ "$_p0" != "$_p1" ] && echo yes || echo no) cfg:$(systemctl is-active prisma-routing.service) failed:$(systemctl --failed --no-legend 2>/dev/null | grep -c prisma) $(grep -o "name [a-z0-9]*" /etc/vpp/startup.conf | sort | tr " \n" "=,")"'
+  wait_for "HXLAB dr-after=" 600 "the dataplane restart to come back $1" || fail=1
+  _dr_a=$(live_field dr-after)
+  _dr_up=$(echo "$_dr_a" | sed -n 's/.* up:\([0-9]*\) .*/\1/p; s/^rc:[0-9]* up:\([0-9]*\) .*/\1/p' | head -1)
+  _dr_n0=${_dr_b##* }; _dr_n1=${_dr_a##* }
+  if echo "$_dr_a" | grep -q "^rc:0 " && echo "$_dr_a" | grep -q "new:yes" \
+     && echo "$_dr_a" | grep -q "cfg:active failed:0" \
+     && [ -n "$_dr_up" ] && [ "$_dr_up" -ge "${_dr_upb:-1}" ] \
+     && [ -n "$_dr_n0" ] && [ "$_dr_n0" = "$_dr_n1" ]; then
+    echo "  [ ok ] a dataplane restart $1 came back configured, cards named as before: $_dr_a"
+  else
+    echo "  [FAIL] a dataplane restart $1 did not come back whole (#564)"
+    echo "         before '${_dr_b:-<no answer>}'; after '${_dr_a:-<no answer>}'"
+    # Read back before the caller powers the box off, as a field: sent bare,
+    # the power button's monitor escape interleaved with it and the log was
+    # lost (0.150.0's second gate).
+    send 'echo "HX""LAB dr-why=$({ cat /tmp/dprestart.log; tail -20 /run/prisma-routing/dataplane-restart.log; vppctl show interface; } 2>&1 | tr -d "\r" | tr "\n" "|" | cut -c1-1500)"'
+    wait_for "HXLAB dr-why=" 60 "the box to say what the restart did" || fail=1
+    echo "         what it did: $(live_field dr-why)"
+    fail=1
+  fi
+}
+
 login_root() {  # the first prompt the box offers, and root in the VTY
   wait_for "$NEW_HOST login:" 420 "$1" || return 1
   send "root"
@@ -4646,6 +4685,62 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
     send 'echo "HX""LAB ho-hwpci=$(vppctl show hardware-interfaces 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {n=\$1} /^ *pci:/ && n == \"'"$HO_IF"'\" {print}" | tr -s " " | sed "s/^ //")"'
     wait_for "HXLAB ho-hwpci=" 60 \
       "the dataplane to print the card's pci row" || fail=1
+    # THE CONTAINER PATH'S OWN PROMISES (0.150.0), asked here because this is
+    # the last boot on the containers: PHASE 6 puts the box back on
+    # vpp.service, and its first gate asked these there - no container to
+    # kill, no log container, and a restart that gave back a card vpp.service
+    # still held, which hung the guest's kernel.
+    # A DATAPLANE DOCKER STARTED AGAIN COMES BACK CONFIGURED (#548). The
+    # virtio bench, 0.149.4: VPP aborted, Docker's on-failure policy started
+    # it again, and it came up with every interface down, no pool, no route,
+    # while prisma-routing.service stayed `active (exited)` - dead until a
+    # person restarted the unit. Here the dataplane process is killed from
+    # the host (a crash, not a `docker stop`, which no policy restarts; the
+    # process is vpp_main in `docker top`, measured on the bench) and
+    # the box has to bring an interface back UP by itself, which only the
+    # configuration does. The control: PRISMA_LAB_NO_REAPPLY=1 stops the
+    # watcher's timer first, and this check MUST then fail.
+    if [ "${PRISMA_LAB_NO_REAPPLY:-0}" = 1 ]; then
+      send 'systemctl stop prisma-routing-card-watch.timer; echo "HX""LAB ct-nore=$(systemctl is-active prisma-routing-card-watch.timer)"'
+      wait_for "HXLAB ct-nore=" 30 "the box to stop the watcher (the control)" || fail=1
+    fi
+    send 'for i in $(seq 1 180); do [ -s /run/prisma-routing/dataplane-applied ] && break; sleep 1; done; echo "HX""LAB ct-rec=$(wc -l < /run/prisma-routing/dataplane-applied 2>/dev/null)"'
+    wait_for "HXLAB ct-rec=" 200 "the box to record which containers it configured" || fail=1
+    send 'echo "HX""LAB ct-upb=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l)"'
+    wait_for "HXLAB ct-upb=" 60 "the box to count its interfaces up before the kill" || fail=1
+    CT_UPB=$(live_field ct-upb)
+    send '_p=$(docker top prisma-routing_vpp_1 -eo pid,comm 2>/dev/null | awk "\$2 == \"vpp_main\" {print \$1; exit}"); kill -9 $_p; _t=0; _up=0; while [ $_t -lt 90 ]; do sleep 1; _t=$((_t + 1)); _up=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l); [ "$_up" -ge 1 ] && [ "$_up" -ge "'"${CT_UPB:-1}"'" ] && break; done; echo "HX""LAB ct-reapply=pid:${_p:-none} up:$_up of '"${CT_UPB:-?}"' after:${_t}s restarts:$(docker inspect -f "{{.RestartCount}}" prisma-routing_vpp_1)"'
+    wait_for "HXLAB ct-reapply=" 150 "the dataplane to be killed and come back" || fail=1
+    CT_REAPPLY=$(live_field ct-reapply)
+    _ra_up=$(echo "$CT_REAPPLY" | sed -n 's/.*up:\([0-9]*\) of.*/\1/p')
+    if [ -n "$_ra_up" ] && [ "${CT_UPB:-0}" -ge 1 ] && [ "$_ra_up" -ge "$CT_UPB" ] \
+       && ! echo "$CT_REAPPLY" | grep -q "pid:none"; then
+      echo "  [ ok ] a dataplane killed and started again by Docker came back configured: $CT_REAPPLY"
+    else
+      echo "  [FAIL] a dataplane killed and started again by Docker did not come back configured"
+      echo "         (${CT_UPB:-?} interface(s) up before; $CT_REAPPLY)"
+      fail=1
+    fi
+    # WHAT THE 0.149.x PATCHES SHIPPED AND NO INSTALL HAD RUN (0.150.0). A
+    # patch release is proved by the suites and an upgrade artifact, never by
+    # an install from the medium; these are the 0.149.x behaviours a fresh
+    # install has to have from its first boot.
+    #
+    # The log container (#550): it carries the CGNAT log's TCP streams when it
+    # runs, and before 0.150.0 it had only ever been started by a patch
+    # upgrade's refresh, never by a box's first `up`.
+    send 'echo "HX""LAB ct-logger=$(docker inspect -f "{{.State.Status}}" prisma-routing_logger_1 2>&1 | tr -d "\r") carried:$(prismash -c "show cgnat logging" 2>/dev/null | grep -c "carried by the log container")"'
+    wait_for "HXLAB ct-logger=" 60 "the box to say whether the log container runs" || fail=1
+    CT_LOGGER=$(live_field ct-logger)
+    case "$CT_LOGGER" in
+      "running carried:1")
+        echo "  [ ok ] the log container runs and carries the TCP log streams: $CT_LOGGER" ;;
+      *)
+        echo "  [FAIL] the log container on a fresh install: ${CT_LOGGER:-<no answer>}"
+        echo "         (expected 'running carried:1' - #550)"
+        fail=1 ;;
+    esac
+    dp_restart_check "on the containers"
     send "sync"
     send "systemctl poweroff"
   else
@@ -5174,37 +5269,35 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
       echo "  [FAIL] prisma-routing-leaks.service is ${CT_LEAKS:-<no answer>}, not active"
       fail=1
     fi
-    # A DATAPLANE DOCKER STARTED AGAIN COMES BACK CONFIGURED (#548). The
-    # virtio bench, 0.149.4: VPP aborted, Docker's on-failure policy started
-    # it again, and it came up with every interface down, no pool, no route,
-    # while prisma-routing.service stayed `active (exited)` - dead until a
-    # person restarted the unit. Here the dataplane process is killed from
-    # the host (a crash, not a `docker stop`, which no policy restarts; the
-    # process is vpp_main in `docker top`, measured on the bench) and
-    # the box has to bring an interface back UP by itself, which only the
-    # configuration does. The control: PRISMA_LAB_NO_REAPPLY=1 stops the
-    # watcher's timer first, and this check MUST then fail.
-    if [ "${PRISMA_LAB_NO_REAPPLY:-0}" = 1 ]; then
-      send 'systemctl stop prisma-routing-card-watch.timer; echo "HX""LAB ct-nore=$(systemctl is-active prisma-routing-card-watch.timer)"'
-      wait_for "HXLAB ct-nore=" 30 "the box to stop the watcher (the control)" || fail=1
-    fi
-    send 'for i in $(seq 1 180); do [ -s /run/prisma-routing/dataplane-applied ] && break; sleep 1; done; echo "HX""LAB ct-rec=$(wc -l < /run/prisma-routing/dataplane-applied 2>/dev/null)"'
-    wait_for "HXLAB ct-rec=" 200 "the box to record which containers it configured" || fail=1
-    send 'echo "HX""LAB ct-upb=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l)"'
-    wait_for "HXLAB ct-upb=" 60 "the box to count its interfaces up before the kill" || fail=1
-    CT_UPB=$(live_field ct-upb)
-    send '_p=$(docker top prisma-routing_vpp_1 -eo pid,comm 2>/dev/null | awk "\$2 == \"vpp_main\" {print \$1; exit}"); kill -9 $_p; _t=0; _up=0; while [ $_t -lt 90 ]; do sleep 1; _t=$((_t + 1)); _up=$(vppctl show interface 2>/dev/null | awk "\$2 ~ /^[0-9]+$/ && \$3 == \"up\" && \$1 != \"local0\"" | wc -l); [ "$_up" -ge 1 ] && [ "$_up" -ge "'"${CT_UPB:-1}"'" ] && break; done; echo "HX""LAB ct-reapply=pid:${_p:-none} up:$_up of '"${CT_UPB:-?}"' after:${_t}s restarts:$(docker inspect -f "{{.RestartCount}}" prisma-routing_vpp_1)"'
-    wait_for "HXLAB ct-reapply=" 150 "the dataplane to be killed and come back" || fail=1
-    CT_REAPPLY=$(live_field ct-reapply)
-    _ra_up=$(echo "$CT_REAPPLY" | sed -n 's/.*up:\([0-9]*\) of.*/\1/p')
-    if [ -n "$_ra_up" ] && [ "${CT_UPB:-0}" -ge 1 ] && [ "$_ra_up" -ge "$CT_UPB" ] \
-       && ! echo "$CT_REAPPLY" | grep -q "pid:none"; then
-      echo "  [ ok ] a dataplane killed and started again by Docker came back configured: $CT_REAPPLY"
+    # The operator capability's group (#563): made by the installer from
+    # 0.150.0, so `operator` on a fresh box works without the first-commit
+    # door that 0.149.26 needed.
+    send 'echo "HX""LAB ct-opgrp=$(getent group prisma-operator >/dev/null && echo present || echo absent)"'
+    wait_for "HXLAB ct-opgrp=" 30 "the box to say whether prisma-operator exists" || fail=1
+    CT_OPGRP=$(live_field ct-opgrp)
+    if [ "$CT_OPGRP" = present ]; then
+      echo "  [ ok ] the installer created prisma-operator (#563)"
     else
-      echo "  [FAIL] a dataplane killed and started again by Docker did not come back configured"
-      echo "         (${CT_UPB:-?} interface(s) up before; $CT_REAPPLY)"
+      echo "  [FAIL] no prisma-operator group on a fresh install (${CT_OPGRP:-<no answer>})"
       fail=1
     fi
+    # The API (#532) on a fresh install: off, which is the default, and it
+    # serves mutual TLS only, so without certificates nothing can answer -
+    # lab/api-grpc.sh proves the calls on a box given them. What a fresh box
+    # owes is the units installed and the configuring one not failed, so the
+    # first `api enabled yes` has something to start.
+    send 'echo "HX""LAB ct-api=units:$(systemctl list-unit-files "prisma-routing-api*.service" --no-legend 2>/dev/null | wc -l) config:$(systemctl is-failed prisma-routing-api-config.service)"'
+    wait_for "HXLAB ct-api=" 30 "the box to say whether the API units are there" || fail=1
+    CT_API=$(live_field ct-api)
+    case "$CT_API" in
+      "units:3 config:"*failed*|"units:3 config:")
+        echo "  [FAIL] the API on a fresh install: $CT_API"; fail=1 ;;
+      "units:3 config:"*)
+        echo "  [ ok ] the API's units are installed and its configuring unit did not fail: $CT_API" ;;
+      *)
+        echo "  [FAIL] the API on a fresh install: ${CT_API:-<no answer>} (expected units:3)"; fail=1 ;;
+    esac
+    dp_restart_check "on vpp.service"
     send "sync"
     # THE POWER BUTTON, AND NOT A TYPED POWEROFF (#478). A hypervisor's
     # Shutdown is an ACPI power-button press, and this box ignored it: no

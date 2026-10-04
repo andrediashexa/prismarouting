@@ -331,3 +331,123 @@ bpa_pool_init (bpa_pool_t *p)
 
   return 0;
 }
+
+/*
+ * NAT64 (#485): turn a pool configuration whose inside is IPv6 into one the
+ * rest of the CGNAT can run. The IPv6 prefixes and the subscriber length
+ * become the subscriber index (bpa_set6_build); `inside` becomes the dense
+ * pseudo set [0, count) that every block, capacity and worker rule reads
+ * sub_idx through; the NAT64 prefix defaults to the Well-Known Prefix and is
+ * held to RFC 6052. Nothing here touches a running pool.
+ */
+clib_error_t *
+bpa_nat64_cfg_finish (bpa_pool_t *cfg, u8 sub_len)
+{
+  static const u8 wkp[16] = { 0x00, 0x64, 0xff, 0x9b };
+  u32 base = 0, count;
+  bpa_set6_error_t e;
+  u32 i;
+
+  if (cfg->n_inside6 == 0)
+    return clib_error_return (0, "an IPv6 inside needs at least one prefix");
+  if (sub_len == 0)
+    return clib_error_return (0, "an IPv6 inside needs subscriber-length");
+  if (cfg->nat64_len == 0)
+    {
+      memcpy (cfg->nat64_prefix, wkp, 16);
+      cfg->nat64_len = 96;
+    }
+  if (!bpa_nat64_prefix_valid (cfg->nat64_prefix, cfg->nat64_len))
+    return clib_error_return (0, "nat64-prefix: RFC 6052 takes /32, /40, /48, "
+				 "/56, /64 or /96, bits 64-71 zero");
+
+  e = bpa_set6_build (&cfg->inside6, (const u8 (*)[16]) cfg->inside6_addr,
+		      cfg->inside6_len, cfg->n_inside6, sub_len);
+  switch (e)
+    {
+    case BPA_SET6_OK:
+      break;
+    case BPA_SET6_CAPACITY:
+      return clib_error_return (0, "more than 2^28 subscriber prefixes: "
+				   "lengthen the inside or shorten "
+				   "subscriber-length");
+    case BPA_SET6_SHORTER:
+      return clib_error_return (0, "an inside prefix is longer than "
+				   "subscriber-length");
+    case BPA_SET6_OVERLAP:
+      return clib_error_return (0, "two inside IPv6 prefixes overlap");
+    case BPA_SET6_HOST_BITS:
+      return clib_error_return (0, "an inside IPv6 prefix has bits set past "
+				   "its length");
+    case BPA_SET6_BAD_SUBLEN:
+      return clib_error_return (0, "subscriber-length is 32-128");
+    default:
+      return clib_error_return (0, "the IPv6 inside was refused");
+    }
+
+  /* The NAT64 prefix is where destinations are; a subscriber inside it would
+   * have its replies built into its own prefix. */
+  for (i = 0; i < cfg->n_inside6; i++)
+    if (bpa_ip6_prefixes_overlap (cfg->inside6_addr[i], cfg->inside6_len[i],
+				  cfg->nat64_prefix, cfg->nat64_len))
+      return clib_error_return (0, "the NAT64 prefix overlaps an inside "
+				   "prefix");
+
+  count = cfg->inside6.count;
+  cfg->is_nat64 = 1;
+  /* No ALG runs on a NAT64 pool yet, whatever the default for IPv4 is: each
+   * is its own phase, with its own lab (#485). Stated in both masks, so
+   * bpa_pool_init() does not resolve the IPv4 defaults back in. */
+  cfg->alg = 0;
+  cfg->alg_set = ~0u;
+  return bpa_addr_set_build (&cfg->inside, &base, &count, 1);
+}
+
+/*
+ * What a NAT64 pool does not do, refused rather than accepted and inert
+ * (#485's rule: every per-pool statement is supported with a test or refused
+ * with a test). Returns the reason, or 0.
+ */
+const char *
+bpa_nat64_unsupported (const bpa_pool_t *cfg)
+{
+  if (!cfg->is_nat64)
+    return 0;
+  /* Dynamic mode, with max-blocks, initial-allocation and block-stride,
+   * since phase 3, and a deterministic pool's reserve since phase 4:
+   * bpa_in2out's allocator on the subscriber's index. */
+  /* NOT "yet": there is nothing for a bypass to mean. A NAT64 subscriber's
+   * packet is addressed into the NAT64 prefix, and the only way it reaches
+   * an IPv4 host is translated - so neither an untranslated source nor an
+   * untranslated destination is a path that exists. */
+  if (cfg->bypass_src.n_ranges || cfg->bypass_dst.n_ranges)
+    return "a NAT64 pool takes no bypass: an IPv6 packet reaches IPv4 only "
+	   "translated";
+  if (cfg->alg)
+    return "a NAT64 pool runs no ALG yet";
+  return 0;
+}
+
+/*
+ * A forward's subscriber, on a pool of either family (#485 phase 4).
+ *
+ * On a NAT64 pool the forward names a host - one /128 of a delegated prefix -
+ * and the subscriber is the prefix's index, which is its pseudo inside
+ * address: written into ip_priv, so every check and pin after this one is
+ * the IPv4 code unchanged. 0, or why not: -1 the host is in no inside
+ * prefix, -2 an IPv6 host on an IPv4 pool, -3 an IPv4 host on a NAT64 one.
+ */
+int
+bpa_nat64_static_resolve (const bpa_pool_t *p, bpa_static_t *sf)
+{
+  u32 idx;
+
+  if (!p->is_nat64)
+    return sf->has_host6 ? -2 : 0;
+  if (!sf->has_host6)
+    return -3;
+  if (bpa_set6_index_of (&p->inside6, sf->host6, &idx))
+    return -1;
+  sf->ip_priv = idx;
+  return 0;
+}
