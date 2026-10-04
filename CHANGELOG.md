@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.149.26 - an operator: upgrade, reboot and shutdown without root
+
+### Added
+
 * **`operator`: upgrade, reboot, shut down and restart the dataplane without
   being root.** ([#563](https://github.com/andrediashexa/hexarouting/issues/563))
   A statement in the user block, beside the role: membership of
