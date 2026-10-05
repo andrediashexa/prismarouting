@@ -2022,8 +2022,42 @@ SHOW_CGNAT = {
                  "<file>")}),
 }
 
+#: `show nat64` (#572): the NAT64 questions, answered for NAT64 only. The
+#: dataplane keeps one session table, one set of blocks and one public space
+#: for both kinds of pool, so `show cgnat` stays the whole of it - these are
+#: the views that refuse an IPv4 subscriber, or a public address of a CGNAT
+#: pool, and say where its answer is.
+SHOW_NAT64 = {
+    "pool": ("configured NAT64 pools, as the dataplane holds them", None),
+    "subscriber": ("everything about one NAT64 subscriber",
+                   "<IPv6-address>"),
+    "translation": ("which NAT64 subscriber held a public address and port",
+                    "<public-address> <port>"),
+}
+
+def nat64_pool_blocks(text):
+    """
+    The NAT64 pools out of `show bpa pool` (#572), each its own block as the
+    dataplane wrote it. A block starts at `pool <name> [`; a NAT64 one is
+    the one with an `inside6` row, which format_bpa_pool() writes for a
+    NAT64 pool and never for another - the dataplane's own words decide,
+    not this VTY's reading of the file.
+    """
+    blocks, cur = [], []
+    for line in text.splitlines():
+        if re.match(r"^\s*pool \S+ \[", line) and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        blocks.append(cur)
+    return ["\n".join(b) for b in blocks
+            if any(x.strip().startswith("inside6") for x in b)]
+
+
 SHOW = {
     "cgnat": ("CGNAT information", SHOW_CGNAT),
+    "nat64": ("NAT64 information", SHOW_NAT64),
     "configuration": ("candidate configuration", {
         "compare": ("differences against the running configuration", None)}),
     "running-config": ("configuration in effect, CGNAT and routing", None),
@@ -4143,6 +4177,12 @@ TREE = {
                 "subscriber": ("end every session of one subscriber; its "
                                "block goes after the hold-down",
                                "<A.B.C.D>"),
+            }),
+            # #572: NAT64's own, by any address in the subscriber's prefix.
+            "nat64": ("NAT64 state", {
+                "subscriber": ("end every session of one NAT64 subscriber; "
+                               "its block goes after the hold-down",
+                               "<IPv6-address>"),
             }),
             "ospf": ("OSPF, which has no sessions to reset one at a time", {
                 "process": ("tear the process down and build it again; every "
@@ -19042,6 +19082,9 @@ class Shell:
         if _ha[:3] == ["show", "cgnat", "ha"]:
             self.show_ha(_ha[3:])
             return
+        if _ha[:2] == ["show", NAT64_LEVEL]:
+            self.show_nat64(_ha[2:])
+            return
         # The ones that carry an argument. Matched by prefix so the argument
         # travels through untouched; prismash is not the place to re-validate an
         # address the dataplane is about to parse anyway.
@@ -21982,6 +22025,9 @@ class Shell:
         if w[1:2] == ["cgnat"]:
             self.clear_cgnat(w[2:])
             return
+        if w[1:2] == [NAT64_LEVEL]:
+            self.clear_nat64(w[2:])
+            return
         if w[:2] != ["clear", "bgp"] or len(w) < 3:
             self.err("usage: clear bgp <neighbour> [soft [in|out]]")
             print("       clear ospf process | clear ospf neighbor <A.B.C.D>")
@@ -22085,6 +22131,79 @@ class Shell:
             return
         for line in out.strip().splitlines():
             print(line)
+
+    def clear_nat64(self, rest):
+        """
+        `clear nat64 subscriber <IPv6 address>` (#572): `clear cgnat
+        subscriber` for NAT64's own subscribers, by any address in the
+        delegated prefix. An IPv4 address is a CGNAT subscriber and is sent
+        there by name rather than cleared from here.
+        """
+        if rest[:1] != ["subscriber"] or len(rest) != 2:
+            self.err("usage: clear nat64 subscriber <IPv6-address>")
+            return
+        try:
+            addr = ipaddress.ip_address(rest[1])
+        except ValueError:
+            self.err(f"a NAT64 subscriber is an IPv6 address: {rest[1]}")
+            return
+        if addr.version == 4:
+            self.err_prose("an IPv4 subscriber is not NAT64's",
+                           f"'clear cgnat subscriber {addr}' clears it")
+            return
+        self.clear_cgnat(["subscriber", str(addr)])
+
+    def show_nat64(self, args):
+        """
+        `show nat64 pool`, `subscriber <IPv6>` and `translation <public>
+        <port>` (#572): the NAT64 half of `show cgnat`, in the dataplane's
+        own words. What is not NAT64 is refused with the `show cgnat`
+        spelling that answers it, so the two never quietly disagree.
+        """
+        if args in ([], ["pool"]):
+            rc, out = self.dp.run("show bpa pool")
+            blocks = nat64_pool_blocks(out) if rc == 0 else []
+            if rc != 0:
+                self.err_prose("the dataplane did not answer",
+                               out.strip() or "nothing came back")
+            elif not blocks:
+                print("no NAT64 pools configured")
+            else:
+                print("\n".join(blocks))
+            return
+        if args[:1] == ["subscriber"] and len(args) == 2:
+            try:
+                addr = ipaddress.ip_address(args[1])
+            except ValueError:
+                self.err(f"a NAT64 subscriber is an IPv6 address: {args[1]}")
+                return
+            if addr.version == 4:
+                self.err_prose("an IPv4 subscriber is not NAT64's",
+                               f"'show cgnat subscriber {addr}' answers it")
+                return
+            self.vpp(f"show bpa subscriber {addr}")
+            return
+        if args[:1] == ["translation"] and len(args) == 3:
+            try:
+                pub = ipaddress.IPv4Address(args[1])
+            except ValueError:
+                self.err(f"a public address is IPv4: {args[1]}")
+                return
+            # Whose public address it is, from the configuration in effect:
+            # a CGNAT pool's answers under `show cgnat translation`.
+            for p in self.running_config().pools.values():
+                if p.level == NAT64_LEVEL:
+                    continue
+                if any(pub in ipaddress.IPv4Network(o, strict=False)
+                       for o in p.outside if ":" not in o):
+                    self.err_prose(f"{pub} is CGNAT pool '{p.name}''s",
+                                   f"'show cgnat translation {pub} "
+                                   f"{args[2]}' answers it")
+                    return
+            self.vpp(f"show bpa translation {pub} {args[2]}")
+            return
+        self.err("usage: show nat64 pool | subscriber <IPv6-address> | "
+                 "translation <public-address> <port>")
 
     def clear_ospf(self, rest):
         """

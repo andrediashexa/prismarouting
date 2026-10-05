@@ -3712,7 +3712,8 @@ check(offered("show isis ")[0] == {"adjacency", "interface"},
       f"show isis offers: {sorted(offered('show isis ')[0])}")
 
 print("\n=== clear reaches the IGPs too ===")
-check(offered("clear ")[0] == {"bgp", "ospf", "isis", "interface", "cgnat"},
+check(offered("clear ")[0] == {"bgp", "ospf", "isis", "interface", "cgnat",
+                                "nat64"},
       f"clear offers: {sorted(offered('clear ')[0])}")
 check(offered("clear ospf ")[0] == {"process", "neighbor"},
       f"clear ospf offers: {sorted(offered('clear ospf ')[0])}")
@@ -8061,6 +8062,82 @@ check(_rc_typo != 0 and "Unknown command" in _o568.getvalue(),
       f"printed: rc {_rc_typo}, {_o568.getvalue()!r}")
 check(_rc_good == 0,
       f"#568: a line FRR answers still exits 0: rc {_rc_good}")
+
+# #572: `show nat64` and `clear nat64` - the NAT64 half of `show cgnat`, in
+# the dataplane's words, refusing what is not NAT64 with the spelling that
+# answers it. Driven through a stand-in dataplane that records what it was
+# asked, so a refusal that still reached the dataplane fails here.
+_POOLS572 = """pool res [deterministic / interleaved]
+  inside       100.64.0.0/22 (1024 addresses, 1 range(s))
+  outside      203.0.113.0/29 (8 addresses, 1 range(s))
+pool v6 [deterministic / interleaved]
+  inside6     2001:db8:1200::/40
+  subscribers  65536 prefixes of /56
+  nat64        64:ff9b::/96 (RFC 6052), the Well-Known Prefix
+  outside      203.0.113.8/29 (8 addresses, 1 range(s))"""
+_b572 = prismash.nat64_pool_blocks(_POOLS572)
+check(len(_b572) == 1 and _b572[0].startswith("pool v6"),
+      f"#572: nat64_pool_blocks keeps the NAT64 pool alone: {_b572}")
+check(prismash.nat64_pool_blocks("no pools configured") == [],
+      "#572: and nothing when the dataplane has no pool")
+
+
+class _Dp572:
+    def __init__(self):
+        self.asked = []
+
+    def run(self, cmd):
+        self.asked.append(cmd)
+        if cmd == "show bpa pool":
+            return 0, _POOLS572
+        return 0, f"answered: {cmd}"
+
+    def reachable(self):
+        return True
+
+
+sh = box_193()
+sh.feed("exit")
+sh.dp = _Dp572()
+_run572 = _config.Config.parse("""nat
+ cgnat
+  pool res
+   prefix-inside 100.64.0.0/22
+   prefix-outside 203.0.113.0/29
+   exit
+  exit
+ exit
+""")
+sh.running_config = lambda: _run572
+out = capture(sh, "show nat64 pool")
+check(out.startswith("pool v6") and "pool res" not in out,
+      f"#572: show nat64 pool lists the NAT64 pools only: {out}")
+out = capture(sh, "show nat64 subscriber 100.64.0.5")
+check("show cgnat subscriber 100.64.0.5" in out
+      and "show bpa subscriber 100.64.0.5" not in sh.dp.asked,
+      f"#572: an IPv4 subscriber is sent to show cgnat: {out}")
+out = capture(sh, "show nat64 subscriber 2001:db8:1200:ab00::10")
+check("show bpa subscriber 2001:db8:1200:ab00::10" in sh.dp.asked,
+      f"#572: an IPv6 one is asked of the dataplane: {sh.dp.asked}")
+out = capture(sh, "show nat64 translation 203.0.113.2 1500")
+check("CGNAT pool 'res'" in out
+      and not any(a.startswith("show bpa translation") for a in sh.dp.asked),
+      f"#572: a CGNAT pool's public address is sent to show cgnat: {out}")
+out = capture(sh, "show nat64 translation 203.0.113.9 1500")
+check("show bpa translation 203.0.113.9 1500" in sh.dp.asked,
+      f"#572: a NAT64 one is asked of the dataplane: {sh.dp.asked}")
+out = capture(sh, "show nat64 nonsense")
+check("usage: show nat64" in out, f"#572: and a usage otherwise: {out}")
+out = capture(sh, "clear nat64 subscriber 100.64.0.5")
+check("clear cgnat subscriber 100.64.0.5" in out
+      and not any(a.startswith("bpa clear") for a in sh.dp.asked),
+      f"#572: clear nat64 refuses an IPv4 subscriber: {out}")
+sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+out = capture(sh, "clear nat64 subscriber 2001:db8:1200:ab00::10")
+check("bpa clear subscriber 2001:db8:1200:ab00::10" in sh.dp.asked,
+      f"#572: and clears an IPv6 one: {sh.dp.asked} {out}")
+out = capture(sh, "clear nat64 subscriber nope")
+check("is an IPv6 address" in out, f"#572: a word is refused: {out}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

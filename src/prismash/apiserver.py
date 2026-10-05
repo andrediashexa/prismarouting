@@ -515,7 +515,9 @@ def pools_of(sh):
                     "prefixes_inside": list(p.inside),
                     "prefixes_outside": list(p.outside),
                     "capacity": int(d.get("capacity", 0) or 0),
-                    "guaranteed": int(d.get("guaranteed", 0) or 0)})
+                    "guaranteed": int(d.get("guaranteed", 0) or 0),
+                    # #572: the level the pool is written under.
+                    "level": getattr(p, "level", "cgnat")})
     return out
 
 
@@ -2687,6 +2689,7 @@ def status_message(output, extra=""):
 
 #: The typed areas by the SetConfigRequest field that carries each (#558).
 AREA_OF_FIELD = {"interface": "interfaces", "pool": "pools",
+                 "nat64_pool": "nat64",
                  "logging": "logging", "static_route": "static",
                  "bgp_neighbor": "bgp", "system": "system",
                  "vrf_device": "vrfs", "bfd_peer": "bfd_peers",
@@ -2782,10 +2785,12 @@ INTERFACE_KEYS = ("name", "kind", "description", "mtu", "shutdown", "ipv4",
 POOL_SCALARS = ("name", "block_size", "port_first", "port_last", "policy",
                 "mode", "max_blocks", "initial_allocation", "block_stride",
                 "reserve", "utilisation_alarm", "max_sessions",
-                "max_session_rate", "tcp_mss", "filter",
-                "subscriber_length", "nat64_prefix")
+                "max_session_rate", "tcp_mss", "filter")
 POOL_LISTS = ("prefix_inside", "prefix_outside", "bypass_source",
               "bypass_destination")
+#: Nat64PoolConfig's (#572): a pool's, less the bypass, plus its own two.
+NAT64_SCALARS = POOL_SCALARS + ("subscriber_length", "nat64_prefix")
+NAT64_LISTS = ("prefix_inside", "prefix_outside")
 COLLECTOR_KEYS = ("transport", "configured", "collector", "port", "source",
                   "enterprise")
 
@@ -2795,16 +2800,18 @@ def interface_pb(pb, d):
     return pb.InterfaceConfig(**{k: d[k] for k in INTERFACE_KEYS})
 
 
-def pool_pb(pb, d):
-    """A typedcfg pool dict as a PoolConfig; an unset VRF stays unset."""
-    kw = {k: d[k] for k in POOL_SCALARS + POOL_LISTS}
+def pool_pb(pb, d, nat64=False):
+    """A typedcfg pool dict as a PoolConfig - or, `nat64`, a Nat64PoolConfig
+    (#572); an unset VRF stays unset."""
+    kw = {k: d[k] for k in (NAT64_SCALARS + NAT64_LISTS if nat64
+                            else POOL_SCALARS + POOL_LISTS)}
     kw["timeouts"] = dict(d["timeouts"])
     kw["algs"] = dict(d["algs"])
     kw["forwards"] = [pb.PortForwardConfig(**f) for f in d["forwards"]]
     for k in ("vrf", "outside_vrf"):
         if d[k] is not None:
             kw[k] = d[k]
-    return pb.PoolConfig(**kw)
+    return (pb.Nat64PoolConfig if nat64 else pb.PoolConfig)(**kw)
 
 
 def logging_pb(pb, d):
@@ -2852,10 +2859,12 @@ def interface_dict(m):
     return out
 
 
-def pool_dict(m):
-    """A PoolConfig as typedcfg's dict; an unset VRF is None."""
-    d = {k: getattr(m, k) for k in POOL_SCALARS}
-    d.update({k: list(getattr(m, k)) for k in POOL_LISTS})
+def pool_dict(m, nat64=False):
+    """A PoolConfig - or, `nat64`, a Nat64PoolConfig (#572) - as typedcfg's
+    dict; an unset VRF is None."""
+    d = {k: getattr(m, k) for k in (NAT64_SCALARS if nat64 else POOL_SCALARS)}
+    d.update({k: list(getattr(m, k))
+              for k in (NAT64_LISTS if nat64 else POOL_LISTS)})
     d["timeouts"] = dict(m.timeouts)
     d["algs"] = dict(m.algs)
     d["forwards"] = [{"protocol": f.protocol, "public_port": f.public_port,
@@ -3305,6 +3314,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                      f"error: {str(e).split(': ', 1)[-1]}", stage="usage")
             out.interfaces.extend(interface_pb(pb, x) for x in d.get("interfaces", []))
             out.pools.extend(pool_pb(pb, x) for x in d.get("pools", []))
+            out.nat64_pools.extend(pool_pb(pb, x, nat64=True)
+                                   for x in d.get("nat64", []))
             if "logging" in d:
                 out.logging.CopyFrom(logging_pb(pb, d["logging"]))
             for b in d.get("box_owned", []):
@@ -3347,10 +3358,12 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             which = req.WhichOneof("object")
             if which is None:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
-                     "error: name the object to set: interface, pool, logging, "
-                     "static_route, bgp_neighbor, system, vrf_device, "
-                     "bfd_peer or bfd_profile", stage="usage")
+                     "error: name the object to set: interface, pool, "
+                     "nat64_pool, logging, static_route, bgp_neighbor, "
+                     "system, vrf_device, bfd_peer or bfd_profile",
+                     stage="usage")
             obj = {"interface": interface_dict, "pool": pool_dict,
+                   "nat64_pool": lambda m: pool_dict(m, nat64=True),
                    "logging": logging_dict, "static_route": dict_from_msg,
                    "bgp_neighbor": bgp_edit_dict, "system": dict_from_msg,
                    "vrf_device": dict_from_msg, "bfd_peer": dict_from_msg,

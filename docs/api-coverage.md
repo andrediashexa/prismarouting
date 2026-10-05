@@ -21,9 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 682 |
+| typed | 753 |
 | text | 1 |
-| n/a | 30 |
+| n/a | 40 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -147,6 +147,9 @@ reachable in the phase their note names.
 | `show cgnat alg` | typed | OperationalService.ListAlgs | every account |  |
 | `show cgnat forward [<pool>]` | typed | OperationalService.ListForwards | every account |  |
 | `show cgnat ha peer <file>` | text | OperationalService.Show | every account | a file on the box's disk; GetHaStatus reads the peer copy at its default path |
+| `show nat64 pool` | typed | OperationalService.ListPools | every account | the pools whose level is nat64 (#572) |
+| `show nat64 subscriber <IPv6-address>` | typed | OperationalService.GetSubscriber | every account | an IPv6 address: the NAT64 subscriber (#572) |
+| `show nat64 translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | a NAT64 pool's public address answers its /56 (#572) |
 | `show configuration compare` | typed | ConfigService.Compare | every account |  |
 | `show running-config` | typed | ConfigService.GetRunning | every account | the configuration as text, with its revision |
 | `show rollback` | typed | ConfigService.ListRevisions | every account |  |
@@ -180,6 +183,7 @@ reachable in the phase their note names.
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear interface counters [<interface>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear cgnat subscriber <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear nat64 subscriber <IPv6-address>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear ospf process` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear ospf neighbor <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear isis adjacency [<system-id>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
@@ -269,6 +273,7 @@ Entered with `nat`; `EditRequest.path` = `["nat"]`; changed by: administrator, c
 | Statement | Class | API | Notes |
 |---|---|---|---|
 | `cgnat` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
+| `nat64` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: cgnat
@@ -306,8 +311,8 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 |---|---|---|---|
 | `prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `subscriber-length <32-128>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `nat64-prefix <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `subscriber-length <32-128>` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
+| `nat64-prefix <X:X::X:X/M>` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
 | `block-size <64-32768>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ports <1-65535> <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `policy interleaved` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -345,8 +350,8 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 | `mode dynamic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `exit` | n/a | - | the session's |
 | `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no subscriber-length` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no nat64-prefix` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no subscriber-length` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
+| `no nat64-prefix` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
 | `no prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ports` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no timeout udp <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -363,6 +368,96 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 | `no reserve` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no bypass source <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no bypass destination <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no utilisation-alarm` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no max-sessions` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no max-session-rate` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no tcp-mss` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no forward tcp <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no forward udp <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no filter` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no alg ftp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no alg rtsp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no alg pptp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no alg esp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no alg sip <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no vrf` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no outside-vrf` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+
+## Configuration: nat64
+
+Entered with `nat > nat64`; `EditRequest.path` = `["nat","nat64"]`; changed by: administrator, cgnat-operator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `pool <pool>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area nat64: read and written as fields (0.149.24) |
+| `no pool <pool>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area nat64: read and written as fields (0.149.24) |
+| `exit` | n/a | - | the session's |
+
+## Configuration: nat64 pool
+
+Entered with `nat > nat64 > pool <name>`; `EditRequest.path` = `["nat","nat64","pool <name>"]`; changed by: administrator, cgnat-operator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `subscriber-length <32-128>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `nat64-prefix <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `block-size <64-32768>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `ports <1-65535> <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `policy interleaved` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `policy blocked` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout udp <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout icmp <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout tcp-syn <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout gre <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout tcp-transitory <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout tcp-established <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout port-holddown <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `timeout alg-expect <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `max-blocks <1-255>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `initial-allocation <ports>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `block-stride <0-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `reserve <0-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `bypass source <A.B.C.D/M>` | n/a | - | refused on a NAT64 pool for good (#485) |
+| `bypass destination <A.B.C.D/M>` | n/a | - | refused on a NAT64 pool for good (#485) |
+| `utilisation-alarm <1-100>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `max-sessions <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `max-session-rate <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `tcp-mss auto` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `forward tcp <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `forward udp <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `filter endpoint-independent` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `filter address-dependent` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `alg ftp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `alg rtsp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `alg pptp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `alg esp <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `alg sip <on\|off>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `vrf <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `outside-vrf <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `mode deterministic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `mode dynamic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `exit` | n/a | - | the session's |
+| `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no subscriber-length` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no nat64-prefix` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no ports` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout udp <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout icmp <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout tcp-syn <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout gre <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout tcp-transitory <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout tcp-established <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout port-holddown <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no timeout alg-expect <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no max-blocks` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no initial-allocation` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no block-stride` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no reserve` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no bypass source <A.B.C.D/M>` | n/a | - | refused on a NAT64 pool for good (#485) |
+| `no bypass destination <A.B.C.D/M>` | n/a | - | refused on a NAT64 pool for good (#485) |
 | `no utilisation-alarm` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no max-sessions` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no max-session-rate` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
