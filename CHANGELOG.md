@@ -81,8 +81,12 @@ version has a chance of seeing it.
   ([#574](https://github.com/andrediashexa/hexarouting/issues/574)) On
   10.40.200.166 (X520, 2026-10-05) ixgbe refused the card at boot, `failed to
   load because an unsupported SFP+ or QSFP module type was detected`, reading
-  a module it had taken on earlier boots as `SFP+: 65535`; the box came up
-  with no X520. `system` > `hardware` > `unsupported-sfp allow` writes
+  a module it had taken on earlier boots as `SFP+: 65535`. Each time its host
+  rebooted, the box came back dark: no X520, so the saved configuration was
+  refused whole (#575) and the management interface stayed down, until
+  somebody reached the console and reloaded ixgbe by hand with the option.
+  That is the case this covers: with the setting on, a box with such a module
+  comes up with its card and its configuration, nobody at the console. `system` > `hardware` > `unsupported-sfp allow` writes
   `PRISMA_ALLOW_UNSUPPORTED_SFP=allow` to tune.env and runs the tuner through
   its existing door, and apply-tuning puts `ixgbe.allow_unsupported_sfp=1` on
   the kernel command line and regenerates GRUB. modprobe takes a module's
@@ -91,7 +95,12 @@ version has a chance of seeing it.
   commit says so. `no unsupported-sfp` (or `refuse`) takes the option off.
   Off by default: Intel warns that a module it has not qualified may be
   unstable. `show system hardware` says what is configured and what this
-  boot has, and the API reads it as `SystemConfig.hardware`.
+  boot has, and the API reads it as `SystemConfig.hardware` and
+  `SystemInfo.unsupported_sfp_*`. lab/install-iso.sh commits the setting on
+  an installed box and reads `ixgbe.allow_unsupported_sfp=1` back off
+  `/boot/grub/grub.cfg` and, on the next boot, off `/proc/cmdline` - the place
+  the initramfs's modprobe reads it from; the guest has no ixgbe card, so the
+  card itself coming up is not proved there.
 
 ### Fixed
 
