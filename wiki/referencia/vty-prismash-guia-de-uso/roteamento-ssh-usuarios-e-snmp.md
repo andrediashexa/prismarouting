@@ -195,6 +195,10 @@ Para ver:
 * `show bfd peers` - duas linhas por sessão: onde ela roda (salto único ou multihop, a interface, a origem, o perfil, e se foi pedida por um protocolo), e depois o estado, há quanto tempo, o intervalo, em quanto tempo ela cai, o diagnóstico quando há um e quantas vezes caiu.
 * `show bfd peer <endereço>` - cada sessão com aquele vizinho em detalhe: os tempos desta caixa e os do vizinho, o tempo de detecção, o eco, os pacotes que entraram e saíram, e quantas vezes subiu e caiu.
 
+No OSPF, no OSPFv3 e no IS-IS o BFD vai na interface, com ou sem perfil: `ip ospf bfd`, `ip ospf bfd profile <nome>` (e `ipv6 ospf6 bfd ...`, `isis bfd ...`). A caixa escreve a linha `bfd` sozinha antes da do perfil, porque o FRR recusa o perfil sem ela.
+
+As sessões também saem pela API, campo a campo e com um aviso a cada mudança de estado, e pelo SNMP, na BFD-STD-MIB (RFC 7331), que o agente da própria caixa responde. Ainda não há trap de sessão caindo: para alarme, consulte a tabela da MIB periodicamente.
+
 
 :::warning
 **Numa caixa atualizada por uma versão de correção, o BFD só funciona depois do reboot.** Quem roda as sessões é o `bfdd`, e ele é ligado pelo contêiner de roteamento quando esse contêiner sobe na versão nova - o que, numa atualização de correção, acontece no próximo reboot. Até lá o `commit` recusa qualquer configuração com `bfd`, dizendo que o `bfdd` não está rodando e que o reboot o liga. É de propósito: sem o `bfdd`, o BGP e a rota estática aceitam a palavra `bfd` e nenhuma sessão é criada - o vizinho ficaria vigiado por ninguém.
