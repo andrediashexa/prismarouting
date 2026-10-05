@@ -101,6 +101,7 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `LookupTranslation` | `show cgnat translation <public> <port>` (#558, phase 6): the subscriber behind it - an IPv4 address, or a NAT64 subscriber's prefix - its pool and block, and whether the answer holds for any instant (`SOURCE_FORMULA`) or only now (`SOURCE_RESERVE`, `SOURCE_DYNAMIC`). See [The CGNAT's screens](#the-cgnats-screens) |
 | | `ListTop`, `GetDrops`, `GetCgnatMemory`, `ListBlocks`, `GetIdentity`, `VerifyHistory`, `ListAlgs`, `ListForwards`, `GetHaStatus` | `show cgnat top`, `drops`, `memory`, `blocks`, `identity`, `history verify`, `alg`, `forward` and `ha` (#558, phase 6), each as fields and its screen in `text`. See [The CGNAT's screens](#the-cgnats-screens) |
 | | `ListOspfInterfaces`, `ListIsisInterfaces`, `GetHardware`, `GetRoutingLogging`, `GetSnmpFile` | `show ospf interface`, `show isis interface`, `show hardware`, `show logging` (FRR's, per daemon), `show snmp mib` and `show snmp zabbix-template` (#558, phase 7), each as fields and its screen in `text`; `GetSnmpFile` returns the file itself. See [The rest of the screens](#the-rest-of-the-screens) |
+| | `ListBfdSessions`, `WatchBfd` | `show bfd peers` and `show bfd peer <address>` as fields with the screen in `text`, and a stream of every session change (#559, phase 2). See [BFD](#bfd) |
 | | `Ping`, `Traceroute`, `Mtr` | `ping`, `traceroute`, `mtr` (#558, phase 7), streamed: a `ProbeEvent` per line the tool prints, with its reply, hop or report row read, then `end`. See [The probes](#the-probes) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) - and, with `logging_events`, the log export's `log-...` events (#555) |
 | | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
@@ -299,6 +300,19 @@ which the VTY passes through; `GetRoutingLogging` reads it back per daemon.
   mib` prints, a file name and a media type to save it as. With no number
   yet, or the file missing from the box, it is `FAILED_PRECONDITION` with
   the VTY's words.
+
+### BFD
+
+`ListBfdSessions` is `show bfd peers` (or, with `peer`, `show bfd peer
+<address>`) as fields - the state, the seconds in it, the diagnostic, both
+ends' timers in milliseconds and the five counters - drawn from the reading
+the screen in `text` is printed from. A `peer` that is not an address is
+`INVALID_ARGUMENT`. `WatchBfd` streams the sessions as they are (INITIAL),
+then CHANGED, APPEARED, GONE, and UNANSWERED when bfdd does not answer;
+`interval_seconds` is 1-60 and 0 means 2. A session that went down and came
+back between two readings is a CHANGED with its down counter moved - the flap
+a comparison of states alone would never report. BFD configuration is lines
+through `Edit` (the `bfd` block, `EditRequest.path ["bfd"]`), not typed yet.
 
 ### The probes
 

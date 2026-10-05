@@ -1610,10 +1610,194 @@ class Interfaces:
 INTERFACES = Interfaces()
 
 
+# --- BFD-STD-MIB, RFC 7331: bfdd's sessions in the IETF's own MIB (#559) ----
+#
+# FRR 10.7.1 ships no bfdd_snmp module (`ls /usr/lib/*/frr/modules` has
+# bgpd, ospfd, ospf6d, isisd, ldpd, ripd and zebra), so bfdd answers no
+# AgentX and this agent serves the table, from the same `show bfd peers json`
+# and `show bfd peers counters json` the VTY's `show bfd` reads. It has its
+# own registration (`--bfd`) and does not depend on the dataplane: a box
+# whose VPP is down still has BFD sessions to report, and that is exactly
+# when they matter.
+#
+# The index is bfdd's local discriminator (its `id`), which RFC 7331 also
+# serves as bfdSessDiscriminator: stable for as long as bfdd runs, which is as
+# long as the session exists. bfdSessInterface is 0: bfdd names the Linux end
+# of an interface and IF-MIB numbers the dataplane's, and serving a number
+# that belongs to another interface is worse than serving none. Traps
+# (bfdSessUp, bfdSessDown) are not sent - pass_persist answers polls and
+# cannot raise one - so bfdNotificationsEnable reads false(2), which is true.
+
+BFD_MIB = "1.3.6.1.2.1.222"
+VTYSH = os.environ.get("VTYSH", "/usr/bin/vtysh")
+BFD_CACHE_SECONDS = float(os.environ.get("PRISMA_SNMP_BFD_CACHE", "2"))
+
+#: IANA-BFD-TC-STD-MIB's IANAbfdDiagTC, from bfdd's words for them.
+BFD_DIAG = {"ok": 0, "control detection time expired": 1,
+            "echo function failed": 2, "neighbor signaled session down": 3,
+            "forwarding plane reset": 4, "path down": 5,
+            "concatenated path down": 6, "administratively down": 7,
+            "reverse concatenated path down": 8}
+#: IANAbfdSessStateTC.
+BFD_STATE = {"shutdown": 1, "admindown": 1, "admin-down": 1, "down": 2,
+             "init": 3, "up": 4}
+
+
+# not a unit: runs vtysh against the live bfdd; parse_bfd() is what reads its
+# answer, and is tested.
+def vtysh_json(cmd):
+    """bfdd's answer to `cmd` as text, or None when it did not answer."""
+    try:
+        p = subprocess.run([VTYSH, "-c", cmd], capture_output=True,
+                           text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def parse_bfd(peers_text, counters_text):
+    """
+    bfdd's sessions from its two JSON answers, the counters folded in by
+    `id`; None when either is not the list bfdd prints.
+    """
+    import json
+    try:
+        peers = json.loads(peers_text[peers_text.index("["):])
+        counters = json.loads(counters_text[counters_text.index("["):])
+    except (ValueError, AttributeError, TypeError):
+        return None
+    by_id = {c.get("id"): c for c in counters if isinstance(c, dict)}
+    return [dict(p, counters=by_id.get(p.get("id"), {}))
+            for p in peers if isinstance(p, dict) and isinstance(p.get("id"), int)]
+
+
+def _octets(text):
+    """An address as (InetAddressType, its octets as pass_persist writes them)."""
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    return (1 if a.version == 4 else 2), a.packed
+
+
+def bfd_rows(sessions):
+    """
+    BFD-STD-MIB's rows for `sessions` (parse_bfd): the scalars, bfdSessTable,
+    bfdSessPerfTable, and the two map tables, every OID as RFC 7331 numbers
+    it. Timers are microseconds there and milliseconds in bfdd.
+    """
+    objs = f"{BFD_MIB}.1"
+    out = [(f"{objs}.1.1.0", "integer", 1),     # bfdAdminStatus enabled
+           (f"{objs}.1.2.0", "integer", 1),     # bfdOperStatus up
+           (f"{objs}.1.3.0", "integer", 2),     # bfdNotificationsEnable false
+           (f"{objs}.1.4.0", "gauge", 0)]       # bfdSessIndexNext: none
+    sess, perf = f"{objs}.2.1", f"{objs}.3.1"
+    for s in sessions:
+        i = s["id"]
+        status = str(s.get("status", "")).lower()
+        state = BFD_STATE.get(status, 2)
+        multi = bool(s.get("multihop"))
+        echo = int(s.get("echo-transmit-interval") or 0)
+        c = s.get("counters") or {}
+
+        col = lambda n, typ, val: out.append(  # noqa: E731
+            (f"{sess}.{n}.{i}", typ, val))
+        col(2, "gauge", 1)
+        col(3, "integer", 2 if multi else 1)
+        col(4, "gauge", i)
+        col(5, "gauge", int(s.get("remote-id") or 0))
+        col(6, "gauge", 0 if state == 1 else (4784 if multi else 3784))
+        col(9, "integer", 3 if state == 1 else 1)
+        col(10, "integer", 1 if state == 4 else (3 if state == 1 else 2))
+        col(11, "integer", state)
+        col(12, "integer", 1 if state in (3, 4) else 2)
+        col(13, "integer", BFD_DIAG.get(str(s.get("diagnostic", "ok")).lower(), 0))
+        col(14, "integer", 1 if echo else 2)
+        col(15, "integer", 2)
+        col(16, "integer", 2)
+        col(17, "integer", 2)
+        col(18, "integer", 0)
+        src, dst = _octets(str(s.get("local", ""))), _octets(str(s.get("peer", "")))
+        if src:
+            col(19, "integer", src[0])
+            col(20, "octet", " ".join(f"{b:02X}" for b in src[1]))
+        if dst:
+            col(21, "integer", dst[0])
+            col(22, "octet", " ".join(f"{b:02X}" for b in dst[1]))
+        ttl = int(s.get("minimum-ttl") or 0)
+        col(23, "integer", 1 if multi and ttl else 2)
+        col(24, "gauge", ttl if multi else 0)
+        tx = int(s.get("transmit-interval") or 0)
+        rx = int(s.get("receive-interval") or 0)
+        col(25, "gauge", tx * 1000)
+        col(26, "gauge", rx * 1000)
+        col(27, "gauge", int(s.get("echo-receive-interval") or 0) * 1000)
+        col(28, "gauge", int(s.get("detect-multiplier") or 0))
+        rrx = int(s.get("remote-receive-interval") or 0)
+        if rrx:
+            # RFC 5880 6.8.7: what this end transmits at is the larger of its
+            # own desired interval and the neighbour's required one.
+            col(29, "gauge", max(tx, rrx) * 1000)
+        rdm = int(s.get("remote-detect-multiplier") or 0)
+        if rdm:
+            col(31, "gauge", rdm)
+        col(32, "integer", 2)
+        col(33, "integer", -1)
+        col(36, "integer", 3 if s.get("type") == "configured" else 2)
+        col(37, "integer", 1)
+        if c:
+            pin = int(c.get("control-packet-input") or 0)
+            pout = int(c.get("control-packet-output") or 0)
+            bad = int(c.get("controlPacketBadInput") or 0)
+            out += [(f"{perf}.1.{i}", "counter", pin % 2 ** 32),
+                    (f"{perf}.2.{i}", "counter", pout % 2 ** 32),
+                    (f"{perf}.3.{i}", "counter", bad % 2 ** 32),
+                    (f"{perf}.12.{i}", "counter",
+                     int(c.get("session-up") or 0) % 2 ** 32),
+                    (f"{perf}.14.{i}", "counter64", pin),
+                    (f"{perf}.15.{i}", "counter64", pout),
+                    (f"{perf}.16.{i}", "counter64", bad)]
+        out.append((f"{objs}.4.1.1.{i}", "gauge", i))
+        if src and dst:
+            idx = (f"0.{src[0]}.{len(src[1])}." + ".".join(str(b) for b in src[1])
+                   + f".{dst[0]}.{len(dst[1])}." + ".".join(str(b) for b in dst[1]))
+            out.append((f"{objs}.5.1.1.{idx}", "gauge", i))
+    return out
+
+
+class Bfd:
+    """bfdd's sessions, read at most every BFD_CACHE_SECONDS; [] silent."""
+
+    def __init__(self):
+        self.at = 0.0
+        self.rows = []
+
+    # not a unit: a cache over vtysh_json(); bfd_rows() and parse_bfd() are
+    # what it serves, and are tested.
+    def refresh(self):
+        if time.time() - self.at < BFD_CACHE_SECONDS:
+            return self.rows
+        peers = vtysh_json("show bfd peers json")
+        counters = vtysh_json("show bfd peers counters json") if peers else None
+        sessions = parse_bfd(peers, counters) if peers and counters else None
+        # bfdd silent: nothing, not the last rows (the module docstring's
+        # "no stale numbers").
+        self.rows = bfd_rows(sessions) if sessions is not None else []
+        self.at = time.time()
+        return self.rows
+
+
+BFD = Bfd()
+
+
 def oid_table():
     """Every OID this agent serves, in lexicographic order."""
     if "--interfaces" in sys.argv[1:]:
         return sorted(INTERFACES.refresh(),
+                      key=lambda r: [int(x) for x in r[0].split(".")])
+    if "--bfd" in sys.argv[1:]:
+        return sorted(BFD.refresh(),
                       key=lambda r: [int(x) for x in r[0].split(".")])
     d = VALUES.refresh()
     out = []

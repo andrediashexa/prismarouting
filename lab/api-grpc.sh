@@ -51,7 +51,7 @@ printf 'hostname prisma-routing\n' > /etc/frr/zebra.conf
 printf 'hostname prisma-routing\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
 # ospfd, ospf6d and isisd too: #558's third phase reads their configuration.
-pgrep zebra >/dev/null || start_frr bgpd ospfd ospf6d isisd
+pgrep zebra >/dev/null || start_frr bgpd ospfd ospf6d isisd bfdd
 sleep 2
 HX="python3 /src/src/prismash/prismash.py"
 # A box with an address and a pool before the API touches it.
@@ -552,6 +552,24 @@ apt-get install -y -qq traceroute mtr-tiny >/dev/null 2>&1
 echo "  probes now: $(ls /usr/bin/traceroute /usr/bin/mtr 2>&1 | tr '\n' ' ')"
 T7T=$(python3 lab/api_phase7_check.py /tmp/apistubs $C 127.0.0.1:50555 $S7 tools 2>&1)
 printf '%s\n' "$T7T" | sed 's/^/  /'
+# #559 phase 2: BFD's sessions typed, and their changes streamed. One `peer`
+# on d0, a dummy interface nothing answers BFD on: the session is down, a
+# state this lab knows. The VTY's screens first, which the rpcs' text is
+# held to; api_phase8_check.py then adds and removes a second peer under a
+# running WatchBfd.
+vtysh -c "conf t" -c "bfd" -c "peer 192.0.2.77 interface d0" -c exit -c exit \
+  2>&1 | sed 's/^/  frr: /'
+sleep 2
+S8=/tmp/screens8; rm -rf $S8; mkdir -p $S8
+$HX -c "show bfd peers" > $S8/bfd-peers 2>&1
+$HX -c "show bfd peer 192.0.2.77" > $S8/bfd-peer 2>&1
+runuser -u netview -- $HX -c "show bfd peers" > $S8/bfd-netview 2>&1
+sed 's/^/  vty: /' $S8/bfd-peers
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50556 --dir $C/box \
+  --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver8.log 2>&1 &
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver8.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+T8=$(python3 lab/api_phase8_check.py /tmp/apistubs $C 127.0.0.1:50556 $S8 2>&1)
+printf '%s\n' "$T8" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -755,6 +773,17 @@ expect "Traceroute streams its hops, 127.0.0.1 at hop 1" t7 traceroute
 expect "Mtr streams its report's hops, sent and loss read" t7 mtr
 TAIL7=$(tail -5 /tmp/apiserver7.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL7"
+t8() { printf '%s\n' "$T8" | grep -q "^RESULT $1 ok"; }
+expect "#559 phase 2: ListBfdSessions: the peer on d0, down, configured, its timers, the screen" t8 sessions
+expect "  one peer by address, the screen of show bfd peer; another, none" t8 one-peer
+expect "  a peer that is not an address: INVALID_ARGUMENT" t8 peer-refused
+expect "  an account with no role gets the screen the VTY gives it" t8 netview-reads
+expect "WatchBfd: the session as it is when the call starts" t8 watch-initial
+expect "  a peer added under it arrives as APPEARED" t8 watch-appeared
+expect "  and removed, as GONE, with the state it had" t8 watch-gone
+expect "  an interval outside 1-60: INVALID_ARGUMENT" t8 interval-refused
+TAIL8=$(tail -5 /tmp/apiserver8.log)
+expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

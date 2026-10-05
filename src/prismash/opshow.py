@@ -14,6 +14,7 @@ the tool's own, the same ones the VTY prints, read here one at a time.
 None of these raises on a line or a value it does not recognise: a field
 stays at its zero value and the text travels beside it.
 """
+import ipaddress
 import re
 
 
@@ -234,3 +235,139 @@ class LineSplitter:
     def rest(self):
         s, self.buf = self.buf.rstrip("\r"), ""
         return [s] if s else []
+
+
+# ---------------------------------------------------------------- BFD (#559)
+
+#: bfdd's words for a session's state, as BfdSession.State's names.
+BFD_STATES = {"up": "STATE_UP", "down": "STATE_DOWN", "init": "STATE_INIT",
+              "shutdown": "STATE_ADMIN_DOWN", "admin-down": "STATE_ADMIN_DOWN",
+              "admindown": "STATE_ADMIN_DOWN"}
+
+
+def _count(d, key):
+    """`d[key]` as a count: 0 for a key missing, negative or not a number."""
+    return max(_int(d.get(key), 0), 0)
+
+
+def bfd_session_fields(s):
+    """One BfdSession's fields from a session of Shell.bfd_facts()."""
+    status = str(s.get("status", ""))
+    held = s.get("uptime") if "uptime" in s else s.get("downtime")
+    c = s.get("counters") or {}
+    ms = lambda key: _count(s, key)  # noqa: E731
+    n = lambda key: _count(c, key)  # noqa: E731
+    return {"peer": str(s.get("peer", "")), "local": str(s.get("local") or ""),
+            "interface": str(s.get("interface") or ""),
+            "vrf": str(s.get("vrf") or "default"),
+            "multihop": bool(s.get("multihop")),
+            "profile": str(s.get("profile") or ""),
+            "state": BFD_STATES.get(status.lower(),
+                                    "STATE_OTHER" if status else
+                                    "STATE_UNSPECIFIED"),
+            "status": status, "seconds_in_state": max(_int(held, 0), 0),
+            "diagnostic": str(s.get("diagnostic") or ""),
+            "remote_diagnostic": str(s.get("remote-diagnostic") or ""),
+            "configured": s.get("type") == "configured",
+            "detect_multiplier": ms("detect-multiplier"),
+            "receive_interval_ms": ms("receive-interval"),
+            "transmit_interval_ms": ms("transmit-interval"),
+            "detection_timeout_ms": ms("detection-timeout"),
+            "echo_receive_interval_ms": ms("echo-receive-interval"),
+            "echo_transmit_interval_ms": ms("echo-transmit-interval"),
+            "remote_receive_interval_ms": ms("remote-receive-interval"),
+            "remote_transmit_interval_ms": ms("remote-transmit-interval"),
+            "remote_detect_multiplier": ms("remote-detect-multiplier"),
+            "minimum_ttl": ms("minimum-ttl"),
+            "counters_known": bool(c),
+            "control_packets_in": n("control-packet-input"),
+            "control_packets_out": n("control-packet-output"),
+            "control_packets_bad": n("controlPacketBadInput"),
+            "session_up_count": n("session-up"),
+            "session_down_count": n("session-down")}
+
+
+def bfd_fields(facts):
+    """BfdSessions's fields from Shell.bfd_facts()."""
+    ok = bool(facts.get("answered")) and not facts.get("garbled")
+    return {"answered": ok,
+            "sessions": [bfd_session_fields(s)
+                         for s in facts.get("sessions") or []] if ok else []}
+
+
+def bfd_peer(text):
+    """
+    ListBfdSessionsRequest.peer read: (address, None) for "" or an address
+    in its canonical form, (None, why) for anything else.
+    """
+    if not text:
+        return "", None
+    try:
+        return str(ipaddress.ip_address(text.strip())), None
+    except ValueError:
+        return None, f"'{text}' is not an address"
+
+
+def bfd_only(fields, peer):
+    """bfd_fields() narrowed to the sessions with `peer` ("" keeps them all)."""
+    if not peer:
+        return fields
+    want = ipaddress.ip_address(peer)
+    keep = []
+    for s in fields["sessions"]:
+        try:
+            if ipaddress.ip_address(s["peer"]) == want:
+                keep.append(s)
+        except ValueError:
+            continue
+    return dict(fields, sessions=keep)
+
+
+def bfd_interval(seconds):
+    """WatchBfdRequest.interval_seconds: 0 is 2; 1-60; None for the rest."""
+    if seconds == 0:
+        return 2
+    return seconds if 1 <= seconds <= 60 else None
+
+
+def bfd_key(f):
+    """
+    A session's identity across readings. Not bfdd's `id`: that is drawn
+    afresh when bfdd restarts, and the same session would read as one gone
+    and another appeared.
+    """
+    return (f["peer"], f["local"], f["interface"], f["vrf"], f["multihop"])
+
+
+def bfd_changes(prev, cur):
+    """
+    The WatchBfd events between two readings of bfd_fields(): a list of
+    (kind, fields, previous_state). `prev` None is the first reading; a
+    reading after bfdd stopped answering sends every session again as
+    KIND_INITIAL. A session that went down and came back between two
+    readings has the same state and a larger session_down_count, and that is
+    a change too - at 2 s a reading and a 300 ms detect time, the flap a
+    watcher most needs to hear about is exactly the one a state comparison
+    alone would never see.
+    """
+    if not cur["answered"]:
+        if prev is not None and not prev["answered"]:
+            return []
+        return [("KIND_UNANSWERED", None, "STATE_UNSPECIFIED")]
+    if prev is None or not prev["answered"]:
+        return [("KIND_INITIAL", s, "STATE_UNSPECIFIED")
+                for s in cur["sessions"]]
+    before = {bfd_key(s): s for s in prev["sessions"]}
+    now = {bfd_key(s): s for s in cur["sessions"]}
+    out = []
+    for k, s in now.items():
+        p = before.get(k)
+        if p is None:
+            out.append(("KIND_APPEARED", s, "STATE_UNSPECIFIED"))
+        elif p["state"] != s["state"] or \
+                s["session_down_count"] > p["session_down_count"]:
+            out.append(("KIND_CHANGED", s, p["state"]))
+    for k, p in before.items():
+        if k not in now:
+            out.append(("KIND_GONE", p, p["state"]))
+    return out

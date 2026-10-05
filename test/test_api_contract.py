@@ -96,7 +96,7 @@ want = {
                            # probes streamed.
                            "ListOspfInterfaces", "ListIsisInterfaces",
                            "GetHardware", "GetRoutingLogging", "GetSnmpFile",
-                           "Ping", "Traceroute", "Mtr"],
+                           "Ping", "Traceroute", "Mtr", "ListBfdSessions", "WatchBfd"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

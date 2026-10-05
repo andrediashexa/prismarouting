@@ -52,6 +52,19 @@ vppctl vrrp vr add pg0 vr_id 7 priority 150 interval 100 100.64.3.1 >/dev/null
 vppctl vrrp proto start pg0 vr_id 7 >/dev/null
 vppctl create bond mode lacp >/dev/null
 
+# BFD-STD-MIB (#559): bfdd, with one session nobody answers - a `peer` on a
+# dummy interface, so its state is down and stays down, which this lab knows.
+# Started before the commit below, which puts Debian-snmp in frrvty: a group
+# is read when snmpd starts.
+ip link add d0 type dummy 2>/dev/null; ip link set d0 up
+ip addr add 192.0.2.1/24 dev d0 2>/dev/null
+mkdir -p /var/run/frr /etc/frr
+for d in zebra mgmtd staticd bfdd; do printf 'hostname prisma-routing\n' > "/etc/frr/$d.conf"; done
+chown -R frr:frr /var/run/frr /etc/frr
+start_frr bfdd
+vtysh -c "conf t" -c "bfd" -c "peer 192.0.2.77 interface d0" -c exit -c exit \
+  2>&1 | sed 's/^/  frr: /'
+
 echo "=========== 1. turn SNMP on from the VTY ==========="
 $HX -c "configure" \
     -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
@@ -92,8 +105,21 @@ printf 'get\n1.3.6.1.4.1.99999.1.1.0\n' | /usr/lib/prisma-routing/snmp-agent | s
 echo "  --- the interfaces, as Debian-snmp ---"
 printf 'getnext\n1.3.6.1.2.1.2\ngetnext\n1.3.6.1.2.1.2.2.1.2\n' | su -s /bin/sh Debian-snmp -c '/usr/lib/prisma-routing/snmp-agent --interfaces' 2>&1 | sed 's/^/    /'
 
+echo "  --- BFD-STD-MIB, the agent as Debian-snmp reading bfdd ---"
+printf 'getnext\n1.3.6.1.2.1.222.1.2.1.11\n' | runuser -u Debian-snmp -- \
+  /usr/lib/prisma-routing/snmp-agent --bfd 2>&1 | sed 's/^/    /'
+
 echo
 echo "=========== 2. poll it ==========="
+# BFD-STD-MIB (#559), through snmpd: the session's state, its neighbour and
+# its transmit interval, by the index the table gives it.
+BW="snmpwalk -v2c -c hexro -On 127.0.0.1"
+BFDSTATE=$($BW 1.3.6.1.2.1.222.1.2.1.11 2>&1)
+BFDIX=$(printf '%s\n' "$BFDSTATE" | awk -F'[ .]' '/^\.1\.3\.6\.1\.2\.1\.222\.1\.2\.1\.11\./ {print $13; exit}')
+BFDDST=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.222.1.2.1.22.${BFDIX:-0} 2>&1)
+BFDTX=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.222.1.2.1.25.${BFDIX:-0} 2>&1)
+BFDNOTIF=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.222.1.1.3.0 2>&1)
+echo "  BFD-STD-MIB: $BFDSTATE / dst $BFDDST / tx $BFDTX / notifications $BFDNOTIF"
 # WHAT AN NMS SEES FIRST (#497): the box's identity, CPU, memory and disks,
 # which net-snmp serves and the view used to keep out.
 DESCR=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.1.1.0 2>&1)
@@ -456,6 +482,13 @@ expect "and the ports it holds" test "$PORTS" = "3"
 # Refused at the daemon (noAccess, from the read-only community and view) or
 # by the agent (notWritable). Either is a refusal; asserting one spelling
 # would tie the test to which layer happened to say no first.
+expect "BFD-STD-MIB: bfdd's one session, down(2), through snmpd as Debian-snmp" \
+  sh -c "printf '%s\n' \"$BFDSTATE\" | grep -c '^\.1\.3\.6\.1\.2\.1\.222\.1\.2\.1\.11\.' | grep -qx 1 && printf '%s\n' \"$BFDSTATE\" | grep -q 'INTEGER: 2$'"
+expect_in "  its neighbour, 192.0.2.77, as InetAddress octets" "C0 00 02 4D" "$BFDDST"
+expect "  its transmit interval in microseconds, bfdd's 300 ms ($BFDTX)" \
+  test "$BFDTX" = "300000"
+expect "  and bfdNotificationsEnable false: the agent sends no BFD trap" \
+  test "$BFDNOTIF" = "2"
 expect "a SET is refused" sh -c "case \"$SETOUT\" in *noAccess*|*otWritable*) exit 0;; *) exit 1;; esac"
 expect "and changed nothing" test "$AFTERSET" = "600"
 expect_in "the v3 user is granted read-only access" "rouser nms priv" "$V3CONF"

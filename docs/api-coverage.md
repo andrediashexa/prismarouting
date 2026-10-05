@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 659 |
-| text | 3 |
+| typed | 661 |
+| text | 1 |
 | n/a | 27 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -159,8 +159,8 @@ reachable in the phase their note names.
 | `show ospf interface` | typed | OperationalService.ListOspfInterfaces | every account | both MTUs and the stall |
 | `show isis adjacency` | typed | OperationalService.ListIsisAdjacencies | every account |  |
 | `show isis interface` | typed | OperationalService.ListIsisInterfaces | every account | the circuits and the dataplane's IS-IS punt |
-| `show bfd peers` | text | OperationalService.Show | every account | BFD phase 1 (#559); typed sessions are its phase 2 |
-| `show bfd peer <address>` | text | OperationalService.Show | every account | BFD phase 1 (#559); typed sessions are its phase 2 |
+| `show bfd peers` | typed | OperationalService.ListBfdSessions | every account | and WatchBfd for state changes (#559) |
+| `show bfd peer <address>` | typed | OperationalService.ListBfdSessions | every account | and WatchBfd for state changes (#559) |
 | `show interface terse` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface description` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface utilization interval <seconds>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
@@ -574,7 +574,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `ip ospf authentication-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip ospf message-digest-key <1-255> md5 <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip ospf passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `ip ospf bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip ospf mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `isis circuit-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -586,7 +586,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `isis hello-interval <1-600>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `isis hello-multiplier <2-100>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `isis password [clear\|md5] <password>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -595,7 +595,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `ipv6 ospf6 bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -624,7 +624,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no ip ospf authentication-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip ospf message-digest-key <1-255> md5 <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip ospf passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `no ip ospf bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip ospf mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no isis circuit-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -636,7 +636,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no isis hello-interval <1-600>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no isis hello-multiplier <2-100>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no isis password [clear\|md5] <password>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `no isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -645,7 +645,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `no ipv6 ospf6 bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -691,7 +691,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `ip ospf authentication-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip ospf message-digest-key <1-255> md5 <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip ospf passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `ip ospf bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ip ospf bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip ospf mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ip router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `isis circuit-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -703,7 +703,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `isis hello-interval <1-600>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `isis hello-multiplier <2-100>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `isis password [clear\|md5] <password>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `isis bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -712,7 +712,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `ipv6 ospf6 bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `ipv6 ospf6 bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 ospf6 mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -749,7 +749,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `no ip ospf authentication-key <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip ospf message-digest-key <1-255> md5 <key>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip ospf passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `no ip ospf bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ip ospf bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip ospf mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ip router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no isis circuit-type level-1` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
@@ -761,7 +761,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `no isis hello-interval <1-600>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no isis hello-multiplier <2-100>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no isis password [clear\|md5] <password>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `no isis bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no isis bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 address <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd suppress-ra` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no ipv6 nd nat64 [<X:X::X:X/M>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -770,7 +770,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `no ipv6 ospf6 network point-to-point` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 network broadcast` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 passive` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
-| `no ipv6 ospf6 bfd` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+| `no ipv6 ospf6 bfd [profile <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 ospf6 mtu-ignore` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no ipv6 router isis <isis-instance>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `no shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |

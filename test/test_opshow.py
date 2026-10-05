@@ -471,5 +471,108 @@ check(O._target("disabled")["enabled"] is False
           "filename": "/var/log/frr/frr.log"},
       "_target: 'disabled', and a level with its filename")
 
+print("\n=== BFD: a session's fields (#559 phase 2) ===")
+# The shape of FRR 10.7.1's `show bfd peers json`, one configured session up
+# with its counters folded in by prismash.bfd_sessions(), one a protocol
+# asked for, down, with none - test_prismash_bfd.py has where they were read.
+UP = {"multihop": False, "peer": "10.9.0.9", "local": "10.9.0.1",
+      "vrf": "default", "interface": "dum0", "id": 1, "status": "up",
+      "uptime": 8100, "diagnostic": "ok", "remote-diagnostic": "ok",
+      "type": "configured", "profile": "fast", "receive-interval": 300,
+      "transmit-interval": 300, "detection-timeout": 900,
+      "echo-receive-interval": 50, "echo-transmit-interval": 0,
+      "detect-multiplier": 3, "remote-receive-interval": 300,
+      "remote-transmit-interval": 300, "remote-detect-multiplier": 3,
+      "counters": {"id": 1, "control-packet-input": 120,
+                   "controlPacketBadInput": 2, "control-packet-output": 121,
+                   "session-up": 1, "session-down": 0}}
+DOWN = {"multihop": True, "peer": "2001:db8::2", "local": "2001:db8::1",
+        "vrf": "red", "id": 2, "minimum-ttl": 254, "status": "down",
+        "downtime": 367, "diagnostic": "control detection time expired",
+        "type": "dynamic", "receive-interval": 300, "transmit-interval": 300,
+        "detection-timeout": 3000, "detect-multiplier": 3, "counters": {}}
+f = O.bfd_session_fields(UP)
+check(f["state"] == "STATE_UP" and f["seconds_in_state"] == 8100
+      and f["configured"] and f["profile"] == "fast"
+      and f["detection_timeout_ms"] == 900 and f["remote_detect_multiplier"] == 3,
+      f"an up session: state, its time in it, its timers: {f}")
+# Mutation shown red: the counter keys read from the session rather than its
+# folded-in counters - every count read 0 and counters_known stayed True.
+check(f["counters_known"] and f["control_packets_in"] == 120
+      and f["control_packets_out"] == 121 and f["control_packets_bad"] == 2
+      and f["session_up_count"] == 1 and f["session_down_count"] == 0,
+      "and its counters, from bfdd's counters reading")
+g = O.bfd_session_fields(DOWN)
+check(g["state"] == "STATE_DOWN" and g["seconds_in_state"] == 367
+      and not g["configured"] and g["multihop"] and g["minimum_ttl"] == 254
+      and g["vrf"] == "red" and g["interface"] == ""
+      and g["remote_receive_interval_ms"] == 0 and not g["counters_known"],
+      f"a protocol's multihop session, down, no counters: {g}")
+check(O.bfd_session_fields({"peer": "10.0.0.1", "status": "AdminDown"})["state"]
+      == "STATE_ADMIN_DOWN"
+      and O.bfd_session_fields({"peer": "10.0.0.1", "status": "weird"})["state"]
+      == "STATE_OTHER"
+      and O.bfd_session_fields({"peer": "10.0.0.1"})["state"] == "STATE_UNSPECIFIED",
+      "admin down by bfdd's word, an unknown word OTHER, none UNSPECIFIED")
+check(O.bfd_fields({"answered": False, "garbled": False, "sessions": []})
+      == {"answered": False, "sessions": []}
+      and O.bfd_fields({"answered": True, "garbled": True,
+                        "sessions": [UP]})["answered"] is False,
+      "bfdd not answering, or answering garble, is not 'no sessions'")
+
+print("\n=== BFD: the request's peer and interval ===")
+check(O.bfd_peer("") == ("", None)
+      and O.bfd_peer("2001:DB8::0002") == ("2001:db8::2", None)
+      and O.bfd_peer("bananas")[0] is None,
+      "a peer: empty, an address made canonical, or refused")
+both = O.bfd_fields({"answered": True, "sessions": [UP, DOWN]})
+check([s["peer"] for s in O.bfd_only(both, "2001:db8::2")["sessions"]]
+      == ["2001:db8::2"] and len(O.bfd_only(both, "")["sessions"]) == 2,
+      "narrowed by address equality, IPv6 spelled any way; empty keeps all")
+check(O.bfd_interval(0) == 2 and O.bfd_interval(1) == 1
+      and O.bfd_interval(60) == 60 and O.bfd_interval(61) is None,
+      "the interval: 0 is 2, 1-60, the rest refused")
+
+print("\n=== BFD: what WatchBfd sends between two readings ===")
+def reading(*sessions, answered=True):
+    return O.bfd_fields({"answered": answered, "sessions": list(sessions)})
+first = O.bfd_changes(None, reading(UP, DOWN))
+check([k for k, _, _ in first] == ["KIND_INITIAL", "KIND_INITIAL"],
+      "the first reading: every session, as it is")
+check(O.bfd_changes(reading(UP, DOWN), reading(UP, DOWN)) == [],
+      "nothing changed, nothing sent")
+went_down = dict(UP, status="down", downtime=1, counters=dict(UP["counters"],
+                 **{"session-down": 1}))
+ch = O.bfd_changes(reading(UP), reading(went_down))
+check([(k, s["state"], p) for k, s, p in ch]
+      == [("KIND_CHANGED", "STATE_DOWN", "STATE_UP")],
+      f"up to down: CHANGED, with the state it left: {ch}")
+# Mutation shown red: the state compared alone - a flap between two readings
+# (down and back up inside 2 s) then sent nothing at all.
+flapped = dict(UP, uptime=1, counters=dict(UP["counters"],
+                                           **{"session-down": 1}))
+ch = O.bfd_changes(reading(UP), reading(flapped))
+check([k for k, _, _ in ch] == ["KIND_CHANGED"],
+      "down and back up between two readings: the down counter moved, sent")
+ch = O.bfd_changes(reading(UP), reading(DOWN))
+check(sorted(k for k, _, _ in ch) == ["KIND_APPEARED", "KIND_GONE"],
+      f"one session removed and another added: GONE and APPEARED: {ch}")
+# bfdd's `id` is drawn afresh at its restart; the key is where the session
+# runs, so a renumbered session is the same one (bfd_fields() drops the id).
+renumbered = dict(UP, id=999)
+check(O.bfd_key(O.bfd_session_fields(UP)) == ("10.9.0.9", "10.9.0.1", "dum0",
+                                                 "default", False)
+      and O._count({"a": "-3"}, "a") == 0 and O._count({}, "a") == 0
+      and O._count({"a": "7"}, "a") == 7,
+      "bfd_key is where the session runs; _count clamps to a count")
+check(O.bfd_changes(reading(UP), reading(renumbered)) == [],
+      "bfdd renumbering its sessions is not a change")
+check([k for k, _, _ in O.bfd_changes(reading(UP), reading(answered=False))]
+      == ["KIND_UNANSWERED"]
+      and O.bfd_changes(reading(answered=False), reading(answered=False)) == []
+      and [k for k, _, _ in O.bfd_changes(reading(answered=False), reading(UP))]
+      == ["KIND_INITIAL"],
+      "bfdd gone: one UNANSWERED, then quiet, then every session again")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -1022,5 +1022,93 @@ check(_it.rows == [] and _it.at == 0.0,
       "an interface cache starts empty, so the first poll reads the dataplane")
 print("  every card, summed over threads, with a stable index and 64-bit counters")
 
+print("=== BFD-STD-MIB, RFC 7331: bfdd's sessions (#559) ===")
+# FRR 10.7.1's `show bfd peers json` and `show bfd peers counters json`, the
+# shape test/test_prismash_bfd.py has: one configured single-hop session up,
+# one multihop a protocol asked for, down, with no counters.
+BFD_PEERS = """[
+ {"multihop": false, "peer": "10.9.0.9", "local": "10.9.0.1", "vrf": "default",
+  "interface": "dum0", "id": 1712291648, "remote-id": 77, "status": "up",
+  "uptime": 8100, "diagnostic": "ok", "type": "configured",
+  "receive-interval": 300, "transmit-interval": 300,
+  "echo-receive-interval": 50, "echo-transmit-interval": 0,
+  "detect-multiplier": 3, "remote-receive-interval": 500,
+  "remote-transmit-interval": 300, "remote-detect-multiplier": 4},
+ {"multihop": true, "peer": "2001:db8::2", "local": "2001:db8::1",
+  "vrf": "default", "id": 99, "minimum-ttl": 254, "status": "down",
+  "downtime": 367, "diagnostic": "control detection time expired",
+  "type": "dynamic", "receive-interval": 300, "transmit-interval": 300,
+  "detect-multiplier": 3}
+]"""
+BFD_COUNTERS = """[
+ {"id": 1712291648, "control-packet-input": 4294967300,
+  "controlPacketBadInput": 1, "control-packet-output": 121,
+  "session-up": 1, "session-down": 0}
+]"""
+sessions = agent.parse_bfd(BFD_PEERS, BFD_COUNTERS)
+check(sessions is not None and len(sessions) == 2
+      and sessions[0]["counters"].get("session-up") == 1
+      and sessions[1]["counters"] == {},
+      f"both sessions read, counters folded in by id: {sessions!r}")
+check(agent.parse_bfd("% Unknown command", BFD_COUNTERS) is None
+      and agent.parse_bfd(None, None) is None,
+      "an answer that is not bfdd's list is nothing, not 'no sessions'")
+rows = {oid: (typ, val) for oid, typ, val in agent.bfd_rows(sessions)}
+B, S, P = "1.3.6.1.2.1.222.1", "1.3.6.1.2.1.222.1.2.1", "1.3.6.1.2.1.222.1.3.1"
+up, dn = 1712291648, 99
+check(rows[f"{B}.1.3.0"] == ("integer", 2),
+      "bfdNotificationsEnable reads false: no trap is sent, and it says so")
+# Mutation shown red: bfdd's milliseconds served as they are - RFC 7331's
+# BfdIntervalTC is microseconds, and an NMS read 300 ms as 300 us.
+check(rows[f"{S}.25.{up}"] == ("gauge", 300000)
+      and rows[f"{S}.26.{up}"] == ("gauge", 300000)
+      and rows[f"{S}.27.{up}"] == ("gauge", 50000),
+      "the timers in microseconds, as BfdIntervalTC is")
+check(rows[f"{S}.29.{up}"] == ("gauge", 500000)
+      and rows[f"{S}.31.{up}"] == ("gauge", 4)
+      and f"{S}.29.{dn}" not in rows and f"{S}.31.{dn}" not in rows,
+      "negotiated: the larger of ours and the neighbour's; none when unheard")
+# Mutation shown red: IANAbfdSessStateTC read as RFC 5880's wire codes
+# (AdminDown 0, Down 1, Init 2, Up 3) - every state one off.
+check(rows[f"{S}.11.{up}"] == ("integer", 4)
+      and rows[f"{S}.11.{dn}"] == ("integer", 2)
+      and rows[f"{S}.10.{up}"] == ("integer", 1)
+      and rows[f"{S}.10.{dn}"] == ("integer", 2),
+      "bfdSessState up(4) and down(2), bfdSessOperStatus up(1) and down(2)")
+check(rows[f"{S}.13.{dn}"] == ("integer", 1)
+      and rows[f"{S}.13.{up}"] == ("integer", 0),
+      "the diagnostic: control detection time expired is 1, ok is 0")
+check(rows[f"{S}.3.{up}"] == ("integer", 1)
+      and rows[f"{S}.3.{dn}"] == ("integer", 2)
+      and rows[f"{S}.6.{up}"] == ("gauge", 3784)
+      and rows[f"{S}.6.{dn}"] == ("gauge", 4784)
+      and rows[f"{S}.23.{dn}"] == ("integer", 1)
+      and rows[f"{S}.24.{dn}"] == ("gauge", 254),
+      "single hop on 3784, multihop on 4784 with its GTSM TTL")
+check(rows[f"{S}.22.{up}"] == ("octet", "0A 09 00 09")
+      and rows[f"{S}.21.{dn}"] == ("integer", 2)
+      and rows[f"{S}.22.{dn}"][1].startswith("20 01 0D B8"),
+      "the neighbour's address, IPv4 and IPv6, as InetAddress octets")
+check(rows[f"{S}.36.{up}"] == ("integer", 3)
+      and rows[f"{S}.36.{dn}"] == ("integer", 2),
+      "a `peer` statement's row is nonVolatile, a protocol's volatile")
+check(rows[f"{P}.1.{up}"] == ("counter", 4) and rows[f"{P}.14.{up}"]
+      == ("counter64", 4294967300) and rows[f"{P}.12.{up}"] == ("counter", 1)
+      and f"{P}.1.{dn}" not in rows,
+      "counters: Counter32 wraps, the HC column carries all of it; none "
+      "invented for a session bfdd gave none")
+check(rows[f"{B}.4.1.1.{up}"] == ("gauge", up)
+      and rows[f"{B}.5.1.1.0.1.4.10.9.0.1.1.4.10.9.0.9"] == ("gauge", up),
+      "the discriminator and IP map tables lead back to the session's index")
+check(agent._octets("192.0.2.77") == (1, bytes([192, 0, 2, 77]))
+      and agent._octets("2001:db8::1")[0] == 2
+      and agent._octets("bananas") is None,
+      "an address as InetAddressType and its octets; text that is not one, none")
+check(agent.Bfd().rows == [] and agent.Bfd().at == 0.0,
+      "a fresh BFD reader holds nothing until it has read bfdd")
+order = [r[0] for r in sorted(agent.bfd_rows(sessions),
+                              key=lambda r: [int(x) for x in r[0].split(".")])]
+check(len(order) == len(set(order)), "no OID served twice")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
