@@ -3196,7 +3196,7 @@ Tab completes; `?` lists the valid options at the cursor with a description:
 ```
 prisma> show cgnat ?
   alg          which ALGs the dataplane has on, per pool
-  blocks       blocks allocated in dynamic mode, and how many a forward pins
+  blocks       blocks allocated in bpa mode, and how many a forward pins
   drops        why packets did not get through
   forward      the port forwards the dataplane holds
   ha           whether this box and its peer map subscribers the same way
