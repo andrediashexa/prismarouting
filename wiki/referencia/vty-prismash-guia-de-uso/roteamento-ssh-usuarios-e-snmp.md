@@ -352,8 +352,31 @@ configure
 | `no interface` | `system` > `dataplane` | a caixa deixa de pegar placa no próximo início do dataplane |
 | `control-plane`, `main-thread`, `workers`, `cgnat-workers` | `system` > `cpu` | os núcleos por papel |
 | `control-plane`, `buffers` | `system` > `memory` | a memória por papel |
+| `unsupported-sfp allow` | `system` > `hardware` | a placa ixgbe (X520 e família) aceita um módulo SFP+ que a Intel não homologou; `no unsupported-sfp` volta ao padrão, que recusa |
 
-As três valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+Todas valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+
+## Módulo SFP+ não homologado numa placa ixgbe
+
+O driver `ixgbe` (Intel X520, X540, X550 e família) recusa a placa inteira quando o módulo SFP+ não está na lista dele. A placa some do Linux e não chega ao dataplane, e o journal do boot diz:
+
+```
+ixgbe 0000:01:00.0: failed to load because an unsupported SFP+ or QSFP module type was detected.
+```
+
+Com módulo de terceiros, que é comum, ou com um módulo que às vezes é lido errado, ligue a aceitação:
+
+```
+configure
+ system
+  hardware
+   unsupported-sfp allow
+   exit
+  exit
+ commit
+```
+
+Vale a partir do próximo boot: a caixa põe `ixgbe.allow_unsupported_sfp=1` na linha de comando do kernel, que o driver lê quando carrega. `show system hardware` mostra o que está configurado e o que o boot atual tem. A Intel avisa que um módulo que ela não testou pode ser instável; por isso vem desligado.
 
 # SSH
 

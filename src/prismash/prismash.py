@@ -3373,6 +3373,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "snmp_changed", "api_changed", "dataplane_if_changed",
                "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
+               "hardware_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -18933,7 +18934,7 @@ class Shell:
             return ""
 
     #: The kernel's own record of the command line it booted with (#574).
-    PROC_CMDLINE = "/proc/cmdline"
+    PROC_CMDLINE = os.environ.get("PRISMA_PROC_CMDLINE", "/proc/cmdline")
     #: The option apply-tuning puts on that line for `unsupported-sfp allow`.
     SFP_CMDLINE = "ixgbe.allow_unsupported_sfp=1"
 

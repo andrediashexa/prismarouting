@@ -2442,6 +2442,10 @@ try:
     check(text.count("allowed on ixgbe cards") == 2
           and "differ" not in text,
           f"booted with it: both rows agree: {text!r}")
+    check(sh.driver_facts() == {"unsupported_sfp_configured": True,
+                                "unsupported_sfp_booted": True},
+          f"driver_facts: the reading the screen and GetSystem share: "
+          f"{sh.driver_facts()}")
     prismash.Shell.PROC_CMDLINE = os.path.join(_root, "tune-hw", "none")
     rv, text = driven(lambda: sh.show_system_hardware())
     check("could not be read" in text, f"an unreadable cmdline is said: {text!r}")
@@ -2459,6 +2463,14 @@ try:
     with open(_tune, "a") as _f:
         _f.write("PRISMA_ALLOW_UNSUPPORTED_SFP=refuse\n")
     check(_real().hardware == {}, "refuse in the file reads as the default")
+    # A tune.env the box cannot write fails the commit, said by its level.
+    prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "hw")
+    sh3 = shell()
+    sh3.candidate = prismash.Shell.running_config(sh3)
+    sh3.candidate.hardware = {"unsupported-sfp": "allow"}
+    rv, text = driven(lambda: sh3.do_commit([]))
+    check("hardware:" in text, f"an unwritable tune.env fails the commit: "
+                               f"{text!r}")
 finally:
     prismash.Shell.TUNE_ENV = _saved_te
     prismash.Shell.PROC_CMDLINE = _saved_pc

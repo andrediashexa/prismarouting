@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 757 |
-| text | 2 |
+| typed | 758 |
+| text | 1 |
 | n/a | 41 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -178,7 +178,7 @@ reachable in the phase their note names.
 | `show policy [<policy> | route <prefix>]` | typed | OperationalService.ListPolicies / GetPolicyCounters / TestPolicy | every account |  |
 | `show system cpu` | typed | OperationalService.GetSystem | every account | worker_load per worker; per-core figures are text (phase 7) |
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
-| `show system hardware` | text | OperationalService.Show | every account |  |
+| `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times |
 | `show logging` | typed | OperationalService.GetRoutingLogging | every account | FRR's logging per daemon |
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |

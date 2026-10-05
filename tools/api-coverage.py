@@ -93,6 +93,8 @@ OPERATIONAL_RULES = [
      "boot, dataplane, control-plane and VTY start times"),
     (["show", "system", "memory"], "typed", "OperationalService.GetSystem",
      "memory_total/used/hugepages bytes"),
+    (["show", "system", "hardware"], "typed", "OperationalService.GetSystem",
+     "unsupported_sfp_configured/booted (#574)"),
     (["show", "system", "cpu"], "typed", "OperationalService.GetSystem",
      "worker_load per worker; per-core figures are text (phase 7)"),
     (["show", "interface", "utilization"], "typed",

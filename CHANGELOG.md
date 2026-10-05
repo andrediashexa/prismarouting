@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **An opt-in setting for SFP+ modules ixgbe does not list.**
+  ([#574](https://github.com/andrediashexa/hexarouting/issues/574)) On
+  10.40.200.166 (X520, 2026-10-05) ixgbe refused the card at boot, `failed to
+  load because an unsupported SFP+ or QSFP module type was detected`, reading
+  a module it had taken on earlier boots as `SFP+: 65535`; the box came up
+  with no X520. `system` > `hardware` > `unsupported-sfp allow` writes
+  `PRISMA_ALLOW_UNSUPPORTED_SFP=allow` to tune.env and runs the tuner through
+  its existing door, and apply-tuning puts `ixgbe.allow_unsupported_sfp=1` on
+  the kernel command line and regenerates GRUB. modprobe takes a module's
+  options from the command line (modprobe.d(5)), in the initramfs too, so
+  the initramfs is not rebuilt; the card is taken at the next boot, and the
+  commit says so. `no unsupported-sfp` (or `refuse`) takes the option off.
+  Off by default: Intel warns that a module it has not qualified may be
+  unstable. `show system hardware` says what is configured and what this
+  boot has, and the API reads it as `SystemConfig.hardware`.
+
 ### Fixed
 
 ## 0.151.1 - the screens say bpa too
