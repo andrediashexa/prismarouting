@@ -182,7 +182,11 @@ never would.
   back through GetConfig and the VTY's own text, then removes it.
 * **IS-IS and OSPFv3 over BFD.** lab/bfd.sh drives both down with the same
   silent cut as OSPF, `isis bfd profile lab` and `ipv6 ospf6 bfd profile
-  lab` at the interface, and then takes their `bfd` away again.
+  lab` at the interface, and then takes their `bfd` away again. Measured
+  (one run, `tools/lab.sh bfd`, 2026-10-05): the IS-IS route left the
+  dataplane 320 ms after the cut (hold time 30 s), the OSPFv3 route 687 ms
+  (dead time 40 s) - the peer's side asks with FRR's defaults, 300 ms x 3,
+  which the session negotiates up to; with BFD off neither left within 12 s.
 
 ## Traps: designed, not built
 
