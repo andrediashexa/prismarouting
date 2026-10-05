@@ -850,7 +850,7 @@ check(any(a.get("name") == "subs" and "DYNAMIC" in str(a.get("mode"))
           for a in _add573),
       f"#573: a saved BPA pool reaches the dataplane after the upgrade: "
       f"{_add573}")
-check("'mode dynamic' is now 'mode bpa'" in _o573.getvalue(),
+check("'mode dynamic' is now 'mode bpa' in pool subs" in _o573.getvalue(),
       f"#573: and the migration is said: {_o573.getvalue()[-200:]!r}")
 check("   mode bpa\n" in _after573 and "mode dynamic" not in _after573,
       f"#573: and the file is written back with the new word: {_after573}")

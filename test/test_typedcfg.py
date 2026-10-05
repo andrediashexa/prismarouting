@@ -86,7 +86,7 @@ check(T.interface_kind(cfg, "lo1") == "loopback" and T.interface_kind(cfg, "ens1
       "interface_kind: a loopback, a port")
 p = T.pool_typed(cfg.pools["A"])
 check(p["prefix_inside"] == ["100.64.0.0/10"] and p["block_size"] == 256
-      and (p["port_first"], p["port_last"]) == (1024, 65535) and p["mode"] == "dynamic"
+      and (p["port_first"], p["port_last"]) == (1024, 65535) and p["mode"] == "bpa"
       and p["vrf"] == 7 and p["outside_vrf"] is None and p["max_blocks"] == 8
       and p["timeouts"] == {"udp": 120} and p["algs"] == {"ftp": False}
       and p["forwards"] == [{"protocol": "tcp", "public_port": 8080,

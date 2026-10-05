@@ -24233,7 +24233,9 @@ class Shell:
         migrated = sorted(n for n, p in target.pools.items()
                           if getattr(p, "_mode_was_dynamic", False))
         for name in migrated:
-            print(f"note: pool {name}: 'mode dynamic' is now 'mode bpa'")
+            # The name last: it has no widest, and words behind it would
+            # fold wherever the console ends (#363).
+            print(f"note: 'mode dynamic' is now 'mode bpa' in pool {name}")
         if migrated:
             print_prose("the file is rewritten with it once applied (#573)",
                         indent="    ")
