@@ -854,7 +854,10 @@ def bfd_peer_lines(cur, desired, fields=()):
     _mask(plain, BFD_PEER_FIELDS)
     cur = cur or {}
     body = []
-    if not plain or "profile" in plain:
+    # `fields` empty is every field; `timers.<f>` alone names no plain one.
+    # Measured in lab/api-grpc.sh: `["timers.transmit_interval_ms"]` read
+    # as "no plain field named, so all of them" wrote `no profile api9`.
+    if not fields or "profile" in plain:
         a, b = cur.get("profile") or "", desired.get("profile") or ""
         if len(b.split()) > 1:
             raise ValueError("bfd peer: a profile name is one word")
@@ -1116,9 +1119,19 @@ def bgp_neighbor_delete_lines(cfg, asn, vrf, name):
     """
     header = bgp_path(asn, vrf)[0]
     fams, top, last = {}, [], []
-    for path, stmt in routing_statements(cfg):
+    stmts = [(p, s) for p, s in routing_statements(cfg)]
+    # `no neighbor X bfd` takes FRR's second line, `bfd profile P`, with it
+    # (#570): a `no` for that line too names one that is gone, and measured
+    # in lab/api-grpc.sh (#559 phase 3) the commit then failed "routing
+    # reload failed". So the profile line is left to the `bfd` one.
+    plain_bfd = any(p and p[0] == header and s.split() == ["neighbor", name,
+                                                          "bfd"]
+                    for p, s in stmts)
+    for path, stmt in stmts:
         w = stmt.split()
         if not path or path[0] != header or w[:2] != ["neighbor", name]:
+            continue
+        if plain_bfd and w[2:4] == ["bfd", "profile"]:
             continue
         if len(path) == 2:
             fams.setdefault(path[1], []).append("no " + stmt)

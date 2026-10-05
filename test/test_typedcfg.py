@@ -337,6 +337,22 @@ _, bl = T.edit_for(BFD, "bfd_profiles",
                    ["timers.receive_interval_ms"])
 check(bl == ["profile fast", "no receive-interval 100", "receive-interval 50",
              "exit"], f"one timer named: only that one moves: {bl}")
+# A timer named alone touches no plain field. Mutation shown red - and found
+# by lab/api-grpc.sh's phase 9 before this check existed: "no plain field
+# named" read as "every plain field", and the session lost its profile.
+_, bl = T.edit_for(BFD, "bfd_peers", {
+    "address": "10.0.0.2", "interface": "eth0",
+    "timers": {"transmit_interval_ms": 400}}, ["timers.transmit_interval_ms"])
+check(bl == ["peer 10.0.0.2 interface eth0", "no transmit-interval 200",
+             "transmit-interval 400", "exit"],
+      f"a session's one timer named: the profile left as it is: {bl}")
+# Removing a neighbour with a BFD profile: its `bfd` line takes the profile
+# line with it (#570), so no `no` is written for the second. Mutation shown
+# red - and found by the lab: the commit failed "routing reload failed".
+_, dl = T.delete_for(BFD, "bgp", name="10.0.0.2", asn="65000")
+check("no neighbor 10.0.0.2 bfd" in dl
+      and not any("bfd profile" in x for x in dl),
+      f"a neighbour with a BFD profile removed by its `bfd` line alone: {dl}")
 _, bl = T.edit_for(BFD, "bfd_peers", {"address": "10.0.0.2",
                                       "interface": "eth0",
                                       "profile": "slow"}, ["profile"])
