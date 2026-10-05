@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **SNMP and the management API listened on one address, and wrote IPv6
+  wrong.** ([#582](https://github.com/andrediashexa/hexarouting/issues/582))
+  10.40.200.166 had to answer both on its management interface's IPv4 and
+  IPv6 addresses, and each setting took one address; an IPv6 SNMP address was
+  written `agentAddress udp:<v6>:161`, which snmpd does not read as IPv6, and
+  could not be read back. `snmp listen-address` and `api listen-address` now
+  take a space-separated list - `10.40.200.166 2804:4ed4:1000:6::166` - each
+  address checked as before and none twice: snmpd gets
+  `udp:A:P,udp6:[B]:P`, read back to the same list, and the API's socket one
+  `ListenStream=` per address, IPv6 bracketed. One address reads and writes
+  exactly as it did.
+
 ## 0.151.7 - FRR's `ip address` is refused in an interface block
 
 ### Fixed

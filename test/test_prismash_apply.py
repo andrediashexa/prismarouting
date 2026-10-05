@@ -2558,6 +2558,19 @@ with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
 check(not _ok and "api: 10.9.9.9:50051 could not be listened on" in _buf.getvalue()
       and _ash.apisvc.applied == [_t.api],
       f"a listener the host could not open fails the commit, in its words: {_buf.getvalue()!r}")
+# A LIST at the prompt (#582): `api listen-address` with an IPv4 and an IPv6
+# address, as 10.40.200.166 needed; any other api setting stays one word.
+_ash = shell_with(FakeApi())
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ash.feed("configure")
+    _ash.feed("api listen-address 10.40.200.166 2804:4ed4:1000:6::166")
+    _ash.feed("api port 50051 50052")
+check(_ash.candidate.api.get("listen-address") == "10.40.200.166 2804:4ed4:1000:6::166"
+      and "usage: api <setting> <value>" in _buf.getvalue()
+      and _ash.candidate.api.get("port", "50051") == "50051",
+      f"the prompt takes the list, and refuses two words for another setting: "
+      f"{_ash.candidate.api} {_buf.getvalue()!r}")
 
 
 

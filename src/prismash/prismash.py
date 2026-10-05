@@ -16375,14 +16375,15 @@ class Shell:
             self.candidate.api[w[2]] = API_DEFAULTS[w[2]]
             return True
         if w[0] == "api":
-            if len(w) != 3:
+            # More than one word for listen-address only, a list (#582).
+            if len(w) < 3 or (len(w) > 3 and w[1] != "listen-address"):
                 self.err("usage: api <setting> <value>")
                 return True
-            why = validate_api({w[1]: w[2]})
+            why = validate_api({w[1]: " ".join(w[2:])})
             if why:
                 self.err(why)
             else:
-                self.candidate.api[w[1]] = w[2]
+                self.candidate.api[w[1]] = " ".join(w[2:])
             return True
         if w[0] == "snmp":
             if len(w) < 3:
