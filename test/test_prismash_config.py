@@ -2189,6 +2189,29 @@ check(config.bfd_uses_profile("peer 10.0.0.2", "profile fast")
       and not config.bfd_uses_profile("peer 10.0.0.2", "detect-multiplier 5"),
       "a profile named inside a session is the session using it")
 
+print("\n=== what a `no` takes: a statement, or a block with its body (#570) ===")
+# Mutation shown red: the nesting count left out - `no bfd` stopped at the
+# profile's own ` exit` and left the peer behind it orphaned.
+_rb570 = ["bfd", " profile lab", "  transmit-interval 100", " exit", " !",
+          " peer 10.0.0.2 interface vppwan0", "  profile lab", " exit", " !",
+          "exit", "!", "ip route 0.0.0.0/0 10.0.0.9"]
+check(_rb570[0:config.statement_extent(_rb570, 0)] == _rb570[0:10],
+      "the whole bfd block, read back from FRR, up to its own exit and no "
+      "further: the default route after it stays")
+check(config.statement_extent(_rb570, 1) == 4,
+      "a profile, with its timers and its exit")
+check(config.statement_extent(_rb570, 5) == 8,
+      "a peer, with its `profile lab` statement and its exit - not the next "
+      "block's lines")
+check(config.statement_extent(_rb570, 11) == 12,
+      "a statement is itself alone")
+_ty570 = ["bfd", "peer 10.0.0.2", "exit", "profile p", "exit", "exit",
+          "router bgp 1", "exit"]
+check(config.statement_extent(_ty570, 0) == 6
+      and config.statement_extent(_ty570, 1) == 3
+      and config.statement_extent(_ty570, 3) == 5,
+      f"and typed at the VTY: {[config.statement_extent(_ty570, i) for i in (0, 1, 3)]}")
+
 print("\n=== a saved file carries a description, and refuses what the "
       "prompt refuses (#436) ===")
 _desc_file = parse_nested("""! routing

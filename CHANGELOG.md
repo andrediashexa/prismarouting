@@ -79,6 +79,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Removing BFD configuration failed `commit check`.**
+  ([#570](https://github.com/andrediashexa/hexarouting/issues/570)) On
+  10.40.200.166 (0.150.8) `no bfd`, and `no peer ...` inside `bfd`, answered
+  "routing validation failed". `no <statement>` deleted the one line it named,
+  and for a block that is only its header: the block's body was left behind
+  at the wrong level, and vtysh refused the file (`% Unknown command:  peer
+  ...`). A peer with a `profile` in it failed the other way, silently: the
+  orphaned `profile` line read as a new profile block and committed. A `no`
+  now takes a block's body and its own `exit` with it. The `no ip route
+  0.0.0.0/0 ...` the refusal listed under "Lines To Add" was never going to
+  be applied: it is frr-reload's diff against a file vtysh could not read,
+  which it treats as empty, and `--reload` stops on the same failure - a
+  static route's removal is listed there in its `no` form by frr-reload's
+  own convention. Also: `no neighbor X bfd` takes both lines FRR reads back
+  for a neighbour with a profile (`bfd` and `bfd profile P`), so the second
+  no longer puts BFD back; and the empty `bfd` block frr-reload leaves when it
+  removes the last session (it sends `no bfd`, then re-enters `bfd` to remove
+  each peer) is taken away after the commit. `lab/bfd.sh` removes each piece
+  in turn - the neighbour's `bfd`, the static route's, a peer, a profile, the
+  whole block - each committing, with the static default route still in FRR.
+
 ## 0.150.8 - BFD, phase 1
 
 ### Added

@@ -531,6 +531,51 @@ def block_paths(routing: list) -> list:
     return out
 
 
+def statement_extent(routing: list, at: int) -> int:
+    """
+    One past the last line `routing[at]` owns (#570): itself when it is a
+    statement, and when it opens a block, its body and the closer that ends
+    it.
+
+    `no <header>` used to delete the header line alone. Measured on
+    10.40.200.166 (0.150.8): `no bfd` left ` peer 10.40.200.1 interface
+    enp6s18` and its ` exit` at the top of the routing half, vtysh refused
+    the file (`% Unknown command:  peer ...`), and `commit check` failed with
+    frr-reload's diff of a file it had read as empty. `no peer X` inside
+    `bfd` left the session's own lines behind the same way; with a `profile`
+    in them, the orphan was read as a NEW profile block and passed.
+
+    The body is read by block_paths, in both shapes it handles: the lines
+    whose path runs through this header. The closer is the first FRR block
+    closer after them - this block's own `exit`, never the enclosing one's,
+    which comes after a closer of this block's.
+    """
+    paths = block_paths(routing)
+    header = routing[at].strip()
+    if not opens_frr_block(header) or paths[at] is None:
+        return at + 1
+    depth = len(paths[at])
+    end, nested = at + 1, 0
+    j = at + 1
+    while j < len(routing):
+        p, s = paths[j], routing[j].strip()
+        if p is None:
+            if s in FRR_BLOCK_CLOSERS:
+                if not nested:
+                    return j + 1      # this block's own closer
+                nested -= 1           # a sub-block's - a profile in `bfd`
+            j += 1                    # a `!` inside the block
+            continue
+        if len(p) > depth and p[depth] == header:
+            if opens_frr_block(s) and not bfd_uses_profile(p[-1], s):
+                nested += 1
+            end = j + 1
+            j += 1
+            continue
+        break
+    return end
+
+
 def block_of(routing: list, stmt: str) -> list:
     """
     The block path `routing` holds `stmt` in, outermost first.

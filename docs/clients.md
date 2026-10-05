@@ -27,6 +27,17 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.9 - BFD configuration can be removed
+
+* **Contract:** unchanged (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).
+* **Removing BFD commits (#570):** on 0.150.8 a `no bfd`, or a `no peer`
+  inside `bfd`, failed `commit check` with "routing validation failed".
+  A `no` of any block now removes its body with it, so removing a peer, a
+  profile, a neighbour's `bfd`, a static route's `bfd` or the whole block
+  commits, through Edit as at the VTY. The BFD config added on .166 to find
+  this was removed; it has none.
+* **Lab box:** .166 is on 0.150.8.
+
 ## 0.150.8 - BFD, phase 1
 
 * **Contract:** unchanged (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).

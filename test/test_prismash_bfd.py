@@ -253,5 +253,81 @@ check("no BFD session" in out.getvalue() or "not an address"
       in out.getvalue(),
       "an address written another way is read as an address, or refused")
 
+print("\n=== `no` at the prompt takes a block's body with it (#570) ===")
+# 10.40.200.166, 0.150.8: `no bfd` deleted the header alone and FRR refused
+# the orphaned ` peer ...`. Driven through Shell.feed, the path the operator
+# types. FRR's dry run is stubbed to accept: the subject is what the
+# candidate holds afterwards.
+READ_BACK = ["ip route 0.0.0.0/0 10.40.200.1", "!", "router bgp 65000",
+             " neighbor 10.0.0.2 remote-as 65001", " neighbor 10.0.0.2 bfd",
+             " neighbor 10.0.0.2 bfd profile lab", "exit", "!", "bfd",
+             " profile lab", "  receive-interval 100", " exit", " !",
+             " peer 10.40.200.1 interface enp6s18", " exit", " !", "exit", "!"]
+
+
+def candidate_after(*typed):
+    sh = prismash.Shell()
+    sh.caps = {prismash.CAP_ALL, prismash.CAP_CGNAT}
+    sh.frr = type("F", (prismash.Frr,), {
+        "available": lambda self: True,
+        "dryrun": lambda self, ctx, line: (prismash.Frr.DRYRUN_ACCEPTED, "")})()
+    sh.mode = "config"
+    sh.candidate = prismash.Config()
+    sh.candidate.routing = list(READ_BACK)
+    with contextlib.redirect_stdout(io.StringIO()):
+        for t in typed:
+            sh.feed(t)
+    return [l for l in sh.candidate.routing]
+
+
+got = candidate_after("no bfd")
+check(not [l for l in got if l.strip() in ("bfd", "profile lab",
+                                            "receive-interval 100")
+           or "peer 10.40.200.1" in l],
+      f"`no bfd` takes the block, its profile and its peer: {got!r}")
+check("ip route 0.0.0.0/0 10.40.200.1" in got
+      and " neighbor 10.0.0.2 remote-as 65001" in got,
+      "and leaves the default route and BGP where they were")
+check(got.count("exit") == 1,
+      f"and only its own exit, not BGP's: {got!r}")
+got = candidate_after("bfd", "no peer 10.40.200.1 interface enp6s18", "exit")
+check(not any("peer 10.40.200.1" in l for l in got)
+      and " profile lab" in got and "bfd" in got,
+      f"`no peer` inside bfd takes the session and leaves the profile: "
+      f"{got!r}")
+# Mutation shown red: the second pass over `neighbor X bfd` left out - the
+# `bfd profile lab` line FRR reads back put BFD back on the neighbour.
+got = candidate_after("router bgp 65000", "no neighbor 10.0.0.2 bfd", "exit")
+check(not any(l.split()[:3] == ["neighbor", "10.0.0.2", "bfd"] for l in got),
+      f"`no neighbor X bfd` takes both of FRR's lines for it: {got!r}")
+check(" neighbor 10.0.0.2 remote-as 65001" in got,
+      "and the neighbour itself stays")
+
+print("\n=== the empty bfd block frr-reload leaves behind (#570) ===")
+
+
+class Leftover(prismash.Frr):
+    def __init__(self, running):
+        self.run_lines, self.sent = running, []
+
+    def running(self):
+        return self.run_lines
+
+    def _exec(self, args):
+        self.sent.append(args)
+        return 0, ""
+
+
+f = Leftover(["ip route 0.0.0.0/0 10.0.0.9", "!", "bfd", "exit", "!"])
+f.drop_empty_bfd(["ip route 0.0.0.0/0 10.0.0.9"])
+check(f.sent == [["-c", "configure terminal", "-c", "no bfd"]],
+      f"an empty block nobody handed over is taken away: {f.sent!r}")
+f = Leftover(["bfd", " peer 10.0.0.2", " exit", "exit"])
+f.drop_empty_bfd(["ip route 0.0.0.0/0 10.0.0.9"])
+check(f.sent == [], "a block with a session in it is not touched")
+f = Leftover(["bfd", "exit"])
+f.drop_empty_bfd(["bfd", "exit"])
+check(f.sent == [], "nor one the configuration handed over has")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

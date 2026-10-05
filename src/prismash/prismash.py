@@ -52,6 +52,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     ROUTING_HEADER,
                     as_hierarchy, group_static,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
+                    statement_extent,
                     is_static_route, static_route, static_route_key,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     _is_bundle, new_bundle, bundle_statement,
@@ -8241,6 +8242,29 @@ class Frr:
                 if l.strip() and not l.startswith(skip)
                 and l.strip() != "agentx" and not l.startswith("hostname ")]
 
+    def drop_empty_bfd(self, handed):
+        """
+        Take away the empty `bfd` block frr-reload leaves behind (#570).
+
+        Measured on FRR 10.7.1: to remove a `bfd` block holding a session,
+        frr-reload sends `no bfd` and THEN `bfd` / `no peer ...` / `exit` -
+        and the second half opens the block again. FRR is left showing `bfd`
+        with nothing in it: no session runs, but `show running-config` keeps
+        a block the operator removed. `no bfd` typed at vtysh leaves nothing,
+        so it is sent once more, only when the configuration handed over has
+        no `bfd` and FRR still shows an empty one.
+        """
+        if any(l.strip() == BFD_BLOCK_WORD for l in handed):
+            return
+        run = self.running()
+        at = [i for i, l in enumerate(run) if l.strip() == BFD_BLOCK_WORD]
+        if not at:
+            return
+        body = [l.strip() for l in run[at[0] + 1:] if l.strip() != "!"]
+        if body[:1] != ["exit"]:
+            return              # not empty: a block this box did not hand over
+        self._exec(["-c", "configure terminal", "-c", "no bfd"])
+
     def hostname_lines(self):
         """
         Every `hostname` line FRR shows (#516), in its order; [] when it
@@ -13155,6 +13179,7 @@ class Shell:
                 for line in self.frr.diagnostics(out):
                     if not compiled_map_warning(line, handed):
                         print(f"  frr: {line}")
+                self.frr.drop_empty_bfd(handed)
             elif self.real_routing(target.routing) or target.pref64:
                 # The same refusal as the check half above, and the same
                 # object: FRR_SILENT_REFUSED is where it is written.
@@ -16833,7 +16858,21 @@ class Shell:
             at = next((i for i in hits if paths[i] == here),
                       hits[0] if hits else None)
             if at is not None:
-                del self.candidate.routing[at]
+                block = paths[at]
+                # A block goes with its body and its `exit` (#570): the
+                # header alone left the body orphaned, and FRR refused it.
+                del self.candidate.routing[
+                    at:statement_extent(self.candidate.routing, at)]
+                # `neighbor X bfd` is read back from FRR as two lines when a
+                # profile is named - `neighbor X bfd` and `neighbor X bfd
+                # profile P` (FRR 10.7.1, measured) - so taking BFD off a
+                # neighbour takes both, or the second puts it back (#570).
+                nw = negated.split()
+                if len(nw) == 3 and nw[0] == "neighbor" and nw[2] == "bfd":
+                    paths = block_paths(self.candidate.routing)
+                    self.candidate.routing = [
+                        l for i, l in enumerate(self.candidate.routing)
+                        if not (l.split()[:3] == nw and paths[i] == block)]
                 return True
         # FRR IS ASKED BEFORE ANYTHING IS STAGED (#431). Until this, every
         # line that reached here went into the candidate unread - `banana

@@ -57,3 +57,6 @@ vpp-core*
 .coverage-gcov/
 .coverage-run.log
 /.lab-retention/
+
+# A worktree's own scratch space: logs and copies, never the product's (#570).
+.scratch/
