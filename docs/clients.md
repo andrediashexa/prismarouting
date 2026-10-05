@@ -27,6 +27,16 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.4 - a dataplane restart keeps its cards
+
+* **Contract:** unchanged (`prisma.proto` sha256 `e2c8775ff68e9937fe092aa4102792786d248e6ef1fefa1850ac9fa88a7041e2`).
+* **Nothing changes through the API** (#576): `RestartDataplane` (and
+  `system dataplane restart`) now brings back every card the dataplane held,
+  a hot card under its own name and the management card included, where on
+  0.151.1 a box with an AF_XDP hot card could come back without its
+  management card.
+* **Lab box:** .166 is on 0.151.3.
+
 ## 0.151.3 - a VLAN with a CGNAT side loads at boot; the VTY's words say bpa
 
 * **Contract:** unchanged (`prisma.proto` sha256 `e2c8775ff68e9937fe092aa4102792786d248e6ef1fefa1850ac9fa88a7041e2`).
