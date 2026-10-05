@@ -1168,6 +1168,95 @@ the load makes the device and FRR activates the VRF when it appears.
 host, loads the saved file, and asserts the devices, their members, red's BGP
 session and a packet across the leak come back.
 
+### Management in a VRF of its own
+
+```
+vrf mgmt table 100
+interface enp6s18
+  vrf 100
+  exit
+vrf mgmt
+ ip route 0.0.0.0/0 10.40.200.1
+exit-vrf
+router static
+ 0.0.0.0/0 next-hop 10.40.10.34
+ exit
+system
+ management
+  vrf mgmt
+  exit
+ exit
+```
+
+The management card goes into a VRF like any other interface (the device and
+the `vrf 100` above), and its default with it, as FRR's `vrf mgmt` block. The
+main table's default is then free for the subscribers': on 10.40.200.166 that
+is the SW-CORE on VLAN 802, while SSH, the API and SNMP stay on 10.40.200.166
+behind 10.40.200.1
+([#580](https://github.com/andrediashexa/hexarouting/issues/580)).
+
+`system` > `management` > `vrf mgmt` is what makes the box's own services
+follow it. Without it the card is in the VRF and the box is not reachable on
+it: `lab/mgmt-vrf.sh off` is that configuration, and it goes red on SSH, SNMP,
+the download and the route the box's own traffic takes.
+
+**What arrives.** sshd, the API's socket and snmpd listen in the main table.
+`net.ipv4.tcp_l3mdev_accept` and `udp_l3mdev_accept` set to 1 let them answer
+a connection that arrives on a VRF, and a TCP reply follows its connection's
+VRF. That was chosen over binding each service into the VRF: it needs no unit
+changed, and a service started before the commit answers after it. The cost is
+that a listener in the main table also answers on a tenant's VRF device, if a
+tenant VRF has a Linux end that can reach the box's address.
+
+**What leaves.** Two policy rules for what the box itself originates (`iif
+lo`), below the backplane's l3mdev rule (1000) and above main's (32766):
+
+| pref | rule | why |
+|---|---|---|
+| 31000 | `iif lo lookup main suppress_prefixlength 0` | the main table without its default: a peer or a collector the main table has a specific route to is still reached by it |
+| 31001 | `iif lo lookup 100` | everything else by management's default |
+
+The same pair for IPv6. Every socket the host, FRR and the containers that
+share its network open goes through them, so each service is decided by where
+its far end is, with no setting of its own:
+
+| Traffic | Follows | Note |
+|---|---|---|
+| DNS, NTP | management, unless main has a specific route to the server | the host's resolver and chrony |
+| `system upgrade`'s downloads | management, likewise | `download_to()`, asserted by the lab |
+| prisma-web and the API | management | prisma-web connects in; the reply follows the connection |
+| SNMP queries and traps | management, likewise | snmpd is the host's |
+| the log container's syslog and IPFIX over TCP | management, unless main has a specific route to the collector | `network_mode: host`; a collector on a subscriber-side network is reached by its route in main |
+| IPFIX over UDP sent by the dataplane | **the main table** | VPP builds those packets and sends them through its FIB 0; it never sees the host's rules. A collector behind management needs a specific route in main, or the TCP export |
+| RADIUS | as its socket: the host's, so management unless main has the route | |
+
+**When it is applied.** At commit, through the host's doors (the rules, then
+the sysctls, `doors.management_argvs()`; a rule already absent is not a
+failure, one that cannot be added fails the commit and is named). The name
+and the table go to `tune.env`, and `apply-tuning` puts the same set in at
+every boot, before the dataplane and before the VRF device exists - a rule
+names a table, not a device. `prismash --load` puts it in again, for a boot
+whose tuner did not run: the running configuration reads management back from
+`tune.env`, so the load's commit sees no change and would put nothing in.
+
+**The way back follows it.** At boot `--load` puts the management default into
+Linux before anything else (#332). With management in a VRF that route goes
+into the VRF's table; into main at metric 0 it would have beaten FRR's default
+(metric 20) and taken the subscribers to the management gateway.
+
+**A commit that breaks reachability.** Use `commit confirmed 10`. If the
+session that typed it cannot reach the box any more, nobody confirms, and the
+rollback takes the VRF move, the rules and the sysctls back out with it. A
+`commit check` refuses `vrf <name>` naming a VRF this configuration does not
+make, before anything reaches the host.
+
+**What the lab does not do.** `lab/mgmt-vrf.sh` proves SSH, the API, SNMP and
+the upgrade download over the VRF with the main default elsewhere, after the
+commit, after a commit that does not touch management, and after the rules and
+sysctls are flushed and `--load` runs. It does not restart the dataplane or
+the containers, and it does not reboot: the pairs are made by units the lab
+container does not run.
+
 ### What the lab asserts, and why the second one is the point
 
 ```

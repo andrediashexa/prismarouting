@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Management in a VRF of its own, so the main table can carry the
+  subscribers' default.**
+  ([#580](https://github.com/andrediashexa/hexarouting/issues/580)) Asked for
+  on 10.40.200.166, whose management (enp6s18, gateway 10.40.200.1) has to
+  stay reachable while the main default goes to the SW-CORE on VLAN 802. The
+  card goes into a VRF as any interface does (`vrf mgmt table 100`, its
+  `vrf 100`, the default in FRR's `vrf mgmt` block), and `system` >
+  `management` > `vrf mgmt` makes the box's own services follow it:
+  `tcp_l3mdev_accept`/`udp_l3mdev_accept` so sshd, the API and snmpd answer
+  on the VRF, and two `iif lo` rules so what the box originates - DNS, NTP,
+  `system upgrade`'s downloads, traps, the log container's export - leaves by
+  management's default unless the main table has a specific route to it. Put
+  on the host at commit, at every boot by the tuner, and again by `--load`;
+  the boot's way-back route goes into the VRF's table rather than main. IPFIX
+  over UDP is sent by the dataplane through its own table and does not follow
+  it. `commit check` refuses a VRF the configuration does not make;
+  `commit confirmed` takes it all back if the session is lost.
+  `lab/mgmt-vrf.sh` proves SSH, the API, SNMP and the download over the VRF
+  with the main default elsewhere, across commits and a `--load`; its off run
+  is red on 15. Not proven: a dataplane restart, a container restart, a
+  reboot. The API's `SystemConfig` gains `management` (11) and `GetSchema`
+  the `system management` mode: additive.
+
 ### Fixed
 
 ## 0.152.3 - BFD's traps

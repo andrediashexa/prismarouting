@@ -281,6 +281,38 @@ São recusados: nomes que começam por `prisma-` (a `prisma-bp` é da própria c
 
 As VRFs aparecem no `show running-config` lidas do Linux, e o arquivo salvo as cria de novo no boot, antes de o roteamento precisar delas.
 
+### A gerência numa VRF própria
+
+Para a tabela principal levar a default dos assinantes e a gerência continuar acessível pelo gateway dela, a placa de gerência vai para uma VRF como qualquer interface, com a default dela no bloco `vrf` do roteamento, e `system` > `management` > `vrf` diz à caixa que os serviços dela moram ali ([#580](https://github.com/andrediashexa/hexarouting/issues/580)):
+
+```
+vrf mgmt table 100
+interface enp6s18
+  vrf 100
+  exit
+vrf mgmt
+ ip route 0.0.0.0/0 10.40.200.1
+exit-vrf
+router static
+ 0.0.0.0/0 next-hop 10.40.10.34
+ exit
+system
+ management
+  vrf mgmt
+  exit
+ exit
+```
+
+Faça com `commit confirmed 10` e confirme com `commit` depois de entrar de novo pelo endereço de gerência. Se a sessão cair, ninguém confirma e o rollback desfaz tudo: a VRF, as regras e os ajustes do kernel.
+
+| O quê | Por onde vai |
+|-------|--------------|
+| SSH, API, SNMP e o prisma-web entrando | pela VRF de gerência; a resposta segue a conexão |
+| DNS, NTP, download do `system upgrade`, traps, export do container de log | pela default da gerência, a menos que a tabela principal tenha uma rota específica para o destino |
+| IPFIX por UDP gerado pelo dataplane | pela tabela principal: o VPP manda por conta própria. Coletor atrás da gerência precisa de rota específica na principal, ou do export por TCP |
+
+Sem `system` > `management` > `vrf mgmt` a placa fica na VRF e a caixa **não** responde por ela: os serviços escutam na tabela principal. Com ele, a caixa liga `tcp_l3mdev_accept`/`udp_l3mdev_accept` e duas regras para o tráfego dela mesma, no commit e em todo boot. `no vrf` dentro de `management` volta tudo para a tabela principal. `commit check` recusa uma VRF que a configuração não cria.
+
 ## Estado administrativo
 
 `shutdown` derruba os dois lados: a interface que encaminha pacotes e o par que o roteamento enxerga. Derrubar só um deixaria o protocolo de roteamento segurando adjacência sobre uma porta que parou de encaminhar — o vizinho acredita que o enlace está bom até o próprio temporizador dele expirar, e o tráfego some nesse meio-tempo.
