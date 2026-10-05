@@ -1,6 +1,7 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 10
-# (the floor: what the off run of 2026-10-04 measured red)
+# OFF-RED-AT-LEAST: 13
+# (the floor: what the off run of 2026-10-05 measured red - 13 with IS-IS and
+# OSPFv3 driven down too, #559 phase 3; 10 before them)
 # BFD (#559): a BGP session and a static route watched by BFD, configured
 # through the VTY, and a link failure that keeps the link up detected in the
 # time the configuration says.

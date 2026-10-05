@@ -580,7 +580,7 @@ printf '%s\n' "$T8" | sed 's/^/  /'
 # 7's IS-IS circuit and OSPF network on d0 with it, for the same reason
 # (measured on the second): nothing of d0 is left for a commit to refuse.
 vtysh -c "conf t" -c "bfd" -c "no peer 192.0.2.77 interface d0" -c exit \
-  -c exit -c "interface d0" -c "no ip router isis HEXA" -c exit \
+  -c "interface d0" -c "no ip router isis HEXA" -c exit \
   -c "router ospf" -c "no network 192.0.2.0/24 area 0" -c exit \
   2>&1 | sed 's/^/  frr: /'
 vtysh -c "show running-config" 2>/dev/null | grep -n "d0" | sed 's/^/  left on d0: /'

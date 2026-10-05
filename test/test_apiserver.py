@@ -1157,7 +1157,10 @@ _tsh.candidate.mtus["ens18"] = 9000
 _tr = A.typed_config(_tsh, {"source": "running", "areas": ["interfaces"]})
 _tc = A.typed_config(_tsh, {"source": "candidate"})
 check(_tr["interfaces"][0]["mtu"] == 1500 and _tc["interfaces"][0]["mtu"] == 9000
-      and sorted(_tc) == sorted(list(A.typedcfg.AREAS) + ["box_owned", "revision"])
+      # Area "bfd" answers two lists (#559 phase 3).
+      and sorted(_tc) == sorted([a for a in A.typedcfg.AREAS if a != "bfd"]
+                                + ["bfd_peers", "bfd_profiles", "box_owned",
+                                   "revision"])
       and sorted(_tr) == ["box_owned", "interfaces", "revision"]
       and _tr["revision"] == A.revision_of(_tsh.running_config().text())
       and _tc["revision"] == "",
