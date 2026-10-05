@@ -79,6 +79,8 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.0 - NAT64 in its own hierarchy, and mode bpa
+
 ### Breaking
 
 * **NAT64 moved to its own hierarchy: `nat` > `nat64` > `pool`.**
