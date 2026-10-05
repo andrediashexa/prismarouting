@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **BFD-STD-MIB answered nothing on a real box.**
+  ([#571](https://github.com/andrediashexa/hexarouting/issues/571)) snmpd runs
+  the agent as Debian-snmp, and 0.150.10 had it run vtysh as that user, in
+  `frrvty`. On a box running the containers FRR's `.vty` sockets are
+  `frr:frr` 0770 and `/etc/frr/vtysh.conf` `frr:frr` 0640: measured on
+  10.40.200.166, vtysh "failed to connect to any daemons" and every BFD
+  object was "No Such Instance" while `show bfd peers` listed the session.
+  The lab had passed because Debian's FRR makes those sockets `frrvty`'s.
+  The agent now reads bfdd through the host's doors - `show bfd peers json`
+  and `show bfd peers counters json`, the only vtysh commands that are doors,
+  which any account may ask - and Debian-snmp is taken back out of `frrvty`,
+  which where the sockets are `frrvty`'s is vtysh's whole CLI, configuration
+  included. `lab/snmp.sh` now gives FRR's sockets and vtysh.conf the box's
+  ownership, and its `no-door` run, a box without the doors daemon, is red on
+  the BFD checks.
+
 ## 0.150.10 - BFD's sessions typed and streamed, and in SNMP
 
 ### Added

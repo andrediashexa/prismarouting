@@ -1643,12 +1643,68 @@ BFD_STATE = {"shutdown": 1, "admindown": 1, "admin-down": 1, "down": 2,
              "init": 3, "up": 4}
 
 
-# not a unit: runs vtysh against the live bfdd; parse_bfd() is what reads its
-# answer, and is tested.
-def vtysh_json(cmd):
-    """bfdd's answer to `cmd` as text, or None when it did not answer."""
+#: THROUGH THE HOST'S DOOR (#571). snmpd runs this agent as Debian-snmp, and
+#: on a box running the containers bfdd's .vty socket is frr:frr 0770 and
+#: /etc/frr/vtysh.conf frr:frr 0640: measured on 10.40.200.166 (0.150.10),
+#: vtysh as that user "failed to connect to any daemons" and every BFD object
+#: answered "No Such Instance" while `show bfd peers` listed the session. The
+#: group that would let it in is vtysh's whole CLI, configuration included, so
+#: the agent asks the doors daemon (root, src/prismash/doors.py) these two
+#: questions instead - the only vtysh commands that are doors, and any uid may
+#: ask them. The argv is the doors' own BFD_PEERS_ARGV / BFD_COUNTERS_ARGV,
+#: held equal by test/test_doors.py.
+BFD_READS = {
+    "show bfd peers json": ("/usr/bin/vtysh", "-c", "show bfd peers json"),
+    "show bfd peers counters json":
+        ("/usr/bin/vtysh", "-c", "show bfd peers counters json"),
+}
+DOORS_SOCKET = os.environ.get("PRISMA_DOORS_SOCKET",
+                              "/run/prisma-routing/doors.sock")
+#: The doors daemon's refusal: an older daemon that does not know the shape.
+DOOR_REFUSED = 126
+
+
+def door_ask(argv, path=None, timeout=10):
+    """
+    (rc, out) from the host's doors daemon for `argv`, or None when nothing
+    answers at `path` - the protocol is doors.runner()'s: one JSON line out,
+    one back.
+    """
+    import json
+    import socket
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        p = subprocess.run([VTYSH, "-c", cmd], capture_output=True,
+        s.settimeout(timeout + 5)
+        s.connect(path or DOORS_SOCKET)
+        s.sendall(json.dumps({"argv": list(argv), "stdin": None,
+                              "timeout": timeout}).encode() + b"\n")
+        buf = b""
+        while not buf.endswith(b"\n") and len(buf) < (1 << 22):
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        r = json.loads(buf.decode())
+        return int(r["rc"]), str(r["out"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    finally:
+        s.close()
+
+
+def vtysh_json(cmd, ask=door_ask):
+    """
+    bfdd's answer to `cmd` (a key of BFD_READS) as text, or None when it did
+    not answer. Asked of the door first; run here only when no door answers
+    or the door is older than this question - which works as root, and is
+    what a box with no doors daemon always did.
+    """
+    argv = BFD_READS[cmd]
+    got = ask(argv)
+    if got is not None and got[0] != DOOR_REFUSED:
+        return got[1] if got[0] == 0 else None
+    try:
+        p = subprocess.run([VTYSH] + list(argv[1:]), capture_output=True,
                            text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -1661,10 +1717,16 @@ def parse_bfd(peers_text, counters_text):
     `id`; None when either is not the list bfdd prints.
     """
     import json
+    # raw_decode, not loads: through the door (#571) the answer is vtysh's
+    # stdout and stderr together, and a warning after the list is not a
+    # reason to serve nothing.
+    dec = json.JSONDecoder()
     try:
-        peers = json.loads(peers_text[peers_text.index("["):])
-        counters = json.loads(counters_text[counters_text.index("["):])
+        peers = dec.raw_decode(peers_text[peers_text.index("["):])[0]
+        counters = dec.raw_decode(counters_text[counters_text.index("["):])[0]
     except (ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(peers, list) or not isinstance(counters, list):
         return None
     by_id = {c.get("id"): c for c in counters if isinstance(c, dict)}
     return [dict(p, counters=by_id.get(p.get("id"), {}))

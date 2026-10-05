@@ -669,6 +669,36 @@ r = doors.answer(json.dumps({"argv": ["systemctl", "is-active", "--quiet",
                  execute=lambda a, st, t: (0, ""))
 check(r["rc"] == 126, f"a question about another unit is not one: {r}")
 
+# bfdd's two reads for the SNMP agent (#571): Debian-snmp's uid may ask them
+# (the uid-1000 loop above), and they are EXACTLY the argv the agent builds -
+# read off the agent's own BFD_READS, so a reworded command in either file is
+# a door that refuses the agent on a real box. Nothing else vtysh does is a
+# door, whoever asks: snmpd's way to bfdd must not be a way to configure FRR.
+import importlib.machinery as _im  # noqa: E402
+import importlib.util as _iu  # noqa: E402
+_ap = os.path.join(HERE, "..", "appliance", "prisma-routing-snmp-agent")
+_spec = _iu.spec_from_loader("snmp_agent_571", _im.SourceFileLoader(
+    "snmp_agent_571", _ap))
+_agent = _iu.module_from_spec(_spec)
+_spec.loader.exec_module(_agent)
+check(set(_agent.BFD_READS.values()) == {doors.BFD_PEERS_ARGV,
+                                         doors.BFD_COUNTERS_ARGV}
+      and all(a in doors.QUERIES for a in _agent.BFD_READS.values()),
+      "#571: the agent's two vtysh reads are the two BFD query doors, argv "
+      "for argv")
+for argv, why in (
+        ([doors.VTYSH_HOST, "-c", "configure terminal"], "configuration"),
+        ([doors.VTYSH_HOST, "-c", "show running-config"], "another show"),
+        ([doors.VTYSH_HOST, "-c", "show bfd peers json", "-c", "write"],
+         "a second command behind the allowed one"),
+        (["vtysh", "-c", "show bfd peers json"], "vtysh off its path"),
+        ([doors.VTYSH_HOST, "-c", "show bfd peers json "], "a trailing space")):
+    for uid in (1000, 0):
+        r = doors.answer(json.dumps({"argv": argv}), uid,
+                         execute=lambda a, st, t: (0, "ran"))
+        check(r["rc"] == 126, f"#571: vtysh with {why} is no door, uid {uid}: "
+              f"{r}")
+
 _ask = []
 _real_runner = doors.runner
 doors.runner = lambda path=doors.SOCKET: (

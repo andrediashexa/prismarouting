@@ -1,5 +1,13 @@
 #!/bin/sh
+# OFF-RED-AT-LEAST: 4
+# (the floor: what the no-door run measured red - the BFD-STD-MIB checks)
 # The SNMP agent, polled the way an NMS polls it.
+#
+#   sh tools/lab.sh snmp           -> LAB PASSED
+#   sh tools/lab.sh snmp no-door   -> LAB FAILED (#571: no doors daemon, so the
+#                                     agent, as Debian-snmp, reaches bfdd only
+#                                     itself - which the box's ownership of
+#                                     FRR's sockets refuses)
 #
 # The oracle is a real snmpget against a real snmpd, not the agent's own
 # output: an agent that answers its own protocol correctly and is never reached
@@ -12,6 +20,7 @@
 #     keeps reporting yesterday's numbers through an outage hides the outage;
 #     one that reports a gap shows it.
 set -u
+MODE=${1:-on}
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
 mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/prisma-routing /etc/snmp /var/lib/snmp
@@ -54,16 +63,33 @@ vppctl create bond mode lacp >/dev/null
 
 # BFD-STD-MIB (#559): bfdd, with one session nobody answers - a `peer` on a
 # dummy interface, so its state is down and stays down, which this lab knows.
-# Started before the commit below, which puts Debian-snmp in frrvty: a group
-# is read when snmpd starts.
 ip link add d0 type dummy 2>/dev/null; ip link set d0 up
 ip addr add 192.0.2.1/24 dev d0 2>/dev/null
 mkdir -p /var/run/frr /etc/frr
 for d in zebra mgmtd staticd bfdd; do printf 'hostname prisma-routing\n' > "/etc/frr/$d.conf"; done
+printf 'service integrated-vtysh-config\n' > /etc/frr/vtysh.conf
 chown -R frr:frr /var/run/frr /etc/frr
 start_frr bfdd
 vtysh -c "conf t" -c "bfd" -c "peer 192.0.2.77 interface d0" -c exit -c exit \
   2>&1 | sed 's/^/  frr: /'
+# FRR'S SOCKETS AS THE BOX HAS THEM (#571), measured on 10.40.200.166
+# (0.150.10, the containers): bfdd.vty srwxrwx--- frr:frr, /etc/frr/vtysh.conf
+# -rw-r----- frr:frr. Here Debian's FRR makes them frrvty's, and 0.150.10's
+# lab passed with Debian-snmp in frrvty while the box's MIB answered nothing.
+chgrp frr /var/run/frr/*.vty; chmod 0770 /var/run/frr/*.vty
+chmod 0640 /etc/frr/vtysh.conf
+# And snmpd's user in neither group: frrvty is what 0.150.10 granted, frr is
+# what would have made it work and is vtysh's whole CLI.
+gpasswd -d Debian-snmp frr >/dev/null 2>&1; gpasswd -d Debian-snmp frrvty >/dev/null 2>&1
+# THE HOST'S DOORS (#571): the agent reads bfdd through them, as on the box,
+# where prisma-routing-doors.service runs them as root. The no-door run is
+# a box without them - what the agent read before.
+if [ "$MODE" != no-door ]; then
+  python3 /src/src/prismash/doors.py --serve > /tmp/doors.log 2>&1 &
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S /run/prisma-routing/doors.sock ] && break; sleep 0.5
+  done
+fi
 
 echo "=========== 1. turn SNMP on from the VTY ==========="
 $HX -c "configure" \

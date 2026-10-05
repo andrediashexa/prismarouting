@@ -224,8 +224,25 @@ FIXED = {
 #: is a door of its own (api_run_argv), root's and prisma-operator's.
 UPGRADE_CHECK_ARGV = ("/usr/bin/prismash", "-c", "system upgrade")
 
+#: bfdd's sessions, READ, for the SNMP agent's BFD-STD-MIB (#571). snmpd runs
+#: the agent as Debian-snmp, and on a box running the containers FRR's .vty
+#: sockets are frr:frr 0770 and /etc/frr/vtysh.conf frr:frr 0640 - measured
+#: on 10.40.200.166 (0.150.10): `vtysh` as that user "failed to connect to
+#: any daemons", so every BFD object answered as absent. The other way in,
+#: membership of frr (or of frrvty, where the sockets are frrvty's), is
+#: vtysh's whole CLI, configuration included: snmpd able to rewrite routing.
+#: These two questions are what the agent reads, at vtysh's installed path,
+#: and nothing else vtysh can be asked is a door. The agent builds the same
+#: argv (appliance/prisma-routing-snmp-agent, BFD_READS); test_doors.py holds
+#: the two equal.
+VTYSH_HOST = "/usr/bin/vtysh"
+BFD_PEERS_ARGV = (VTYSH_HOST, "-c", "show bfd peers json")
+BFD_COUNTERS_ARGV = (VTYSH_HOST, "-c", "show bfd peers counters json")
+
 QUERIES = {
     UPGRADE_CHECK_ARGV: "ask which release is the newest",
+    BFD_PEERS_ARGV: "read bfdd's sessions",
+    BFD_COUNTERS_ARGV: "read bfdd's session counters",
     ("systemctl", "is-active", "--quiet", "prisma-routing-containers.service"):
         "ask which unit runs the dataplane",
     ("/usr/lib/prisma-routing/ssh-host-key-origin",):

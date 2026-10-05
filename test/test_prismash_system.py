@@ -884,6 +884,25 @@ with _tf.TemporaryDirectory() as _d:
           "SNMP off, or nobody to poll it: nothing to rewrite")
 system.SNMP_VERSION_FILE = _old
 
+print("--- SnmpDaemon.apply: snmpd's user in vpp, and taken out of frrvty (#571)")
+with _tf.TemporaryDirectory() as _d:
+    _groups = []
+
+    def _rec(argv, stdin=None, timeout=30):
+        # not a unit: records what apply() asks of the host
+        if argv[:1] == ["gpasswd"]:
+            _groups.append(list(argv))
+        return 0, ""
+    system.SnmpDaemon(runner=_rec, root=_d,
+                      conf=os.path.join(_d, "snmpd.conf")).apply(
+        {"enabled": "yes"}, ["p"], {})
+    # Mutation shown red: 0.150.10's `gpasswd -a Debian-snmp frrvty` back.
+    check(["gpasswd", "-a", system.SNMPD_USER, "vpp"] in _groups
+          and ["gpasswd", "-d", system.SNMPD_USER, "frrvty"] in _groups
+          and ["gpasswd", "-a", system.SNMPD_USER, "frrvty"] not in _groups,
+          f"snmpd's user joins vpp and leaves frrvty, which was vtysh's whole "
+          f"CLI and reached no bfdd on a box: {_groups}")
+
 print("--- SnmpDaemon._conf: the file, through the door, or unread (#525)")
 with _tf.TemporaryDirectory() as _d:
     _asked = []

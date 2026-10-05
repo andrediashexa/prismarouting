@@ -324,6 +324,7 @@ BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
 OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c:off policy-d:off policy-igp:off commit-readback:off heap-full:off hot-card:off control-plane-dies:kill-vpp detreserve:off dns:off drain-slope:no-drain ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
            in-place:off initial:off cgnat-workers:off lacp:off doors:off
            api-grpc:off ftp64:off pref64:off prune-images:off bfd:off
+           snmp:no-door
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent nat64:off oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off

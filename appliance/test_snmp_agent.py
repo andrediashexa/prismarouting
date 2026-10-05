@@ -1106,6 +1106,98 @@ check(agent._octets("192.0.2.77") == (1, bytes([192, 0, 2, 77]))
       "an address as InetAddressType and its octets; text that is not one, none")
 check(agent.Bfd().rows == [] and agent.Bfd().at == 0.0,
       "a fresh BFD reader holds nothing until it has read bfdd")
+# Through the door, vtysh's stderr rides behind the list (#571).
+check(agent.parse_bfd(BFD_PEERS + "\n% a warning\n", BFD_COUNTERS) is not None,
+      "#571: text after bfdd's list does not cost the table")
+
+print("\n=== bfdd read through the host's door, not as snmpd's user (#571) ===")
+# 10.40.200.166, 0.150.10: as Debian-snmp, vtysh "failed to connect to any
+# daemons" (bfdd.vty frr:frr 0770) and the MIB answered nothing. The agent
+# asks the doors daemon instead; a stand-in daemon on a real unix socket
+# answers here, so the protocol is exercised and not a stub of it.
+import json as _json, socket as _socket, threading as _threading  # noqa: E402
+_ddir = tempfile.mkdtemp()
+_dsock = os.path.join(_ddir, "doors.sock")
+_asked = []
+
+
+def _door_daemon(reply_for):
+    srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    srv.bind(_dsock)
+    srv.listen(4)
+
+    def loop():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = c.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+            req = _json.loads(buf.decode())
+            _asked.append(req["argv"])
+            c.sendall(_json.dumps(reply_for(req["argv"])).encode() + b"\n")
+            c.close()
+    _threading.Thread(target=loop, daemon=True).start()
+    return srv
+
+
+def _answers(argv):
+    if argv[-1] == "show bfd peers json":
+        return {"rc": 0, "out": BFD_PEERS}
+    if argv[-1] == "show bfd peers counters json":
+        return {"rc": 0, "out": BFD_COUNTERS}
+    return {"rc": 126, "out": "the host's door: not an operation"}
+
+
+_srv = _door_daemon(_answers)
+got = agent.door_ask(agent.BFD_READS["show bfd peers json"], path=_dsock)
+check(got == (0, BFD_PEERS) and _asked[-1] == ["/usr/bin/vtysh", "-c",
+                                               "show bfd peers json"],
+      "#571: the door is asked the exact argv, and its answer comes back")
+check(agent.door_ask(["/usr/bin/vtysh", "-c", "x"],
+                     path=os.path.join(_ddir, "nobody")) is None,
+      "#571: nothing listening is None, not an answer")
+# Mutation shown red: vtysh_json() running vtysh as itself again - the stand-in
+# vtysh below exits 1 as Debian-snmp's did, so only the door can answer.
+_vt = os.path.join(_ddir, "vtysh")
+with open(_vt, "w") as _f:
+    _f.write("#!/bin/sh\necho 'Exiting: failed to connect to any daemons.'\n"
+             "exit 1\n")
+os.chmod(_vt, 0o755)
+_saved_vtysh, agent.VTYSH = agent.VTYSH, _vt
+_saved_ask = agent.door_ask
+try:
+    ask = lambda argv: _saved_ask(argv, path=_dsock)  # noqa: E731
+    check(agent.vtysh_json("show bfd peers json", ask=ask) == BFD_PEERS
+          and agent.vtysh_json("show bfd peers counters json", ask=ask)
+          == BFD_COUNTERS,
+          "#571: the agent reads bfdd through the door when vtysh as itself "
+          "cannot")
+    # An older daemon refuses a shape it does not know (126): the agent then
+    # runs vtysh itself, as before - which is what root and a box with no
+    # doors daemon always did.
+    check(agent.vtysh_json("show bfd peers json",
+                           ask=lambda argv: (126, "refused")) is None,
+          "#571: a refusal falls back to vtysh here, and that failing is None")
+    _ok = os.path.join(_ddir, "vtysh-ok")
+    with open(_ok, "w") as _f:
+        _f.write("#!/bin/sh\necho '[]'\n")
+    os.chmod(_ok, 0o755)
+    agent.VTYSH = _ok
+    check(agent.vtysh_json("show bfd peers json", ask=lambda argv: None)
+          == "[]\n",
+          "#571: with no doors daemon at all, vtysh is run here")
+    check(agent.vtysh_json("show bfd peers json",
+                           ask=lambda argv: (1, "bfdd is not running")) is None,
+          "#571: the door's own failure is bfdd silent, not a fallback")
+finally:
+    agent.VTYSH = _saved_vtysh
+    _srv.close()
 order = [r[0] for r in sorted(agent.bfd_rows(sessions),
                               key=lambda r: [int(x) for x in r[0].split(".")])]
 check(len(order) == len(set(order)), "no OID served twice")
