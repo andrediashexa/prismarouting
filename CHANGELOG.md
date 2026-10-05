@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.4 - a dataplane restart keeps its cards
+
+### Fixed
+
 * **`system dataplane restart` with a hot card took the box dark.**
   ([#576](https://github.com/andrediashexa/hexarouting/issues/576)) On
   10.40.200.166 (0.151.1) the X520, attached through AF_XDP as `xdp-enp1s0`,
