@@ -596,6 +596,52 @@ said "tuning unchanged" \
   || bad "an unchanged tuning said nothing: $OUT"
 
 echo
+echo "=== PRISMA_ALLOW_UNSUPPORTED_SFP: ixgbe's option on the command line (#574) ==="
+# Measured on 10.40.200.166 (X520, 2026-10-05): ixgbe refused the card's SFP+
+# module at boot and the box came up with no X520. The option has to be on
+# the kernel command line, where modprobe reads it in the initramfs.
+SFPLINE='ixgbe.allow_unsupported_sfp=1'
+grubfile() { cat "$R/etc/default/grub.d/prisma-routing.cfg"; }
+mkbox
+run PRISMA_ALLOW_UNSUPPORTED_SFP=allow
+grubfile | grep -q "$SFPLINE" \
+  && ok "allow puts $SFPLINE on the command line" \
+  || bad "allow did not reach the GRUB file: $(grubfile)"
+case "$(order)" in
+  *update-grub*) ok "  and GRUB is regenerated, so the next boot has it" ;;
+  *) bad "the option was written and update-grub did not run: $(order)" ;;
+esac
+said "allowed on ixgbe cards from the next boot" \
+  && ok "  and the journal says when it takes effect" \
+  || bad "allow said nothing about the next boot: $OUT"
+grubfile | grep -q "isolcpus\|GRUB_CMDLINE_LINUX_DEFAULT=\"x\"" \
+  && ok "  and the tuner's own line is kept beside it" \
+  || bad "the tuner's line was lost: $(grubfile)"
+# The same box set back to refuse: the tuner rewrites its file whole, so the
+# line goes, the file differs and GRUB is regenerated without it.
+: > "$REC/order"
+run PRISMA_ALLOW_UNSUPPORTED_SFP=refuse
+grubfile | grep -q "$SFPLINE" \
+  && bad "refuse left the option on the command line: $(grubfile)" \
+  || ok "refuse takes the option off the command line"
+case "$(order)" in
+  *update-grub*) ok "  and GRUB is regenerated without it" ;;
+  *) bad "the option was removed and update-grub did not run: $(order)" ;;
+esac
+mkbox
+run PRISMA_ALLOW_UNSUPPORTED_SFP=yes
+said "REFUSED PRISMA_ALLOW_UNSUPPORTED_SFP, in tune.env" \
+  && said "It is allow or refuse" \
+  && said "refuse: ixgbe takes only the modules it lists" \
+  && ok "a value that is neither allow nor refuse is refused by name" \
+  || bad "PRISMA_ALLOW_UNSUPPORTED_SFP=yes was not refused. Output: $OUT"
+grubfile | grep -q "$SFPLINE" \
+  && bad "a refused value still put the option on: $(grubfile)" \
+  || ok "  and the box keeps ixgbe's default"
+[ "$RC" = 0 ] \
+  && ok "  and the typo costs the setting, not the tuning: rc 0" \
+  || bad "a typo in the setting failed the unit: rc $RC"
+echo
 echo "=== a box with no update-grub is told, rather than left disagreeing ==="
 #
 # THE LAST REFUSAL IN THIS SCRIPT AND THE ONLY ONE NOTHING RAN. Every case

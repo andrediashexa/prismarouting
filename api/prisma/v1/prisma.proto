@@ -741,6 +741,10 @@ message SystemConfig {
   // effect at the next boot.
   repeated KeyValue cpu = 8;
   repeated KeyValue memory = 9;
+  // system > hardware (#574): the card drivers' settings, statement by
+  // statement - today `unsupported-sfp allow`; absent is ixgbe's default,
+  // refuse. In effect from the next boot.
+  repeated KeyValue hardware = 10;
 }
 
 message UserConfig {

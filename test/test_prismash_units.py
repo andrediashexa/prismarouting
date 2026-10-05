@@ -2383,6 +2383,87 @@ driven(lambda: sh.do_config("no memory"))
 check(sh.candidate.cgnat_memory_gb == 0, "and 'no memory' takes it out")
 ok("the CGNAT's memory: stored, shown, refused when it is not a figure")
 
+print("\n=== system > hardware: unsupported SFP+ modules, stored, booted (#574) ===")
+check(_config.hardware_error("unsupported-sfp", "allow") is None
+      and _config.hardware_error("unsupported-sfp", "refuse") is None
+      and _config.hardware_error("unsupported-sfp", "yes").startswith("expected")
+      and "'unsupported-sfp'" in _config.hardware_error("x", "1"),
+      "hardware_error: allow and refuse, and nothing else")
+_tune = os.path.join(_root, "tune-hw", "tune.env")
+_saved_te = prismash.Shell.TUNE_ENV
+_saved_pc = prismash.Shell.PROC_CMDLINE
+try:
+    prismash.Shell.TUNE_ENV = _tune
+    os.makedirs(os.path.dirname(_tune), exist_ok=True)
+    with open(_tune, "w") as _f:
+        _f.write("PRISMA_CGNAT_MEMORY_GB=8\n")
+    sh = shell()
+    _real = lambda: prismash.Shell.running_config(sh)
+    sh.candidate = _real()
+    check(sh.candidate.hardware == {}, "nothing set, nothing read back")
+    for _l in ("system", "hardware", "unsupported-sfp allow"):
+        driven(lambda: sh.do_config(_l))
+    check(sh.candidate.hardware == {"unsupported-sfp": "allow"},
+          f"typed under system > hardware: {sh.candidate.hardware}")
+    rv, text = driven(lambda: sh.do_config("unsupported-sfp maybe"))
+    check("expected: unsupported-sfp <allow|refuse>" in text
+          and sh.candidate.hardware == {"unsupported-sfp": "allow"},
+          f"a third word is refused and changes nothing: {text!r}")
+    _calls = []
+    _run0 = sh.sys._run
+    sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh.apply_hardware(sh.candidate.hardware))
+    sh.sys._run = _run0
+    with open(_tune) as _f:
+        _got = _f.read()
+    check("PRISMA_ALLOW_UNSUPPORTED_SFP=allow\n" in _got
+          and "PRISMA_CGNAT_MEMORY_GB=8\n" in _got,
+          f"the key reaches tune.env, the rest stays: {_got!r}")
+    check(["systemctl", "restart", "prisma-routing-tune"] in _calls,
+          f"and the tuner is run, through its door: {_calls}")
+    check("in effect from the next reboot" in text and "allow" in text,
+          f"the commit says when it takes effect: {text!r}")
+    check(_real().hardware == {"unsupported-sfp": "allow"},
+          "read back into the running configuration")
+    check("system\n hardware\n  unsupported-sfp allow\n  exit"
+          in _real().text(), "which writes it in the system block")
+    _cl = os.path.join(_root, "tune-hw", "cmdline")
+    prismash.Shell.PROC_CMDLINE = _cl
+    with open(_cl, "w") as _f:
+        _f.write("BOOT_IMAGE=/vmlinuz ro quiet\n")
+    rv, text = driven(lambda: sh.show_system_hardware())
+    check("allowed on ixgbe cards" in text.split("this boot:")[0]
+          and "refused, ixgbe's default" in text.split("this boot:")[1]
+          and "differ until the box boots again" in text,
+          f"configured, not booted yet, and the gap said: {text!r}")
+    with open(_cl, "w") as _f:
+        _f.write("BOOT_IMAGE=/vmlinuz ro ixgbe.allow_unsupported_sfp=1\n")
+    rv, text = driven(lambda: sh.show_system_hardware())
+    check(text.count("allowed on ixgbe cards") == 2
+          and "differ" not in text,
+          f"booted with it: both rows agree: {text!r}")
+    prismash.Shell.PROC_CMDLINE = os.path.join(_root, "tune-hw", "none")
+    rv, text = driven(lambda: sh.show_system_hardware())
+    check("could not be read" in text, f"an unreadable cmdline is said: {text!r}")
+    # Back to the default: the key is written empty, which apply-tuning
+    # reads as refuse, and nothing is read back.
+    driven(lambda: sh.do_config("no unsupported-sfp"))
+    check(sh.candidate.hardware == {}, "'no unsupported-sfp' takes it out")
+    driven(lambda: sh.apply_hardware(sh.candidate.hardware))
+    with open(_tune) as _f:
+        _got = _f.read()
+    check("PRISMA_ALLOW_UNSUPPORTED_SFP=\n" in _got
+          and _real().hardware == {},
+          f"and the file says the default again: {_got!r}")
+    # A tune.env that says refuse by hand is the default, not a setting.
+    with open(_tune, "a") as _f:
+        _f.write("PRISMA_ALLOW_UNSUPPORTED_SFP=refuse\n")
+    check(_real().hardware == {}, "refuse in the file reads as the default")
+finally:
+    prismash.Shell.TUNE_ENV = _saved_te
+    prismash.Shell.PROC_CMDLINE = _saved_pc
+ok("system > hardware: stored, the tuner run, shown beside this boot")
+
 print("\n=== system > dataplane: the levels, the file and the old line (#457) ===")
 check(_config.nest_system("ens19") == ["system", " dataplane", "  interface ens19",
                                       "  exit", " exit"],
@@ -2398,7 +2479,7 @@ _n, _bad = _config.denest_system(list(enumerate(
 check([l for _, l in _n] == ["dataplane interface ens19"] and _bad == [],
       "the old top-level line is still read: a box replays its file at boot")
 _n, _bad = _config.denest_system(list(enumerate(["system", " dns", " exit"], 1)))
-check(_bad and "there is 'dataplane', 'cpu' and 'memory'" in _bad[0][2],
+check(_bad and "there is 'dataplane', 'cpu', 'memory' and 'hardware'" in _bad[0][2],
       f"anything else under system is said: {_bad}")
 _c = _config.Config.parse("system\n dataplane\n  interface ens19\n  exit\n exit\n")
 check(_c.dataplane_if == "ens19" and not _c.unknown
@@ -2413,7 +2494,7 @@ check("'dataplane' has moved under 'system'" in text
 check(sh.system_rewrite("system") == "" and sh.nat_ctx == ["system"],
       "system enters its level")
 rv, text = driven(lambda: sh.do_config("dns"))
-check("under 'system' there is 'dataplane', 'cpu' and 'memory'" in text,
+check("under 'system' there is 'dataplane', 'cpu', 'memory' and 'hardware'" in text,
       f"and only those three are under it (#466): {text!r}")
 check(sh.system_rewrite("dataplane") == ""
       and sh.nat_ctx == ["system", "dataplane"], "dataplane enters its level")

@@ -28,6 +28,7 @@ LIVEDIR=$ROOT/run/live
 : "${PRISMA_CONTROL_PLANE_MEMORY_GB:=}"
 : "${PRISMA_BUFFERS_PER_NUMA:=}"
 : "${PRISMA_CGNAT_WORKERS:=}"
+: "${PRISMA_ALLOW_UNSUPPORTED_SFP:=}"
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -105,6 +106,18 @@ case "$PRISMA_CGNAT_MEMORY_GB" in
     echo "  8, not 8G and not 8.5. Empty sizes it from PRISMA_SUBSCRIBERS." >&2
     say_using "the estimate from PRISMA_SUBSCRIBERS"
     PRISMA_CGNAT_MEMORY_GB= ;;
+esac
+
+# SFP+ MODULES IXGBE DOES NOT LIST (#574): `system` > `hardware` >
+# `unsupported-sfp allow`, written here by the VTY. allow or refuse - or empty,
+# which is refuse - and a typo costs the box the setting, never its tuning.
+case "$PRISMA_ALLOW_UNSUPPORTED_SFP" in
+  ""|allow|refuse) ;;
+  *)
+    say_refused PRISMA_ALLOW_UNSUPPORTED_SFP "$PRISMA_ALLOW_UNSUPPORTED_SFP"
+    echo "  It is allow or refuse - or empty, which is refuse." >&2
+    say_using "refuse: ixgbe takes only the modules it lists"
+    PRISMA_ALLOW_UNSUPPORTED_SFP= ;;
 esac
 
 # The governor is runtime state, not a kernel parameter: asking for it in
@@ -260,6 +273,22 @@ esac
 # component that knew why was throwing its reasoning away.
 report=$(prisma-routing-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
 printf '%s\n' "$report" | grep -E "^# |WARNING" >&2
+# THE OPTION ON THE KERNEL COMMAND LINE, AFTER THE TUNER (#574). ixgbe loads
+# from the initramfs, before this unit runs, and reads allow_unsupported_sfp
+# then; modprobe takes a module's options from the kernel command line
+# (modprobe.d(5)), the initramfs's modprobe included, so the line below is
+# all it needs and the initramfs is not rebuilt. Appended to the file the
+# tuner has just written, which it writes whole on every run: `refuse` leaves
+# the line out, the file differs, and update-grub below takes it off. A line
+# of its own because the tuner writes no command line on a machine with no
+# core to isolate, and this one must not depend on the cores.
+if [ "$PRISMA_ALLOW_UNSUPPORTED_SFP" = allow ]; then
+  {
+    echo "# system > hardware > unsupported-sfp allow (#574)"
+    echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT ixgbe.allow_unsupported_sfp=1"'
+  } >> "$GRUBFILE"
+  echo "unsupported SFP+ modules: allowed on ixgbe cards from the next boot" >&2
+fi
 printf 'kernel cmdline hugepages: %s\n' \
   "$(tr ' ' '\n' < "$PROCCMDLINE" | grep '^hugepages=' || echo '(none)')" >&2
 # THE CONTROL PLANE HELD OFF THE ISOLATED CPUS (#466), by cgroup and not

@@ -21,9 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 753 |
-| text | 1 |
-| n/a | 40 |
+| typed | 757 |
+| text | 2 |
+| n/a | 41 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -178,6 +178,7 @@ reachable in the phase their note names.
 | `show policy [<policy> | route <prefix>]` | typed | OperationalService.ListPolicies / GetPolicyCounters / TestPolicy | every account |  |
 | `show system cpu` | typed | OperationalService.GetSystem | every account | worker_load per worker; per-core figures are text (phase 7) |
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
+| `show system hardware` | text | OperationalService.Show | every account |  |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times |
 | `show logging` | typed | OperationalService.GetRoutingLogging | every account | FRR's logging per daemon |
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
@@ -482,6 +483,7 @@ Entered with `system`; `EditRequest.path` = `["system"]`; changed by: administra
 | `dataplane` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `memory` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `cpu` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `hardware` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: system memory
@@ -511,6 +513,17 @@ Entered with `system > cpu`; `EditRequest.path` = `["system","cpu"]`; changed by
 | `no workers` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `no control-plane` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `no main-thread` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `exit` | n/a | - | the session's |
+
+## Configuration: system hardware
+
+Entered with `system > hardware`; `EditRequest.path` = `["system","hardware"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `unsupported-sfp allow` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `unsupported-sfp refuse` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `no unsupported-sfp` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: system dataplane

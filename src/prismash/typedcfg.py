@@ -1352,6 +1352,7 @@ def system_typed(cfg):
         "cgnat_memory_gb": cfg.cgnat_memory_gb,
         "cpu": _kv(cfg.cpu),
         "memory": _kv(cfg.memory),
+        "hardware": _kv(getattr(cfg, "hardware", {})),
     }
 
 
@@ -2142,6 +2143,8 @@ def config_modes(P):
          P.TREE["memory"], adm, ["system", "memory"]),
         ("system cpu", "system > cpu", '["system","cpu"]', P.TREE["cpu"], adm,
          ["system", "cpu"]),
+        ("system hardware", "system > hardware", '["system","hardware"]',
+         P.TREE["hardware"], adm, ["system", "hardware"]),
         ("system dataplane", "system > dataplane", '["system","dataplane"]',
          P.TREE["dataplane"], adm, ["system", "dataplane"]),
         ("policy-options", "policy-options", '["policy-options"]',
@@ -2227,6 +2230,7 @@ READ_MODES = {"config": "system", "router static": "static",
               "router ospf6": "ospf6", "router isis": "isis",
               "system": "system", "system memory": "system",
               "system cpu": "system", "system dataplane": "system",
+              "system hardware": "system",
               "user": "users", "snmp-user": "snmp_users",
               "policy-options": "policy", "prefix-list": "policy",
               "policy-statement": "policy", "term": "policy",
