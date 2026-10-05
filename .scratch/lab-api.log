@@ -1,8 +1,0 @@
-building the plugin once, so no lab races another to do it... ok
-
-  api-grpc           pass
-  api-grpc+off       pass (166 check(s) red, floor 166)
-
-  pass=2  fail=0  notmeasured=0  novpp=0  ran=0
-  machine: 16 cpu(s)
-  load 1.50 at the start, 2.23 at the highest batch boundary
