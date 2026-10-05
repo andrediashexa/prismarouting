@@ -1,4 +1,4 @@
-# OFF-RED-AT-LEAST: 4
+# OFF-RED-AT-LEAST: 8
 # A card added to the running box forwards at once, through AF_XDP (#453).
 #
 #   [netns peer] 192.0.2.2 --- veth p20/ens20 --- [box: VPP running]
@@ -29,6 +29,7 @@ mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing
 }
 cd /src
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
+VPPPID=$!
 wait_vpp /tmp/vpp.log || exit 1
 use_binary_api
 mkdir -p /var/run/frr /etc/frr
@@ -83,6 +84,49 @@ COUNTERS=$(vppctl show interface ens20 2>&1)
 printf '%s\n' "$COUNTERS" | sed 's/^/  vpp: /'
 RXIP4=$(printf '%s\n' "$COUNTERS" | awk '$1 == "ip4" {print $2}')
 
+echo; echo "=========== system dataplane restart, the record lost (#576) ==========="
+# 10.40.200.166, 0.151.1: the hot card's linux_cp end held its name past the
+# stop, the record was gone, the tuner wrote `name xdp-enp1s0`, and the box
+# went dark. Here the stop is VPP itself going away, and the restart runs on
+# the real netdevs: R2's sys/class/net links each to the kernel's own (so a
+# TAP shows tun_flags and a deleted one dangles), and xdp-ens20 is given the
+# PCI parent a veth lacks. systemctl, the give-back and udev are stand-ins:
+# the units are not in this container, and they are not what failed.
+TAPWAS=$( [ -e /sys/class/net/ens20/tun_flags ] && echo tap || echo none )
+kill "$VPPPID" 2>/dev/null; wait "$VPPPID" 2>/dev/null
+STALE=$( [ -e /sys/class/net/ens20/tun_flags ] && echo "the dataplane's end outlived it" || echo "the dataplane's end went with it" )
+echo "  ens20 before the stop: $TAPWAS; after: $STALE"
+R2=/tmp/hot-root2
+rm -rf "$R2"; mkdir -p "$R2/sys/class/net" "$R2/sys/devices/pci0000:00/0000:00:14.0" \
+  "$R2/etc/vpp" "$R2/run/prisma-routing"
+for d in /sys/class/net/*; do
+  [ "${d##*/}" = xdp-ens20 ] && continue
+  ln -s "$d" "$R2/sys/class/net/${d##*/}"
+done
+mkdir -p "$R2/sys/class/net/xdp-ens20"
+ln -sfn "../../../devices/pci0000:00/0000:00:14.0" "$R2/sys/class/net/xdp-ens20/device"
+printf 'dpdk {\n}\n' > "$R2/etc/vpp/startup.conf"
+cat > /tmp/sysctl-stub <<EOF2
+#!/bin/sh
+case "\$*" in
+  "is-active --quiet prisma-routing-containers.service") exit 0 ;;
+  "is-active --quiet vpp.service") exit 1 ;;
+  "restart prisma-routing-tune.service") cp $R2/run/prisma-routing/restart-cards /tmp/seen-keep 2>/dev/null ;;
+esac
+exit 0
+EOF2
+chmod +x /tmp/sysctl-stub
+if [ "$MODE" = off ]; then
+  RESTART="(not run: MODE=off)"
+else
+  RESTART=$(PRISMA_ROOT=$R2 PRISMA_SYSTEMCTL=/tmp/sysctl-stub PRISMA_GIVE_BACK=true \
+            PRISMA_UDEVADM=true PRISMA_SLEEP=: PRISMA_LOAD_WAIT=0 \
+            sh /src/appliance/prisma-hot-card restart-dataplane 2>&1)
+fi
+printf '%s\n' "$RESTART" | sed 's/^/  /'
+AFTER=$(ip -d link show ens20 2>&1)
+SEEN=$(cat /tmp/seen-keep 2>/dev/null)
+
 echo; echo "=========== VERDICT ==========="
 expect_in "the script attached the card, and said how it moves to DPDK" \
   "system dataplane restart" "$HOT"
@@ -95,4 +139,8 @@ expect_in "  and show interface says it is on AF_XDP, and what moves it" \
   "forwarding through AF_XDP" "$SHOWIF"
 expect_in "the peer is answered" " 0% packet loss" "$PING"
 expect "  through the dataplane, not around it" test "${RXIP4:-0}" -ge 5
+expect_in "after a restart with no record, the card is ens20 again (#576)" \
+  "veth" "$AFTER"
+expect "  and no netdev is left called xdp-ens20" sh -c '! ip link show xdp-ens20 >/dev/null 2>&1'
+expect_in "  and the tuner is told the dataplane held it" "0000:00:14.0" "$SEEN"
 verdict
