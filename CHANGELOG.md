@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.5 - a card missing at boot no longer takes the configuration down
+
+### Fixed
+
 * **A card missing at boot took the whole configuration down.**
   ([#575](https://github.com/andrediashexa/hexarouting/issues/575)) On
   10.40.200.166 (0.151.1) the X520 failed its driver's probe after a reboot,
