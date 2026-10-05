@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.3 - a VLAN with a CGNAT side loads at boot; the VTY's words say bpa
+
+### Fixed
+
 * **A saved VLAN with a CGNAT side failed to load at boot.**
   ([#578](https://github.com/andrediashexa/hexarouting/issues/578)) On
   10.40.200.166 (0.151.2) `--load` failed at every try with "interface
