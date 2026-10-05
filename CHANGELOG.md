@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.1 - the screens say bpa too
+
+### Fixed
+
 * **The dataplane's screens still said `dynamic`.**
   ([#573](https://github.com/andrediashexa/hexarouting/issues/573)) 0.151.0
   renamed the mode `bpa` in the configuration, the refusals and the API, and
