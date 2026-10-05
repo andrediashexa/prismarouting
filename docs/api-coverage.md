@@ -347,7 +347,7 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 | `vrf <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `outside-vrf <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `mode deterministic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `mode dynamic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `mode bpa` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `exit` | n/a | - | the session's |
 | `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no subscriber-length` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
@@ -437,7 +437,7 @@ Entered with `nat > nat64 > pool <name>`; `EditRequest.path` = `["nat","nat64","
 | `vrf <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `outside-vrf <0-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `mode deterministic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `mode dynamic` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `mode bpa` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `exit` | n/a | - | the session's |
 | `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no subscriber-length` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |

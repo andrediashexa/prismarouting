@@ -734,7 +734,7 @@ with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
   pool dyn
    inside 100.64.4.0/22
    outside 200.150.0.20/30
-   mode dynamic
+   mode bpa
    max-blocks 2
    block-stride 3
    exit
@@ -819,6 +819,41 @@ check(sets.get("six", {}).get("tcp_mss") == 1400,
       f"and the NAT64 pool's clamp: {sets.get('six')}")
 check(len(n64) == 1 and n64[0]["block_reserve"] == 2 and n64[0]["vrf_id"] == 10,
       f"the NAT64 pool's reserve and VRF on its creation message: {n64}")
+
+# #573: A SAVED FILE WITH `mode dynamic` - every box saved before this
+# release that had a BPA pool; 10.95.200.198 is one. It loads, says it was
+# migrated, reaches the dataplane as the BPA pool it is, and the file is
+# written back saying `mode bpa`: the box comes up with its pools.
+api = FakeApi()
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("""nat
+ cgnat
+  pool subs
+   prefix-inside 100.64.0.0/22
+   prefix-outside 200.150.0.16/30
+   mode dynamic
+   max-blocks 2
+   exit
+  exit
+ exit
+""")
+    saved = fh.name
+_o573 = io.StringIO()
+with contextlib.redirect_stdout(_o573):
+    sh.load(saved)
+_after573 = open(saved).read()
+os.unlink(saved)
+_add573 = [a for m, a in api.calls if m == "bpa_pool_add_del"]
+check(any(a.get("name") == "subs" and "DYNAMIC" in str(a.get("mode"))
+          for a in _add573),
+      f"#573: a saved BPA pool reaches the dataplane after the upgrade: "
+      f"{_add573}")
+check("'mode dynamic' is now 'mode bpa'" in _o573.getvalue(),
+      f"#573: and the migration is said: {_o573.getvalue()[-200:]!r}")
+check("   mode bpa\n" in _after573 and "mode dynamic" not in _after573,
+      f"#573: and the file is written back with the new word: {_after573}")
 
 # #572: the same NAT64 pool in the old form - under `cgnat`, as 0.150.0-
 # 0.150.11 wrote it - is a file the box refuses at load, naming the new

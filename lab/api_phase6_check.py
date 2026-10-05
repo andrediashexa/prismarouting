@@ -96,7 +96,7 @@ def translation_dynamic():
                                                          port=b.first_port + 1), timeout=T)
     result("translation-dynamic",
            t.subscriber == "100.64.16.1" and t.pool == LONG and t.now_only
-           and t.source == pb.Translation.SOURCE_DYNAMIC,
+           and t.source == pb.Translation.SOURCE_BPA,
            f"{b.public_address}:{b.first_port + 1} -> {t.subscriber} "
            f"{pb.Translation.Source.Name(t.source)}")
 

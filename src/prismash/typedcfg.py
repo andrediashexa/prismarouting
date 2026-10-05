@@ -105,7 +105,8 @@ def pool_typed(pool):
         "port_first": _int(lo),
         "port_last": _int(hi),
         "policy": pool.policy,
-        "mode": pool.mode,
+        # #573: the statement's word, `bpa` for on demand.
+        "mode": pool.mode_word,
         # "" is every VRF, which is not VRF 0: None says it.
         "vrf": None if pool.vrf == "" else _int(pool.vrf),
         "outside_vrf": None if pool.outside_vrf == "" else _int(pool.outside_vrf),

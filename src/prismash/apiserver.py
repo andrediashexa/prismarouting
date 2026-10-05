@@ -510,7 +510,8 @@ def pools_of(sh):
     for name in sorted(cfg.pools):
         p = cfg.pools[name]
         d = dp.get(name, {})
-        out.append({"name": name, "mode": p.mode, "policy": p.policy,
+        out.append({"name": name, "mode": getattr(p, "mode_word", p.mode),
+                    "policy": p.policy,
                     "block_size": int(p.block_size or 0),
                     "prefixes_inside": list(p.inside),
                     "prefixes_outside": list(p.outside),

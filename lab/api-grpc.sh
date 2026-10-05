@@ -251,7 +251,7 @@ vppctl set interface bpa out2in pg1 >/dev/null 2>&1
 # nothing on demand and so writes no line (the second run of this section
 # had one, the boot marker, and nothing to wait for).
 $HX -c configure -c nat -c cgnat -c "pool lg" -c "prefix-inside 100.64.8.0/22" \
-    -c "prefix-outside 200.150.0.32/30" -c "mode dynamic" -c top -c commit 2>&1 \
+    -c "prefix-outside 200.150.0.32/30" -c "mode bpa" -c top -c commit 2>&1 \
     | tail -1 | sed 's/^/  pool: /'
 $HX -c configure -c nat -c cgnat -c "logging syslog 192.168.209.2 port 601 enterprise 32473" \
     -c top -c commit 2>&1 | tail -1 | sed 's/^/  /'
@@ -472,7 +472,7 @@ echo "=========== #558, phase 6: the CGNAT's screens, typed ==========="
 # NAT64 pool (lab/nat64.sh's) with FTP64 on and a forward to an IPv6 host.
 $HX -c configure -c nat -c cgnat -c "pool residential-cgnat" \
     -c "prefix-inside 100.64.16.0/22" -c "prefix-outside 200.150.0.40/30" \
-    -c "mode dynamic" -c "alg ftp on" -c "alg rtsp off" \
+    -c "mode bpa" -c "alg ftp on" -c "alg rtsp off" \
     -c "forward tcp 1600 to 100.64.16.5 80" -c exit \
     -c exit -c nat64 \
     -c "pool v6" -c "prefix-inside 2001:db8:1200::/48" -c "subscriber-length 56" \

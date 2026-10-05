@@ -75,6 +75,39 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Breaking
+
+* **NAT64 moved to its own hierarchy: `nat` > `nat64` > `pool`.**
+  ([#572](https://github.com/andrediashexa/hexarouting/issues/572)) The
+  maintainer's decision of 2026-10-05: a NAT64 pool (#485) is written under
+  `nat64`, beside `cgnat`, and no longer inside it. **The old form is
+  refused**, at `commit check` and when a saved file is loaded, naming the
+  new one - there is no automatic move, so a box with a NAT64 pool under
+  `cgnat` MUST have it rewritten before the upgrade. `nat64` holds pools
+  and nothing else: the interfaces, the logging, the timeouts and the memory
+  stay under `cgnat`, shared by both. One pool name across both levels: the
+  dataplane holds one pool table keyed by name. NAT64 has its own views,
+  `show nat64 pool`, `show nat64 subscriber <IPv6>`, `show nat64 translation`
+  and `clear nat64 subscriber <IPv6>`, which refuse what is not NAT64 and
+  name the `show cgnat` spelling that answers it; `show cgnat` stays the
+  whole dataplane, NAT44 and NAT64, as the session table and the public
+  space are one. The API: `PoolConfig` loses `subscriber_length` and
+  `nat64_prefix` (numbers 25 and 26 reserved, never reused); NAT64 pools are
+  `Nat64PoolConfig`, in `TypedConfig.nat64_pools`, `SetConfigRequest.nat64_pool`
+  and DeleteConfig's area `nat64`; `GetConfig` area `pools` holds the CGNAT
+  pools only; `ListPools` says each pool's `level`.
+* **`mode dynamic` is `mode bpa`.**
+  ([#573](https://github.com/andrediashexa/hexarouting/issues/573)) BPA, bulk
+  port allocation, is the on-demand mode, and its statement is `mode bpa`,
+  under `cgnat` and `nat64` alike. `mode dynamic` typed at the prompt, or
+  sent through Edit or SetConfig, is refused naming `mode bpa`. A saved file
+  that says `mode dynamic` is migrated when it is loaded - read as the BPA
+  pool it is, said, and written back with the new word once applied - so a
+  box upgraded to this release comes up with its pools. The API:
+  `PoolConfig.mode` is `"deterministic"` or `"bpa"`; the translation source
+  `SOURCE_DYNAMIC` is `SOURCE_BPA`, the same number. The dataplane's own
+  word, the log records and `show bpa` are unchanged.
+
 ### Added
 
 ### Fixed

@@ -249,7 +249,7 @@ Numa caixa com vinte pools e política de BGP, `show running-config` é várias 
 
 ```
 show running-config | section interface         o bloco de cada interface
-show running-config | include mode dynamic      só as linhas com esse texto
+show running-config | include mode bpa      só as linhas com esse texto
 show running-config | exclude description       tudo, menos as linhas com esse texto
 show running-config | include timeout | count   quantas linhas casam
 show cgnat top | first 10                       as dez primeiras linhas

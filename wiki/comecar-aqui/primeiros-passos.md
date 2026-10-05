@@ -25,7 +25,7 @@ flowchart TD
 flowchart TD
     Q{"Tem endereço público para<br/>TODOS os assinantes ao mesmo tempo?"}
     Q -->|Sim| DET["mode deterministic<br/>zero log de alocação<br/>a prova é a configuração"]
-    Q -->|Não| DIN["mode dynamic<br/>sobreassinatura possível<br/>um registro IPFIX por bloco"]
+    Q -->|Não| DIN["mode bpa<br/>sobreassinatura possível<br/>um registro IPFIX por bloco"]
 ```
 
 Conta rápida para o determinístico: `assinantes × block-size ÷ 64512` = quantos endereços públicos você precisa. 200 mil assinantes com blocos de 512 dão cerca de 1.588 endereços — um `/21`.

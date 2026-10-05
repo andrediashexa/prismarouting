@@ -264,7 +264,7 @@ check(A.is_lcp_tap("tap4096") and not A.is_lcp_tap("pg0") and not A.is_lcp_tap("
 check(A.cfg_addresses(sh.cfg, "pg0") == ["100.64.3.254/22"] and A.cfg_addresses(sh.cfg, "x") == [],
       "an interface's configured addresses")
 P = A.pools_of(sh)
-check(P == [{"name": "nb", "mode": "dynamic", "policy": "interleaved", "block_size": 256,
+check(P == [{"name": "nb", "mode": "bpa", "policy": "interleaved", "block_size": 256,
              "prefixes_inside": ["100.64.0.0/22"], "prefixes_outside": ["200.150.0.16/30"],
              "capacity": 6, "guaranteed": 3, "level": "cgnat"}],
       f"a pool with the dataplane's capacity, and its level (#572): {P}")
@@ -1128,7 +1128,7 @@ _TXT = """nat
    prefix-outside 200.0.0.0/24
    block-size 256
    policy interleaved
-   mode dynamic
+   mode bpa
    exit
   logging syslog 10.0.0.2 port 601 enterprise 67033 facility 16 severity 6
   exit

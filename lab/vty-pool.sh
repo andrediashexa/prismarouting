@@ -33,7 +33,7 @@ $HX -c "configure" \
     -c "prefix-inside 100.64.0.0/22" \
     -c "prefix-outside 200.150.0.16/30" \
     -c "block-size 512" \
-    -c "mode dynamic" \
+    -c "mode bpa" \
     -c "max-blocks 3" \
     -c "filter address-dependent" \
     -c "timeout udp 600" \

@@ -178,7 +178,7 @@ VTY_SAY=$($HX -c "configure" \
     -c "block-size 512" \
     -c "ports 1024 65535" \
     -c "policy blocked" \
-    -c "mode dynamic" \
+    -c "mode bpa" \
     -c "max-blocks 2" \
     -c "block-stride $VTY_STRIDE" \
     -c "exit" \
@@ -202,7 +202,7 @@ VTY_QUIET=$($HX -c "configure" \
     -c "block-size 512" \
     -c "ports 1024 65535" \
     -c "policy blocked" \
-    -c "mode dynamic" \
+    -c "mode bpa" \
     -c "max-blocks 2" \
     -c "block-stride 2" \
     -c "exit" \

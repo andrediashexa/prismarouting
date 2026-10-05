@@ -2986,7 +2986,9 @@ CGNAT_POOL = {
                     "where it was", ARG_VRF_ID),
     "mode": ("how the block is assigned", {
         "deterministic": ("by formula, no allocation logging", None),
-        "dynamic": ("on demand, with allocation logging", None),
+        # #573: BPA, bulk port allocation, is the on-demand mode.
+        "bpa": ("on demand (bulk port allocation), with allocation logging",
+                None),
     }),
     "exit": ("leave the pool", None),
 }
@@ -17893,9 +17895,13 @@ class Shell:
                 if why:
                     raise ValueError(why)
             elif w[0] == "mode":
-                if w[1] not in ("deterministic", "dynamic"):
-                    raise ValueError("mode must be deterministic or dynamic")
-                p.mode = w[1]
+                # #573: `bpa` is the on-demand mode's word; the old one is
+                # refused at the prompt, naming the new.
+                if w[1] == "dynamic":
+                    raise ValueError("mode dynamic is now 'mode bpa' (#573)")
+                if w[1] not in Pool.MODE_WORDS:
+                    raise ValueError("mode must be deterministic or bpa")
+                p.mode = Pool.MODE_WORDS[w[1]]
             elif w[0] == "timeout":
                 if w[1] not in Pool.TIMEOUTS:
                     raise ValueError("timeout must be one of "
@@ -22900,6 +22906,22 @@ class Shell:
             print(f"  {n:>2}  {when}  {label}"
                   + (f"  {comment}" if comment else ""))
 
+    def write_migrated(self, path, cfg):
+        """
+        `path` written again from `cfg`, the configuration it was read as
+        (#573): the file a migration changed, with the same umask a save
+        uses. Said when it cannot be written - the box runs the new word
+        either way, and the next `save` writes it.
+        """
+        old_umask = os.umask(CONFIG_UMASK)
+        try:
+            with open(path, "w") as f:
+                f.write(cfg.text())
+        except OSError as e:
+            self.err(f"the migrated file could not be written: {e}")
+        finally:
+            os.umask(old_umask)
+
     def save_running(self):
         """
         Write the running configuration to disk, never world-readable.
@@ -23997,6 +24019,9 @@ class Shell:
         loop below, and Pool.stride_inert() decides which pools it means
         (#375).
         """
+        # A file read from `path` is one a migration may write back (#573);
+        # text handed in - a peer's, a test's - is not this box's file.
+        from_file = text is None
         if text is None:
             if not os.path.exists(path):
                 return
@@ -24201,7 +24226,21 @@ class Shell:
         if way_back:
             self.apply_management_path(way_back)
 
+        # #573: a file saved before `mode bpa` says `mode dynamic`. It is
+        # read as the BPA pool it is, said here, and - once applied - written
+        # back with the new word, so the box comes up with its pools and the
+        # file stops carrying a word the prompt refuses.
+        migrated = sorted(n for n, p in target.pools.items()
+                          if getattr(p, "_mode_was_dynamic", False))
+        for name in migrated:
+            print(f"note: pool {name}: 'mode dynamic' is now 'mode bpa'")
+        if migrated:
+            print_prose("the file is rewritten with it once applied (#573)",
+                        indent="    ")
+
         if self.apply(target):
+            if migrated and from_file:
+                self.write_migrated(path, target)
             # A window armed before the reboot is still pending: the file
             # outlives the boot, and so does the deadline (#212).
             pending = self.confirm.read()

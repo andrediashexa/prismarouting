@@ -9,7 +9,7 @@ O diferencial é o **CGNAT por bloco de portas**: em vez de registrar cada fluxo
 O Marco Civil (Lei 12.965/2014) exige um ano de guarda de registros de conexão. Log por fluxo em CGNAT gera volume impraticável. Esta caixa **exporta** os registros e não guarda nenhum — quem guarda pelo ano é o coletor. As duas formas, escolhidas por pool:
 
 * **Determinístico** (`mode deterministic`) — o endereço público e o bloco de portas são *calculados* a partir da definição do pool. Não existe evento de alocação, logo não há o que exportar. A prova entregue a uma autoridade é *"o algoritmo, mais a configuração vigente naquele instante"*, e por isso a caixa mantém uma trilha datada da configuração. A única exceção são os blocos de uma `reserve`, que a fórmula não produz e por isso são exportados um a um.
-* **BPA** (`mode dynamic`) — os blocos são alocados dinamicamente, sob demanda e em degraus, com um registro IPFIX por alocação e por liberação (RFC 8158), não por fluxo.
+* **BPA** (`mode bpa`) — os blocos são alocados dinamicamente, sob demanda e em degraus, com um registro IPFIX por alocação e por liberação (RFC 8158), não por fluxo.
 
 BPA é só o modo dinâmico: o determinístico não é um tipo de BPA. Os dois juntos são o *CGNAT por bloco de portas*.
 

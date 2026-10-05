@@ -26,7 +26,7 @@ flowchart LR
 flowchart TD
     Q{"Tem endereço público para<br/>TODOS os assinantes ao mesmo tempo?"}
     Q -->|Sim| DET["mode deterministic<br/>o bloco de cada um sai de uma fórmula<br/>a prova é a própria configuração"]
-    Q -->|Não| DIN["mode dynamic<br/>bloco entregue sob demanda<br/>exige coletor IPFIX: sem ele<br/>não há como dizer quem usava a porta"]
+    Q -->|Não| DIN["mode bpa<br/>bloco entregue sob demanda<br/>exige coletor IPFIX: sem ele<br/>não há como dizer quem usava a porta"]
 ```
 
 **2. Quantas portas cada assinante ganha** (`block-size`, potência de dois). 512 é um bom começo para residencial. Menos que isso enche com um console de jogo e uma TV ligados. Mais que isso gasta endereço público.

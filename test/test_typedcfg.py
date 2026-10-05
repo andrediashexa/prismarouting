@@ -40,7 +40,7 @@ TEXT = """nat
    block-size 256
    ports 1024 65535
    policy interleaved
-   mode dynamic
+   mode bpa
    vrf 7
    max-blocks 8
    timeout udp 120

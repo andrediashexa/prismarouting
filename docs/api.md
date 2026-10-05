@@ -392,6 +392,19 @@ permission, unknown, the re-map gate and expiry against a real server.
 
 ### The configuration as fields
 
+**NAT64 pools are their own area, `nat64` (#572).** Written under `nat` >
+`nat64`, they are read in `TypedConfig.nat64_pools`, set with
+`SetConfigRequest.nat64_pool` and removed with DeleteConfig's area `nat64`,
+each a `Nat64PoolConfig`: a `PoolConfig`'s fields under the same numbers,
+less the bypass a NAT64 pool never takes, plus `subscriber_length` and
+`nat64_prefix`. Area `pools` holds the CGNAT pools only, and `PoolConfig`'s
+numbers 25 and 26 are reserved. A pool name is one pool across both areas: a
+`PoolConfig` named for a NAT64 pool is refused (INVALID_ARGUMENT, "is a pool
+under 'nat64'"). `ListPools` says each pool's `level`, `"cgnat"` or
+`"nat64"`. A pool's `mode` is `"deterministic"` or `"bpa"` (#573); `"dynamic"`
+is refused, and `Translation.Source` `SOURCE_BPA` is the number
+`SOURCE_DYNAMIC` was.
+
 `GetConfig`, `SetConfig`, `DeleteConfig`, `GetSchema` and `ValidateLines`
 (#558, phase 2) cover what a UI edits most - each interface's block, each
 CGNAT pool, and the CGNAT log export's collectors - as fields, and every

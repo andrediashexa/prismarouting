@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 46
+# OFF-RED-AT-LEAST: 48
 # (the floor: what the off run of 2026-10-04 measured red, every check)
 # NAT64: an IPv6-only subscriber reaches an IPv4 server (#485), through a
 # deterministic pool (sections 1-12) and then a dynamic one whose blocks are
@@ -400,7 +400,7 @@ cfg_dyn() {  # <collector> <source> <the pool's own lines>
       -c "identity radius secret lab-s3cr3t port 1813" \
       -c "exit" -c "nat64" -c "pool v6" "$@" \
       -c "prefix-outside 203.0.113.3/32" \
-      -c "block-size 64" -c "ports 1024 $PORT_HI" -c "mode dynamic" \
+      -c "block-size 64" -c "ports 1024 $PORT_HI" -c "mode bpa" \
       -c "max-blocks 2" -c "exit" -c "commit remap"
 }
 

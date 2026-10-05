@@ -459,7 +459,7 @@ message PoolConfig {
   uint32 port_last = 6;
   // "interleaved" or "blocked".
   string policy = 7;
-  // "deterministic" or "dynamic".
+  // "deterministic" or "bpa" (#573).
   string mode = 8;
   // Unset: every VRF (no statement), which is not VRF 0.
   optional uint32 vrf = 9;
@@ -508,7 +508,7 @@ message Nat64PoolConfig {
   uint32 port_first = 5;
   uint32 port_last = 6;
   string policy = 7;
-  // "deterministic" or "dynamic".
+  // "deterministic" or "bpa" (#573).
   string mode = 8;
   optional uint32 vrf = 9;
   optional uint32 outside_vrf = 10;
@@ -1512,7 +1512,8 @@ message Translation {
     SOURCE_RESERVE = 2;
     // A dynamic pool's block: the holder NOW only; for a past instant, the
     // RFC 8158 log says who held it.
-    SOURCE_DYNAMIC = 3;
+    // BREAKING (#573): SOURCE_DYNAMIC's name; the number is the same.
+    SOURCE_BPA = 3;
     // The port is outside the pool's usable range: nothing was ever
     // translated there.
     SOURCE_OUTSIDE_RANGE = 4;
@@ -1529,7 +1530,7 @@ message Translation {
   Source source = 6;
   // True on a NAT64 pool.
   bool nat64 = 7;
-  // True when the answer is about now only (SOURCE_RESERVE, SOURCE_DYNAMIC).
+  // True when the answer is about now only (SOURCE_RESERVE, SOURCE_BPA).
   bool now_only = 8;
   // `show cgnat translation <public> <port>`, verbatim.
   string text = 9;
@@ -2359,7 +2360,7 @@ message ListPoolsRequest {}
 
 message Pool {
   string name = 1;
-  // "dynamic" or "deterministic".
+  // "bpa" or "deterministic" (#573).
   string mode = 2;
   // "interleaved" or "blocked".
   string policy = 3;

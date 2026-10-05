@@ -2652,5 +2652,21 @@ check((_v4at64.nat64_fits() or ("",))[0].endswith("an IPv4 inside is not NAT64")
       f"#572: an IPv4 inside under nat64 is refused: {_v4at64.nat64_fits()}")
 
 
+# #573: `mode bpa` is the statement; the model's value stays the dataplane's.
+print("\n=== #573: mode bpa ===")
+_p573 = config.Pool("p")
+check(config.Config._pool_line(_p573, "mode bpa") is None
+      and _p573.mode == "dynamic" and " mode bpa" in _p573.lines(),
+      f"#573: mode bpa is read as the dataplane's dynamic and written as bpa")
+_q573 = config.Pool("q")
+check(config.Config._pool_line(_q573, "mode dynamic") is None
+      and _q573.mode == "dynamic" and getattr(_q573, "_mode_was_dynamic"),
+      "#573: a saved mode dynamic is read, and remembered for the migration")
+check("expected deterministic or bpa"
+      in (config.Config._pool_line(config.Pool("r"), "mode often") or ""),
+      "#573: and a word that is neither is refused, naming the two")
+check(config.Pool("s").mode_word == "deterministic",
+      "#573: deterministic is its own word")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

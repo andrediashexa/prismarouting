@@ -1385,7 +1385,7 @@ class Pool:
         if self.ports:
             out.append(f" ports {self.ports}")
         out.append(f" policy {self.policy}")
-        out.append(f" mode {self.mode}")
+        out.append(f" mode {self.mode_word}")
         # Deliberately not behind `in_place`. A reserve reduces capacity,
         # which is the divisor under the blocked policy and the ceiling under
         # every policy - so changing it re-maps subscribers and the pool has
@@ -1566,6 +1566,20 @@ class Pool:
         return any(":" in p for p in self.inside)
 
     NAT64_WKP = "64:ff9b::/96"
+
+    #: The statement's words for the two modes (#573, the maintainer's
+    #: decision of 2026-10-05): BPA, bulk port allocation, is the on-demand
+    #: mode, and its word is `bpa`. The model keeps the dataplane's value,
+    #: "dynamic" - BPA_API_MODE_DYNAMIC and `show bpa config`'s word - so the
+    #: plugin and the log are not touched by a rename of a VTY word.
+    MODE_WORDS = {"deterministic": "deterministic", "bpa": "dynamic"}
+
+    # not a unit: a property is read and never called, so no test can name
+    # it for the reader; test_prismash_config.py reads it all the same
+    @property
+    def mode_word(self) -> str:
+        """The mode as the statement writes it: `bpa` for on demand (#573)."""
+        return "bpa" if self.mode == "dynamic" else self.mode
 
     # not a unit: a property is read and never called, so no test can name
     # it for the reader; test_prismash_config.py reads it all the same
@@ -4467,9 +4481,19 @@ class Config:
             else:
                 pool.outside_vrf = w[1]
         elif w[0] == "mode" and len(w) > 1:
-            if w[1] not in ("deterministic", "dynamic"):
-                return f"mode '{w[1]}': expected deterministic or dynamic"
-            pool.mode = w[1]
+            if w[1] in Pool.MODE_WORDS:
+                pool.mode = Pool.MODE_WORDS[w[1]]
+            elif w[1] == "dynamic":
+                # The word of every file saved before #573, and the one the
+                # dataplane's own `show bpa config` still prints. Read, and
+                # remembered, so that a FILE that says it is migrated - said
+                # and saved by Shell.load - rather than refused: 10.95.200.198
+                # carries one, and a box upgraded to this release must come
+                # up with its pools. The prompt refuses the word (Shell).
+                pool.mode = "dynamic"
+                pool._mode_was_dynamic = True
+            else:
+                return f"mode '{w[1]}': expected deterministic or bpa"
         elif w[0] == "timeout" and len(w) > 2:
             if w[1] not in Pool.TIMEOUTS:
                 return (f"timeout '{w[1]}': expected one of "

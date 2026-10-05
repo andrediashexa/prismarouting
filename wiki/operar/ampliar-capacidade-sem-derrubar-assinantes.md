@@ -20,7 +20,7 @@ O mapeamento é `índice do assinante → (endereço público, bloco de portas)`
 
 
 :::info
-**Em pool dinâmico não existe a recusa desta página.** A contagem de quem se move só faz sentido onde o bloco é uma fórmula. Num pool `mode dynamic`, mudar prefixo, tamanho de bloco, faixa de portas, política, VRF ou modo reconstrói o pool do mesmo jeito — toda sessão dele termina no instante do `commit` —, mas o `commit` passa sem pedir `commit remap` e sem imprimir conta nenhuma. Os blocos que o pool segurava são liberados com um `natEvent 17` cada, carimbado no instante da mudança, então o log continua fechado. Trate a mudança como a parada que ela é: janela, aviso, e depois `show cgnat blocks` para ver os blocos voltando a ser alocados.
+**Em pool dinâmico não existe a recusa desta página.** A contagem de quem se move só faz sentido onde o bloco é uma fórmula. Num pool `mode bpa`, mudar prefixo, tamanho de bloco, faixa de portas, política, VRF ou modo reconstrói o pool do mesmo jeito — toda sessão dele termina no instante do `commit` —, mas o `commit` passa sem pedir `commit remap` e sem imprimir conta nenhuma. Os blocos que o pool segurava são liberados com um `natEvent 17` cada, carimbado no instante da mudança, então o log continua fechado. Trate a mudança como a parada que ela é: janela, aviso, e depois `show cgnat blocks` para ver os blocos voltando a ser alocados.
 
 :::
 

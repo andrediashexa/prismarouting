@@ -674,7 +674,7 @@ VTY_DYNSTRIDE_SAY=$($HX -c "configure" \
     -c "block-size $VTY_BSZ" \
     -c "ports $VTY_PORTS" \
     -c "policy interleaved" \
-    -c "mode dynamic" \
+    -c "mode bpa" \
     -c "max-blocks 2" \
     -c "block-stride $STRIDE" \
     -c "exit" \
