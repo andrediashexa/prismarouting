@@ -55,6 +55,9 @@ STATE=${PRISMA_HOT_CARDS:-$ROOT/run/prisma-routing/hot-cards}
 SYSTEMCTL=${PRISMA_SYSTEMCTL:-systemctl}
 UDEVADM=${PRISMA_UDEVADM:-udevadm}
 GIVE_BACK=${PRISMA_GIVE_BACK:-/usr/lib/prisma-routing/give-the-card-back}
+# The cards the dataplane held when a restart began, for the tuner to claim
+# again (#576). prisma-routing-tune reads the same path.
+RESTART_CARDS=${PRISMA_RESTART_CARDS:-$ROOT/run/prisma-routing/restart-cards}
 
 say() { echo "prisma-hot-card: $*"; }
 
@@ -204,8 +207,28 @@ netdev_of() {
 # enp1s0 was refused on load, and the box, managed through enp6s18, was dark
 # until a reset. Only TUN/TAP devices named for a card are removed: a real
 # card never has tun_flags.
+# THE HOT CARDS, as "pci name" (#576): the ones the record lists, and any card
+# Linux still holds as xdp-<name> that the record does not - the name only
+# this script gives (kernel_name), so a netdev called that with a PCI device
+# behind it is a hot card whose record was lost. Measured on 10.40.200.166
+# (0.151.1): no record, and the restart wrote `name xdp-enp1s0` into
+# startup.conf.
+hot_cards() {
+  if [ -f "$STATE" ]; then
+    while read -r n pci _k; do
+      [ -n "$n" ] && echo "${pci:--} $n"
+    done < "$STATE"
+  fi
+  for d in "$SYSNET"/xdp-*; do
+    [ -e "$d/device" ] || continue
+    k=${d##*/}; n=${k#xdp-}
+    [ -f "$STATE" ] && awk -v n="$n" '$1 == n {f=1} END {exit !f}' "$STATE" && continue
+    echo "$(pci_of "$k") $n"
+  done
+}
+
 stale_ends() {
-  startup_names | while read -r _pci n; do
+  { startup_names; hot_cards; } | while read -r _pci n; do
     for d in "$SYSNET/$n" "$SYSNET/$n".*; do
       [ -e "$d/tun_flags" ] || continue
       if $IP link del dev "${d##*/}" 2>/dev/null; then
@@ -235,6 +258,16 @@ restart_dataplane() {
   # What the cards were called, before anything changes (#564).
   names=$(mktemp)
   startup_names > "$names"
+  # AND WHICH CARDS THE DATAPLANE HELD (#576), for the tuner to claim every one
+  # of them again. On 10.40.200.166 (0.151.1) the restart came back without
+  # enp6s18, the card the box is managed through: the tuner decided afresh,
+  # once the stale Linux ends - and the default route on them - were gone,
+  # and the box went dark. A restart restores what the dataplane had; it is
+  # not a new choice of cards.
+  mkdir -p "$(dirname "$RESTART_CARDS")"
+  { sed -n 's/^[[:space:]]*dev[[:space:]]\{1,\}\([0-9a-fA-F]\{4\}:[0-9a-fA-F:.]\{7,\}\).*/\1/p' \
+        "$STARTUP" 2>/dev/null
+    hot_cards | awk '$1 != "-" && $1 != "" {print $1}'; } | sort -u > "$RESTART_CARDS"
   # A STOP THAT DID NOT REPORT SUCCESS IS NOT A DATAPLANE STILL RUNNING (#564).
   # On 10.95.200.198 (0.149.26) the containers went down and this function
   # returned "could not be stopped; nothing was changed" - whatever made
@@ -268,7 +301,7 @@ restart_dataplane() {
   if ! $SYSTEMCTL stop "$dp"; then
     if $SYSTEMCTL is-active --quiet "$dp"; then
       say "the dataplane could not be stopped; nothing was changed"
-      rm -f "$names"
+      rm -f "$names" "$RESTART_CARDS"
       return 1
     fi
     say "the stop did not report success and the dataplane is down;"
@@ -299,8 +332,24 @@ restart_dataplane() {
     done < "$STATE"
     rm -f "$STATE"
   fi
+  # A HOT CARD WITH NO RECORD (#576) takes its own name back too. Only a
+  # netdev called xdp-<name> with a PCI device behind it, which only this
+  # script names that way, and only when <name> is free: the stale ends that
+  # held it are gone by now.
+  for d in "$SYSNET"/xdp-*; do
+    [ -e "$d/device" ] || continue
+    k=${d##*/}; n=${k#xdp-}
+    [ -e "$SYSNET/$n" ] && { say "$n: taken, so $k keeps its name"; continue; }
+    $IP link set dev "$k" down 2>/dev/null
+    if $IP link set dev "$k" name "$n" 2>/dev/null; then
+      say "$n: handed back to the kernel under its own name (no record)"
+    else
+      say "$n: could not be renamed back from $k; the tuner sees it as $k"
+    fi
+  done
   rc=0
   $SYSTEMCTL restart prisma-routing-tune.service || rc=1
+  rm -f "$RESTART_CARDS"
   # Started whatever the tuner said: a box whose tuner failed still has the
   # startup.conf it had, and a dataplane on it beats none.
   $SYSTEMCTL start "$dp" || rc=1
