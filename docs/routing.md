@@ -2007,11 +2007,11 @@ one-line file and watches it refused with nothing applied, loads the block
 and watches the pool reach the dataplane and the route reach FRR, saves, and
 loads what the box itself wrote.
 
-Under `nat` only `cgnat` is taken:
+Under `nat` there are two levels, `cgnat` and, since #572, `nat64`:
 
 ```
-error: under 'nat' there is 'cgnat' and nothing else
-    'cgnat' enters it; 'exit' leaves 'nat'
+error: under 'nat' there is 'cgnat' and 'nat64'
+    each enters its level; 'exit' leaves 'nat'
 ```
 
 * **Inside a block nothing is rewritten.** A route-map clause or a description

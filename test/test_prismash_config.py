@@ -120,7 +120,10 @@ MUTATIONS = {
 
 # Fields that are not settings at all: the pool's identity, and the tables the
 # mutations above reach through.
-NOT_A_SETTING = {"name"}
+# `level` is the hierarchy a pool is written under (#572), `cgnat` or
+# `nat64`: never changed on a pool that exists - a name holds one level - so
+# it is neither a mapping change nor an in-place one.
+NOT_A_SETTING = {"name", "level"}
 
 
 print("=== which changes rebuild a pool, and which do not ===")
@@ -2380,7 +2383,7 @@ check(config.canonical_prefix("2001:DB8:1200:0::/40") == "2001:db8:1200::/40",
 check(config.canonical_prefix("100.64.0.0/10") == "100.64.0.0/10",
       "IPv4 is left alone")
 
-v6 = config.Pool("v6")
+v6 = config.Pool("v6", config.NAT64_LEVEL)
 v6.inside = ["2001:db8:1200::/40"]
 v6.outside = ["203.0.113.0/29"]
 check(v6.is_nat64 and not base_pool().is_nat64, "an IPv6 inside is NAT64")
@@ -2567,7 +2570,7 @@ _d = _run3.delta_to(_cand)
 check(_d["ra_on"] == ["host-sub"] and _d["routing_changed"],
       f"PREF64 taken away: VPP advertises again, FRR reloaded: {_d['ra_on']}")
 # The commit check.
-_v6 = config.Pool("v6")
+_v6 = config.Pool("v6", config.NAT64_LEVEL)
 _v6.inside = ["2001:db8:1200::/40"]
 _v6.outside = ["203.0.113.0/29"]
 _v6.subscriber_length = 56
@@ -2584,6 +2587,70 @@ _c.ra_enabled.discard("host-sub")
 _f = config.pref64_findings(_c)
 check(len(_f) == 1 and "does not advertise" in _f[0][0],
       f"an interface that does not advertise: {_f}")
+
+# #572: NAT64 under `nat` > `nat64`, beside `cgnat`. The file's two levels,
+# written and read back; the old form refused at load naming the new one; a
+# level that holds pools and nothing else; one name across both levels.
+print("\n=== #572: nat > nat64 > pool ===")
+_f572 = """nat
+ cgnat
+  pool res
+   prefix-inside 100.64.0.0/22
+   prefix-outside 203.0.113.0/29
+   exit
+  exit
+ nat64
+  pool v6
+   prefix-inside 2001:db8:1200::/40
+   subscriber-length 56
+   prefix-outside 203.0.113.8/29
+   exit
+  exit
+ exit
+"""
+_c572 = config.Config.parse(_f572)
+check(not _c572.unknown and _c572.pools["v6"].level == config.NAT64_LEVEL
+      and _c572.pools["res"].level == config.CGNAT_LEVEL,
+      f"#572: each pool is held at its level: {_c572.unknown}")
+_b572 = _c572.cgnat_block()
+check(_b572[:2] == ["nat", " cgnat"] and " nat64" in _b572
+      and _b572.index(" nat64") > _b572.index("  pool res"),
+      f"#572: written as two levels, cgnat first: {_b572}")
+check(config.Config.parse(_c572.text()).is_same(_c572),
+      "#572: and read back as the same configuration")
+check(config.nat_level_block(_b572, config.NAT64_LEVEL)[0] == "pool v6"
+      and config.nat_level_block(_b572, config.CGNAT_LEVEL)[0] == "pool res",
+      "#572: nat_level_block gives one level's lines, as typed there")
+check(config.nat_level_block(_b572, "nope") == [],
+      "#572: and nothing for a level the block does not have")
+_old572 = """nat
+ cgnat
+  pool v6
+   prefix-inside 2001:db8:1200::/40
+   subscriber-length 56
+   prefix-outside 203.0.113.8/29
+   exit
+  exit
+ exit
+"""
+_o572 = config.Config.parse(_old572)
+check(any("nat > nat64 > pool v6" in w for _, _, w in _o572.unknown),
+      f"#572: the old form is refused, naming the new one: {_o572.unknown}")
+_n572 = config.Config.parse("nat\n nat64\n  logging enable\n  exit\n exit\n")
+check(_n572.unknown and "under 'nat64' there are pools" in _n572.unknown[0][2],
+      f"#572: nat64 holds pools and nothing else: {_n572.unknown}")
+_d572 = config.Config.parse(_f572.replace("pool v6", "pool res"))
+check(len(_d572.unknown) == 1 and "one name, one pool" in _d572.unknown[0][2],
+      f"#572: one name across both levels, one refusal: {_d572.unknown}")
+_dp572 = config.Config.parse("cgnat pool v6\n prefix-inside 2001:db8::/40\n"
+                             " subscriber-length 56\n exit\n", dataplane=True)
+check(_dp572.pools["v6"].level == config.NAT64_LEVEL,
+      "#572: what the dataplane answers is NAT64 by its inside")
+_v4at64 = config.Pool("v4", config.NAT64_LEVEL)
+_v4at64.inside = ["100.64.0.0/22"]
+check((_v4at64.nat64_fits() or ("",))[0].endswith("an IPv4 inside is not NAT64"),
+      f"#572: an IPv4 inside under nat64 is refused: {_v4at64.nat64_fits()}")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

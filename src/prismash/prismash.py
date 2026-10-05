@@ -43,6 +43,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
+                    NAT64_LEVEL, NAT64_WHERE, NAT_LEVELS_SAY,
+                    NAT64_LEVEL_SAYS, nat_level_block,
                     SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
                     MEMORY_LEVEL, SYSTEM_SETTINGS,
@@ -4332,6 +4334,8 @@ _EVERY_LEVEL = {k: TREE["config"][k] for k in ("commit", "rollback", "show")}
 TREE["nat"] = {
     "cgnat": ("carrier-grade NAT: pools, interfaces, logging, timeouts",
               None),
+    # #572: NAT64's own level, beside `cgnat`.
+    "nat64": ("NAT64: pools whose inside is IPv6", None),
     "exit": ("leave 'nat'", None),
     **_EVERY_LEVEL,
 }
@@ -4507,6 +4511,15 @@ TREE["cgnat"] = {
         "pool": ("remove a pool", ARG_POOL),
         "interface": ("disable CGNAT on an interface", ARG_INTERFACE)}),
     "exit": ("leave 'cgnat'", None),
+    **_EVERY_LEVEL,
+}
+# `nat` > `nat64` (#572): pools and nothing else. The interfaces, the
+# logging, the timeouts and the memory stay under `cgnat`, shared by both.
+TREE["nat64"] = {
+    "pool": ("create or edit a NAT64 pool", ARG_POOL),
+    "no": ("remove NAT64 configuration", {
+        "pool": ("remove a NAT64 pool", ARG_POOL)}),
+    "exit": ("leave 'nat64'", None),
     **_EVERY_LEVEL,
 }
 
@@ -9082,7 +9095,8 @@ class Shell:
         no warning.
         """
         if self.mode == "pool" and self.pool is not None:
-            return f"{NAT_HIERARCHY} / {CGNAT_LEVEL} / pool {self.pool.name}"
+            _lvl = getattr(self.pool, "level", CGNAT_LEVEL)
+            return f"{NAT_HIERARCHY} / {_lvl} / pool {self.pool.name}"
         if self.mode == "user" and self.user is not None:
             return f"user {self.user.name}"
         if self.mode == "snmp-user" and self.snmp_user is not None:
@@ -15978,15 +15992,22 @@ class Shell:
                 return ""
             return line
         if self.nat_ctx == [NAT_HIERARCHY]:
-            if line.strip() == CGNAT_LEVEL:
-                self.nat_ctx.append(CGNAT_LEVEL)
+            if line.strip() in (CGNAT_LEVEL, NAT64_LEVEL):
+                self.nat_ctx.append(line.strip())
             else:
-                self.err_prose("under 'nat' there is 'cgnat' and nothing else",
-                               "'cgnat' enters it; 'exit' leaves 'nat'")
+                self.err_prose(NAT_LEVELS_SAY,
+                               "each enters its level; 'exit' leaves 'nat'")
+            return ""
+        level = self.nat_ctx[-1]
+        if level == NAT64_LEVEL and w[0] != "pool" and w[:2] != ["no",
+                                                                 "pool"]:
+            # `nat64` holds pools and nothing else (#572).
+            self.err_prose("not a statement of 'nat64'; nothing staged",
+                           NAT64_LEVEL_SAYS)
             return ""
         if w[0] == "no":
-            return f"no {CGNAT_LEVEL} " + " ".join(w[1:])
-        return f"{CGNAT_LEVEL} " + line.strip()
+            return f"no {level} " + " ".join(w[1:])
+        return f"{level} " + line.strip()
 
     def hierarchy_rewrite(self, line):
         """
@@ -16168,7 +16189,8 @@ class Shell:
             self.nat_ctx = []
             return True
 
-        if line.startswith("cgnat pool "):
+        if (line.startswith("cgnat pool ")
+                or line.startswith(f"{NAT64_LEVEL} pool ")) and len(w) > 2:
             name = w[2]
             # Before the pool exists and before the mode changes, for the
             # reason `router bgp` is refused before its block is entered
@@ -16178,12 +16200,30 @@ class Shell:
             if why:
                 self.err_prose(*why)
                 return True
-            self.pool = self.candidate.pools.get(name) or Pool(name)
+            # One name, one pool, across `cgnat` and `nat64` (#572): the
+            # dataplane holds one pool table, keyed by name.
+            held = self.candidate.pools.get(name)
+            if held is not None and held.level != w[0]:
+                self.err_prose(f"pool '{name}' is a pool under "
+                               f"'{held.level}'",
+                               "edit it there, or give this pool a name of "
+                               "its own")
+                return True
+            self.pool = held or Pool(name, w[0])
             self.candidate.pools[name] = self.pool
             self.mode = "pool"
             return True
-        if line.startswith("no cgnat pool "):
-            self.candidate.pools.pop(w[3], None)
+        if (line.startswith("no cgnat pool ")
+                or line.startswith(f"no {NAT64_LEVEL} pool ")) and len(w) > 3:
+            held = self.candidate.pools.get(w[3])
+            # Only from its own level: `no pool v6` under `cgnat` must not
+            # remove the NAT64 pool `v6` the operator is not looking at.
+            if held is not None and held.level == w[1]:
+                self.candidate.pools.pop(w[3], None)
+            elif held is not None:
+                self.err_prose(f"pool '{w[3]}' is a pool under "
+                               f"'{held.level}'; nothing removed",
+                               "remove it from there")
             return True
         if w[:2] == ["snmp", "community"] and len(w) > 2:
             if w[2] not in self.candidate.snmp_communities:
@@ -19117,7 +19157,7 @@ class Shell:
             # residencial`, not the model's `cgnat pool residencial`.
             lines = (cfg.pools[self.pool.name].lines()
                      if self.pool.name in cfg.pools else self.pool.lines())
-            lines[0] = lines[0][len(CGNAT_LEVEL) + 1:]
+            lines[0] = lines[0].split(" ", 1)[1]
             print("\n".join(lines))
             return
         # Standing in `system` or `dataplane`: that level's block (#457).
@@ -19138,8 +19178,8 @@ class Shell:
         # as `show configuration` writes it.
         if self.nat_ctx and not self.frr_ctx:
             block = cfg.cgnat_block()
-            if self.nat_ctx[-1] == CGNAT_LEVEL:
-                block = [b[1:] for b in block[1:-1]]
+            if self.nat_ctx[-1] in (CGNAT_LEVEL, NAT64_LEVEL):
+                block = nat_level_block(block, self.nat_ctx[-1])
             print("\n".join(block) if block else
                   "nothing is configured here yet")
             return

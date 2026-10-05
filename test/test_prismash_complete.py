@@ -3524,8 +3524,41 @@ sh.feed("nat")
 check(sh.nat_ctx == ["nat"] and sh.prompt() == "prisma# [edit nat] ",
       f"nat is entered: {sh.prompt()!r}")
 out = capture(sh, "pool x")
-check("under 'nat' there is 'cgnat' and nothing else" in out
-      and not sh.candidate.pools, f"and only cgnat is under it: {out}")
+check("under 'nat' there is 'cgnat' and 'nat64'" in out
+      and not sh.candidate.pools, f"and only the two levels are: {out}")
+
+# #572: NAT64 is `nat` > `nat64` > `pool`, beside `cgnat` - the maintainer's
+# decision of 2026-10-05. The pool is the same Pool, held at its level.
+sh = box_193()
+for _l in ("nat", "nat64", "pool v6", "prefix-inside 2001:db8:1200::/40",
+           "subscriber-length 56", "prefix-outside 203.0.113.8/29"):
+    sh.feed(_l)
+check(sh.mode == "pool" and sh.candidate.pools["v6"].level == "nat64",
+      f"#572: a pool entered under nat64 is held there: {sh.nat_ctx}")
+check(sh.where() == "nat / nat64 / pool v6",
+      f"#572: and the prompt names the level: {sh.where()!r}")
+_this = capture(sh, "show this")
+check(_this.splitlines()[0] == "pool v6",
+      f"#572: show this names the pool as typed: {_this[:40]!r}")
+sh.feed("exit")
+_lvl = capture(sh, "show this")
+check(_lvl.splitlines()[0] == "pool v6"
+      and not any(_x.strip() == "nat64" for _x in _lvl.splitlines()),
+      f"#572: show this at nat64 is that level's pools: {_lvl[:60]!r}")
+out = capture(sh, "logging enable")
+check("not a statement of 'nat64'" in out,
+      f"#572: nat64 holds pools and nothing else: {out}")
+sh.feed("exit")
+sh.feed("cgnat")
+out = capture(sh, "pool v6")
+check("is a pool under 'nat64'" in out and sh.mode != "pool",
+      f"#572: one name, one pool, across the two levels: {out}")
+out = capture(sh, "no pool v6")
+check("v6" in sh.candidate.pools and "nothing removed" in out,
+      f"#572: no pool under cgnat leaves nat64's pool alone: {out}")
+_shown = "\n".join(sh.candidate.cgnat_block())
+check(" nat64\n  pool v6" in _shown,
+      f"#572: the file writes it under nat64: {_shown}")
 sh.feed("cgnat")
 sh.feed("pool p")
 check(sh.mode == "pool" and sh.nat_ctx == ["nat", "cgnat"],
