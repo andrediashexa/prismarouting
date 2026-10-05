@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.12 - BFD's configuration as fields
+
+### Added
+
 * **BFD, phase 3: its configuration as fields, and IS-IS and OSPFv3 over
   BFD proved.** ([#559](https://github.com/andrediashexa/hexarouting/issues/559))
   GetConfig area `bfd` reads the block's sessions (`BfdPeerConfig`, keyed as
@@ -96,8 +102,6 @@ version has a chance of seeing it.
   lab/bfd.sh drives IS-IS and OSPFv3 down with the same silent cut as OSPF
   and takes their `bfd` away again. BFD traps are designed in docs/bfd.md and
   not built: the product sends no notification of its own yet.
-
-### Fixed
 
 ## 0.150.11 - BFD-STD-MIB answers on a real box
 
