@@ -34,6 +34,14 @@ grep -qx "ListenStream=10.40.200.166:9443" "$U" 2>/dev/null \
 grep -q "restart prisma-routing-api-proxy.socket" "$W/calls" \
   && grep -q "daemon-reload" "$W/calls" && ok "reloaded and restarted" \
   || bad "systemctl was asked: $(cat "$W/calls")"
+# #584: systemd refuses to restart a socket whose service runs, so the proxy
+# is stopped FIRST - on .166 every change of a running API's address rolled
+# back without it.
+_stop=$(grep -n "stop prisma-routing-api-proxy.service" "$W/calls" | head -1 | cut -d: -f1)
+_rst=$(grep -n "restart prisma-routing-api-proxy.socket" "$W/calls" | head -1 | cut -d: -f1)
+[ -n "$_stop" ] && [ -n "$_rst" ] && [ "$_stop" -lt "$_rst" ] \
+  && ok "the proxy is stopped before its socket is restarted (#584)" \
+  || bad "the proxy was not stopped before the socket restart: $(cat "$W/calls")"
 case "$OUT" in *"listens on 10.40.200.166:9443"*) ok "and says where" ;; *) bad "said: $OUT" ;; esac
 
 echo "=== an IPv6 address is bracketed ==="

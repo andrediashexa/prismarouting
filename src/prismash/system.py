@@ -1507,6 +1507,10 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     # answered as an unknown one.
     for c in communities:
         out.append(f"com2sec {SNMP_V2C_SECNAME} default {c}")
+        # And its IPv6 twin (#584): net-snmp's com2sec maps IPv4 sources only,
+        # so with an IPv6 listen-address (#582) a v6 query timed out -
+        # measured on 10.40.200.166 - until com2sec6 was added beside it.
+        out.append(f"com2sec6 {SNMP_V2C_SECNAME} default {c}")
     if communities:
         out.append(f"group {SNMP_V2C_GROUP} v2c {SNMP_V2C_SECNAME}")
         out.append(f'access {SNMP_V2C_GROUP} "" v2c noauth exact hexa none none')

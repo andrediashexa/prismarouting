@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **SNMP answered no IPv6 client, and a running API's address could not be
+  changed.** ([#584](https://github.com/andrediashexa/hexarouting/issues/584))
+  Applying #582 on 10.40.200.166: snmpd listened on its IPv6 address but the
+  file had only `com2sec`, which net-snmp applies to IPv4 sources, so a v6
+  query timed out; each community now gets a `com2sec6` beside it. And
+  `api listen-address` on a running API rolled back at every commit -
+  systemd refuses to restart a socket whose service runs - leaving the box
+  listening on what it had, `[::]` on .166, every address; api-configure now
+  stops the proxy before restarting its socket.
+
 ## 0.151.8 - SNMP and the API listen on IPv4 and IPv6
 
 ### Fixed

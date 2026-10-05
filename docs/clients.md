@@ -27,6 +27,15 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.9 - SNMP over IPv6, and a running API's address can change
+
+* **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **Nothing changes through the API** (#584): SNMP now answers IPv6 clients
+  on an IPv6 listen-address, and changing `api.listen-address` on a running
+  API takes effect instead of rolling back. To reach the API over IPv6 a
+  client keeps the certificate's name (`prisma-api`) as its target name.
+* **Lab box:** .166 is on 0.151.8.
+
 ## 0.151.8 - SNMP and the API listen on IPv4 and IPv6
 
 * **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).

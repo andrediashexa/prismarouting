@@ -117,6 +117,12 @@ WantedBy=sockets.target
 UNIT
 mv -f "$UNITS/$SOCKET.new" "$UNITS/$SOCKET"
 "$SYSTEMCTL" daemon-reload
+# The proxy holds the socket it was started on, and systemd refuses to
+# restart a socket whose service is running (#584): measured on
+# 10.40.200.166, every change of `api listen-address` on a running API failed
+# and rolled back, and the box stayed listening on what it had - [::], every
+# address. So the proxy is stopped first; the socket starts it again on demand.
+"$SYSTEMCTL" stop prisma-routing-api-proxy.service >/dev/null 2>&1
 "$SYSTEMCTL" restart "$SOCKET" || {
   echo "api-configure: $LISTEN could not be listened on" >&2
   exit 1
