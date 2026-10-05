@@ -454,7 +454,7 @@ check(not v6, f"every ipv6 statement's address/prefix is an IPv6 or either-famil
 print("=== schema: every mode the VTY has ===")
 sch = T.schema(P)
 by = {m["mode"]: m for m in sch}
-check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 32,
+check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 33,
       f"every mode of config_modes, in its order: {len(sch)}")
 check(sum(len(m["statements"]) for m in sch) > 350,
       f"{sum(len(m['statements']) for m in sch)} statements")

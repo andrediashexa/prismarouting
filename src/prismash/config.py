@@ -163,11 +163,32 @@ def memory_error(key, value):
     return "under 'memory' there is 'control-plane' and 'buffers'"
 
 
+#: The card drivers' own settings (#574): `system` > `hardware`, beside
+#: `cpu` and `memory`. One today: whether ixgbe takes an SFP+ module it does
+#: not list. Measured on 10.40.200.166 (X520, 2026-10-05): a module that had
+#: been taken on earlier boots read as `SFP+: 65535`, ixgbe refused the card
+#: ("unsupported SFP+ or QSFP module type"), and the box came up with no
+#: X520. With allow_unsupported_sfp=1 the same card came up at 10 Gbps.
+HARDWARE_LEVEL = "hardware"
+HARDWARE_KEYS = {"unsupported-sfp": "PRISMA_ALLOW_UNSUPPORTED_SFP"}
+
+
+def hardware_error(key, value):
+    """Why `hardware <key> <value>` cannot be taken, or None."""
+    if key == "unsupported-sfp":
+        if value not in ("allow", "refuse"):
+            return ("expected: unsupported-sfp <allow|refuse>; refuse is "
+                    "the default")
+        return None
+    return "under 'hardware' there is 'unsupported-sfp'"
+
+
 #: The levels under `system` that are tune.env settings: each one's keys and
 #: the rule its values are read by. One table, so the file, the prompt, the
 #: readback and the commit cannot each know a different list.
 SYSTEM_SETTINGS = {CPU_LEVEL: (CPU_KEYS, cpu_error),
-                   MEMORY_LEVEL: (MEMORY_KEYS, memory_error)}
+                   MEMORY_LEVEL: (MEMORY_KEYS, memory_error),
+                   HARDWARE_LEVEL: (HARDWARE_KEYS, hardware_error)}
 #: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
 #: on a machine. The tuner caps what is asked at what the box's RAM can give,
 #: and says so.
@@ -329,7 +350,8 @@ NAT64_LEVEL_SAYS = ("under 'nat64' there are pools; interfaces, logging and "
                     "timeouts are under 'cgnat'")
 
 
-def nest_system(dataplane_if, cpu=None, memory=None) -> list[str]:
+def nest_system(dataplane_if, cpu=None, memory=None,
+                hardware=None) -> list[str]:
     """
     The `system` block a file carries (#457): `dataplane` for the card, and
     `cpu` for the cores by role (#466), each only when it says something -
@@ -340,7 +362,8 @@ def nest_system(dataplane_if, cpu=None, memory=None) -> list[str]:
     if dataplane_if:
         body += [f" {DATAPLANE_LEVEL}", f"  interface {dataplane_if}",
                  "  exit"]
-    for level, held in ((CPU_LEVEL, cpu or {}), (MEMORY_LEVEL, memory or {})):
+    for level, held in ((CPU_LEVEL, cpu or {}), (MEMORY_LEVEL, memory or {}),
+                        (HARDWARE_LEVEL, hardware or {})):
         if held:
             body.append(f" {level}")
             body += [f"  {k} {held[k]}" for k in SYSTEM_SETTINGS[level][0]
@@ -390,7 +413,7 @@ def denest_system(numbered):
                 depth = 0
             else:
                 bad.append((n, s, "under 'system' there is 'dataplane', "
-                                  "'cpu' and 'memory'"))
+                                  "'cpu', 'memory' and 'hardware'"))
         else:
             if s in ("exit", "quit", "end"):
                 depth = 1
@@ -3312,6 +3335,9 @@ class Config:
         # The memory by role (#466), the same kind of setting under
         # `system` > `memory`.
         self.memory: dict[str, str] = {}
+        # The card drivers' settings (#574), the same kind under `system` >
+        # `hardware`: in effect from the next boot, on the kernel command line.
+        self.hardware: dict[str, str] = {}
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -3483,7 +3509,8 @@ class Config:
         # carries no statement, the same way an interface nobody shut down
         # carries no `shutdown`: recording an absence would put a line on every
         # box and make the file describe a decision nobody took.
-        out += nest_system(self.dataplane_if, self.cpu, self.memory)
+        out += nest_system(self.dataplane_if, self.cpu, self.memory,
+                           self.hardware)
         out += policy_mod.nest(self.policy)
         if self.hostname:
             out.append(f"hostname {self.hostname}")
@@ -4937,6 +4964,7 @@ class Config:
             "policy_changed": self.policy != other.policy,
             "cpu_changed": self.cpu != other.cpu,
             "memory_changed": self.memory != other.memory,
+            "hardware_changed": self.hardware != other.hardware,
             "cgnat_memory_changed":
                 self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,

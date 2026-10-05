@@ -47,7 +47,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     NAT64_LEVEL_SAYS, nat_level_block,
                     SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
-                    MEMORY_LEVEL, SYSTEM_SETTINGS,
+                    MEMORY_LEVEL, SYSTEM_SETTINGS, HARDWARE_LEVEL,
+                    HARDWARE_KEYS,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     BFD_BLOCK_WORD, BFD_SUBBLOCK_OPENERS, bfd_uses_profile,
@@ -2122,6 +2123,8 @@ SHOW = {
     "system": ("this machine", {
         "cpu": ("which cores do what: configured, and in effect", None),
         "memory": ("the RAM by role: configured, and in effect", None),
+        "hardware": ("the card drivers' settings: configured, and in effect",
+                     None),
         "uptime": ("since when the box, the dataplane and the routing run",
                    None)}),
     "logging": ("system log (FRR)", None),
@@ -3370,6 +3373,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "snmp_changed", "api_changed", "dataplane_if_changed",
                "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
+               "hardware_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -4389,6 +4393,8 @@ TREE["system"] = {
                "buffers", None),
     "cpu": ("which cores do what: the control plane's, VPP's main thread's",
             None),
+    "hardware": ("the card drivers' settings: SFP+ modules ixgbe does not "
+                 "list", None),
     "exit": ("leave 'system'", None),
     **_EVERY_LEVEL,
 }
@@ -4404,6 +4410,20 @@ TREE["memory"] = {
         "control-plane": ("a quarter of the RAM, at least 2 GB", None),
         "buffers": ("16384 per worker", None)}),
     "exit": ("leave 'memory'", None),
+    **_EVERY_LEVEL,
+}
+# THE CARD DRIVERS (#574), a level of its own under `system`, the same kind
+# of setting: tune.env, then the kernel command line at the next boot.
+TREE["hardware"] = {
+    "unsupported-sfp": ("whether ixgbe takes an SFP+ module Intel has not "
+                        "qualified", {
+        "allow": ("take it; Intel warns such a module may be unstable",
+                  None),
+        "refuse": ("refuse it and leave the card out, the default", None)}),
+    "no": ("go back to the default", {
+        "unsupported-sfp": ("ixgbe refuses a module it does not list",
+                            None)}),
+    "exit": ("leave 'hardware'", None),
     **_EVERY_LEVEL,
 }
 TREE["cpu"] = {
@@ -9508,7 +9528,8 @@ class Shell:
             for _k, _key in _keys.items():
                 _v = self.read_tune_key(_key)
                 if _v and _error(_k, _v) is None \
-                        and not (_k == "main-thread" and _v == "shared"):
+                        and not (_k == "main-thread" and _v == "shared") \
+                        and not (_k == "unsupported-sfp" and _v == "refuse"):
                     _held[_k] = _v
             setattr(cfg, _lvl, _held)
         cfg.users = self.sys.read_users()
@@ -12827,6 +12848,11 @@ class Shell:
             if not ok:
                 self.err(f"memory: {msg}")
                 return False
+        if d.get("hardware_changed"):
+            ok, msg = self.apply_hardware(target.hardware)
+            if not ok:
+                self.err(f"hardware: {msg}")
+                return False
         if d["cgnat_memory_changed"]:
             ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
             if not ok:
@@ -15985,8 +16011,8 @@ class Shell:
                     or line.strip() in SYSTEM_SETTINGS:
                 self.nat_ctx.append(line.strip())
             else:
-                self.err_prose("under 'system' there is 'dataplane', 'cpu' "
-                               "and 'memory'",
+                self.err_prose("under 'system' there is 'dataplane', 'cpu', "
+                               "'memory' and 'hardware'",
                                "each enters its level; 'exit' leaves "
                                "'system'")
             return ""
@@ -18907,6 +18933,49 @@ class Shell:
         except OSError:
             return ""
 
+    #: The kernel's own record of the command line it booted with (#574).
+    PROC_CMDLINE = os.environ.get("PRISMA_PROC_CMDLINE", "/proc/cmdline")
+    #: The option apply-tuning puts on that line for `unsupported-sfp allow`.
+    SFP_CMDLINE = "ixgbe.allow_unsupported_sfp=1"
+
+    def driver_facts(self):
+        """
+        The card drivers' settings (#574): what is configured - tune.env, in
+        effect from the next boot - and whether this boot has it. ixgbe
+        declares the parameter with no sysfs permission, so /sys/module does
+        not show it: the kernel command line this boot was given is the one
+        reading of what ixgbe was loaded with. None when it cannot be read.
+        """
+        configured = self.read_tune_key(HARDWARE_KEYS["unsupported-sfp"]) \
+            == "allow"
+        try:
+            with open(self.PROC_CMDLINE) as f:
+                booted = self.SFP_CMDLINE in f.read().split()
+        except OSError:
+            booted = None
+        return {"unsupported_sfp_configured": configured,
+                "unsupported_sfp_booted": booted}
+
+    def show_system_hardware(self):
+        """The card drivers' settings (#574), the show_system_cpu() shape:
+        configured beside in effect, the gap between them a reboot."""
+        f = self.driver_facts()
+        print("configured, in effect from the next reboot:")
+        print("  unsupported SFP+     "
+              + ("allowed on ixgbe cards" if f["unsupported_sfp_configured"]
+                 else "refused, ixgbe's default"))
+        print("this boot:")
+        b = f["unsupported_sfp_booted"]
+        print("  unsupported SFP+     "
+              + ("unknown: the kernel command line could not be read"
+                 if b is None else
+                 "allowed on ixgbe cards" if b else
+                 "refused, ixgbe's default"))
+        if b is not None and b != f["unsupported_sfp_configured"]:
+            print_prose("the two differ until the box boots again: the "
+                        "option is on the kernel command line, which ixgbe "
+                        "reads when it loads")
+
     def show_system_memory(self):
         """
         The RAM by role (#466): what is configured - tune.env, in effect from
@@ -19073,6 +19142,9 @@ class Shell:
         if line == "show system memory":
             self.show_system_memory()
             return
+        if line == "show system hardware":
+            self.show_system_hardware()
+            return
         if line == "show system uptime":
             self.show_system_uptime()
             return
@@ -19212,7 +19284,8 @@ class Shell:
         # Standing in `system` or `dataplane`: that level's block (#457).
         if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY \
                 and not self.frr_ctx:
-            block = nest_system(cfg.dataplane_if, cfg.cpu, cfg.memory)
+            block = nest_system(cfg.dataplane_if, cfg.cpu, cfg.memory,
+                                cfg.hardware)
             _lvl = self.nat_ctx[-1]
             if _lvl == DATAPLANE_LEVEL or _lvl in SYSTEM_SETTINGS:
                 # That level's own lines, from the whole block.
@@ -21016,6 +21089,36 @@ class Shell:
         print_prose("in effect from the next reboot: the hugepages are "
                     "reserved on the kernel command line. 'show system "
                     "memory' says both")
+        if rc not in (0, 127):
+            print_prose("the tuner did not run, so the boot configuration is "
+                        "not recomputed yet: " + " ".join(out.split())[:120])
+        return True, ""
+
+    def apply_hardware(self, hardware):
+        """
+        The card drivers' settings (#574), apply_cpu()'s shape: stored in
+        tune.env, the tuner run, and what is outstanding said. ixgbe reads
+        allow_unsupported_sfp when it loads - from the initramfs, at boot -
+        and apply-tuning puts it on the kernel command line, where modprobe
+        takes a module's options from (modprobe.d(5)), so nothing in the
+        initramfs has to be rebuilt and the card is taken at the next boot.
+        """
+        for k, key in SYSTEM_SETTINGS[HARDWARE_LEVEL][0].items():
+            ok, why = self.write_tune_key(key, hardware.get(k, ""))
+            if not ok:
+                return False, why
+        rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
+        sfp = hardware.get("unsupported-sfp", "refuse")
+        # One figure a row, and last on it.
+        print(f"hardware: unsupported SFP+ modules on ixgbe cards {sfp}")
+        if sfp == "allow":
+            print_prose("in effect from the next reboot: the option is on the "
+                        "kernel command line, and ixgbe reads it when it "
+                        "loads. Intel warns that a module it has not "
+                        "qualified may be unstable")
+        else:
+            print_prose("in effect from the next reboot: ixgbe refuses a "
+                        "module it does not list again")
         if rc not in (0, 127):
             print_prose("the tuner did not run, so the boot configuration is "
                         "not recomputed yet: " + " ".join(out.split())[:120])

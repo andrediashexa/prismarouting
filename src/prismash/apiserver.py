@@ -961,6 +961,8 @@ READERS = {
     "hostname": lambda sh, a: sh.sys.read_hostname(),
     # The clocks `show system uptime` reads (#534), from the same Shell.
     "uptime": lambda sh, a: sh.uptime_facts(),
+    # The card drivers' settings `show system hardware` reads (#574).
+    "drivers": lambda sh, a: sh.driver_facts(),
     # Routing policy (#538): what `show policy`, `show policy <name>` and
     # `test policy` compute, as data, from the same Shell methods.
     "policies": lambda sh, a: sh.policies_data(),
@@ -3446,6 +3448,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         def GetSystem(self, req, context):
             cpu = self._ask(context, "screen", "show system cpu")
             mem = self._ask(context, "screen", "show system memory")
+            hw = self._ask(context, "screen", "show system hardware")
+            drv = self._ask(context, "drivers")
             c = parse_cpu(cpu)
             up = 0
             try:
@@ -3464,6 +3468,13 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 pass
             return pb.SystemInfo(hostname=self._ask(context, "hostname"),
                                  uptime_seconds=up, cpu_text=cpu, memory_text=mem,
+                                 hardware_text=hw,
+                                 unsupported_sfp_configured=bool(
+                                     drv["unsupported_sfp_configured"]),
+                                 unsupported_sfp_booted=bool(
+                                     drv["unsupported_sfp_booted"]),
+                                 unsupported_sfp_booted_known=(
+                                     drv["unsupported_sfp_booted"] is not None),
                                  hugepages=pages,
                                  worker_load=[pb.WorkerLoad(**w) for w in load],
                                  **memory_of(),

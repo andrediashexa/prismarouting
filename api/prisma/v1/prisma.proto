@@ -741,6 +741,10 @@ message SystemConfig {
   // effect at the next boot.
   repeated KeyValue cpu = 8;
   repeated KeyValue memory = 9;
+  // system > hardware (#574): the card drivers' settings, statement by
+  // statement - today `unsupported-sfp allow`; absent is ixgbe's default,
+  // refuse. In effect from the next boot.
+  repeated KeyValue hardware = 10;
 }
 
 message UserConfig {
@@ -2290,6 +2294,14 @@ message SystemInfo {
   // How loaded each dataplane worker is (#533). A polling worker's CPU is
   // always 100%; these are what the dataplane itself counts.
   repeated WorkerLoad worker_load = 20;
+  // `show system hardware` (#574): whether ixgbe takes an SFP+ module it
+  // does not list - as configured (in effect from the next boot), and as
+  // this boot has it, read off the kernel command line. booted_known false
+  // is a command line that could not be read, not a refusal.
+  bool unsupported_sfp_configured = 21;
+  bool unsupported_sfp_booted = 22;
+  bool unsupported_sfp_booted_known = 23;
+  string hardware_text = 24;
 }
 
 // One dataplane worker's load, from the dataplane's statistics segment.

@@ -4741,6 +4741,21 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
         fail=1 ;;
     esac
     dp_restart_check "on the containers"
+    # SFP+ MODULES IXGBE DOES NOT LIST (#574). 10.40.200.166 came back dark
+    # every time its host rebooted: ixgbe refused the X520's module at boot,
+    # the card never reached the dataplane, and somebody had to reload ixgbe
+    # by hand. The setting is only worth having if the option is where the
+    # EARLY boot reads it - ixgbe probes from the initramfs, before the tuner
+    # and the dataplane - so this commits it here and the next boot (PHASE
+    # 6) reads it off /proc/cmdline. This guest has no ixgbe card: what is
+    # proved is that the option reaches the kernel command line, which is
+    # where modprobe takes it from in the initramfs.
+    send 'echo "HX""LAB hw-commit=$(prismash -c configure -c system -c hardware -c "unsupported-sfp allow" -c exit -c exit -c commit -c save 2>&1 | tr -d "\r" | grep -c "in effect from the next reboot")"'
+    wait_for "HXLAB hw-commit=" 300 "the box to commit unsupported-sfp allow" || fail=1
+    HW_COMMIT=$(live_field hw-commit)
+    send 'echo "HX""LAB hw-grub=$(grep -c "ixgbe.allow_unsupported_sfp=1" /boot/grub/grub.cfg 2>/dev/null)"'
+    wait_for "HXLAB hw-grub=" 60 "the box to say whether GRUB carries the option" || fail=1
+    HW_GRUB=$(live_field hw-grub)
     send "sync"
     send "systemctl poweroff"
   else
@@ -5108,7 +5123,14 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   boot_vm "${CONTAINER_SECS:-1200}" \
     -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET
   CT_SWITCH=""
+  HW_CMDLINE=""
   if login_root "the box to come back for the switch to containers"; then
+    # The boot after `unsupported-sfp allow` (#574): the kernel's own record
+    # of the command line it was given, the one the initramfs's modprobe
+    # reads ixgbe's options from.
+    send 'echo "HX""LAB hw-cmdline=$(tr " " "\n" < /proc/cmdline | grep -c "^ixgbe.allow_unsupported_sfp=1$")"'
+    wait_for "HXLAB hw-cmdline=" 60 "the box to read its kernel command line" || fail=1
+    HW_CMDLINE=$(live_field hw-cmdline)
     # `disable --now` on both, then enable the pair. The units conflict, so
     # the order is not a preference: enabling the containers unit while
     # vpp.service is running is asking systemd to decide, and what this
@@ -5125,6 +5147,16 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   fi
   stop_vm 120
 
+  if [ "${HW_COMMIT:-0}" -ge 1 ] && [ "${HW_GRUB:-0}" -ge 1 ] \
+     && [ "${HW_CMDLINE:-0}" = 1 ]; then
+    echo "  [ ok ] unsupported-sfp allow reached the next boot's kernel command"
+    echo "         line, where the initramfs's modprobe reads ixgbe's options (#574)"
+  else
+    echo "  [FAIL] unsupported-sfp allow did not reach the next boot (#574):"
+    echo "         commit said it ${HW_COMMIT:-<no answer>} time(s), grub.cfg"
+    echo "         ${HW_GRUB:-<no answer>}, /proc/cmdline ${HW_CMDLINE:-<no answer>}"
+    fail=1
+  fi
   case "$CT_SWITCH" in
     *rc=0*) echo "  [ ok ] the two commands that put a box back were taken" ;;
     "")     echo "  [FAIL] the box never answered about the switch"; fail=1 ;;
