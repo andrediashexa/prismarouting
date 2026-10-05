@@ -84,7 +84,7 @@ check(not {"inside", "outside"} & o,
 o, _, _ = opts("pool", "policy ")
 check(o == {"interleaved", "blocked"}, f"policy should have two options: {o}")
 o, _, _ = opts("pool", "mode ")
-check(o == {"deterministic", "dynamic"}, f"mode should have two options: {o}")
+check(o == {"deterministic", "bpa"}, f"mode should have two options: {o}")
 print(f"  policy -> {sorted(o)} ; mode has two options")
 
 print("\n=== a free argument becomes a hint, not an empty list ===")
@@ -8138,6 +8138,28 @@ check("bpa clear subscriber 2001:db8:1200:ab00::10" in sh.dp.asked,
       f"#572: and clears an IPv6 one: {sh.dp.asked} {out}")
 out = capture(sh, "clear nat64 subscriber nope")
 check("is an IPv6 address" in out, f"#572: a word is refused: {out}")
+
+# #572: the handlers named, and each refusal they print driven.
+_r572 = capture(sh, "clear nat64 nonsense")
+check("usage: clear nat64 subscriber" in _r572,
+      f"#572: Shell.clear_nat64 says its usage: {_r572}")
+with contextlib.redirect_stdout(io.StringIO()) as _o:
+    sh.clear_nat64(["subscriber", "2001:db8:1200:ab00::11"])
+check("bpa clear subscriber 2001:db8:1200:ab00::11" in sh.dp.asked,
+      "#572: Shell.clear_nat64, called by name")
+with contextlib.redirect_stdout(io.StringIO()) as _o:
+    sh.show_nat64(["subscriber", "nope"])
+check("a NAT64 subscriber is an IPv6 address" in _o.getvalue(),
+      f"#572: Shell.show_nat64 refuses a word: {_o.getvalue()}")
+with contextlib.redirect_stdout(io.StringIO()) as _o:
+    sh.show_nat64(["translation", "nope", "80"])
+check("a public address is IPv4" in _o.getvalue(),
+      f"#572: and a public address that is not one: {_o.getvalue()}")
+# #573: the migrated file, when it cannot be written, is said.
+with contextlib.redirect_stdout(io.StringIO()) as _o:
+    sh.write_migrated("/nonexistent-572/prisma.conf", _run572)
+check("the migrated file could not be written" in _o.getvalue(),
+      f"#573: Shell.write_migrated says a file it cannot write: {_o.getvalue()}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -536,7 +536,8 @@ _t572 = T.config_typed(_c572, ["pools", "nat64"])
 check([p["name"] for p in _t572["pools"]] == ["res"]
       and [p["name"] for p in _t572["nat64"]] == ["v6"],
       f"#572: pools holds the CGNAT pools, nat64 the NAT64 ones: {_t572}")
-check("bypass_source" not in _t572["nat64"][0]
+check(T.nat64_pools_typed(_c572)[0] == T.nat64_pool_typed(_c572.pools["v6"])
+      and "bypass_source" not in _t572["nat64"][0]
       and _t572["nat64"][0]["subscriber_length"] == 56,
       f"#572: a NAT64 pool's fields, less the bypass: {_t572['nat64'][0]}")
 check("nat64" in T.AREAS and "nat64" in T.config_typed(_c572),

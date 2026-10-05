@@ -56,12 +56,12 @@ check(t["subscriber"] == "2001:db8:1200:ab00::/56" and t["nat64"]
       f"a NAT64 pool's formula names the subscriber's prefix: {t}")
 t = C.parse_translation("200.150.0.18:4000  ->  2001:db8:1200:ab00::/56\n"
                         "  pool v6-dyn, block 9, DYNAMIC\n" + XLT_PROSE_NOW + "\n")
-check(t["source"] == "dynamic" and t["now_only"] and t["nat64"]
+check(t["source"] == "bpa" and t["now_only"] and t["nat64"]
       and t["pool"] == "v6-dyn", f"a dynamic NAT64 holder, for now only: {t}")
 t = C.parse_translation("200.150.0.18:4000  ->  nobody, right now\n"
                         "  pool dyn, block 9, DYNAMIC: no subscriber holds this "
                         "block at the moment\n" + XLT_PROSE_NOW + "\n")
-check(t["subscriber"] == "" and t["source"] == "dynamic" and t["now_only"]
+check(t["subscriber"] == "" and t["source"] == "bpa" and t["now_only"]
       and t["block"] == 9, f"nobody holds it now: {t}")
 t = C.parse_translation("200.150.0.19:2100  ->  100.64.1.7\n"
                         "  pool nb, reserve block 2, DETERMINISTIC RESERVE\n"

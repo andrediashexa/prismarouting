@@ -22208,8 +22208,8 @@ class Shell:
                     return
             self.vpp(f"show bpa translation {pub} {args[2]}")
             return
-        self.err("usage: show nat64 pool | subscriber <IPv6-address> | "
-                 "translation <public-address> <port>")
+        self.err("usage: show nat64 pool | subscriber <IPv6-address>")
+        print("       show nat64 translation <public-address> <port>")
 
     def clear_ospf(self, rest):
         """
