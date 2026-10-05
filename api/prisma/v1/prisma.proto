@@ -1427,6 +1427,10 @@ service OperationalService {
   rpc ListTop(ListTopRequest) returns (ListTopResponse);
   // `show cgnat drops`: why packets did not get through, per CGNAT node.
   rpc GetDrops(GetDropsRequest) returns (DropsReport);
+  // `show configuration pending` (#575): what the boot left out of the saved
+  // file for a card the box did not have, and goes on when it appears.
+  rpc GetPendingConfiguration(GetPendingConfigurationRequest)
+      returns (PendingConfiguration);
   // `show cgnat memory`: the dataplane's main heap, which holds every
   // session, and how many more sessions still fit in it.
   rpc GetCgnatMemory(GetCgnatMemoryRequest) returns (CgnatMemory);
@@ -1570,6 +1574,27 @@ message ListTopResponse {
 }
 
 message GetDropsRequest {}
+
+message GetPendingConfigurationRequest {}
+
+// What `prismash --load` left out on this boot (#575). The health service
+// prisma.v1.Configuration is NOT_SERVING exactly while `pending` is true.
+message PendingConfiguration {
+  // True while statements of the saved file wait for a card; `save` is
+  // refused then, so the file keeps them.
+  bool pending = 1;
+  // The physical ports the file names and the dataplane did not have.
+  repeated string cards = 2;
+  // The statements left out, as the file's own rows, in order.
+  repeated string left_out = 3;
+  // When the boot left them out, Unix seconds; 0 when nothing is pending.
+  int64 since = 4;
+  // The file they come from.
+  string path = 5;
+  // True once a card came back after a commit: the statements were then
+  // not put on by themselves, and wait for the operator.
+  bool held_for_a_commit = 6;
+}
 
 message DropCounter {
   // The dataplane's own description of the counter, as the screen prints it.
@@ -2212,6 +2237,9 @@ message ClearRequest {
     TARGET_OSPF_NEIGHBOR = 5;
     // `clear isis adjacency [<name>]`: one system id, or every adjacency.
     TARGET_ISIS_ADJACENCY = 6;
+    // `clear configuration pending` (#575): give up what the boot left out
+    // for a missing card, so `save` writes again. No `name`.
+    TARGET_CONFIGURATION_PENDING = 7;
   }
   Target target = 1;
   string name = 2;

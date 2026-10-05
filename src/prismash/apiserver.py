@@ -1462,6 +1462,7 @@ CLEAR_LINES = {
     "ospf_process": "clear ospf process",
     "ospf_neighbor": "clear ospf neighbor {name}",
     "isis_adjacency": "clear isis adjacency {name}",
+    "configuration_pending": "clear configuration pending",
 }
 #: BgpMode, as the words after the neighbour.
 BGP_MODES = {"hard": "", "soft": " soft", "soft_in": " soft in",
@@ -2665,6 +2666,27 @@ PENDING_PATH = os.environ.get(
 def config_pending(path=None):
     """True when the boot left statements out for a missing card (#575)."""
     return os.path.exists(path or PENDING_PATH)
+
+
+def pending_fields(path=None):
+    """
+    PendingConfiguration's fields from the record `--load` writes (#575):
+    pending false and the rest empty when there is none, or when it cannot
+    be read - the record is the one reader, and a box with none applied all
+    of its file.
+    """
+    try:
+        with open(path or PENDING_PATH) as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        rec = None
+    if not isinstance(rec, dict):
+        return {"pending": False, "cards": [], "left_out": [], "since": 0,
+                "path": "", "held_for_a_commit": False}
+    return {"pending": True, "cards": list(rec.get("cards", [])),
+            "left_out": list(rec.get("left_out", [])),
+            "since": int(rec.get("since", 0)), "path": rec.get("path", ""),
+            "held_for_a_commit": bool(rec.get("told"))}
 
 
 def health_status(service, stats_ok, log_status=None, pending=False):
@@ -3901,6 +3923,11 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 lp = r.pop("last_progress")
                 out.streams.add(**r).last_progress.CopyFrom(ts(lp))
             return out
+
+        # not a unit: an rpc, driven by lab/missing-card.sh; pending_fields()
+        # is what it reads, and is tested.
+        def GetPendingConfiguration(self, req, context):
+            return pb.PendingConfiguration(**pending_fields())
 
         # not a unit: an rpc, driven by lab/api-grpc.sh; clear_line() is
         # what it decides, and is tested.

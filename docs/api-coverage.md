@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 758 |
+| typed | 760 |
 | text | 1 |
 | n/a | 41 |
 
@@ -151,6 +151,7 @@ reachable in the phase their note names.
 | `show nat64 subscriber <IPv6-address>` | typed | OperationalService.GetSubscriber | every account | an IPv6 address: the NAT64 subscriber (#572) |
 | `show nat64 translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | a NAT64 pool's public address answers its /56 (#572) |
 | `show configuration compare` | typed | ConfigService.Compare | every account |  |
+| `show configuration pending` | typed | OperationalService.GetPendingConfiguration | every account | and the health service prisma.v1.Configuration (#575) |
 | `show running-config` | typed | ConfigService.GetRunning | every account | the configuration as text, with its revision |
 | `show rollback` | typed | ConfigService.ListRevisions | every account |  |
 | `show this` | typed | ConfigService.ShowCandidate | every account |  |
@@ -188,6 +189,7 @@ reachable in the phase their note names.
 | `clear ospf process` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear ospf neighbor <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear isis adjacency [<system-id>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
+| `clear configuration pending` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `rollback <0-19>` | typed | ConfigService.Rollback, then Commit | every account |  |
 | `save` | typed | ConfigService.Save | every account |  |
 | `system reboot` | typed | SystemService.Reboot | administrator | refused while unsaved or inside a confirm window unless force |

@@ -89,6 +89,8 @@ want = {
                            "Clear",
                            # #558 phase 6: the CGNAT's screens, typed.
                            "LookupTranslation", "ListTop", "GetDrops",
+                           # #575: what the boot left out for a card.
+                           "GetPendingConfiguration",
                            "GetCgnatMemory", "ListBlocks", "GetIdentity",
                            "VerifyHistory", "ListAlgs", "ListForwards",
                            "GetHaStatus",

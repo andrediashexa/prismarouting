@@ -960,8 +960,30 @@ check(A.config_pending(_rec575) is False, "#575: no record, nothing pending")
 with open(_rec575, "w") as _f575:
     _f575.write("{}")
 check(A.config_pending(_rec575) is True, "#575: a record is something pending")
+with open(_rec575, "w") as _f575:
+    _f575.write('{"cards": ["enp1s0"], "left_out": ["interface enp1s0", '
+                '" mtu 9000"], "since": 1791168000, "path": "/etc/x.conf", '
+                '"applied": "ab", "told": true}')
+_pf = A.pending_fields(_rec575)
+check(_pf == {"pending": True, "cards": ["enp1s0"],
+              "left_out": ["interface enp1s0", " mtu 9000"],
+              "since": 1791168000, "path": "/etc/x.conf",
+              "held_for_a_commit": True},
+      f"#575: PendingConfiguration's fields from the record: {_pf}")
+with open(_rec575, "w") as _f575:
+    _f575.write("not json")
+check(A.pending_fields(_rec575)["pending"] is False,
+      "#575: a record that cannot be read is nothing pending, not a crash")
 os.unlink(_rec575)
+check(A.pending_fields(_rec575) == {"pending": False, "cards": [],
+                                    "left_out": [], "since": 0, "path": "",
+                                    "held_for_a_commit": False},
+      "#575: no record, nothing pending")
 os.rmdir(_d575)
+check(A.clear_line("configuration_pending") == "clear configuration pending"
+      and A.clear_line("configuration_pending", "x")
+      == "clear configuration pending",
+      "#575: ClearRequest's configuration_pending is the VTY's line")
 check(A.health_status(A.CONFIG_HEALTH, True, pending=True) == "NOT_SERVING"
       and A.health_status(A.CONFIG_HEALTH, True, pending=False) == "SERVING"
       and A.health_status("", True, pending=True) == "SERVING"
