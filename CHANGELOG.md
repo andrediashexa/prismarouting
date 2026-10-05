@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`ip address` typed in an interface block went to FRR unread.**
+  ([#579](https://github.com/andrediashexa/hexarouting/issues/579)) On
+  10.40.200.166 FRR's form, typed where the box's `ipv4 address` belongs, was
+  staged as a routing statement: zebra put the address on the Linux pair,
+  linux_cp carried it into the dataplane, the running configuration held it
+  twice, and a later `no ip address` took the dataplane's address away with
+  the candidate still listing it - and prisma-web's schema check found two
+  lines no statement of the box matched. It is refused at the prompt, naming
+  `ipv4 address <prefix>`; `no ip address` still passes, so a line already in
+  FRR can be cleaned up.
+
 ## 0.151.6 - a login during an upgrade waits instead of failing
 
 ### Fixed

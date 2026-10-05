@@ -27,6 +27,15 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.7 - FRR's `ip address` is refused in an interface block
+
+* **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **`ip address` in an interface block** (#579): refused at the VTY with
+  words naming `ipv4 address <prefix>`, where it was staged as an FRR
+  statement that matched no statement of GetSchema. `no ip address` still
+  passes. Typed config (InterfaceConfig) is unaffected.
+* **Lab box:** .166 is on 0.151.6.
+
 ## 0.151.6 - a login during an upgrade waits instead of failing
 
 * **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).

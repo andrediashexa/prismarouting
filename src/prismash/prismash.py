@@ -16851,6 +16851,23 @@ class Shell:
             self.candidate.vlans[iface] = tag
             return True
 
+        # FRR'S `ip address` IS NOT THIS BOX'S (#579). Typed inside a Prisma
+        # interface block it fell through to the routing pass-through, unread:
+        # on 10.40.200.166 zebra put the address on the Linux pair, linux_cp
+        # carried it into the dataplane, the running configuration held it
+        # twice, and a later `no ip address` took the dataplane's address away
+        # with the candidate still listing it. Refused at the prompt, naming
+        # the box's statement; `no ip address` still passes, so a line already
+        # in FRR can be cleaned up.
+        if iface and not neg and w[:2] == ["ip", "address"]:
+            arg = w[2] if len(w) > 2 else "<A.B.C.D/M>"
+            self.err_prose(f"interface {iface}: 'ip address' is FRR's, not "
+                           "this box's",
+                           f"use 'ipv4 address {arg}': it puts the address on "
+                           "the dataplane, which FRR then sees through the "
+                           "Linux pair")
+            return True
+
         # Addresses are the device's: they belong to the packet path, and FRR
         # sees them only because linux_cp mirrors them onto the TAP.
         if iface and not neg and dp in ("ipv4 address", "ipv6 address"):
