@@ -1462,6 +1462,7 @@ CLEAR_LINES = {
     "ospf_process": "clear ospf process",
     "ospf_neighbor": "clear ospf neighbor {name}",
     "isis_adjacency": "clear isis adjacency {name}",
+    "configuration_pending": "clear configuration pending",
 }
 #: BgpMode, as the words after the neighbour.
 BGP_MODES = {"hard": "", "soft": " soft", "soft_in": " soft in",
@@ -2649,16 +2650,57 @@ def take_sample(history, stats, worker_cpus="", meminfo=None, now=None, meter=No
 #: either, for the same reason.
 LOG_HEALTH = "prisma.v1.LogExport"
 
+#: The health service's name for "is the saved configuration all applied"
+#: (#575): NOT_SERVING while the boot left statements out for a card the box
+#: did not have. A name of its own for LOG_HEALTH's reason: a box short of
+#: a card still answers every call, and the reads are how a client finds
+#: out what is missing.
+CONFIG_HEALTH = "prisma.v1.Configuration"
 
-def health_status(service, stats_ok, log_status=None):
+#: Where `prismash --load` records what it left out (prismash.PENDING_PATH;
+#: /run/prisma-routing is mounted into the management container).
+PENDING_PATH = os.environ.get(
+    "PRISMA_CONFIG_PENDING", "/run/prisma-routing/config-pending.json")
+
+
+def config_pending(path=None):
+    """True when the boot left statements out for a missing card (#575)."""
+    return os.path.exists(path or PENDING_PATH)
+
+
+def pending_fields(path=None):
+    """
+    PendingConfiguration's fields from the record `--load` writes (#575):
+    pending false and the rest empty when there is none, or when it cannot
+    be read - the record is the one reader, and a box with none applied all
+    of its file.
+    """
+    try:
+        with open(path or PENDING_PATH) as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        rec = None
+    if not isinstance(rec, dict):
+        return {"pending": False, "cards": [], "left_out": [], "since": 0,
+                "path": "", "held_for_a_commit": False}
+    return {"pending": True, "cards": list(rec.get("cards", [])),
+            "left_out": list(rec.get("left_out", [])),
+            "since": int(rec.get("since", 0)), "path": rec.get("path", ""),
+            "held_for_a_commit": bool(rec.get("told"))}
+
+
+def health_status(service, stats_ok, log_status=None, pending=False):
     """
     grpc.health.v1's answer for `service`: "SERVING", "NOT_SERVING", or None
     for a service this server does not serve. `log_status` is the log
     export's own answer (LogWatch.health()'s first half) for LOG_HEALTH;
-    without one that name is not served.
+    without one that name is not served. `pending` is config_pending()'s
+    answer, for CONFIG_HEALTH.
     """
     if service == LOG_HEALTH:
         return log_status
+    if service == CONFIG_HEALTH:
+        return "NOT_SERVING" if pending else "SERVING"
     served = ("", "prisma.v1.ConfigService", "prisma.v1.OperationalService",
               "prisma.v1.TelemetryService", "prisma.v1.RouteService",
               "prisma.v1.SessionService", "prisma.v1.SystemService")
@@ -3882,6 +3924,11 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 out.streams.add(**r).last_progress.CopyFrom(ts(lp))
             return out
 
+        # not a unit: an rpc, driven by lab/missing-card.sh; pending_fields()
+        # is what it reads, and is tested.
+        def GetPendingConfiguration(self, req, context):
+            return pb.PendingConfiguration(**pending_fields())
+
         # not a unit: an rpc, driven by lab/api-grpc.sh; clear_line() is
         # what it decides, and is tested.
         def Clear(self, req, context):
@@ -4203,7 +4250,8 @@ def health_servicer(stats_factory, hpb, hrpc, grpc, logwatch=None):
     class Health(hrpc.HealthServicer):
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def Check(self, req, context):
-            st = health_status(req.service, ok(), log_status())
+            st = health_status(req.service, ok(), log_status(),
+                               config_pending())
             if st is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"no service {req.service!r}")
             return hpb.HealthCheckResponse(status=getattr(hpb.HealthCheckResponse, st))
@@ -4212,7 +4260,8 @@ def health_servicer(stats_factory, hpb, hrpc, grpc, logwatch=None):
         def Watch(self, req, context):
             last = None
             while context.is_active():
-                st = health_status(req.service, ok(), log_status()) or "SERVICE_UNKNOWN"
+                st = health_status(req.service, ok(), log_status(),
+                                   config_pending()) or "SERVICE_UNKNOWN"
                 if st != last:
                     last = st
                     yield hpb.HealthCheckResponse(status=getattr(hpb.HealthCheckResponse, st))

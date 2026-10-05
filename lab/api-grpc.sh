@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 191
+# OFF-RED-AT-LEAST: 195
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -587,6 +587,11 @@ vtysh -c "conf t" -c "bfd" -c "no peer 192.0.2.77 interface d0" -c exit \
 vtysh -c "show running-config" 2>/dev/null | grep -n "d0" | sed 's/^/  left on d0: /'
 T9=$(python3 lab/api_phase9_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
 printf '%s\n' "$T9" | sed 's/^/  /'
+# #575: what the boot left out for a missing card, through the API.
+rm -f /run/prisma-routing/config-pending.json
+T10=$(python3 lab/api_phase10_check.py /tmp/apistubs $C 127.0.0.1:50556 \
+  /run/prisma-routing/config-pending.json 2>&1)
+printf '%s\n' "$T10" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -817,6 +822,11 @@ expect "  DeleteConfig a profile by its name" t9 delete-profile
 expect "  DeleteConfig the whole block, body and all, the static routes kept (#570)" t9 delete-block
 expect "  a session that is not there: INVALID_ARGUMENT" t9 delete-unknown-refused
 expect "  GetSchema knows the bfd peer mode, its statements typed" t9 schema-bfd
+t10() { printf '%s\n' "$T10" | grep -q "^RESULT $1 ok"; }
+expect "#575: nothing pending reads so, and prisma.v1.Configuration is SERVING" t10 pending-none
+expect "  GetPendingConfiguration reads the boot's record: the card, what it left out" t10 pending-read
+expect "  and the health service is NOT_SERVING while it stands" t10 pending-health
+expect "  Clear's configuration_pending gives it up through the VTY, SERVING again" t10 pending-clear
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

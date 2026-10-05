@@ -951,6 +951,46 @@ check(A.health_status(A.LOG_HEALTH, True, "NOT_SERVING") == "NOT_SERVING"
       and A.health_status("prisma.v1.OperationalService", True, "NOT_SERVING") == "SERVING",
       "#555: the log export answers under a name of its own, and its stall "
       "reaches neither the server's \"\" nor OperationalService")
+# #575: the saved configuration all applied, or not - a name of its own, so a
+# box short of a card does not read as a server to stop calling.
+import tempfile as _tf575  # noqa: E402
+_d575 = _tf575.mkdtemp()
+_rec575 = os.path.join(_d575, "config-pending.json")
+check(A.config_pending(_rec575) is False, "#575: no record, nothing pending")
+with open(_rec575, "w") as _f575:
+    _f575.write("{}")
+check(A.config_pending(_rec575) is True, "#575: a record is something pending")
+with open(_rec575, "w") as _f575:
+    _f575.write('{"cards": ["enp1s0"], "left_out": ["interface enp1s0", '
+                '" mtu 9000"], "since": 1791168000, "path": "/etc/x.conf", '
+                '"applied": "ab", "told": true}')
+_pf = A.pending_fields(_rec575)
+check(_pf == {"pending": True, "cards": ["enp1s0"],
+              "left_out": ["interface enp1s0", " mtu 9000"],
+              "since": 1791168000, "path": "/etc/x.conf",
+              "held_for_a_commit": True},
+      f"#575: PendingConfiguration's fields from the record: {_pf}")
+with open(_rec575, "w") as _f575:
+    _f575.write("not json")
+check(A.pending_fields(_rec575)["pending"] is False,
+      "#575: a record that cannot be read is nothing pending, not a crash")
+os.unlink(_rec575)
+check(A.pending_fields(_rec575) == {"pending": False, "cards": [],
+                                    "left_out": [], "since": 0, "path": "",
+                                    "held_for_a_commit": False},
+      "#575: no record, nothing pending")
+os.rmdir(_d575)
+check(A.clear_line("configuration_pending") == "clear configuration pending"
+      and A.clear_line("configuration_pending", "x")
+      == "clear configuration pending",
+      "#575: ClearRequest's configuration_pending is the VTY's line")
+check(A.health_status(A.CONFIG_HEALTH, True, pending=True) == "NOT_SERVING"
+      and A.health_status(A.CONFIG_HEALTH, True, pending=False) == "SERVING"
+      and A.health_status("", True, pending=True) == "SERVING"
+      and A.health_status("prisma.v1.ConfigService", True,
+                          pending=True) == "SERVING",
+      "#575: prisma.v1.Configuration is NOT_SERVING while statements wait "
+      "for a card, and that reaches no other service")
 check(A.stats_ok(lambda: {"/sys/heartbeat": 1}) and not A.stats_ok(lambda: {})
       and not A.stats_ok(lambda: 1 / 0), "the statistics segment answers, or does not")
 

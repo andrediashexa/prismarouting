@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A card missing at boot took the whole configuration down.**
+  ([#575](https://github.com/andrediashexa/hexarouting/issues/575)) On
+  10.40.200.166 (0.151.1) the X520 failed its driver's probe after a reboot,
+  `prismash --load` refused the saved file whole over it - "this box has no
+  such interface" - and the box came up with nothing applied, its management
+  port (a card that was there) included, until somebody reached the console.
+  A card the saved file names and the dataplane does not have is now not a
+  reason to refuse the file: everything that depends on it - the card's own
+  block, its sub-interfaces, a bundle left with no member, a VRRP `track` on
+  it, its FRR stanza and any routing statement naming it - is left out, the
+  rest is applied, and the box says so on the console, in the journal, in
+  `show configuration pending` and through the API (the health service
+  `prisma.v1.Configuration`, NOT_SERVING while anything waits). The file is
+  never trimmed: `save` is refused while anything is pending, and `clear
+  configuration pending` is the operator giving it up. When the card appears
+  - the hot-card path hands it to the dataplane - the watcher's tick
+  (`prismash --apply-pending`) loads the file again, so the box ends where a
+  boot with the card would have; not over a commit made since, which it
+  says once instead. A line the VTY cannot read is still refused, as before.
+
 ## 0.151.4 - a dataplane restart keeps its cards
 
 ### Fixed

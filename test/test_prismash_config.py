@@ -2668,5 +2668,85 @@ check("expected deterministic or bpa"
 check(config.Pool("s").mode_word == "deterministic",
       "#573: deterministic is its own word")
 
+# ---------------------------------------------------------------------------
+print("=== #575: what depends on a card the box does not have ===")
+_c575 = config.Config.parse("""interface enp6s18
+ ipv4 address 10.40.200.166/24
+ vrrp 1 address 10.40.200.200
+ vrrp 1 track enp1s0.666 decrement 20
+ vrrp 1 track enp6s19 decrement 10
+ exit
+interface enp1s0
+ mtu 9000
+ exit
+interface enp1s0.666
+ vlan 666
+ ipv4 address 192.0.2.1/30
+ cgnat outside
+ exit
+interface enp6s19
+ cgnat inside
+ exit
+interface ae0
+ member enp1s0
+ member enp7s0
+ exit
+interface ae1
+ member enp1s0
+ exit
+! routing
+interface enp1s0.666
+ ip ospf area 0
+exit
+router bgp 65000
+ neighbor 192.0.2.2 remote-as 65001
+ neighbor 192.0.2.2 update-source enp1s0.666
+exit
+""")
+check(not _c575.unknown, f"#575: the fixture parses: {_c575.unknown}")
+_dep = _c575.card_dependents(["enp1s0"])
+check(_dep == {"enp1s0", "enp1s0.666", "ae1"},
+      f"#575: the card, its sub-interface and a bundle left with no member, "
+      f"and not a bundle that keeps one: {sorted(_dep)}")
+_o, _left = _c575.without_cards(["enp1s0"])
+check(_o.bundles["ae0"]["members"] == ["enp7s0"] and "ae1" not in _o.bundles,
+      f"#575: ae0 keeps enp7s0, ae1 goes: {_o.bundles}")
+check(list(_o.vrrp["enp6s18"][1]["track"]) == ["enp6s19"]
+      and _o.vrrp["enp6s18"][1]["addresses"],
+      f"#575: the virtual router loses the track on the missing port only: "
+      f"{_o.vrrp}")
+check("enp1s0.666" not in _o.interfaces
+      and _o.interfaces.get("enp6s19") == "inside",
+      f"#575: the CGNAT side goes with the port: {_o.interfaces}")
+check(not any("enp1s0" in l for l in _o.routing)
+      and " neighbor 192.0.2.2 remote-as 65001" in _o.routing
+      and "router bgp 65000" in _o.routing,
+      f"#575: the stanza and the update-source go, the BGP block stays: "
+      f"{_o.routing}")
+check(" neighbor 192.0.2.2 update-source enp1s0.666" in _left
+      and " mtu 9000" in _left and "interface enp6s18" not in _left,
+      f"#575: left_out is the lines the pruned text lacks, none of "
+      f"management's: {_left}")
+check("enp1s0" in _c575.text() and _c575.bundles["ae1"]["members"] == ["enp1s0"],
+      "#575: without_cards changed the configuration it was asked about")
+# In order, each block whole: ndiff once put one block's ` exit` ahead of
+# another's `interface` row (lab/missing-card.sh).
+_two = config.Config.parse("interface ens19\n ipv4 address 192.0.2.1/24\n"
+                           " exit\ninterface ens20\n"
+                           " ipv4 address 198.51.100.1/24\n mtu 1500\n exit\n")
+check(_two.without_cards(["ens20"])[1]
+      == ["interface ens20", " ipv4 address 198.51.100.1/24", " mtu 1500",
+          " exit"],
+      f"#575: left_out out of order: {_two.without_cards(['ens20'])[1]}")
+check(all(config.is_card_name(n) for n in
+           ("enp1s0", "ens19", "eth0", "enx001122334455",
+            "TenGigabitEthernet0/8/0", "GigabitEthernet0/13/0"))
+      and not any(config.is_card_name(n) for n in
+                  ("Ten0", "lo", "loop0", "ae0", "tap4096", "vppwan0", "")),
+      "#575: is_card_name: a port's shape, and a typo's is not one")
+_o2, _left2 = _c575.without_cards([])
+check(_left2 == [] and _o2.text() == _c575.text(),
+      "#575: no missing card leaves nothing out")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

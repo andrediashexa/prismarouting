@@ -25,6 +25,14 @@ import prismash      # noqa: E402
 import routes      # noqa: E402
 import system      # noqa: E402
 import vppapi      # noqa: E402
+import atexit      # noqa: E402
+import shutil      # noqa: E402
+
+# What --load leaves out for a missing card is recorded in /run (#575); here,
+# in a directory of this run's own, taken away when it ends (#566).
+_PENDING_DIR = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, _PENDING_DIR, True)
+prismash.PENDING_PATH = os.path.join(_PENDING_DIR, "config-pending.json")
 
 fail = 0
 
@@ -1983,8 +1991,10 @@ check(pairs_made(_sh.api) == [],
 print(f"  unnamed device: {_out[:160]!r}")
 
 # TWO CARDS THAT DIFFER ONLY IN PCI DOMAIN cannot say which the old name
-# was, and neither is guessed: the refusal that follows names what the box
-# has, which is the state master left every such file in.
+# was, and neither is guessed. Until #575 the file was then refused whole,
+# naming what the box has; a card the file names and the box does not have
+# is now what #575 is about, so what depends on the old name is left out and
+# said, nothing is put on either twin, and the rest of the file loads.
 class TwinVpp(CardVpp):
     def run(self, cmd):
         self.commands.append(cmd)
@@ -2000,10 +2010,13 @@ _sh.dp = TwinVpp()
 _out = load_text(_sh, SAVED_OLD)
 check("is ens19 on this box" not in _out and "is ens20 on this box" not in _out,
       f"a twin in another domain and the box picked one: {_out!r}")
-check("interface GigabitEthernet0/13/0: this box has no such interface" in _out
-      and "refusing to load this file" in _out,
-      f"and the file was not refused with what the box has: {_out!r}")
-print("  a twin in another PCI domain: nothing guessed, the file refused")
+check("this box does not have: GigabitEthernet0/13/0" in _out
+      and "refusing to load this file" not in _out,
+      f"and the old name was not left out and said (#575): {_out!r}")
+check(not any(m == "sw_interface_add_del_address" for m, _ in _sh.api.calls),
+      f"an address meant for the old name went on a twin: {_sh.api.calls}")
+print("  a twin in another PCI domain: nothing guessed, its statements left "
+      "out (#575)")
 
 print("\n=== a bus spelled with a letter first: the second socket's card "
       "(#389) ===")
@@ -2607,6 +2620,195 @@ with contextlib.redirect_stdout(io.StringIO()):
     check(sh.apply_mtu("ge0", 1400) is False,
           "apply_mtu fails when the dataplane does not take the value")
 os.unlink(startup)
+
+# ---------------------------------------------------------------------------
+print("\n=== a card missing at boot: the rest loads, it is said, the file "
+      "stays whole (#575) ===")
+# 10.40.200.166, 0.151.1: the X520 failed its probe, --load refused the file
+# whole, and the box came up with nothing - management included. Here the box
+# has GigabitEthernet0/12/0 (management) and not GigabitEthernet0/13/0.
+SAVED_575 = """interface GigabitEthernet0/12/0
+ ipv4 address 200.150.0.1/24
+ exit
+interface GigabitEthernet0/13/0
+ ipv4 address 198.51.100.1/30
+ mtu 9000
+ exit
+interface GigabitEthernet0/13/0.666
+ vlan 666
+ ipv4 address 192.0.2.1/30
+ exit
+! routing
+router static
+ 200.150.0.0/24 next-hop 200.150.0.2
+"""
+
+
+def load_file(sh, path):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sh.load(path)
+    return flat(buf.getvalue())
+
+
+def addr_calls(api):
+    return [a for m, a in api.calls if m == "sw_interface_add_del_address"]
+
+
+prismash.Shell.forget_pending(None)
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as _fh:
+    _fh.write(SAVED_575)
+    _p575 = _fh.name
+_sh = boot_shell()
+_out = load_file(_sh, _p575)
+check("refusing to load this file" not in _out,
+      f"#575: a missing card refused the whole file: {_out!r}")
+check("this box does not have: GigabitEthernet0/13/0" in _out
+      and "show configuration pending" in _out,
+      f"#575: the missing card was not said: {_out!r}")
+check(len(addr_calls(_sh.api)) == 1,
+      f"#575: management's address alone goes on, not the missing card's "
+      f"or its sub-interface's: {addr_calls(_sh.api)}")
+_rec = _sh.read_pending()
+check(_rec and _rec["cards"] == ["GigabitEthernet0/13/0"]
+      and " ipv4 address 198.51.100.1/30" in _rec["left_out"]
+      and " ipv4 address 192.0.2.1/30" in _rec["left_out"]
+      and _rec["path"] == _p575,
+      f"#575: the record of what was left out: {_rec}")
+with open(_p575) as _f:
+    check(_f.read() == SAVED_575, "#575: the file on disk was trimmed")
+# `save` refuses while anything is pending: the running configuration is
+# short of the card's statements, and writing it is how the file loses them.
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.save_running()
+check("save: refused, nothing was written" in _buf.getvalue(),
+      f"#575: save wrote while statements were pending: {_buf.getvalue()!r}")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.show_pending()
+check("GigabitEthernet0/13/0" in _buf.getvalue()
+      and "ipv4 address 198.51.100.1/30" in _buf.getvalue(),
+      f"#575: show configuration pending: {_buf.getvalue()!r}")
+
+# A reapply after a container restart replays revision 0 - already short of
+# the card's statements, so naming no missing card - and MUST NOT take the
+# record with it: the statements still wait.
+_pruned = config.Config.parse(SAVED_575).without_cards(
+    ["GigabitEthernet0/13/0"])[0].text()
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.load("/run/rollback/0.conf", text=_pruned, reapply=True)
+check(_sh.read_pending() is not None,
+      f"#575: a reapply of revision 0 dropped the pending record: "
+      f"{_buf.getvalue()!r}")
+
+# The card appears, and nobody committed since: the file goes on again.
+_rb_text = {}
+_sh.rb = type("RB", (), {
+    "push": lambda self, text, *a: _rb_text.__setitem__(0, text),
+    "load": lambda self, n: _rb_text.get(0)})()
+# The revision --load would have recorded is the text it applied.
+_rb_text[0] = config.Config.parse(SAVED_575).without_cards(
+    ["GigabitEthernet0/13/0"])[0].text()
+_sh.store_pending(dict(_rec, applied=prismash.hashlib.sha256(
+    _rb_text[0].encode()).hexdigest()))
+_quiet = io.StringIO()
+with contextlib.redirect_stdout(_quiet):
+    check(_sh.apply_pending() == 0, "#575: nothing to do is success")
+check(_quiet.getvalue() == "",
+      f"#575: apply_pending spoke with the card still missing: "
+      f"{_quiet.getvalue()!r}")
+
+
+class BackVpp(BootVpp):
+    """The same box once the card is in the dataplane."""
+
+    def run(self, cmd):
+        if cmd.startswith("show interface"):
+            self.commands.append(cmd)
+            return 0, DP_IFACES + "GigabitEthernet0/13/0             2      up          9000/0/0/0\n"
+        return super().run(cmd)
+
+
+_sh.dp = BackVpp()
+_sh.api = FakeDataplane(existing=("GigabitEthernet0/12/0",
+                                  "GigabitEthernet0/13/0",
+                                  "GigabitEthernet0/13/0.666"))
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _rc = _sh.apply_pending()
+check(_rc == 0 and "the statements that waited for a card go on" in _buf.getvalue(),
+      f"#575: the card came back and nothing went on: {_buf.getvalue()!r}")
+check(len(addr_calls(_sh.api)) >= 2,
+      f"#575: the card's own addresses did not go on: {addr_calls(_sh.api)}")
+check(_sh.read_pending() is None,
+      "#575: the record outlived a load with every card present")
+
+# A commit since the boot: the card is back but the file is NOT put over it.
+_sh.dp = BootVpp()
+_sh.api = FakeDataplane(existing=("GigabitEthernet0/12/0",))
+load_file(_sh, _p575)
+_rec = _sh.read_pending()
+_rb_text[0] = "something an operator committed since\n"
+_sh.dp = BackVpp()
+_sh.api = FakeDataplane(existing=("GigabitEthernet0/12/0",
+                                  "GigabitEthernet0/13/0",
+                                  "GigabitEthernet0/13/0.666"))
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.apply_pending()
+    _sh.apply_pending()
+check(_buf.getvalue().count("the configuration changed since the boot") == 1
+      and addr_calls(_sh.api) == [],
+      f"#575: a commit since the boot was loaded over, or said every tick: "
+      f"{_buf.getvalue()!r}")
+check(_sh.read_pending() is not None,
+      "#575: the record went with nothing put on")
+
+# `clear configuration pending` gives them up, and `save` writes again.
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.clear_pending()
+check("cleared:" in _buf.getvalue() and _sh.read_pending() is None,
+      f"#575: clear configuration pending: {_buf.getvalue()!r}")
+os.unlink(_p575)
+
+# #573's migration rewrites the file, and with a card missing it MUST write
+# the whole file - mode bpa, AND the card's statements - never the pruned one.
+_saved_dyn = SAVED_575.replace(
+    "! routing",
+    "nat\n cgnat\n  pool p9\n   prefix-inside 100.64.0.0/22\n"
+    "   prefix-outside 203.0.113.0/29\n   mode dynamic\n   exit\n  exit\n"
+    " exit\n! routing")
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as _fh:
+    _fh.write(_saved_dyn)
+    _pdyn = _fh.name
+load_file(boot_shell(), _pdyn)
+with open(_pdyn) as _f:
+    _after = _f.read()
+os.unlink(_pdyn)
+check("mode bpa" in _after and "198.51.100.1/30" in _after
+      and "GigabitEthernet0/13/0.666" in _after,
+      f"#575: the #573 rewrite trimmed the missing card out of the file: "
+      f"{_after!r}")
+
+# missing_cards(): a dataplane that does not answer has no missing card -
+# leaving everything out over it would be a box applying nothing - and a
+# sub-interface or a loopback the file CREATES is never a card.
+_cfg = config.Config.parse(SAVED_575)
+_silent = boot_shell()
+_silent.dp = type("V", (BootVpp,), {"run": lambda s, c: (1, "")})()
+check(_silent.missing_cards(_cfg) == [],
+      "#575: a dataplane that did not answer made every card missing")
+check(boot_shell().missing_cards(_cfg) == ["GigabitEthernet0/13/0"],
+      f"#575: missing_cards: {boot_shell().missing_cards(_cfg)}")
+_sh2 = boot_shell()
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh2.write_pending(["x"], [" a"], "/p", "text")
+    _sh2.forget_pending()
+check(_sh2.read_pending() is None, "#575: forget_pending left the record")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
