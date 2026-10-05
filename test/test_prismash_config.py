@@ -2729,6 +2729,15 @@ check(" neighbor 192.0.2.2 update-source enp1s0.666" in _left
       f"management's: {_left}")
 check("enp1s0" in _c575.text() and _c575.bundles["ae1"]["members"] == ["enp1s0"],
       "#575: without_cards changed the configuration it was asked about")
+# In order, each block whole: ndiff once put one block's ` exit` ahead of
+# another's `interface` row (lab/missing-card.sh).
+_two = config.Config.parse("interface ens19\n ipv4 address 192.0.2.1/24\n"
+                           " exit\ninterface ens20\n"
+                           " ipv4 address 198.51.100.1/24\n mtu 1500\n exit\n")
+check(_two.without_cards(["ens20"])[1]
+      == ["interface ens20", " ipv4 address 198.51.100.1/24", " mtu 1500",
+          " exit"],
+      f"#575: left_out out of order: {_two.without_cards(['ens20'])[1]}")
 _o2, _left2 = _c575.without_cards([])
 check(_left2 == [] and _o2.text() == _c575.text(),
       "#575: no missing card leaves nothing out")

@@ -3155,6 +3155,22 @@ def _is_lcp_tap(name: str) -> bool:
     return is_number(rest)
 
 
+#: A physical port's name, as Linux names one (enp1s0, ens19, eth0, enx...)
+#: or as VPP names a card it took through DPDK (TenGigabitEthernet0/8/0).
+_CARD_NAME = re.compile(
+    r"^((en|eth|ib)[a-z0-9]+|[A-Za-z]+Ethernet[0-9a-f]+(/[0-9a-f]+)*)$")
+
+
+def is_card_name(name: str) -> bool:
+    """
+    Is `name` shaped like a physical port (#575)? A missing card is what
+    `--load` leaves out and applies later; a name of no card's shape - a typo
+    such as `Ten0` - is a statement the file is wrong about, and is still
+    refused whole, as every line this VTY cannot hold is.
+    """
+    return bool(_CARD_NAME.match(name))
+
+
 class Config:
     """A complete device configuration."""
 
@@ -3789,9 +3805,26 @@ class Config:
                        or l.strip().split()[:1] == ["interface"]]
         before = self.text().splitlines()
         after = out.text().splitlines()
-        # ndiff marks a line of `before` alone with "- " ahead of it.
-        left = [l[2:] for l in difflib.ndiff(before, after)
-                if l.startswith("- ")]
+        # The runs of `before` that `after` does not have. Not ndiff: with
+        # a configuration's many identical ` exit` rows it aligned one block's
+        # `exit` with another's and printed `exit` ahead of the `interface` it
+        # closes (lab/missing-card.sh). Line-level matching keeps each block
+        # whole and in order.
+        # Each row compared with the block it is in, so two blocks' identical
+        # ` exit` rows are different rows.
+        def keyed(lines):
+            hdr, out_ = None, []
+            for l in lines:
+                if l[:1] not in (" ", "") and l not in ("exit", "!"):
+                    hdr = l
+                out_.append((hdr, l))
+            return out_
+        kb, ka = keyed(before), keyed(after)
+        sm = difflib.SequenceMatcher(None, kb, ka, autojunk=False)
+        left = []
+        for op, i1, i2, _j1, _j2 in sm.get_opcodes():
+            if op in ("delete", "replace"):
+                left += before[i1:i2]
         return out, left
 
     def drop_lcp_taps(self, taps):

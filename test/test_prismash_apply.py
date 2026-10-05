@@ -2738,7 +2738,7 @@ _sh.api = FakeDataplane(existing=("GigabitEthernet0/12/0",
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
     _rc = _sh.apply_pending()
-check(_rc == 0 and "is on the box now: the statements that waited" in _buf.getvalue(),
+check(_rc == 0 and "the statements that waited for a card go on" in _buf.getvalue(),
       f"#575: the card came back and nothing went on: {_buf.getvalue()!r}")
 check(len(addr_calls(_sh.api)) >= 2,
       f"#575: the card's own addresses did not go on: {addr_calls(_sh.api)}")

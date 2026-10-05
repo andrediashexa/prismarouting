@@ -57,7 +57,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     block_paths, block_of, frr_block_lines, opens_frr_block,
                     statement_extent,
                     is_static_route, static_route, static_route_key,
-                    _address_family_error, _is_loopback, _is_lcp_tap,
+                    _address_family_error, _is_loopback, _is_lcp_tap, is_card_name,
                     _is_bundle, new_bundle, bundle_statement,
                     prefix_error, prefix6_error, nat64_prefix_error,
                     pref64_value, pref64_remove, pref64_sorted,
@@ -24154,9 +24154,11 @@ class Shell:
         named |= {s.rsplit(".", 1)[0] for s in target.vlans}
         for spec in target.bundles.values():
             named |= set(spec["members"])
+        # A name of no card's shape is a typo, which the existence check
+        # still refuses the file over; only a port can be missing.
         return sorted(n for n in named
                       if n not in have and n not in created
-                      and not _is_lcp_tap(n))
+                      and not _is_lcp_tap(n) and is_card_name(n))
 
     def read_pending(self):
         """What `--load` left out on this boot (#575), or None."""
@@ -24262,16 +24264,17 @@ class Shell:
         if now is None or hashlib.sha256(
                 now.encode()).hexdigest() != rec["applied"]:
             if not rec.get("told"):
-                print(f"note: {', '.join(back)} is on the box now, and the "
-                      "configuration changed since the boot")
+                # The names last on the row, the #363 shape.
+                print("note: the configuration changed since the boot, and "
+                      f"the card is back: {', '.join(back)}")
                 print_prose("the statements that waited for it are not put "
                             "on by themselves over a commit; 'show "
                             "configuration pending' lists them")
                 rec["told"] = True
                 self.store_pending(rec)
             return 0
-        print(f"note: {', '.join(back)} is on the box now: the statements "
-              "that waited for it go on")
+        print("note: the statements that waited for a card go on, now that "
+              f"it is here: {', '.join(back)}")
         before = self.failed
         self.load(rec["path"])
         return 1 if self.failed > before else 0

@@ -112,7 +112,7 @@ expect_in "save is refused while it waits, so the file keeps it" \
 expect_in "  and the file on disk still names ens20" \
   "198.51.100.1/24" "$WHOLE"
 expect_in "the card plugged in is taken up by the watcher's tick" \
-  "is on the box now" "$APPLY"
+  "the statements that waited for a card go on" "$APPLY"
 expect_in "  and its peer is answered" " 0% packet loss" "$UP"
 expect_in "  and nothing is pending after it" "nothing pending" "$AFTER"
 verdict
