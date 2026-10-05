@@ -1679,9 +1679,15 @@ class SnmpDaemon:
         # dataplane answers. Before the restart, because a group is read
         # when the process starts; gpasswd -a is a no-op on a member.
         self._run(["gpasswd", "-a", SNMPD_USER, "vpp"])
-        # And bfdd, for BFD-STD-MIB (#559): vtysh talks to the daemons'
-        # .vty sockets, which are frrvty's.
-        self._run(["gpasswd", "-a", SNMPD_USER, "frrvty"])
+        # NOT bfdd's group (#571). 0.150.10 put Debian-snmp in frrvty for
+        # BFD-STD-MIB, and it reached nothing: on a box running the
+        # containers the .vty sockets are frr:frr 0770 (10.40.200.166). And
+        # where they ARE frrvty's, that membership is vtysh's whole CLI,
+        # configuration included. The agent reads bfdd through the host's
+        # door instead (doors.BFD_PEERS_ARGV), so the membership 0.150.10
+        # granted is taken back here; gpasswd -d on a non-member is an error
+        # nobody needs to read.
+        self._run(["gpasswd", "-d", SNMPD_USER, "frrvty"])
 
         # v3 users are created in net-snmp's own persistent store, which it
         # rewrites on first use. Written only when absent, or every restart
