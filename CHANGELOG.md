@@ -20,17 +20,6 @@ every merge can lose. Written once, from the entries below it, it has nothing
 to drift from.
 
 **Renaming `## Unreleased` to a version MUST leave an empty `## Unreleased`
-
-### Fixed
-
-* **The dataplane's screens still said `dynamic`.**
-  ([#573](https://github.com/andrediashexa/hexarouting/issues/573)) 0.151.0
-  renamed the mode `bpa` in the configuration, the refusals and the API, and
-  `show cgnat pool` (the dataplane's `show bpa pool`) still printed `pool
-  rfc6598 [dynamic / interleaved]` on 10.95.200.198, as did `show bpa config`.
-  Both now say `bpa`; the dataplane's own `bpa pool` command takes `mode bpa`
-  as well as the old word. The audit trail keeps `mode dynamic`: a record is
-  never reworded, and `show cgnat history verify` reads the old entries.
 above it.** Without one, a branch cut before the rename has nowhere to put its
 entry: git no longer finds that heading, anchors on the `### Fixed` of the
 
@@ -89,6 +78,15 @@ version has a chance of seeing it.
 ### Added
 
 ### Fixed
+
+* **The dataplane's screens still said `dynamic`.**
+  ([#573](https://github.com/andrediashexa/hexarouting/issues/573)) 0.151.0
+  renamed the mode `bpa` in the configuration, the refusals and the API, and
+  `show cgnat pool` (the dataplane's `show bpa pool`) still printed `pool
+  rfc6598 [dynamic / interleaved]` on 10.95.200.198, as did `show bpa config`.
+  Both now say `bpa`; the dataplane's own `bpa pool` command takes `mode bpa`
+  as well as the old word. The audit trail keeps `mode dynamic`: a record is
+  never reworded, and `show cgnat history verify` reads the old entries.
 
 ## 0.151.0 - NAT64 in its own hierarchy, and mode bpa
 
