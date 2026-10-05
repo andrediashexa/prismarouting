@@ -27,6 +27,14 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.1 - the screens say bpa too
+
+* **Contract:** unchanged (`prisma.proto` sha256 `d804c1426273155583621247c0e43bc7f04896523e560f14a214dce07a3966c8`).
+* **Nothing changes through the API** (#573): `Show` of `show cgnat pool`
+  now reads `[bpa / interleaved]` where 0.151.0 still printed
+  `[dynamic / ...]`; the typed reads already said "bpa".
+* **Lab box:** .166 is on 0.151.0.
+
 ## 0.151.0 - NAT64 in its own hierarchy, and mode bpa
 
 * **Contract:** BREAKING (`prisma.proto` sha256 `d804c1426273155583621247c0e43bc7f04896523e560f14a214dce07a3966c8`).

@@ -192,7 +192,7 @@ expect_in "the ALG switch reached the dataplane" "alg ftp off" "$CFG"
 # Read from a different command, so this is not the same string twice: show
 # bpa alg asks the pool's own mask rather than re-printing the configuration.
 expect_in "and 'show bpa alg' agrees with it" "ftp    off" "$ALG"
-expect_in "show bpa pool reports the mode the VTY set" "dynamic" "$POOL"
+expect_in "show bpa pool reports the mode the VTY set" "bpa" "$POOL"
 expect "a vppctl setting survives an unrelated commit through the VTY" \
   test "${AFTER:-0}" -ge 1
 expect "and the commit that had to survive it did take effect" \
