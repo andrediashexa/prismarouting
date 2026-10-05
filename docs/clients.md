@@ -27,6 +27,20 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.10 - BFD's sessions typed and streamed, and in SNMP
+
+* **Contract:** additive (`prisma.proto` sha256 `3c758e3cf29cdcf8cc738e973502cd69fcb07ec93969d83a99bdf26a0c1c5305`).
+* **OperationalService** gains `ListBfdSessions` (`show bfd peers`, or one
+  `peer`, as fields: state, seconds in it, diagnostics, both ends' timers in
+  ms, five counters; the screen in `text`; INVALID_ARGUMENT for a peer that
+  is not an address) and `WatchBfd` (a stream: each session as it is, then
+  CHANGED / APPEARED / GONE / UNANSWERED events; `interval_seconds` 1-60, 0 is
+  2; a down-and-up between two readings is a CHANGED with the down counter
+  moved). BFD configuration stays lines through Edit.
+* **SNMP:** BFD-STD-MIB (RFC 7331) is served; traps are not
+  (`bfdNotificationsEnable` reads false).
+* **Lab box:** .166 is on 0.150.9.
+
 ## 0.150.9 - BFD configuration can be removed
 
 * **Contract:** unchanged (`prisma.proto` sha256 `8cc49ae67f9d8279a77b0d443d7ad5f6d016ae0518c6b96c000b32256973efa1`).

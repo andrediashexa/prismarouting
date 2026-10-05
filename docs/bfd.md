@@ -152,7 +152,26 @@ With BGP's hold time at 30 s. The same lab with every `bfd` taken out (`sh
 tools/lab.sh bfd off`) sees neither route leave in 12 s, and the static route
 never would.
 
-## What is left, for phase 2
+## What phase 2 delivers (0.150.10)
+
+* **The API.** `OperationalService.ListBfdSessions` carries `show bfd peers`
+  (or one `peer`) as fields, from the one reading the screen is drawn from;
+  `WatchBfd` streams the sessions as they are, then every change: a state
+  change, a session that appeared or went away, a down-and-up between two
+  readings (its down counter moved), and the daemon not answering.
+* **SNMP.** The product's agent serves BFD-STD-MIB (RFC 7331) - the
+  scalars, bfdSessTable, bfdSessPerfTable and the map tables - read from
+  bfdd through vtysh on its own registration, so it answers while the
+  dataplane does not. `bfdNotificationsEnable` reads false: pass_persist
+  cannot send a trap.
+* **The IGPs.** `bfd profile <name>` at an OSPF, OSPFv3 or IS-IS interface;
+  the VTY stages the bare `bfd` line first, because FRR 10.7.1 answers the
+  profile line alone with "has not been set" and stores nothing. lab/bfd.sh
+  drives OSPF down through BFD: after the silent cut at 100 ms x 3, bfdd saw
+  the session down in 277 ms, the static route left in 277 ms, BGP in 351 ms
+  and OSPF (dead time 40 s) in 256 ms.
+
+## What is left after phase 2
 
 * **The IGPs.** `ip ospf bfd`, `ipv6 ospf6 bfd` and `isis bfd` were already
   in the grammar, and before this phase they were inert on every box: nothing

@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Added
 
+* **BFD, phase 2: its sessions through the API, BFD-STD-MIB, and OSPF over
+  BFD proved.** ([#559](https://github.com/andrediashexa/hexarouting/issues/559))
+  `OperationalService.ListBfdSessions` carries `show bfd peers` as fields -
+  state, time in it, diagnostics, both ends' timers, the five counters - from
+  the one reading the screen in `text` is drawn from, and `WatchBfd` streams
+  every change: the sessions as they are, then each that changed state (or
+  whose down counter moved between two readings, the flap a state comparison
+  never sees), appeared or went away. The SNMP agent serves BFD-STD-MIB
+  (RFC 7331) - the scalars, bfdSessTable, bfdSessPerfTable and the two map
+  tables - read from bfdd through vtysh on its own registration, so it
+  answers while the dataplane does not; FRR 10.7.1 ships no `bfdd_snmp` to
+  serve it over AgentX. The IGPs' `bfd` at an interface takes `profile
+  <name>`, and the VTY stages the bare `ip ospf bfd` (or OSPFv3's, IS-IS's)
+  before it: measured on FRR 10.7.1, the profile line alone is answered "ip
+  ospf bfd has not been set" and nothing is stored. A `no` of an IGP's `bfd`
+  takes its profile line with it, as #570 made a neighbour's do.
+  lab/bfd.sh drives OSPF down through BFD with the same silent cut;
+  lab/api-grpc.sh's eighth phase holds both rpcs against the VTY's screens
+  and a stream that sees a peer added and removed under it; lab/snmp.sh reads
+  the session through snmpd as Debian-snmp. Not in this phase: BFD traps
+  (bfdNotificationsEnable reads false - pass_persist cannot send one), typed
+  BFD configuration in GetConfig, and IS-IS and OSPFv3 driven down in a lab.
+
 ### Fixed
 
 ## 0.150.9 - BFD configuration can be removed
