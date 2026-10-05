@@ -27,6 +27,14 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.11 - BFD-STD-MIB answers on a real box
+
+* **Contract:** unchanged (`prisma.proto` sha256 `3c758e3cf29cdcf8cc738e973502cd69fcb07ec93969d83a99bdf26a0c1c5305`).
+* **Nothing changes through the API** (#571). SNMP's BFD-STD-MIB, which
+  answered nothing on a box running the containers, now reads bfdd through
+  the host's doors.
+* **Lab box:** .166 is on 0.150.10.
+
 ## 0.150.10 - BFD's sessions typed and streamed, and in SNMP
 
 * **Contract:** additive (`prisma.proto` sha256 `3c758e3cf29cdcf8cc738e973502cd69fcb07ec93969d83a99bdf26a0c1c5305`).
