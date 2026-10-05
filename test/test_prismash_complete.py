@@ -8161,6 +8161,34 @@ with contextlib.redirect_stdout(io.StringIO()) as _o:
 check("the migrated file could not be written" in _o.getvalue(),
       f"#573: Shell.write_migrated says a file it cannot write: {_o.getvalue()}")
 
+# FRR's `ip address` inside a Prisma interface block (#579). On 10.40.200.166
+# it went to FRR unread, reached the dataplane through the Linux pair, and a
+# later `no ip address` took the address away. Refused at the prompt, naming
+# the box's statement; `no ip address` still passes, to clean an old line up.
+sh = shell_with_frr()
+sh.feed("configure")
+sh.feed("interface host-veth-vpp")
+with contextlib.redirect_stdout(io.StringIO()) as _o579:
+    sh.feed("ip address 10.9.9.1/24")
+_t579 = _o579.getvalue()
+check("'ip address' is FRR's" in _t579
+      and "use 'ipv4 address 10.9.9.1/24'" in _t579,
+      f"#579: 'ip address' in an interface block is refused naming "
+      f"'ipv4 address': {_t579!r}")
+check(not any("ip address" in l for l in sh.candidate.routing),
+      f"#579: and nothing reaches FRR: {sh.candidate.routing}")
+check(all(len(l) <= 79 for l in _t579.splitlines()),
+      f"#579: and the refusal fits a 79-column console: {_t579!r}")
+with contextlib.redirect_stdout(io.StringIO()):
+    sh.feed("ipv4 address 10.9.9.1/24")
+check("10.9.9.1/24" in sh.candidate.addresses.get("host-veth-vpp", []),
+      "#579: and 'ipv4 address' is the box's own statement, staged")
+with contextlib.redirect_stdout(io.StringIO()) as _o579n:
+    sh.feed("no ip address 10.9.9.1/24")
+check("FRR's" not in _o579n.getvalue(),
+      f"#579: 'no ip address' still passes, to clean an old FRR line up: "
+      f"{_o579n.getvalue()!r}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
 
