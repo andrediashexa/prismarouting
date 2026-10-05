@@ -27,6 +27,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 
 
 class Channel:
@@ -121,14 +122,51 @@ class Channel:
         return "gone", None
 
 
+#: How long a login waits for the broker's socket (#581). Measured on
+#: 10.40.200.166: `system upgrade` recreates the management container in about
+#: 3 s and the whole refresh takes about 7; a login in that window met a
+#: refused socket and printed a Python traceback before falling back to bash.
+ATTACH_WAIT = 20.0
+WAITING = "the VTY is restarting (an upgrade is under way); waiting..."
+
+
+class BrokerUnavailable(Exception):
+    """The broker's socket refused, or was missing, for all of ATTACH_WAIT."""
+
+
+def connect(path, wait=None, sleep=time.sleep, now=time.monotonic,
+            err=None):
+    """
+    The broker's socket at `path`, connected - waiting out a refused or
+    missing socket for `wait` seconds (ATTACH_WAIT), and saying so once on
+    `err` (stderr), which is the user's terminal at this point. Raises
+    BrokerUnavailable when the time runs out.
+    """
+    err = err or sys.stderr
+    deadline = now() + (ATTACH_WAIT if wait is None else wait)
+    said = False
+    while True:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.connect(path)
+            return sock
+        except (ConnectionRefusedError, FileNotFoundError) as e:
+            sock.close()
+            if now() >= deadline:
+                raise BrokerUnavailable(str(e)) from None
+            if not said:
+                print(WAITING, file=err, flush=True)
+                said = True
+            sleep(0.5)
+
+
 def attach(path):
     """
     Connect to the broker at `path`, take the terminal it hands over, and
     return the Channel. stdin, stdout and stderr are the user's terminal from
     here on.
     """
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(path)
+    sock = connect(path)
     _, fds, _, _ = socket.recv_fds(sock, 16, 3)
     for i, fd in enumerate(fds[:3]):
         os.dup2(fd, i)

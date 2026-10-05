@@ -27,6 +27,14 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.6 - a login during an upgrade waits instead of failing
+
+* **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **Nothing changes through the API** (#581): an SSH login to the VTY in the
+  seconds an upgrade recreates the management container now waits for it,
+  rather than printing a traceback and dropping to a shell.
+* **Lab box:** .166 is on 0.151.5.
+
 ## 0.151.5 - a card missing at boot no longer takes the configuration down
 
 * **Contract:** additive (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
