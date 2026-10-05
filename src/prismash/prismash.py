@@ -94,6 +94,13 @@ import policy as policy_mod
 readline = None
 
 CONFIG_PATH = os.environ.get("PRISMA_CONFIG", "/etc/prisma-routing/prisma-routing.conf")
+# What `--load` left out because a card the file names was not on the box
+# (#575): the cards, the statements, the file they came from and the text it
+# applied. In /run because it is about THIS boot - a box that reboots with
+# the card answers the question afresh - and /run/prisma-routing is mounted
+# into the management container, where the API reads it.
+PENDING_PATH = os.environ.get(
+    "PRISMA_CONFIG_PENDING", "/run/prisma-routing/config-pending.json")
 # A static route's description (#436). FRR has no field for one, so the box
 # keeps it here, written by commit and read back by running_config(), beside
 # the saved configuration and under the same umask.
@@ -2060,7 +2067,10 @@ SHOW = {
     "cgnat": ("CGNAT information", SHOW_CGNAT),
     "nat64": ("NAT64 information", SHOW_NAT64),
     "configuration": ("candidate configuration", {
-        "compare": ("differences against the running configuration", None)}),
+        "compare": ("differences against the running configuration", None),
+        # #575: what the boot left out for a card the box did not have.
+        "pending": ("what the saved file holds for a card not on the box",
+                    None)}),
     "running-config": ("configuration in effect, CGNAT and routing", None),
     "rollback": ("committed revisions available", None),
     "this": ("the configuration of the hierarchy you are in", None),
@@ -4198,6 +4208,11 @@ TREE = {
             "isis": ("IS-IS adjacencies", {
                 "adjacency": ("all of them, or one system id",
                               "[<system-id>]"),
+            }),
+            # #575: give up what waits for a missing card, so `save` writes.
+            "configuration": ("the saved file's statements kept for a card", {
+                "pending": ("give them up; 'save' then writes without them",
+                            None),
             }),
         }),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
@@ -19194,6 +19209,9 @@ class Shell:
         if line in ("show configuration compare", "show configuration | compare"):
             self.show_compare()
             return
+        if line == "show configuration pending":
+            self.show_pending()
+            return
         if line == "show configuration":
             self.print_config(self.candidate or self.running_config())
             return
@@ -22154,12 +22172,16 @@ class Shell:
         if w[1:2] == [NAT64_LEVEL]:
             self.clear_nat64(w[2:])
             return
+        if w[1:3] == ["configuration", "pending"] and len(w) == 3:
+            self.clear_pending()
+            return
         if w[:2] != ["clear", "bgp"] or len(w) < 3:
             self.err("usage: clear bgp <neighbour> [soft [in|out]]")
             print("       clear ospf process | clear ospf neighbor <A.B.C.D>")
             print("       clear isis adjacency [<system-id>]")
             print("       clear interface counters [<interface>]")
             print("       clear cgnat subscriber <A.B.C.D>")
+            print("       clear configuration pending")
             return
         if not self.require(CAP_ALL, "clear bgp"):
             return
@@ -23056,6 +23078,18 @@ class Shell:
         directory the operator's own group had been given, so the first save on
         the box was the last one a non-root account could make (#188).
         """
+        # Refused while the boot left statements out for a missing card
+        # (#575): the running configuration is short of them, and writing it
+        # is the one way the file would lose them.
+        rec = self.read_pending()
+        if rec:
+            self.err("save: refused, nothing was written")
+            print_prose(f"{len(rec['left_out'])} statement(s) of the saved "
+                        "file wait for a card this box does not have, and "
+                        "the file would lose them: 'show configuration "
+                        "pending' lists them, 'clear configuration pending' "
+                        "gives them up")
+            return
         running = self.running_config()
         # Refused rather than written (#525): with neither snmpd.conf nor the
         # saved file readable, the SNMP half of this file would be the
@@ -24092,6 +24126,152 @@ class Shell:
         return 1 if self.failed else 0
 
     @sigint_ignored
+    def missing_cards(self, target):
+        """
+        The physical ports `target` names that the dataplane does not have
+        now, sorted (#575) - [] when the dataplane does not answer, because a
+        dataplane that cannot be read is not one that has no ports, and
+        leaving everything out over it would be a box applying nothing.
+
+        A name the configuration CREATES - a sub-interface, a loopback, a
+        bundle - is never a card; its parent, or its member, may be. Both
+        names of a linux_cp pair count as present, as in the commit check.
+        """
+        rc, out = self.dp.run("show interface")
+        have = set(routes.parse_interfaces(out)) if rc == 0 else set()
+        if not have - {"local0"}:
+            return []
+        _, lcp_out = self.dp.run("show lcp")
+        for names in routes.lcp_pairs(lcp_out).values():
+            have.update(names)
+        created = set(target.vlans) | set(target.loopbacks) \
+            | set(target.bundles)
+        named = {n for n in target.interface_names() if n not in created}
+        named |= {s.rsplit(".", 1)[0] for s in target.vlans}
+        for spec in target.bundles.values():
+            named |= set(spec["members"])
+        return sorted(n for n in named
+                      if n not in have and n not in created
+                      and not _is_lcp_tap(n))
+
+    def read_pending(self):
+        """What `--load` left out on this boot (#575), or None."""
+        try:
+            with open(PENDING_PATH) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def write_pending(self, cards, left_out, path, applied):
+        """
+        Record what `--load` left out (#575): the cards, the statements, the
+        file and a digest of the text it applied - the digest is how
+        apply_pending() tells that nobody has committed since, which is the
+        one condition under which putting the file back changes nothing an
+        operator did.
+        """
+        self.store_pending({
+            "cards": list(cards), "left_out": list(left_out), "path": path,
+            "since": int(time.time()),
+            "applied": hashlib.sha256(applied.encode()).hexdigest()})
+
+    def store_pending(self, rec):
+        """Write the pending record `rec` whole, atomically."""
+        try:
+            os.makedirs(os.path.dirname(PENDING_PATH), exist_ok=True)
+            with open(PENDING_PATH + ".tmp", "w") as f:
+                json.dump(rec, f)
+            os.replace(PENDING_PATH + ".tmp", PENDING_PATH)
+        except OSError as e:
+            # Said and not fatal: the statements were left out either way, and
+            # the console above already listed them.
+            print(f"warning: the pending record could not be written: "
+                  f"{e.strerror}")
+
+    def forget_pending(self):
+        """Remove the record of what `--load` left out, if there is one."""
+        try:
+            os.unlink(PENDING_PATH)
+        except OSError:
+            pass
+
+    def show_pending(self):
+        """`show configuration pending` (#575)."""
+        rec = self.read_pending()
+        if not rec:
+            print("  nothing pending: the box applied all of its saved "
+                  "configuration")
+            return
+        print_prose(f"the saved file holds statements for "
+                    f"{len(rec['cards'])} card(s) this box did not have when "
+                    "it loaded it; they were left out, and go on by "
+                    "themselves when the card appears:")
+        for card in rec["cards"]:
+            print(f"    {card}")
+        print(f"  left out ({len(rec['left_out'])}):")
+        for line in rec["left_out"]:
+            print(f"    {line}")
+        print_prose("'save' is refused while this list stands, so the file "
+                    "keeps them; 'clear configuration pending' gives them up")
+
+    def clear_pending(self):
+        """`clear configuration pending` (#575): give the statements up."""
+        if not self.require(CAP_ALL, "clear configuration pending"):
+            return
+        rec = self.read_pending()
+        if not rec:
+            print("  nothing pending")
+            return
+        self.forget_pending()
+        print(f"cleared: {len(rec['left_out'])} pending statement(s)")
+        print_prose("the next 'save' writes the file without them")
+
+    def apply_pending(self):
+        """
+        Put on what `--load` left out, once a card it waited for is on the
+        box (#575). What prisma-routing-card-watch runs every tick; it prints
+        nothing at all while there is nothing to do, which is every tick but
+        one. Returns 0, or 1 when it tried and failed.
+
+        The FILE is loaded again - the same apply a boot with the card makes,
+        so the box ends exactly where that boot would have. Only while the
+        configuration in effect is still what `--load` applied: a commit
+        since then is an operator's change, and loading the file over it
+        would take that change away. Then it says so once and leaves it.
+        """
+        rec = self.read_pending()
+        if not rec:
+            return 0
+        try:
+            with open(rec["path"]) as f:
+                text = f.read()
+        except OSError:
+            return 0
+        still = set(self.missing_cards(Config.parse(text)))
+        back = [c for c in rec["cards"] if c not in still]
+        if not back:
+            return 0
+        try:
+            now = self.rb.load(0)
+        except RollbackUnavailable:
+            now = None
+        if now is None or hashlib.sha256(
+                now.encode()).hexdigest() != rec["applied"]:
+            if not rec.get("told"):
+                print(f"note: {', '.join(back)} is on the box now, and the "
+                      "configuration changed since the boot")
+                print_prose("the statements that waited for it are not put "
+                            "on by themselves over a commit; 'show "
+                            "configuration pending' lists them")
+                rec["told"] = True
+                self.store_pending(rec)
+            return 0
+        print(f"note: {', '.join(back)} is on the box now: the statements "
+              "that waited for it go on")
+        before = self.failed
+        self.load(rec["path"])
+        return 1 if self.failed > before else 0
+
     def reapply(self):
         """
         Put the configuration in effect back on a dataplane that restarted
@@ -24263,6 +24443,29 @@ class Shell:
                 print_prose(f"({why})", indent="        ")
             return
 
+        # A CARD THE FILE NAMES AND THE BOX DOES NOT HAVE (#575). Measured on
+        # 10.40.200.166 (0.151.1): the X520 failed its driver's probe at boot,
+        # the interface-existence check refused the file whole, and the box
+        # came up with nothing - its management port, a virtio card that WAS
+        # there, included - until someone reached its console. A missing
+        # card is not a line this VTY cannot hold, which is what the refusal
+        # above is for: the file is right, the box is short of hardware. So
+        # what depends on the card is left out and said, everything else is
+        # applied, and the watcher puts the rest on when the card appears
+        # (apply_pending). The file is never trimmed: `save` refuses while
+        # anything is pending.
+        full = target
+        cards = self.missing_cards(target)
+        left_out = []
+        if cards:
+            target, left_out = target.without_cards(cards)
+            # The names last on the row, the #363 shape.
+            print(f"warning: this box does not have: {', '.join(cards)}")
+            print_prose(f"{len(left_out)} statement(s) of the saved file "
+                        "depend on it and are left out until it appears; "
+                        "everything else is applied. 'show configuration "
+                        "pending' lists them", indent="    ")
+
         # A BLOCK-STRIDE ON A DETERMINISTIC POOL, dropped here and refused
         # everywhere an operator types it (#375). The pair has been accepted
         # since 0.67.0 and the allocator never read the stride, so a file
@@ -24362,7 +24565,16 @@ class Shell:
 
         if self.apply(target):
             if migrated and from_file:
-                self.write_migrated(path, target)
+                # The FULL file (#575): `target` may be short of what waits
+                # for a card, and the file is never trimmed.
+                self.write_migrated(path, full)
+            if cards:
+                self.write_pending(cards, left_out, path, target.text())
+            elif from_file:
+                # Only the saved file answers for the record: a reapply after
+                # a container restart replays revision 0, which is already
+                # short of what is pending and so names no missing card.
+                self.forget_pending()
             # A window armed before the reboot is still pending: the file
             # outlives the boot, and so does the deadline (#212).
             pending = self.confirm.read()
@@ -24595,6 +24807,11 @@ def main():
     # Not typed either: watch-the-dataplane runs it when the dataplane or
     # the routing container started again under a box that had already
     # loaded its configuration (#548).
+    # Not typed either: watch-the-dataplane runs it every tick, and it is
+    # silent until a card the boot left statements out for appears (#575).
+    if args and args[0] == "--apply-pending":
+        return sh.apply_pending()
+
     if args and args[0] == "--reapply":
         path = sh.reapply()
         if path is None:

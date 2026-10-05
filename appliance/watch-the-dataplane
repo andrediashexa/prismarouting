@@ -94,6 +94,8 @@ REPORT_LINES=${PRISMA_DATAPLANE_REPORT_LINES:-80}
 FRR_CONTAINER=${PRISMA_FRR_CONTAINER:-prisma-routing_frr_1}
 APPLIED=${PRISMA_APPLIED_STAMP:-$ROOT/run/prisma-routing/dataplane-applied}
 PRISMASH=${PRISMA_PRISMASH:-/usr/bin/prismash}
+# What the boot's --load left out for a card the box did not have (#575).
+PENDING=${PRISMA_CONFIG_PENDING:-$ROOT/run/prisma-routing/config-pending.json}
 WAITVPP=${PRISMA_WAIT_FOR_VPP:-$ROOT/usr/lib/prisma-routing/wait-for-vpp}
 # Attempts at putting one restart's configuration back before this stops
 # trying and says so: a configuration the new dataplane refuses would be
@@ -250,6 +252,13 @@ state=$("$DOCKER" inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)
 case "$state" in
   running)
     reapply_if_restarted
+    # A card the boot left statements out for may have appeared since: the
+    # hot-card path hands it to the dataplane, and this puts on what waited
+    # for it (#575). Only while there is a record, so every other tick costs
+    # one stat.
+    if [ -e "$PENDING" ]; then
+      "$PRISMASH" --apply-pending || say "putting on what waited for a card failed"
+    fi
     exit 0 ;;
   restarting|created)
     # `restarting` is the policy still trying, and that is not giving up.

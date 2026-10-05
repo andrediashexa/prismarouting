@@ -3696,6 +3696,104 @@ class Config:
         return [(name, a) for name, addrs in self.addresses.items()
                 for a in addrs if ":" not in a]
 
+    def card_dependents(self, cards) -> set:
+        """
+        Every interface name in this configuration that exists only through
+        one of `cards`: the cards themselves, a sub-interface of one (its
+        name is `<card>.<n>`, and a sub-interface of that is one too), and a
+        bundle left with no member once the missing ones are taken out
+        (#575). A bundle that keeps a member is NOT one: it forwards on what
+        it has, and only the absent member leaves it.
+        """
+        cards = set(cards or ())
+        dep = set()
+        for name in self.interface_names() | set(self.vlans):
+            if name in cards:
+                dep.add(name)
+        for b, spec in self.bundles.items():
+            left = [m for m in spec["members"] if m not in cards]
+            if spec["members"] and not left:
+                dep.add(b)
+        # A sub-interface of a card, or of a bundle that is gone, is gone
+        # with it.
+        for name in self.interface_names() | set(self.vlans):
+            if name.split(".", 1)[0] in dep:
+                dep.add(name)
+        return dep
+
+    def without_cards(self, cards):
+        """
+        This configuration minus everything that depends on `cards`, the
+        physical ports the box does not have right now, and the statements
+        that were left out (#575). Returns (config, left_out), where
+        left_out is every line of this configuration's text() the returned
+        one does not have, in order. Neither this object nor the file it was
+        read from is touched.
+
+        WHAT "DEPENDS ON A CARD" MEANS, and it is one rule per kind of
+        statement, each the statement that would be refused or would fail on
+        a box without the card:
+
+        * The card's own `interface` block - addresses, MTU, description,
+          shutdown, uRPF, MAC, VRF, linux-name, IPv6 RA and PREF64, VRRP,
+          and its CGNAT side - and the same for every sub-interface of it
+          and every bundle left with no member (card_dependents()).
+        * A bundle that keeps a member loses only the absent member.
+        * A virtual router elsewhere that TRACKS a dependent interface loses
+          that track, and keeps the rest of itself.
+        * In the routing section: the FRR `interface` stanza of a dependent
+          interface, whole; and any other statement that names one as a
+          word - `ip route <p> <card>`, a static route's `next-hop <card>`,
+          `neighbor X update-source <card>` - is left out on its own, the
+          block it sits in (`router bgp`, `router static`) staying.
+
+        What is NOT left out: a pool, which names prefixes rather than ports;
+        a route via an ADDRESS, even one the card would have reached, because
+        the box cannot know which port an address resolves through until it
+        does; and every statement about anything else. Management first: the
+        port the box is reached through is a card like any other, and when it
+        is present nothing here touches it.
+
+        Why the text and not a list kept as the attributes are pruned: the
+        text is what the box would have applied, so the difference between
+        the two texts is exactly what it did not apply - one reader of the
+        question, not two that can drift (#296's argument).
+        """
+        import copy
+        import difflib
+        dep = self.card_dependents(cards)
+        cards = set(cards or ())
+        out = copy.deepcopy(self)
+        for d in (out.mtus, out.urpf, out.descriptions, out.addresses,
+                  out.vlans, out.vrfs, out.macs, out.linux_names, out.pref64,
+                  out.vrrp, out.interfaces):
+            for name in [n for n in d if n in dep]:
+                del d[name]
+        out.admin_down -= dep
+        out.ra_enabled -= dep
+        out.declared -= dep
+        out.loopbacks -= dep
+        if hasattr(out, "soft_pairs"):
+            out.soft_pairs -= dep
+        for b in [b for b in out.bundles if b in dep]:
+            del out.bundles[b]
+        for spec in out.bundles.values():
+            spec["members"] = [m for m in spec["members"] if m not in cards]
+        for vrs in out.vrrp.values():
+            for vr in vrs.values():
+                for t in [t for t in vr["track"] if t in dep]:
+                    del vr["track"][t]
+        out.drop_frr_interface_blocks(sorted(dep))
+        out.routing = [l for l in out.routing
+                       if not (set(l.split()) & dep)
+                       or l.strip().split()[:1] == ["interface"]]
+        before = self.text().splitlines()
+        after = out.text().splitlines()
+        # ndiff marks a line of `before` alone with "- " ahead of it.
+        left = [l[2:] for l in difflib.ndiff(before, after)
+                if l.startswith("- ")]
+        return out, left
+
     def drop_lcp_taps(self, taps):
         """
         Take the named linux_cp TAPs out of this configuration.
