@@ -283,7 +283,7 @@ As VRFs aparecem no `show running-config` lidas do Linux, e o arquivo salvo as c
 
 ### A gerência numa VRF própria
 
-Para a tabela principal levar a default dos assinantes e a gerência continuar acessível pelo gateway dela, a placa de gerência vai para uma VRF como qualquer interface, com a default dela no bloco `vrf` do roteamento, e `system` > `management` > `vrf` diz à caixa que os serviços dela moram ali ([#580](https://github.com/andrediashexa/hexarouting/issues/580)):
+Para a tabela principal levar a default dos assinantes e a gerência continuar acessível pelo gateway dela, a placa de gerência vai para uma VRF como qualquer interface, com a default dela no bloco `vrf` do roteamento, e `system` > `management` > `vrf` diz à caixa que os serviços dela moram ali:
 
 ```
 vrf mgmt table 100
