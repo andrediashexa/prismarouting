@@ -68,7 +68,10 @@ check(not cfg.unknown, f"the sample parses whole: {cfg.unknown}")
 
 print("=== reads ===")
 d = T.config_typed(cfg)
-check(sorted(d) == sorted(list(T.AREAS) + ["box_owned"]), "every area by default - the routing half too (#558 phase 3) - and the box's own lines")
+# Area "bfd" (#559 phase 3) answers two lists, its sessions and its profiles.
+check(sorted(d) == sorted([a for a in T.AREAS if a != "bfd"] +
+                          ["bfd_peers", "bfd_profiles", "box_owned"]),
+      "every area by default - the routing half too (#558 phase 3) - and the box's own lines")
 i = {x["name"]: x for x in d["interfaces"]}
 e = i["ens18"]
 check(e["description"] == "up link" and e["mtu"] == 1500 and not e["shutdown"]
@@ -214,6 +217,140 @@ for area, ls in (("interfaces", lines + new), ("pools", pl), ("logging", ll)):
     bad = [x for x in ls if not in_grammar(GRAMMAR[area], x.split())]
     check(not bad, f"{area}: every line is in the grammar: {bad}")
 
+print("=== BFD as fields (#559 phase 3) ===")
+# FRR 10.7.1's read-back shape: indented, `!` between stanzas, the profile
+# of a neighbour on a second `bfd` line (#570), and the BFD words of a static
+# route after its tag.
+BFD = Config()
+BFD.routing = [
+    "bfd", " profile fast", "  detect-multiplier 3", "  receive-interval 100",
+    "  echo receive-interval disabled", " exit", " !",
+    " peer 10.0.0.2 interface eth0", "  profile fast",
+    "  transmit-interval 200", " exit", " !",
+    " peer 10.0.0.9 multihop local-address 10.0.0.1", "  minimum-ttl 250",
+    "  passive-mode", "  log-session-changes", " exit", "exit",
+    "router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+    " neighbor 10.0.0.2 bfd", " neighbor 10.0.0.2 bfd profile fast", "exit",
+    "ip route 10.9.0.0/16 10.0.0.2 tag 5 bfd multi-hop profile fast"]
+b = T.bfd_typed(BFD)
+p2 = next(p for p in b["peers"] if p["address"] == "10.0.0.2")
+p9 = next(p for p in b["peers"] if p["address"] == "10.0.0.9")
+check(p2["interface"] == "eth0" and p2["profile"] == "fast"
+      and p2["timers"]["transmit_interval_ms"] == 200
+      and p2["timers"]["detect_multiplier"] == 0,
+      f"a session: its key, its profile, the timer it sets, 0 for the rest: {p2}")
+check(p9["multihop"] and p9["local_address"] == "10.0.0.1"
+      and p9["timers"]["minimum_ttl"] == 250 and p9["timers"]["passive_mode"]
+      and p9["other"] == ["log-session-changes"],
+      f"a multihop session, a flag, and what no field takes in `other`: {p9}")
+fast = b["profiles"][0]
+check(fast["name"] == "fast" and fast["timers"]["receive_interval_ms"] == 100
+      and fast["timers"]["echo_receive_disabled"],
+      f"a profile, `echo receive-interval disabled` its own flag: {fast}")
+# The key, not the text: FRR writes the words in its order, a client in any.
+check(T.bfd_peer_key("peer 10.0.0.9 local-address 10.0.0.1 multihop")
+      == {"address": "10.0.0.9", "multihop": True, "local_address": "10.0.0.1",
+          "interface": "", "vrf": ""}
+      and T.bfd_peer_header({"address": "10.0.0.9", "vrf": "red",
+                             "local_address": "10.0.0.1", "multihop": True})
+      == "peer 10.0.0.9 multihop local-address 10.0.0.1 vrf red",
+      "a peer's key read in any order, and its header written in FRR's")
+# Two `bfd` blocks in a candidate - each SetConfig enters the block again -
+# are one: the reader merges by key. Mutation shown red: `peers.append`
+# without the lookup gave the session twice.
+TWICE = Config()
+TWICE.routing = ["bfd", "peer 10.0.0.2", "detect-multiplier 5", "exit", "exit",
+                 "bfd", "peer 10.0.0.2", "receive-interval 50", "exit", "exit"]
+tw = T.bfd_typed(TWICE)["peers"]
+check(len(tw) == 1 and tw[0]["timers"]["detect_multiplier"] == 5
+      and tw[0]["timers"]["receive_interval_ms"] == 50,
+      f"a session staged in two `bfd` blocks reads as one: {tw}")
+
+print("=== BFD edits: the lines, and only the ones that change ===")
+path, bl = T.edit_for(BFD, "bfd_peers", {
+    "address": "10.0.0.2", "interface": "eth0", "profile": "",
+    "timers": {"transmit_interval_ms": 300, "detect_multiplier": 5}})
+# Mutation shown red: a bare `no transmit-interval`, which this VTY stages as
+# a statement of its own and leaves the old line in the candidate.
+check(path == ["bfd"] and bl == ["peer 10.0.0.2 interface eth0",
+                                 "no profile fast", "detect-multiplier 5",
+                                 "no transmit-interval 200",
+                                 "transmit-interval 300", "exit"],
+      f"a session's changes, each removal the `no` of the line as it is: {bl}")
+_, bl = T.edit_for(BFD, "bfd_profiles",
+                   {"name": "fast", "timers": {"receive_interval_ms": 50}},
+                   ["timers.receive_interval_ms"])
+check(bl == ["profile fast", "no receive-interval 100", "receive-interval 50",
+             "exit"], f"one timer named: only that one moves: {bl}")
+_, bl = T.edit_for(BFD, "bfd_peers", {"address": "10.0.0.2",
+                                      "interface": "eth0",
+                                      "profile": "slow"}, ["profile"])
+check(bl == ["peer 10.0.0.2 interface eth0", "no profile fast",
+             "profile slow", "exit"],
+      f"`profile` named, the timers left as they are: {bl}")
+for bad, why in (({"name": "two words"}, "a profile name is one word"),
+                 ({"name": "x", "timers": {}}, None)):
+    try:
+        T.edit_for(BFD, "bfd_profiles", bad, ["timers.nonsense"])
+        check(False, "an unknown timer field is refused")
+    except ValueError as e:
+        check("timers.nonsense" in str(e) or "one word" in str(e),
+              f"refused: {e}")
+check(T.delete_for(BFD, "bfd", bfd_peer={
+          "address": "10.0.0.9", "local_address": "10.0.0.1",
+          "multihop": True}) ==
+      (["bfd"], ["no peer 10.0.0.9 multihop local-address 10.0.0.1"])
+      and T.delete_for(BFD, "bfd", name="fast") == (["bfd"],
+                                                     ["no profile fast"])
+      and T.delete_for(BFD, "bfd") == ([], ["no bfd"]),
+      "delete: a session by its key, a profile by its name, the whole block "
+      "- each the `no` of its header, which takes the body with it (#570)")
+try:
+    T.delete_for(BFD, "bfd", bfd_peer={"address": "10.0.0.7"})
+    check(False, "a session that is not there is refused")
+except ValueError as e:
+    check("no session" in str(e), f"refused: {e}")
+
+print("=== BFD on a BGP neighbour and a static route ===")
+nb = T.bgp_typed(BFD)[0]["neighbors"][0]
+# Mutation shown red: the `bfd profile P` line read as `bfd` alone (the
+# phase 2 reader), which a client then wrote back without its profile.
+check(nb["bfd"] and nb["bfd_profile"] == "fast" and nb["other"] == [],
+      f"the neighbour's two BFD lines are one field each: {nb}")
+_, bl = T.edit_for(BFD, "bgp", {"asn": "65000", "neighbor": {
+    "address": "10.0.0.2", "bfd": True, "bfd_profile": "slow"}},
+    ["bfd_profile"])
+check(bl == ["no neighbor 10.0.0.2 bfd profile fast",
+             "neighbor 10.0.0.2 bfd profile slow"],
+      f"the profile changed, BFD left on: {bl}")
+_, bl = T.edit_for(BFD, "bgp", {"asn": "65000", "neighbor": {
+    "address": "10.0.0.2", "bfd": False}}, ["bfd", "bfd_profile"])
+check(bl == ["no neighbor 10.0.0.2 bfd"],
+      f"BFD off: one `no`, which takes the profile line too (#570): {bl}")
+st = T.static_routes_typed(BFD)[0]
+check(st["bfd"] and st["bfd_multihop"] and st["bfd_profile"] == "fast"
+      and st["extra"] == [] and st["tag"] == 5,
+      f"a static route's BFD words are its fields, not `extra`: {st}")
+check(T.static_line(st) ==
+      "10.9.0.0/16 next-hop 10.0.0.2 tag 5 bfd multi-hop profile fast",
+      f"and written back after the tag, where the route takes them: "
+      f"{T.static_line(st)}")
+try:
+    T.static_line(dict(st, bfd=False))
+    check(False, "a BFD option without bfd is refused")
+except ValueError as e:
+    check("needs bfd" in str(e), f"refused: {e}")
+# Every line a BFD edit writes is the BFD grammar's own (a `no` checked on
+# the statement it removes).
+for node, ls in ((P.BFD_PEER, ["detect-multiplier 5", "no transmit-interval 200",
+                               "profile slow", "echo receive-interval disabled",
+                               "echo-mode", "no passive-mode"]),
+                 (P.BFD_BLOCK, ["peer 10.0.0.2 interface eth0",
+                                "profile fast"])):
+    bad = [x for x in ls if not in_grammar(
+        node, x.split()[1:] if x.startswith("no ") else x.split())]
+    check(not bad, f"BFD: every line is in the grammar: {bad}")
+
 print("=== box-owned statements: read only, on purpose ===")
 own = Config.parse("""! routing
 log syslog informational
@@ -246,7 +383,7 @@ check(not v6, f"every ipv6 statement's address/prefix is an IPv6 or either-famil
 print("=== schema: every mode the VTY has ===")
 sch = T.schema(P)
 by = {m["mode"]: m for m in sch}
-check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 27,
+check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 30,
       f"every mode of config_modes, in its order: {len(sch)}")
 check(sum(len(m["statements"]) for m in sch) > 350,
       f"{sum(len(m['statements']) for m in sch)} statements")

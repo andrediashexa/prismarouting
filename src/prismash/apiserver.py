@@ -1417,7 +1417,8 @@ def typed_delete(sh, args):
     path, lines = typedcfg.delete_for(
         sh.candidate, args.get("area", ""), args.get("name", ""),
         args.get("transport", ""), args.get("prefix", ""),
-        args.get("next_hop", ""), args.get("asn", ""), args.get("vrf", ""))
+        args.get("next_hop", ""), args.get("asn", ""), args.get("vrf", ""),
+        args.get("bfd_peer"))
     return {"path": path, "lines": lines}
 
 
@@ -2688,7 +2689,8 @@ def status_message(output, extra=""):
 AREA_OF_FIELD = {"interface": "interfaces", "pool": "pools",
                  "logging": "logging", "static_route": "static",
                  "bgp_neighbor": "bgp", "system": "system",
-                 "vrf_device": "vrfs"}
+                 "vrf_device": "vrfs", "bfd_peer": "bfd_peers",
+                 "bfd_profile": "bfd_profiles"}
 
 #: TypedConfig's repeated routing fields (#558 phase 3), by typedcfg's area.
 #: The areas of #558 phase 4, as {area: (TypedConfig field, message,
@@ -2728,7 +2730,10 @@ ROUTING_FIELDS = {"static": ("static_routes", "StaticRouteConfig"),
                   "ospf6": ("ospf6", "OspfConfig"),
                   "isis": ("isis", "IsisConfig"),
                   "interface_routing": ("interface_routing",
-                                        "InterfaceRoutingConfig")}
+                                        "InterfaceRoutingConfig"),
+                  # #559 phase 3: area "bfd" answers both lists.
+                  "bfd_peers": ("bfd_peers", "BfdPeerConfig"),
+                  "bfd_profiles": ("bfd_profiles", "BfdProfileConfig")}
 
 
 def msg_from_dict(cls, d):
@@ -3343,12 +3348,13 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             if which is None:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
                      "error: name the object to set: interface, pool, logging, "
-                     "static_route, bgp_neighbor, system or vrf_device",
-                     stage="usage")
+                     "static_route, bgp_neighbor, system, vrf_device, "
+                     "bfd_peer or bfd_profile", stage="usage")
             obj = {"interface": interface_dict, "pool": pool_dict,
                    "logging": logging_dict, "static_route": dict_from_msg,
                    "bgp_neighbor": bgp_edit_dict, "system": dict_from_msg,
-                   "vrf_device": dict_from_msg}[which](getattr(req, which))
+                   "vrf_device": dict_from_msg, "bfd_peer": dict_from_msg,
+                   "bfd_profile": dict_from_msg}[which](getattr(req, which))
             try:
                 r = c["worker"].ask("typed_lines", {
                     "area": AREA_OF_FIELD[which], "object": obj,
@@ -3365,7 +3371,9 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 r = c["worker"].ask("typed_delete", {
                     "area": req.area, "name": req.name,
                     "transport": req.transport, "prefix": req.prefix,
-                    "next_hop": req.next_hop, "asn": req.asn, "vrf": req.vrf})
+                    "next_hop": req.next_hop, "asn": req.asn, "vrf": req.vrf,
+                    "bfd_peer": (dict_from_msg(req.bfd_peer)
+                                 if req.HasField("bfd_peer") else None)})
             except WorkerError as e:
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
                      f"error: {str(e).split(': ', 1)[-1]}", stage="usage")

@@ -21,9 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 661 |
+| typed | 682 |
 | text | 1 |
-| n/a | 27 |
+| n/a | 30 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -802,6 +802,51 @@ Entered with `rpki`; `EditRequest.path` = `["rpki"]`; changed by: administrator.
 | `rpki expire_interval <600-172800>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area rpki: read as fields since 0.149.24; written as lines - an SSH cache names key files |
 | `rpki retry_interval <1-7200>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area rpki: read as fields since 0.149.24; written as lines - an SSH cache names key files |
 | `rpki reset` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area rpki: read as fields since 0.149.24; written as lines - an SSH cache names key files |
+| `exit` | n/a | - | the session's |
+
+## Configuration: bfd
+
+Entered with `bfd`; `EditRequest.path` = `["bfd"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `peer <address> [multihop] [local-address <address>] [interface <interface>] [vrf <name>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `profile <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `exit` | n/a | - | the session's |
+
+## Configuration: bfd peer
+
+Entered with `bfd > peer <address> ...`; `EditRequest.path` = `["bfd","peer <address>"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `detect-multiplier <2-255>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `receive-interval <10-4294967>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `transmit-interval <10-4294967>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `echo-mode` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `echo receive-interval <10-4294967>\|disabled` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `echo transmit-interval <10-4294967>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `passive-mode` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `minimum-ttl <1-254>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `profile <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `exit` | n/a | - | the session's |
+
+## Configuration: bfd profile
+
+Entered with `bfd > profile <name>`; `EditRequest.path` = `["bfd","profile <name>"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `detect-multiplier <2-255>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `receive-interval <10-4294967>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `transmit-interval <10-4294967>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `echo-mode` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `echo receive-interval <10-4294967>\|disabled` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `echo transmit-interval <10-4294967>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `passive-mode` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `minimum-ttl <1-254>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
+| `shutdown` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#559 phase 3) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: router bgp

@@ -566,6 +566,60 @@ message TypedConfig {
   repeated BundleConfig bundles = 24;
   // `nat` > `cgnat` statements other than pools, roles and the log export.
   CgnatGlobalsConfig cgnat_globals = 25;
+  // The `bfd` block (#559 phase 3): its sessions and its timer profiles,
+  // area "bfd". A BGP neighbour's and a static route's BFD are on those.
+  repeated BfdPeerConfig bfd_peers = 26;
+  repeated BfdProfileConfig bfd_profiles = 27;
+}
+
+
+// The timers a BFD session and a profile both take (#559 phase 3). Every
+// field at 0 / false is a statement the block does not have, and FRR's own
+// default applies: detect-multiplier 3, the intervals 300 ms, the echo
+// intervals 50 ms, minimum-ttl 254 (multihop only).
+message BfdTimers {
+  // Packets missed before the session goes down, 2-255.
+  uint32 detect_multiplier = 1;
+  // The slowest this box wants to receive / the fastest it sends, in ms
+  // (10-4294967).
+  uint32 receive_interval_ms = 2;
+  uint32 transmit_interval_ms = 3;
+  // Multihop only: the lowest TTL accepted, 1-254.
+  uint32 minimum_ttl = 4;
+  bool echo_mode = 5;
+  bool passive_mode = 6;
+  // The session held down, its configuration kept.
+  bool shutdown = 7;
+  // `echo receive-interval`: in ms, or disabled (then the ms is 0).
+  uint32 echo_receive_interval_ms = 8;
+  bool echo_receive_disabled = 9;
+  uint32 echo_transmit_interval_ms = 10;
+}
+
+// A `peer` of the `bfd` block. The session IS its key - address, multihop,
+// local_address, interface, vrf - as FRR keys it: SetConfig finds the
+// session by those five whatever order a client gives them in, and changing
+// one of them is another session.
+message BfdPeerConfig {
+  string address = 1;
+  bool multihop = 2;
+  string local_address = 3;
+  string interface = 4;
+  string vrf = 5;
+  // The profile whose timers it takes; a timer set here wins.
+  string profile = 6;
+  BfdTimers timers = 7;
+  // Statements of its body no field takes, verbatim (read only).
+  repeated string other = 8;
+  // The `peer ...` line as the configuration holds it (read only).
+  string header = 9;
+}
+
+// A `profile <name>` of the `bfd` block.
+message BfdProfileConfig {
+  string name = 1;
+  BfdTimers timers = 2;
+  repeated string other = 3;
 }
 
 message CgnatGlobalsConfig {
@@ -858,6 +912,13 @@ message StaticRouteConfig {
   repeated string extra = 8;
   // The route as `router static` takes it (read only).
   string line = 9;
+  // The route tracked by a BFD session (#559 phase 3): `bfd [multi-hop]
+  // [source <address>] [profile <name>]`. Before phase 3 these words were
+  // in `extra`. The options need `bfd`.
+  bool bfd = 10;
+  bool bfd_multihop = 11;
+  string bfd_source = 12;
+  string bfd_profile = 13;
 }
 
 // A redistribution into a routing protocol.
@@ -922,6 +983,9 @@ message BgpNeighborConfig {
   // keywords) and value ("" for a flag; a password is "<set>"), #558
   // phase 4. What no key takes is still in `other`.
   repeated KeyValue settings = 14;
+  // `neighbor X bfd profile <name>` (#559 phase 3); needs `bfd`. Before
+  // phase 3 a profile was read as `bfd` alone and dropped.
+  string bfd_profile = 15;
 }
 
 // An `address-family` of a `router bgp` block.
@@ -1079,6 +1143,11 @@ message SetConfigRequest {
     // and a Linux VRF device (#540).
     SystemConfig system = 8;
     VrfDeviceConfig vrf_device = 9;
+    // #559 phase 3: a BFD session, found by its key fields, and a profile,
+    // by its name. Their timers are named in `fields` as "timers" (every
+    // one) or "timers.<field>" (that one).
+    BfdPeerConfig bfd_peer = 10;
+    BfdProfileConfig bfd_profile = 11;
   }
   // The fields to change, by their names in the message above ("mtu",
   // "ipv4", "collectors"; "ports" for port_first/port_last, "vlan" for the
@@ -1098,7 +1167,9 @@ message SetConfigResponse {
 
 message DeleteConfigRequest {
   string candidate_id = 1;
-  // "interfaces", "pools", "logging", "static", "bgp" or "vrfs".
+  // "interfaces", "pools", "logging", "static", "bgp", "vrfs" or "bfd".
+  // "bfd" removes the profile `name`, or the session `bfd_peer` (by its key
+  // fields), or - neither given - the whole `bfd` block, body and all.
   string area = 2;
   // The interface, pool or VRF device.
   string name = 3;
@@ -1110,6 +1181,8 @@ message DeleteConfigRequest {
   // "bgp": the neighbour is `name`, in the `router bgp` of asn (and vrf).
   string asn = 7;
   string vrf = 8;
+  // "bfd": the session to remove; only its key fields are read.
+  BfdPeerConfig bfd_peer = 9;
 }
 
 message GetSchemaRequest {

@@ -211,6 +211,13 @@ TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"
 #: Edit. A statement of these levels no field takes is still read back, in
 #: its block's `other`, verbatim - so it stays `text` here.
 TYPED_CONFIG.update({"router static": ("<prefix>",)})
+#: The `bfd` block (#559 phase 3): sessions and profiles, read and written as
+#: fields (BfdPeerConfig, BfdProfileConfig), every timer of their body too.
+_BFD_BODY = ("detect-multiplier", "receive-interval", "transmit-interval",
+             "echo-mode", "echo", "passive-mode", "minimum-ttl", "shutdown")
+TYPED_CONFIG.update({"bfd": ("peer", "profile"),
+                     "bfd peer": _BFD_BODY + ("profile",),
+                     "bfd profile": _BFD_BODY})
 #: `neighbor <address> <word> ...` statements that have a field, by level:
 #: the others (capability, remove-private-AS, advertise) are read back
 #: verbatim in the neighbour's `other` and stay `text`.
@@ -374,11 +381,11 @@ def classify_config(level, words):
                     "and as lines through Edit; GetSchema/ValidateLines check "
                     "a line (0.149.22)")
         if stmt[:len(first.split())] == first.split():
+            since = ("#559 phase 3" if level.startswith("bfd") else
+                     "0.149.22" if level == "router static" else "0.149.20")
             return ("typed", TYPED_CONFIG_API,
                     "and as lines through Edit; GetSchema/ValidateLines check "
-                    "a line (0.149.22)" if level == "router static" else
-                    "and as lines through Edit; GetSchema/ValidateLines check "
-                    "a line (0.149.20)")
+                    f"a line ({since})")
     if words == ["exit-address-family"]:
         return "n/a", "-", "closes the address-family block"
     kind = SETTING_KIND.get(level)
