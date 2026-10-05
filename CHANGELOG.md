@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.9 - SNMP answers IPv6, and the API's address can change while it runs
+
+### Fixed
+
 * **SNMP answered no IPv6 client, and a running API's address could not be
   changed.** ([#584](https://github.com/andrediashexa/hexarouting/issues/584))
   Applying #582 on 10.40.200.166: snmpd listened on its IPv6 address but the
