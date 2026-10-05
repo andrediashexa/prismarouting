@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.7 - FRR's `ip address` is refused in an interface block
+
+### Fixed
+
 * **`ip address` typed in an interface block went to FRR unread.**
   ([#579](https://github.com/andrediashexa/hexarouting/issues/579)) On
   10.40.200.166 FRR's form, typed where the box's `ipv4 address` belongs, was
