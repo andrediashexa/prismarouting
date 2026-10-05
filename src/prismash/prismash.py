@@ -24137,6 +24137,10 @@ class Shell:
         bundle - is never a card; its parent, or its member, may be. Both
         names of a linux_cp pair count as present, as in the commit check.
         """
+        # lab/missing-card.sh's control: the behaviour before #575, a file
+        # refused whole over the card, which that lab MUST go red on.
+        if os.environ.get("PRISMA_MISSING_CARD_STRICT") == "1":
+            return []
         rc, out = self.dp.run("show interface")
         have = set(routes.parse_interfaces(out)) if rc == 0 else set()
         if not have - {"local0"}:

@@ -318,6 +318,20 @@ A recusa mostra as duas linhas em conflito, o `mode` e o `block-stride`, porque 
 
 Um statement nomeia uma interface que não existe aqui. A primeira forma vem de uma linha de roteamento ou de CGNAT que aponta para ela; a segunda, de entrar num bloco `interface` que a caixa não tem. `show interface` lista os nomes que ela tem, e é dali que o nome deve sair - inventar um é como o problema começa.
 
+**No boot é diferente: uma placa que sumiu não derruba o resto.** Se o arquivo salvo cita uma placa que o dataplane não tem quando a caixa sobe - um módulo SFP que o driver recusou, uma placa tirada do servidor -, a caixa aplica tudo o que não depende dela e deixa de fora só o que depende: o bloco da própria placa, as sub-interfaces dela, um bundle que ficou sem nenhum membro, um `track` de VRRP nela, o bloco do FRR e qualquer linha de roteamento que a cite. A gerência, as rotas e os outros pools sobem normalmente. O console e o journal avisam com `warning: this box does not have: <placa>`, e o que ficou de fora aparece em:
+
+```
+show configuration pending
+```
+
+Enquanto houver algo pendente, o `save` é recusado (`save: refused, nothing was written`): a configuração em uso está sem as linhas da placa, e gravar seria a forma de o arquivo perdê-las. Quando a placa aparece, a caixa aplica sozinha o que esperava por ela - o mesmo que um boot com a placa faria. Se alguém fez `commit` depois do boot, ela não passa o arquivo por cima: avisa uma vez e deixa a decisão com você. Para abrir mão do que está pendente e voltar a poder gravar:
+
+```
+clear configuration pending
+```
+
+Pela API, o serviço de health `prisma.v1.Configuration` fica `NOT_SERVING` enquanto houver algo pendente.
+
 ### `a bundle member this box does not have`, `a port in two bundles` e `a bundle member with config of its own`
 
 As três recusas de um bundle LACP (`interface ae<n>`), cada uma com o nome da porta no fim:
