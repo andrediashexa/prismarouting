@@ -36,7 +36,10 @@ case "\$*" in
   "-d link show dev "*) for a in \$(cat "$S/alts"); do echo "    altname \$a"; done ;;
   "link property del dev "*) sed -i "s/\$7//" "$S/alts" ;;
   "link show dev "*) grep -qx "\$4" "$S/names"; exit \$? ;;
-  "link set dev "*" name "*) if ! grep -qx "\$4" "$S/names" && [ -e "$R/sys/class/net/\$4" ]; then
+  "link set dev "*" name "*) # The kernel refuses a name another netdev holds (#576: a
+                           # hot card's stale TAP held it, "File exists").
+                           [ -e "$R/sys/class/net/\$6" ] && exit 1
+                           if ! grep -qx "\$4" "$S/names" && [ -e "$R/sys/class/net/\$4" ]; then
                              mv "$R/sys/class/net/\$4" "$R/sys/class/net/\$6"; exit 0; fi
                            grep -qx "\$4" "$S/names" || exit 1
                            sed -i "s/^\$4\$/\$6/" "$S/names" ;;
@@ -78,6 +81,10 @@ echo "systemctl \$*" >> "$S/calls"
 # #564: the tuner, standing in - startup.conf from the cards as Linux names
 # them now, which is what the real one writes; and a configuration that names
 # an interface the dataplane does not have is refused, as --load refuses it.
+# #576: what the tuner is handed as the restart's card set, read as it runs.
+if [ "\$*" = "restart prisma-routing-tune.service" ]; then
+  cp "$R/run/prisma-routing/restart-cards" "$S/seen-keep" 2>/dev/null || : > "$S/seen-keep"
+fi
 if [ "\$*" = "restart prisma-routing-tune.service" ] && [ -e "$S/tunewrites" ]; then
   { echo "dpdk {"
     for d in "$R"/sys/class/net/*; do
@@ -258,6 +265,47 @@ _seq=$(grep -E "^systemctl (stop|start|restart) |^giveback" "$S/calls" | tr '\n'
   && ok "and the containers unit, which Conflicts with it, is never started" \
   || bad "the containers unit was started on a units box: $(cat "$S/calls")"
 rm -f "$S/units" "$S/loaded"
+
+echo "=== #576: a hot card's own name comes back, and the tuner is told what the dataplane held ==="
+# 10.40.200.166, 0.151.1: the hot card's linux_cp ends (enp1s0, enp1s0.666)
+# outlived the stop and held its name, the rename back failed, and the tuner
+# wrote `name xdp-enp1s0`; and enp6s18 was not claimed again.
+hot_restart() {  # <keep the record: yes|no>
+  # The box as the attach leaves it: the card under its kernel name, the
+  # dataplane's ends holding the card's own name, and the record.
+  fresh; : > "$S/names"
+  mv "$R/sys/class/net/eth9" "$R/sys/class/net/xdp-eth9"
+  mkdir -p "$R/sys/class/net/eth9" "$R/sys/class/net/eth9.666" "$R/run/prisma-routing"
+  : > "$R/sys/class/net/eth9/tun_flags"; : > "$R/sys/class/net/eth9.666/tun_flags"
+  [ "$1" = yes ] && echo "eth9 0000:00:14.0 xdp-eth9" > "$R/run/prisma-routing/hot-cards"
+  : > "$S/calls"; rm -f "$S/seen-keep"
+  OUT=$(HC restart-dataplane); RC=$?
+}
+hot_restart yes
+called "^ip link del dev eth9$" && called "^ip link del dev eth9.666$" \
+  && ok "the hot card's stale Linux ends are removed, sub-interface included" \
+  || bad "the hot card's TAPs were left holding its name: $(grep 'link del' "$S/calls")"
+[ -e "$R/sys/class/net/eth9/device" ] && said "eth9: handed back to the kernel under its own name" \
+  && ok "with the record: the card is eth9 again before the tuner runs" \
+  || bad "with the record, the card kept its xdp- name: $OUT"
+grep -qx "0000:00:14.0" "$S/seen-keep" && grep -qx "0000:00:13.0" "$S/seen-keep" \
+  && ok "the tuner is handed every card the dataplane held, the boot's and the hot one" \
+  || bad "the restart's card set: $(cat "$S/seen-keep" 2>/dev/null)"
+[ ! -e "$R/run/prisma-routing/restart-cards" ] \
+  && ok "and the set is removed after the tuner, so no boot reads it" \
+  || bad "the restart's card set outlived the restart"
+hot_restart no
+[ -e "$R/sys/class/net/eth9/device" ] && said "eth9: handed back to the kernel under its own name (no record)" \
+  && ok "with no record: xdp-eth9, a name only this script gives, becomes eth9" \
+  || bad "with no record, the card kept its xdp- name: $OUT"
+grep -qx "0000:00:14.0" "$S/seen-keep" \
+  && ok "and the tuner still hears of it, from the card itself" \
+  || bad "with no record the hot card was missing from the set: $(cat "$S/seen-keep")"
+fresh; mkdir -p "$R/sys/class/net/xdp-lo"; : > "$S/calls"
+OUT=$(HC restart-dataplane); RC=$?
+! called "name lo$" \
+  && ok "a netdev called xdp-<name> with no PCI card behind it is left alone" \
+  || bad "a non-card xdp- netdev was renamed: $(cat "$S/calls")"
 
 echo "=== #564: the restart ends with the names a boot gives the cards ==="
 # 10.40.200.166, 0.149.30: the dataplane's Linux ends (TAPs named enp1s0,

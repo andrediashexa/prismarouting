@@ -764,6 +764,12 @@ def management_path(topo, ifname):
 MGMT_PATH_FILE = os.environ.get("PRISMA_MGMT_PATH",
                                 "/run/prisma-routing/dataplane-management")
 
+#: The cards the dataplane held when `system dataplane restart` began, one PCI
+#: address a line, written by prisma-hot-card for one run of this tuner and
+#: removed after it (#576). A boot never has it: /run is empty at boot.
+RESTART_CARDS_FILE = os.environ.get("PRISMA_RESTART_CARDS",
+                                    "/run/prisma-routing/restart-cards")
+
 
 def write_management_path(handover, path=None):
     """
@@ -799,7 +805,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
          config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None,
          control_plane_cores=None, main_thread="shared",
          control_plane_memory_gb=None, buffers_per_numa=None,
-         cgnat_workers=None, _interim=False):
+         cgnat_workers=None, _interim=False, keep_pci=None):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -872,6 +878,22 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
             claimed = list(cards)
             claim_why = "all"
 
+    # ------------------------------ A RESTART RESTORES ITS CARDS (#576).
+    #
+    # `system dataplane restart` hands every card back and asks again, and the
+    # answer must be the set the dataplane had, not a new one. On
+    # 10.40.200.166 (0.151.1) it came back without enp6s18, the card the box
+    # is managed through, and the box went dark. keep_pci is that set, by PCI
+    # address (a name can change across the give-back), written by
+    # prisma-hot-card for this one run; a boot never has it.
+    kept = []
+    if keep_pci and not ifname:
+        for c in cards:
+            if topo.nic_pci(c) in keep_pci and c not in claimed:
+                claimed.append(c)
+                kept.append(c)
+    kept_all = {c for c in claimed if keep_pci and topo.nic_pci(c) in keep_pci}
+
     # ------------------- THE WAY BACK, when the card being claimed is the
     # one this box is reached on (#378).
     #
@@ -908,10 +930,17 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
             # (#385), so a card kept out of the stanza here is a card nothing
             # takes, and a startup.conf somebody edited by hand is bound as
             # written.
-            no_way_back = mgmt
-            claimed = [c for c in claimed if c != mgmt]
-            if not claimed:
-                claim_why = "no-way-back"
+            if mgmt in kept_all:
+                # It was the dataplane's before this restart, and the way back
+                # it had - the boot's record in /run, or the address the saved
+                # configuration puts on its pair - is still there. Withheld,
+                # it is the one card the box was reachable over (#576).
+                pass
+            else:
+                no_way_back = mgmt
+                claimed = [c for c in claimed if c != mgmt]
+                if not claimed:
+                    claim_why = "no-way-back"
 
     # Read once, here, so the renderer and the report cannot ask the box
     # different questions about the same card.
@@ -1140,6 +1169,10 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         # None when they could not all be read - in which case the card was
         # taken out of the claim above and `no_way_back` carries its name.
         "handover": handover,
+        # The cards a restart claimed only because the dataplane held them
+        # before it (#576), and whether this run was a restart at all.
+        "restart_kept": kept,
+        "restart": bool(keep_pci),
         "handover_if": mgmt if (mgmt and mgmt in claimed) else None,
         # The card this box is reached on that it declined to claim, because
         # it could not work out how to stay reachable without it.
@@ -2787,6 +2820,13 @@ def main():
         return 0
 
     topo = Topology(a.sysfs_root)
+    # The restart's card set (#576): prisma-hot-card writes it for one run.
+    keep_pci = None
+    try:
+        with open(RESTART_CARDS_FILE) as f:
+            keep_pci = {w for w in f.read().split() if is_pci_addr(w)} or None
+    except OSError:
+        pass
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
              low_latency=not a.no_low_latency,
              config_path=a.config, vpp_base=a.vpp_base,
@@ -2795,7 +2835,7 @@ def main():
              main_thread=a.main_thread,
              control_plane_memory_gb=a.control_plane_memory_gb,
              buffers_per_numa=a.buffers_per_numa,
-             cgnat_workers=a.cgnat_workers)
+             cgnat_workers=a.cgnat_workers, keep_pci=keep_pci)
 
     if a.would_claim:
         return would_claim(p, a.would_claim)
@@ -2863,7 +2903,12 @@ def main():
         # handover that did not happen, and `prismash --load` put back an
         # address read on another day - the stale-record defect that putting
         # this in /run exists to prevent.
-        if write_management_path(p["handover"]):
+        if not p["handover"] and p.get("restart") and os.path.exists(MGMT_PATH_FILE):
+            # A restart keeps the boot's way back (#576): the card it
+            # describes is the dataplane's again, and the record is about
+            # this boot, which a restart does not end.
+            print(f"restart: {MGMT_PATH_FILE} kept from this boot", file=sys.stderr)
+        elif write_management_path(p["handover"]):
             print(f"wrote {MGMT_PATH_FILE}", file=sys.stderr)
         else:
             print(f"no handover on this boot; {MGMT_PATH_FILE} is not there",

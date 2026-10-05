@@ -79,6 +79,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`system dataplane restart` with a hot card took the box dark.**
+  ([#576](https://github.com/andrediashexa/hexarouting/issues/576)) On
+  10.40.200.166 (0.151.1) the X520, attached through AF_XDP as `xdp-enp1s0`,
+  came back under that name in startup.conf, and enp6s18 - the card the box
+  is managed through - was given back to Linux and not claimed again. The hot
+  card's own linux_cp ends (`enp1s0`, `enp1s0.666`) outlived the stop and held
+  its name, so the rename back failed; and the tuner decided the cards afresh,
+  after the ends carrying the default route were gone. The restart now removes
+  the hot cards' stale ends as well, renames a hot card whose record was lost
+  (`xdp-<name>` with a PCI card behind it, a name only the attach gives), and
+  hands the tuner the PCI addresses the dataplane held: every one of them is
+  claimed again, a reserved card and the management card included, and the
+  boot's way back is kept rather than removed.
+
 ## 0.151.3 - a VLAN with a CGNAT side loads at boot; the VTY's words say bpa
 
 ### Fixed

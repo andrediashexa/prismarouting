@@ -157,7 +157,7 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
     w(f"{root}/proc/meminfo", f"MemTotal:       {ram_gb * 1024 * 1024} kB")
     return node_cpus
 
-def run(root, *args, maxmtu=None, addr=None):
+def run(root, *args, maxmtu=None, addr=None, keep=None):
     """
     The tuner against a synthetic root.
 
@@ -240,6 +240,15 @@ def run(root, *args, maxmtu=None, addr=None):
     # for the same reason (#378): its real path is /run, which a suite cannot
     # write and must not share between fixtures.
     env["PRISMA_MGMT_PATH"] = os.path.join(root, "run/prisma-routing/mgmt")
+    # The restart's card set (#576), inside the tree for the same reason, and
+    # written only when the case is a restart.
+    env["PRISMA_RESTART_CARDS"] = os.path.join(root, "run/prisma-routing/restart-cards")
+    if keep is None and os.path.exists(env["PRISMA_RESTART_CARDS"]):
+        os.unlink(env["PRISMA_RESTART_CARDS"])
+    if keep is not None:
+        os.makedirs(os.path.dirname(env["PRISMA_RESTART_CARDS"]), exist_ok=True)
+        with open(env["PRISMA_RESTART_CARDS"], "w") as _f:
+            _f.write("".join(f"{_p}\n" for _p in keep))
     mgmt = os.path.join(root, "etc/network/interfaces.d/prisma-routing")
     p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root,
                         "--mgmt-conf", mgmt] + list(args),
@@ -1260,6 +1269,44 @@ with tempfile.TemporaryDirectory() as root:
     check("eth1" in out and "reserved for Linux" in out,
           f"the report does not say which card was reserved or why: "
           f"{[l for l in out.splitlines() if l.startswith('#')][:6]}")
+
+print("\n=== a restart claims every card the dataplane held, reserve or not (#576) ===")
+# 10.40.200.166, 0.151.1: `system dataplane restart` came back without
+# enp6s18, the card the box is managed through, and the box went dark. A
+# restart restores the set the dataplane had; prisma-hot-card writes it.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    reserve(root, "eth1")
+    out = run(root, keep=["0000:3b:00.0", "0000:3b:00.1"])
+    devs = sorted(l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:"))
+    check(devs == ["0000:3b:00.0", "0000:3b:00.1"],
+          f"a restart left out a card the dataplane held before it: {devs}")
+    out = run(root)
+    devs = sorted(l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:"))
+    check(devs == ["0000:3b:00.0"],
+          f"and a boot, with no restart set, still honours the reserve: {devs}")
+with tempfile.TemporaryDirectory() as root:
+    # The card the box is reached on, its way back unreadable at this moment
+    # (the stale ends that carried the address and the route are gone): a
+    # boot withholds it, a restart of a dataplane that held it does not.
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    add_nic(root, "eth1", "0000:3b:00.1")
+    _routed_named(root)
+    mgmt_rec = os.path.join(root, "run/prisma-routing/mgmt")
+    os.makedirs(os.path.dirname(mgmt_rec), exist_ok=True)
+    with open(mgmt_rec, "w") as _f:
+        _f.write("eth0 192.168.2.50/24 52:54:00:ab:cd:ef 192.168.2.1\n")
+    out = run(root, keep=["0000:3b:00.0", "0000:3b:00.1"])
+    devs = sorted(l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:"))
+    check(devs == ["0000:3b:00.0", "0000:3b:00.1"],
+          f"a restart withheld the management card it held before: {devs}")
+    out = run(root)
+    devs = sorted(l.split()[1] for l in out.splitlines() if l.strip().startswith("dev 0000:"))
+    check(devs == ["0000:3b:00.1"],
+          f"and a boot with no way back still withholds it: {devs}")
 
 print("\n=== --would-claim: the boot's rule, asked about a card added later (#453) ===")
 # A running box: eth0 is already the dataplane's (bound, so no netdev - it is
