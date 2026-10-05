@@ -19,7 +19,7 @@ import grpc  # noqa: E402
 from prisma.v1 import prisma_pb2 as pb, prisma_pb2_grpc as rpc  # noqa: E402
 
 CERTS, TARGET = sys.argv[2], sys.argv[3]
-PEER = {"address": "192.0.2.88", "interface": "d0"}
+PEER = {"address": "192.0.2.88"}
 
 
 def channel(who):
@@ -86,7 +86,7 @@ def commit_with(setter, comment="api bfd phase 3"):
 
 def peer_of(t):
     return [p for p in t.bfd_peers if p.address == PEER["address"]
-            and p.interface == PEER["interface"]]
+            and not p.interface and not p.multihop]
 
 
 def statics():
@@ -118,10 +118,10 @@ def check_peer():
             profile="api9", timers=pb.BfdTimers(transmit_interval_ms=200),
             **PEER)), timeout=60))
     p = peer_of(typed())
-    blk = block(running(), "peer 192.0.2.88 interface d0")
+    blk = block(running(), "peer 192.0.2.88")
     result("set-peer", p and p[0].profile == "api9"
            and p[0].timers.transmit_interval_ms == 200
-           and p[0].header == "peer 192.0.2.88 interface d0"
+           and p[0].header == "peer 192.0.2.88"
            and "profile api9" in blk and "transmit-interval 200" in blk,
            f"lines {list(rep.lines)} vty {blk}")
 
@@ -132,9 +132,9 @@ def check_peer_one_field():
             timers=pb.BfdTimers(transmit_interval_ms=400), **PEER),
         fields=["timers.transmit_interval_ms"]), timeout=60))
     p = peer_of(typed())
-    blk = block(running(), "peer 192.0.2.88 interface d0")
+    blk = block(running(), "peer 192.0.2.88")
     result("set-peer-one-field",
-           list(rep.lines) == ["peer 192.0.2.88 interface d0",
+           list(rep.lines) == ["peer 192.0.2.88",
                                "no transmit-interval 200",
                                "transmit-interval 400", "exit"]
            and p and p[0].timers.transmit_interval_ms == 400
@@ -166,7 +166,7 @@ def check_neighbor_profile():
 def check_static():
     rep = commit_with(lambda cid: cfg.SetConfig(pb.SetConfigRequest(
         candidate_id=cid, static_route=pb.StaticRouteConfig(
-            prefix="10.88.0.0/16", next_hop="192.0.2.88", bfd=True,
+            prefix="10.88.0.0/16", next_hop="100.64.3.1", bfd=True,
             bfd_profile="api9")), timeout=60))
     r = [x for x in typed(["static"]).static_routes if x.prefix == "10.88.0.0/16"]
     text = running()
@@ -177,7 +177,7 @@ def check_static():
            f"lines {list(rep.lines)} read {r[0] if r else None}")
     commit_with(lambda cid: cfg.DeleteConfig(pb.DeleteConfigRequest(
         candidate_id=cid, area="static", prefix="10.88.0.0/16",
-        next_hop="192.0.2.88"), timeout=60))
+        next_hop="100.64.3.1"), timeout=60))
     result("static-bfd-deleted", not any("10.88.0.0/16" in x
                                          for x in running().splitlines()))
 
@@ -186,9 +186,9 @@ def check_delete_peer():
     rep = commit_with(lambda cid: cfg.DeleteConfig(pb.DeleteConfigRequest(
         candidate_id=cid, area="bfd",
         bfd_peer=pb.BfdPeerConfig(**PEER)), timeout=60))
-    result("delete-peer", list(rep.lines) == ["no peer 192.0.2.88 interface d0"]
+    result("delete-peer", list(rep.lines) == ["no peer 192.0.2.88"]
            and not peer_of(typed())
-           and not block(running(), "peer 192.0.2.88 interface d0"),
+           and not block(running(), "peer 192.0.2.88"),
            f"lines {list(rep.lines)}")
 
 
@@ -217,7 +217,7 @@ def check_delete_block():
     result("delete-block", list(rep.lines) == ["no bfd"]
            and not peer_of(t)
            and not [p for p in t.bfd_profiles if p.name == "api9b"]
-           and "peer 192.0.2.88 interface d0" not in text
+           and "peer 192.0.2.88" not in text
            and statics() == BEFORE.get("static"),
            f"lines {list(rep.lines)} statics {statics()} before "
            f"{BEFORE.get('static')}")

@@ -258,7 +258,7 @@ def check_schema():
     udp = [st for st in modes["cgnat"].statements if list(st.words) == ["logging", "udp"]]
     srcs = {a.source for m in s.modes for st in m.statements for f in st.forms
             for a in f.arguments if a.source}
-    ok = (len(modes) == 27 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
+    ok = (len(modes) == 30 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
           and arg is not None and arg.kind == "integer" and (arg.min, arg.max) == (64, 32768)
           and list(modes["pool"].path) == ["nat", "cgnat", "pool <name>"]
           and modes["pool"].typed_area == "pools" and bs[0].typed

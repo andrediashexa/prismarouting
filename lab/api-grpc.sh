@@ -573,7 +573,12 @@ printf '%s\n' "$T8" | sed 's/^/  /'
 # #559 phase 3: the `bfd` block as fields, on the same server - a profile, a
 # session, a neighbour's and a static route's BFD, each committed and read
 # back as the VTY prints it, then removed: a session, a profile, and the
-# whole block last (#570).
+# whole block last (#570). Phase 8's session on d0 goes first, through vtysh
+# as it came: d0 is a dummy no dataplane holds, and the commit check of every
+# phase 9 commit - which reads the whole configuration - refuses it ("this
+# box has no such interface"), measured on this lab's first run.
+vtysh -c "conf t" -c "bfd" -c "no peer 192.0.2.77 interface d0" -c exit \
+  -c exit 2>&1 | sed 's/^/  frr: /'
 T9=$(python3 lab/api_phase9_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
 printf '%s\n' "$T9" | sed 's/^/  /'
 pkill -f "^sleep 900$"
