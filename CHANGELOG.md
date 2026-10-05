@@ -79,6 +79,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A login during an upgrade's container recreate printed a Python
+  traceback.** ([#581](https://github.com/andrediashexa/hexarouting/issues/581))
+  On 10.40.200.166 a login in the ~3 s `system upgrade 0.151.5` spent
+  recreating the management container met the VTY broker's socket refused, and
+  `vtyattach` printed `ConnectionRefusedError` before the login fell back to a
+  shell. The VTY now waits for the socket for up to 20 s, saying once "the VTY
+  is restarting (an upgrade is under way); waiting...", and when the time runs
+  out falls back to the shell with a sentence instead of a traceback.
+
 ## 0.151.5 - a card missing at boot no longer takes the configuration down
 
 ### Fixed

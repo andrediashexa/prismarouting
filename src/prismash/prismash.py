@@ -24803,7 +24803,15 @@ def main():
     args = sys.argv[1:]
     if args[:1] == ["--attach"] and len(args) > 1:
         import vtyattach
-        ATTACHED = vtyattach.attach(args[1])
+        try:
+            ATTACHED = vtyattach.attach(args[1])
+        except vtyattach.BrokerUnavailable:
+            # #581: a sentence, not a traceback; the login falls back to a
+            # shell as before.
+            print("the VTY did not come back in time; a shell is opened\n"
+                  "    instead - log in again in a minute for the VTY",
+                  file=sys.stderr)
+            return 1
         args = args[2:]
     sh = Shell()
 

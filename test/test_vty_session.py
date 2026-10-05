@@ -169,6 +169,49 @@ for reply, want in ((b"HOSTDONE 3\n", ("done", 3)), (b"HOSTREFUSED\n", ("refused
           f"request_hostrun: {reply.strip().decode()} is {got}, asked {asked}")
     a.close(); b.close()
 
+print("\n=== vtyattach.connect: a login during the container's recreate (#581) ===")
+# 10.40.200.166, 0.151.5's upgrade: a login in the ~3 s the management
+# container was being recreated met a refused socket and printed a traceback.
+import io as _io  # noqa: E402
+import tempfile as _tf  # noqa: E402
+_d = _tf.mkdtemp()
+_path = os.path.join(_d, "broker.sock")
+_err = _io.StringIO()
+_srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+
+def _late_listen():
+    import time as _t
+    _t.sleep(0.8)          # the socket appears while connect() is waiting
+    _srv.bind(_path)
+    _srv.listen(1)
+_t = _th.Thread(target=_late_listen)
+_t.start()
+_sock = vtyattach.connect(_path, wait=5, err=_err)
+_t.join(5)
+check(_sock is not None and vtyattach.WAITING in _err.getvalue()
+      and _err.getvalue().count(vtyattach.WAITING) == 1,
+      f"a socket that appears late is waited for, said once: {_err.getvalue()!r}")
+_sock.close(); _srv.close()
+_err = _io.StringIO()
+try:
+    vtyattach.connect(os.path.join(_d, "never.sock"), wait=0.6, err=_err)
+    _gave_up = False
+except vtyattach.BrokerUnavailable:
+    _gave_up = True
+check(_gave_up and vtyattach.WAITING in _err.getvalue(),
+      "a socket that never appears ends in BrokerUnavailable, not a traceback "
+      "from socket.connect")
+_err = _io.StringIO()
+_s2 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+_s2.bind(os.path.join(_d, "up.sock")); _s2.listen(1)
+_ok = vtyattach.connect(os.path.join(_d, "up.sock"), wait=5, err=_err)
+check(_ok is not None and _err.getvalue() == "",
+      "a broker that is up is connected at once, with nothing said")
+_ok.close(); _s2.close()
+import shutil as _sh  # noqa: E402
+_sh.rmtree(_d, True)
+
 print("\n=== Shell.on_the_host: only from the management plane ===")
 sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
 import prismash  # noqa: E402
