@@ -27,6 +27,20 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.5 - a card missing at boot no longer takes the configuration down
+
+* **Contract:** additive (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **What the boot left out (#575):** `OperationalService.GetPendingConfiguration`
+  answers `pending`, the `cards` the saved file names and the box did not
+  have, the statements `left_out` (the file's own rows, in order), `since`
+  (Unix seconds), `path`, and `held_for_a_commit` (a card came back after a
+  commit, so the statements wait for the operator). The health service
+  `prisma.v1.Configuration` is NOT_SERVING exactly while `pending` is true;
+  no other service changes. `Clear` with `TARGET_CONFIGURATION_PENDING` (7)
+  gives the statements up, so `save` writes again. While anything is
+  pending, `ConfigService.Save` is refused with the VTY's words.
+* **Lab box:** .166 is on 0.151.4.
+
 ## 0.151.4 - a dataplane restart keeps its cards
 
 * **Contract:** unchanged (`prisma.proto` sha256 `e2c8775ff68e9937fe092aa4102792786d248e6ef1fefa1850ac9fa88a7041e2`).
