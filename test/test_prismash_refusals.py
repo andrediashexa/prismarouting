@@ -1316,8 +1316,8 @@ _settings = [
     ("dataplane with no card named", "system|dataplane|interface",
      "error: usage: interface <card>, under 'system' > 'dataplane'"),
     ("something under system that is not dataplane", "system|dns",
-     "error: under 'system': 'dataplane', 'cpu', 'memory', 'hardware' or "
-     "'logging'"),
+     "error: under 'system': dataplane, cpu, memory, hardware, logging, "
+     "management"),
     ("ssh with no value", "ssh port",
      "error: usage: ssh <setting> <value>"),
     ("an ssh value sshd would not take", "ssh permit-root-login maybe",

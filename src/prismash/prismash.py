@@ -50,7 +50,9 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
                     MEMORY_LEVEL, SYSTEM_SETTINGS, HARDWARE_LEVEL,
                     HARDWARE_KEYS, LOGGING_LEVEL, SYSTEM_LEVELS_SAY,
-                    stage_logging,
+                    stage_logging, MANAGEMENT_LEVEL, MANAGEMENT_KEYS,
+                    MANAGEMENT_TABLE_KEY, management_table,
+                    management_vrf_error,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     BFD_BLOCK_WORD, BFD_SUBBLOCK_OPENERS, bfd_uses_profile,
@@ -3483,7 +3485,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "snmp_changed", "api_changed", "dataplane_if_changed",
                "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
-               "hardware_changed", "logging_changed",
+               "hardware_changed", "logging_changed", "management_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -4516,6 +4518,7 @@ TREE["system"] = {
                  "list", None),
     "logging": ("where the box's events go: remote syslog destinations",
                 None),
+    "management": ("the VRF the box's own management lives in", None),
     "exit": ("leave 'system'", None),
     **_EVERY_LEVEL,
 }
@@ -4557,6 +4560,17 @@ TREE["hardware"] = {
         "unsupported-sfp": ("ixgbe refuses a module it does not list",
                             None)}),
     "exit": ("leave 'hardware'", None),
+    **_EVERY_LEVEL,
+}
+# MANAGEMENT IN A VRF OF ITS OWN (#580), a level under `system`: the VRF's
+# name, a `vrf <name> table <id>` of this configuration. In effect at the
+# commit, and at every boot from tune.env.
+TREE["management"] = {
+    "vrf": ("the VRF management lives in; the main table's default is then "
+            "the subscribers'", "<name>"),
+    "no": ("management back in the main table", {
+        "vrf": ("the box's own traffic by the main table again", None)}),
+    "exit": ("leave 'management'", None),
     **_EVERY_LEVEL,
 }
 TREE["cpu"] = {
@@ -11226,7 +11240,7 @@ class Shell:
                 return True
         return False
 
-    def apply_management_path(self, mgmt):
+    def apply_management_path(self, mgmt, table=0):
         """
         Put the management address back, on the pair of the card that moved.
 
@@ -11314,8 +11328,14 @@ class Shell:
         # already has the route. An error there would be a box reporting a
         # failure for having succeeded twice.
         gw = mgmt["gateway"]
+        # INTO MANAGEMENT'S OWN TABLE when the file puts it in a VRF (#580).
+        # In the main table this route sat at metric 0, under FRR's
+        # subscribers' default at 20, and linux_nl would have handed it to
+        # the dataplane's table 0 - the subscribers' traffic out of the
+        # management port, on every boot.
         rc, out = self.sys._run(["ip", "route", "replace", "default",
-                                 "via", gw, "dev", mgmt["name"]])
+                                 "via", gw, "dev", mgmt["name"]]
+                                + (["table", str(table)] if table else []))
         if rc != 0:
             # SAID AND NOT FATAL. The address is already back, so the box
             # is reachable from its own subnet and an operator on it can
@@ -11814,6 +11834,11 @@ class Shell:
                                    "it is sent through a VRF this "
                                    "configuration has: 'vrf <name> table <n>'")
                     ok = False
+            # The management VRF is one this configuration makes (#580).
+            why = management_vrf_error(target)
+            if why:
+                self.err_prose(*why)
+                ok = False
             # The same refusals `do_config` gives at the prompt, on the paths
             # that never see the prompt: `rollback` to a revision written when
             # the box had a different card in it, and `--load` of a file
@@ -13365,6 +13390,20 @@ class Shell:
                     target.linux_names.pop(ifname, None)
                 continue
             if not self.set_lcp_pair(ifname, host, True):
+                return False
+
+        # MANAGEMENT IN A VRF OF ITS OWN (#580), BEFORE any interface moves
+        # between tables: the rules and the sysctls are what keep the session
+        # this commit is typed in answering once the management interface is
+        # in its VRF, so they are there first. Taking it out the same way:
+        # the box's own traffic is back on the main table before the
+        # interface leaves the VRF.
+        if d.get("management_changed"):
+            ok, msg = self.apply_management(target)
+            if not ok:
+                # The verdict fixed, what failed in prose: `msg` carries an
+                # argv and the host's own words, whose width nothing bounds.
+                self.err_prose("management could not be put in its VRF", msg)
                 return False
 
         # Moving an interface between routing tables, addresses and all.
@@ -22511,6 +22550,41 @@ class Shell:
                         "not recomputed yet: " + " ".join(out.split())[:120])
         return True, ""
 
+    def apply_management(self, target):
+        """
+        Management in a VRF of its own (#580): the VRF's name and table in
+        tune.env, where the boot's tuner reads them, and the same rules and
+        sysctls put on the host now, through its doors.
+
+        `tcp_l3mdev_accept`/`udp_l3mdev_accept` let sshd, the API's socket
+        and snmpd - which listen in the main table - answer a connection that
+        arrives on the VRF; a TCP reply follows its connection's VRF. Two
+        rules for what the box itself originates (`iif lo`): the main table
+        without its default first, so a peer or a collector the main table
+        has a route to is still reached by it, then the VRF's table, whose
+        default is management's. The main table's default is then the
+        subscribers' alone.
+        """
+        name = target.management.get("vrf", "")
+        table = management_table(target)
+        for key, value in ((MANAGEMENT_KEYS["vrf"], name),
+                           (MANAGEMENT_TABLE_KEY, str(table) if table else "")):
+            ok, why = self.write_tune_key(key, value)
+            if not ok:
+                return False, why
+        for argv, may_fail in doors.management_argvs(table):
+            rc, out = self.sys._run(argv)
+            if rc != 0 and not may_fail:
+                return False, f"{' '.join(argv)}: {out.strip()[:120]}"
+        if table:
+            print_prose(f"management: in VRF {name}, table {table}")
+            print_prose("the box's own traffic leaves by that VRF's default "
+                        "unless the main table has a more specific route; "
+                        "the main table's default is the subscribers'")
+        else:
+            print("management: in the main table")
+        return True, ""
+
     def apply_cgnat_memory(self, gb):
         """
         The memory given to the CGNAT (#454): stored in tune.env, the tuner
@@ -26041,7 +26115,8 @@ class Shell:
             # abandon: `err` has already counted the failure, which is what
             # prisma-routing.service and the exit status read.
             if way_back:
-                self.apply_management_path(way_back)
+                self.apply_management_path(way_back,
+                                           management_table(target))
             return
 
         # Checked before it is applied, and refused whole if the check refuses.
@@ -26068,7 +26143,7 @@ class Shell:
         # still wants its pools and its routing - a box that forwards and is
         # reachable only at its console is better than one that is neither.
         if way_back:
-            self.apply_management_path(way_back)
+            self.apply_management_path(way_back, management_table(target))
 
         # #573: a file saved before `mode bpa` says `mode dynamic`. It is
         # read as the BPA pool it is, said here, and - once applied - written

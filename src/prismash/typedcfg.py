@@ -1365,6 +1365,7 @@ def system_typed(cfg):
              "protocol": d["protocol"], "severity": d["severity"],
              "source_address": d["source-address"], "vrf": d["vrf"]}
             for d in getattr(cfg, "logging_hosts", [])],
+        "management": _kv(getattr(cfg, "management", {})),
     }
 
 
@@ -2168,6 +2169,9 @@ def config_modes(P):
          P.TREE["hardware"], adm, ["system", "hardware"]),
         ("system logging", "system > logging", '["system","logging"]',
          P.TREE["logging"], adm, ["system", "logging"]),
+        ("system management", "system > management",
+         '["system","management"]', P.TREE["management"], adm,
+         ["system", "management"]),
         ("system dataplane", "system > dataplane", '["system","dataplane"]',
          P.TREE["dataplane"], adm, ["system", "dataplane"]),
         ("policy-options", "policy-options", '["policy-options"]',
@@ -2254,6 +2258,7 @@ READ_MODES = {"config": "system", "router static": "static",
               "system": "system", "system memory": "system",
               "system cpu": "system", "system dataplane": "system",
               "system hardware": "system", "system logging": "system",
+              "system hardware": "system", "system management": "system",
               "user": "users", "snmp-user": "snmp_users",
               "policy-options": "policy", "prefix-list": "policy",
               "policy-statement": "policy", "term": "policy",

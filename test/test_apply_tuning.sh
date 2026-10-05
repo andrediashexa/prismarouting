@@ -123,8 +123,24 @@ mkbox() {  # [governor] [available governors]
   fi
 }
 
+# `ip` and `sysctl` recorded, never run (#580): the management rules and
+# sysctls are the host's, and this suite must not touch the machine it runs on.
+cat > "$STUB/rec-ip" <<'EOF2'
+#!/bin/sh
+echo "ip $*" >> "$REC/host"
+EOF2
+cat > "$STUB/rec-sysctl" <<'EOF2'
+#!/bin/sh
+echo "sysctl $*" >> "$REC/host"
+EOF2
+chmod +x "$STUB/rec-ip" "$STUB/rec-sysctl"
+host() { cat "$REC/host" 2>/dev/null; }
+
 run() {  # VAR=value ... ; the box must already exist
-  OUT=$(env PATH="$STUB:$PATH" REC="$REC" PRISMA_ROOT="$R" "$@" sh "$BIN" 2>&1)
+  : > "$REC/host"
+  OUT=$(env PATH="$STUB:$PATH" REC="$REC" PRISMA_ROOT="$R" \
+        PRISMA_IP="$STUB/rec-ip" PRISMA_SYSCTL="$STUB/rec-sysctl" \
+        "$@" sh "$BIN" 2>&1)
   RC=$?
   printf '%s\n' "$OUT" | say_box
 }
@@ -596,6 +612,46 @@ said "tuning unchanged" \
   || bad "an unchanged tuning said nothing: $OUT"
 
 echo
+echo "=== PRISMA_MANAGEMENT_TABLE: management in a VRF of its own (#580) ==="
+# The rules and sysctls the VTY puts in at a commit, put in again at every
+# boot from tune.env, before the VRF device exists.
+mkbox
+run PRISMA_MANAGEMENT_VRF=mgmt PRISMA_MANAGEMENT_TABLE=100
+host | grep -qx "ip rule add pref 31001 iif lo lookup 100" \
+  && host | grep -qx "ip -6 rule add pref 31001 iif lo lookup 100" \
+  && ok "the box's own traffic looks up table 100, both families" \
+  || bad "no rule for table 100: $(host)"
+host | grep -qx "ip rule add pref 31000 iif lo lookup main suppress_prefixlength 0" \
+  && ok "  after the main table without its default" \
+  || bad "the main table's rule is missing: $(host)"
+host | grep -qx "sysctl -q -w net.ipv4.tcp_l3mdev_accept=1" \
+  && host | grep -qx "sysctl -q -w net.ipv4.udp_l3mdev_accept=1" \
+  && ok "  and the main table's listeners answer on the VRF" \
+  || bad "the l3mdev sysctls were not set: $(host)"
+[ "$(host | grep -n 'rule del pref 31001$' | head -1 | cut -d: -f1)" -lt \
+  "$(host | grep -n 'rule add pref 31001' | head -1 | cut -d: -f1)" ] \
+  && ok "  the old rules removed first, so a reboot does not stack them" \
+  || bad "the rules were not removed before being added: $(host)"
+said "management: in VRF mgmt, table 100" \
+  && ok "  and the journal says so" || bad "nothing said: $OUT"
+run PRISMA_MANAGEMENT_TABLE=
+host | grep -q "rule add" \
+  && bad "no table and a rule was added: $(host)" \
+  || ok "without the setting no rule is added"
+host | grep -qx "sysctl -q -w net.ipv4.tcp_l3mdev_accept=0" \
+  && host | grep -qx "ip rule del pref 31001" \
+  && ok "  and a box taken out of it loses the rules and the sysctls" \
+  || bad "turning it off left something behind: $(host)"
+run PRISMA_MANAGEMENT_TABLE=254
+said "REFUSED PRISMA_MANAGEMENT_TABLE, in tune.env" \
+  && said "It is a VRF's table" && said "management in the main table" \
+  && ! host | grep -q "rule add" \
+  && ok "the kernel's main table is refused by name, and no rule is added" \
+  || bad "table 254 was not refused: $OUT / $(host)"
+[ "$RC" = 0 ] && ok "  and the typo costs the setting, not the tuning" \
+  || bad "a bad table failed the unit: rc $RC"
+echo
+
 echo "=== PRISMA_ALLOW_UNSUPPORTED_SFP: ixgbe's option on the command line (#574) ==="
 # Measured on 10.40.200.166 (X520, 2026-10-05): ixgbe refused the card's SFP+
 # module at boot and the box came up with no X520. The option has to be on

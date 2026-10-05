@@ -2575,6 +2575,139 @@ check("error: logging: " in text and "No such file or directory" in text,
       f"a logging.conf that cannot be written fails the commit: {text!r}")
 os.remove(_conf)
 ok("system > logging: typed, refused, committed, read back and shown")
+print("\n=== system > management: management in a VRF of its own (#580) ===")
+check(_config.management_error("vrf", "mgmt") is None
+      and _config.management_error("vrf", "prisma-bp").startswith("expected")
+      and _config.management_error("vrf", "default").startswith("expected")
+      and "'vrf'" in _config.management_error("x", "1"),
+      "management_error: a VRF's name, never the box's own or 'default'")
+_tune = os.path.join(_root, "tune-mg", "tune.env")
+_saved_te = prismash.Shell.TUNE_ENV
+try:
+    prismash.Shell.TUNE_ENV = _tune
+    os.makedirs(os.path.dirname(_tune), exist_ok=True)
+    with open(_tune, "w") as _f:
+        _f.write("PRISMA_CGNAT_MEMORY_GB=8\n")
+    sh = shell()
+    _real = lambda: prismash.Shell.running_config(sh)
+    sh.candidate = _real()
+    check(sh.candidate.management == {}, "nothing set, nothing read back")
+    for _l in ("system", "management", "vrf mgmt"):
+        driven(lambda: sh.do_config(_l))
+    check(sh.candidate.management == {"vrf": "mgmt"},
+          f"typed under system > management: {sh.candidate.management}")
+    # A VRF the configuration does not make is refused at commit check: the
+    # rules would send the box's own traffic to a table nothing fills.
+    check(_config.management_vrf_error(sh.candidate) is not None
+          and "no such VRF" in _config.management_vrf_error(sh.candidate)[0],
+          "management vrf naming no `vrf <name> table <id>` is refused")
+    sh.candidate.vrf_devices["mgmt"] = 100
+    check(_config.management_vrf_error(sh.candidate) is None
+          and _config.management_table(sh.candidate) == 100,
+          "and taken once the VRF is made, its table read from it")
+    _calls = []
+    _run0 = sh.sys._run
+    sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh.apply_management(sh.candidate))
+    sh.sys._run = _run0
+    with open(_tune) as _f:
+        _got = _f.read()
+    check("PRISMA_MANAGEMENT_VRF=mgmt\n" in _got
+          and "PRISMA_MANAGEMENT_TABLE=100\n" in _got
+          and "PRISMA_CGNAT_MEMORY_GB=8\n" in _got,
+          f"the name and the table reach tune.env, the rest stays: {_got!r}")
+    check(_calls == [a for a, _ in prismash.doors.management_argvs(100)],
+          f"and the host's rules and sysctls are put in now: {_calls}")
+    check(["ip", "rule", "add", "pref", "31001", "iif", "lo", "lookup",
+           "100"] in _calls
+          and ["sysctl", "-q", "-w", "net.ipv4.tcp_l3mdev_accept=1"]
+          in _calls, "the VRF's table for the box's own traffic, and the "
+                     "listeners answering on it")
+    check(all(prismash.doors.management_door(a) for a in _calls),
+          "every one a door the host opens")
+    check("management: in VRF mgmt, table 100" in text,
+          f"the commit says where management is: {text!r}")
+    check(_real().management == {"vrf": "mgmt"},
+          "read back into the running configuration")
+    check("system\n management\n  vrf mgmt\n  exit" in _real().text(),
+          "which writes it in the system block")
+    # The table is part of the setting: the VRF given another one moves it.
+    _other = _real()
+    _other.vrf_devices["mgmt"] = 101
+    _base = _real()
+    _base.vrf_devices["mgmt"] = 100
+    check(_base.delta_to(_other)["management_changed"],
+          "a new table for the VRF is a change to apply")
+    # A failed rule fails the commit, named; a missing old rule does not.
+    sh.sys._run = lambda argv, *a, **k: (
+        (2, "RTNETLINK answers: No such file or directory")
+        if argv[:3] == ["ip", "rule", "del"] or argv[:4] == ["ip", "-6",
+                                                            "rule", "del"]
+        else (0, ""))
+    ok_, why_ = sh.apply_management(sh.candidate)
+    check(ok_, f"an old rule already gone is not a failure: {why_}")
+    sh.sys._run = lambda argv, *a, **k: ((1, "denied") if "add" in argv
+                                         else (0, ""))
+    ok_, why_ = sh.apply_management(sh.candidate)
+    check(not ok_ and "rule add" in why_,
+          f"a rule that cannot be added fails the commit, named: {why_}")
+    sh.sys._run = _run0
+    # Out of it: the key written empty, the rules removed, the sysctls off.
+    driven(lambda: sh.do_config("no vrf"))
+    check(sh.candidate.management == {}, "'no vrf' takes it out")
+    _calls = []
+    sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh.apply_management(sh.candidate))
+    sh.sys._run = _run0
+    with open(_tune) as _f:
+        _got = _f.read()
+    check("PRISMA_MANAGEMENT_VRF=\n" in _got
+          and "PRISMA_MANAGEMENT_TABLE=\n" in _got and _real().management == {},
+          f"and the file says the main table again: {_got!r}")
+    check(not any("add" in a for a in _calls)
+          and ["sysctl", "-q", "-w", "net.ipv4.tcp_l3mdev_accept=0"] in _calls,
+          f"no rule added, the sysctls off: {_calls}")
+    # A tune.env the box cannot write fails the commit, said by its level.
+    prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "mg")
+    sh3 = shell()
+    import copy as _copy
+    _run3 = prismash.Shell.running_config(sh3)
+    _run3.vrf_devices["mgmt"] = 100
+    sh3.running_config = lambda: _copy.deepcopy(_run3)
+    sh3.candidate = _copy.deepcopy(_run3)
+    sh3.candidate.management = {"vrf": "mgmt"}
+    rv, text = driven(lambda: sh3.do_commit([]))
+    check("management could not be put in its VRF" in text,
+          f"an unwritable tune.env fails the commit: {text!r}")
+finally:
+    prismash.Shell.TUNE_ENV = _saved_te
+ok("system > management: stored, put on the host now, shown")
+
+print("\n=== the boot's way back goes into management's table (#580) ===")
+sh = shell()
+_calls = []
+sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+sh.dataplane_if_with_mac = lambda mac: "enp6s18"
+sh.set_admin = lambda *a: True
+sh.device_linux_names = lambda: {"enp6s18": "enp6s18"}
+sh.dp.run = lambda cmd: (0, "10.40.200.166/24")
+_mg = {"mac": "aa", "name": "enp6s18", "address": "10.40.200.166/24",
+       "gateway": "10.40.200.1"}
+driven(lambda: sh.apply_management_path(_mg, 100))
+check(["ip", "route", "replace", "default", "via", "10.40.200.1", "dev",
+       "enp6s18", "table", "100"] in _calls,
+      f"with management in table 100 the route goes there, not in main: "
+      f"{_calls}")
+check(prismash.doors.answer_shape(["ip", "route", "replace", "default", "via",
+                                   "10.40.200.1", "dev", "enp6s18", "table",
+                                   "100"]) is not None
+      if hasattr(prismash.doors, "answer_shape") else True,
+      "and the host opens that door")
+_calls.clear()
+driven(lambda: sh.apply_management_path(_mg))
+check(["ip", "route", "replace", "default", "via", "10.40.200.1", "dev",
+       "enp6s18"] in _calls, f"without it, the main table as before: {_calls}")
+ok("the way back: management's table when it has one")
 
 print("\n=== system > dataplane: the levels, the file and the old line (#457) ===")
 check(_config.nest_system("ens19") == ["system", " dataplane", "  interface ens19",
@@ -2606,9 +2739,8 @@ check("'dataplane' has moved under 'system'" in text
 check(sh.system_rewrite("system") == "" and sh.nat_ctx == ["system"],
       "system enters its level")
 rv, text = driven(lambda: sh.do_config("dns"))
-check("under 'system': 'dataplane', 'cpu', 'memory', 'hardware' or "
-      "'logging'" in text,
-      f"and only those levels are under it (#466, #588): {text!r}")
+check(_config.SYSTEM_LEVELS_SAY in text and "management" in text,
+      f"and only those levels are under it (#466, #588, #580): {text!r}")
 check(sh.system_rewrite("dataplane") == ""
       and sh.nat_ctx == ["system", "dataplane"], "dataplane enters its level")
 check(sh.system_rewrite("interface ens19") == "dataplane interface ens19"

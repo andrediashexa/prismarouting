@@ -50,9 +50,72 @@ import events
 import transceiver
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
                     VRF_RESERVED_PREFIX, probe_host_ok, probe_source_ok,
-                    vrf_device_error)
+                    vrf_device_error, IFACE_VRF_MIN, IFACE_VRF_MAX)
 
 SOCKET = "/run/prisma-routing/doors.sock"
+
+#: The two rules management in its own VRF puts in (#580): the main table
+#: without its default for what the box itself sends (`iif lo`), then the
+#: VRF's table. Below the main table's own rule (32766) and above nothing
+#: of the box's: prisma-bp's l3mdev rule is at 1000.
+MGMT_RULE_MAIN, MGMT_RULE_VRF = "31000", "31001"
+#: The sysctls that let the main table's listeners answer on a VRF.
+MGMT_SYSCTLS = ("net.ipv4.tcp_l3mdev_accept", "net.ipv4.udp_l3mdev_accept")
+
+
+def mgmt_table_ok(table) -> bool:
+    """A table the management rules may name: a VRF's, never the kernel's
+    own (253-255) or the main one."""
+    t = str(table)
+    return is_number(t) and IFACE_VRF_MIN <= int(t) <= IFACE_VRF_MAX \
+        and int(t) not in (253, 254, 255)
+
+
+def management_argvs(table):
+    """
+    What puts management in its own VRF on the host (#580), or takes it out
+    (table 0), as [(argv, may_fail)]: the old rules removed - absent is not a
+    failure - then the sysctls, then the new rules. The one list the VTY runs
+    and answer() accepts, so the two cannot drift.
+    """
+    on = "1" if table else "0"
+    out = []
+    for fam in ((), ("-6",)):
+        for pref in (MGMT_RULE_MAIN, MGMT_RULE_VRF):
+            out.append((("ip",) + fam + ("rule", "del", "pref", pref), True))
+    for key in MGMT_SYSCTLS:
+        out.append((("sysctl", "-q", "-w", f"{key}={on}"), False))
+    if table:
+        for fam in ((), ("-6",)):
+            out.append((("ip",) + fam + ("rule", "add", "pref",
+                         MGMT_RULE_MAIN, "iif", "lo", "lookup", "main",
+                         "suppress_prefixlength", "0"), False))
+            out.append((("ip",) + fam + ("rule", "add", "pref",
+                         MGMT_RULE_VRF, "iif", "lo", "lookup",
+                         str(table)), False))
+    return [(list(a), f) for a, f in out]
+
+
+def management_door(argv) -> bool:
+    """Is `argv` one management_argvs() builds, for some table?"""
+    argv = tuple(argv)
+    if argv[:2] == ("ip", "-6"):
+        rest = argv[2:]
+    elif argv[:1] == ("ip",):
+        rest = argv[1:]
+    elif argv[:3] == ("sysctl", "-q", "-w") and len(argv) == 4:
+        key, _, val = argv[3].partition("=")
+        return key in MGMT_SYSCTLS and val in ("0", "1")
+    else:
+        return False
+    if rest[:3] == ("rule", "del", "pref") and len(rest) == 4:
+        return rest[3] in (MGMT_RULE_MAIN, MGMT_RULE_VRF)
+    if rest == ("rule", "add", "pref", MGMT_RULE_MAIN, "iif", "lo",
+                "lookup", "main", "suppress_prefixlength", "0"):
+        return True
+    return (len(rest) == 8 and rest[:7] == ("rule", "add", "pref",
+            MGMT_RULE_VRF, "iif", "lo", "lookup")
+            and mgmt_table_ok(rest[7]))
 
 #: An account name as a door takes it: never an option (no leading '-'),
 #: never a path, at most useradd(8)'s 32 characters. root is refused where
@@ -350,6 +413,16 @@ def verb_of(argv, stdin=None):
             and _address(argv[5]) and argv[6] == "dev" \
             and NETDEV.match(argv[7]):
         return "put the management default route back"
+    # The same, into management's own VRF table (#580).
+    if n == 10 and argv[:5] == ("ip", "route", "replace", "default", "via") \
+            and _address(argv[5]) and argv[6] == "dev" \
+            and NETDEV.match(argv[7]) and argv[8] == "table" \
+            and mgmt_table_ok(argv[9]):
+        return "put the management default route back, in its VRF"
+    # Management in a VRF of its own (#580): its rules and sysctls, the
+    # exact argvs management_argvs() builds.
+    if management_door(argv):
+        return "put management in its own VRF"
     # A tenant VRF's device and its members (#540). Every name a VRF's is
     # the statement's own predicate, which refuses prisma-*: the backplane's
     # VRF is not reachable through these by its name. What a name cannot

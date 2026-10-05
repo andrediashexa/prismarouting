@@ -358,6 +358,7 @@ TYPED_PHASE4 = {
     "system cpu": (("*", "system", False),),
     "system hardware": (("*", "system", False),),
     "system logging": (("*", "system", False),),
+    "system management": (("*", "system", False),),
     "system dataplane": (("*", "system", False),),
     "user": (("*", "users", False),),
     "snmp-user": (("*", "snmp_users", False),),

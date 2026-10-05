@@ -758,6 +758,11 @@ message SystemConfig {
   // [vrf <name>]`, `no host <address>`). Not the CGNAT's connection
   // records, which are `nat` > `cgnat` > `logging` and TypedConfig.logging.
   repeated LoggingDestination log_destinations = 11;
+  // system > management (#580): `vrf <name>` when management lives in a VRF
+  // of its own - the box's own traffic leaves by that VRF's default and the
+  // main table's default is the subscribers'; absent is the main table. In
+  // effect at the commit.
+  repeated KeyValue management = 12;
 }
 
 // One remote syslog destination of the box's record of events (#588 phase
