@@ -2738,6 +2738,12 @@ check(_two.without_cards(["ens20"])[1]
       == ["interface ens20", " ipv4 address 198.51.100.1/24", " mtu 1500",
           " exit"],
       f"#575: left_out out of order: {_two.without_cards(['ens20'])[1]}")
+check(all(config.is_card_name(n) for n in
+           ("enp1s0", "ens19", "eth0", "enx001122334455",
+            "TenGigabitEthernet0/8/0", "GigabitEthernet0/13/0"))
+      and not any(config.is_card_name(n) for n in
+                  ("Ten0", "lo", "loop0", "ae0", "tap4096", "vppwan0", "")),
+      "#575: is_card_name: a port's shape, and a typo's is not one")
 _o2, _left2 = _c575.without_cards([])
 check(_left2 == [] and _o2.text() == _c575.text(),
       "#575: no missing card leaves nothing out")

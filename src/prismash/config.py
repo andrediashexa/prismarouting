@@ -3812,6 +3812,8 @@ class Config:
         # whole and in order.
         # Each row compared with the block it is in, so two blocks' identical
         # ` exit` rows are different rows.
+        # not a unit: a closure inside without_cards, read through it by
+        # test_prismash_config.py's block-order case.
         def keyed(lines):
             hdr, out_ = None, []
             for l in lines:
