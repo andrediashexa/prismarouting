@@ -637,14 +637,14 @@ POOLS_NOW=$(vppctl show bpa pool 2>&1 | tr -d '\r')
 stanza() { printf '%s\n' "$POOLS_NOW" | awk -v n="$1" '$1=="pool"{f=($2==n)} f'; }
 DYN_STRIDE_ROWS=$(stanza dynstride)
 # Which pools the screen makes the layout promise about, and in which mode.
-# The header carries the mode in brackets - "pool dynstride [dynamic /
+# The header carries the mode in brackets - "pool dynstride [bpa /
 # interleaved]" - so the pool and its mode are read off the same screen that
 # made the promise, rather than out of what this file asked for.
 STRIDE_ROWS=$(printf '%s\n' "$POOLS_NOW" \
   | awk '$1=="pool"{n=$2; m=$3} /^ *stride /{print n, m}')
 STRIDE_ROW_N=$(printf '%s\n' "$STRIDE_ROWS" | grep -c '[^ ]')
 STRIDE_ROW_NOT_DYN=$(printf '%s\n' "$STRIDE_ROWS" | grep '[^ ]' \
-  | grep -vc '\[dynamic')
+  | grep -vc '\[bpa')
 echo "  the pool screen promises a stride on: ${STRIDE_ROWS:-(nothing)}"
 
 # AND THE SAME TWO POOLS AT THE PROMPT, which is where an operator is. The

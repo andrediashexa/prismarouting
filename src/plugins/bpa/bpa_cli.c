@@ -147,6 +147,17 @@ format_bpa_mode (u8 *s, va_list *args)
 		 m == BPA_MODE_DETERMINISTIC ? "deterministic" : "dynamic");
 }
 
+/* not a unit: a VPP format function over a va_list - see the header.
+ * The word an operator reads (#573): the on-demand mode is BPA. The audit
+ * trail keeps format_bpa_mode's "dynamic" - a record is never reworded. */
+u8 *
+format_bpa_mode_word (u8 *s, va_list *args)
+{
+  bpa_mode_t m = va_arg (*args, int);
+  return format (s, "%s",
+		 m == BPA_MODE_DETERMINISTIC ? "deterministic" : "bpa");
+}
+
 /* Renders a host-order address the way the rest of VPP prints v4. */
 /* not a unit: a VPP format function over a va_list - see the header */
 static u8 *
@@ -224,7 +235,7 @@ format_bpa_pool (u8 *s, va_list *args)
   u32 indent = format_get_indent (s);
   u32 usable = bpa_pool_usable (p);
 
-  s = format (s, "pool %v [%U / %U]", p->name, format_bpa_mode, p->mode,
+  s = format (s, "pool %v [%U / %U]", p->name, format_bpa_mode_word, p->mode,
 	      format_bpa_policy, p->policy);
   if (p->vrf_id != ~0u)
     s = format (s, "\n%Uvrf          %u%s", format_white_space, indent + 2,
@@ -629,7 +640,8 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.policy = BPA_POLICY_BLOCKED;
       else if (unformat (line_input, "mode deterministic"))
 	cfg.mode = BPA_MODE_DETERMINISTIC;
-      else if (unformat (line_input, "mode dynamic"))
+      else if (unformat (line_input, "mode dynamic")
+	       || unformat (line_input, "mode bpa"))
 	cfg.mode = BPA_MODE_DYNAMIC;
       /* Per-pool lifetimes. Absent means inherit the global, which is why
        * zero is the "not set" value rather than a legal setting. */
@@ -1091,7 +1103,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "bpa pool <name> inside <pfx>/<len> [inside <pfx>/<len> ...] "
     "outside <pfx>/<len> [outside <pfx>/<len> ...] "
     "[block <n>] [ports <min>-<max>] "
-    "[policy interleaved|blocked] [mode deterministic|dynamic] "
+    "[policy interleaved|blocked] [mode deterministic|bpa] "
     "[alg <ftp|rtsp|pptp|esp|sip> on|off] "
     "[bypass <destination|source> <pfx>/<len>] "
     "[vrf <id>] [outside-vrf <id>] "
@@ -3542,7 +3554,7 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
       if (p->port_min != 1024 || p->port_max != 65535)
 	s = format (s, " ports %u %u\n", p->port_min, p->port_max);
       s = format (s, " policy %U\n", format_bpa_policy, p->policy);
-      s = format (s, " mode %U\n", format_bpa_mode, p->mode);
+      s = format (s, " mode %U\n", format_bpa_mode_word, p->mode);
       /* Only the overrides. Emitting inherited values would turn every
        * global change into a diff against every pool. */
       if (p->timeouts.udp)

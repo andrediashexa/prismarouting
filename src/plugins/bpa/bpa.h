@@ -484,6 +484,7 @@ void bpa_reserve_say (vlib_main_t *vm, const bpa_pool_t *p);
 format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;
 format_function_t format_bpa_mode;
+format_function_t format_bpa_mode_word;
 format_function_t format_bpa_alg;
 format_function_t format_bpa_proto;
 format_function_t format_bpa_alg;
