@@ -133,6 +133,7 @@ sh test/test_tool_refusals.sh
 sh test/test_off_run_coverage.sh
 python3 test/test_every_function.py
 python3 test/test_prismash_refusals.py
+python3 test/test_bpa_word.py
 python3 test/test_collector_stop.py
 python3 test/test_appliance_paths.py
 python3 test/test_lab_collector_window.py

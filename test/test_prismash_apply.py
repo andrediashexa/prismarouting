@@ -748,7 +748,7 @@ with contextlib.redirect_stdout(buf):
 out = buf.getvalue()
 check("refusing to load" not in out,
       f"a box must load its own saved file: {out!r}")
-check("block-stride applies to dynamic pools only" not in out,
+check("block-stride applies to bpa pools only" not in out,
       f"and must not refuse the pair at boot: {out!r}")
 # The note whole and on a row of its own, the pool named last: a pool name
 # has no widest, and last on the row the fold lands after the words (#363).
@@ -1631,7 +1631,7 @@ print("\n=== a first allocation that cannot be what it says is refused at check 
 # through.
 for _mode, _ports, _want in (("dynamic", 300, "not 300"),
                              ("dynamic", 4096, "allows: 4096"),
-                             ("deterministic", 1024, "dynamic pools only")):
+                             ("deterministic", 1024, "bpa pools only")):
     _cfg = target_with("first", "100.64.0.0/22", "200.150.9.0/28")
     _pool = _cfg.pools["first"]
     _pool.mode, _pool.max_blocks, _pool.initial_ports = _mode, 4, _ports
@@ -1916,6 +1916,34 @@ check(pairs_made(_sh.api) == [(1, "ens19", True), (1100, "ens19.100", True)],
       f"and the renamed card was not paired under its name: "
       f"{pairs_made(_sh.api)}")
 print(f"  loaded: {_out[:160]!r}")
+
+# A CGNAT SIDE ON A SUB-INTERFACE THE SAME LOAD CREATES. Measured on
+# 10.40.200.166 (0.151.2): a saved file with `enp1s0.801` and `cgnat inside`
+# on it failed `--load` at every boot with "interface enp1s0.801: the
+# dataplane does not have it" - the side was applied before the VLAN was
+# created - and the box came up with none of its configuration.
+SAVED_SIDE_ON_NEW_SUB = """nat
+ cgnat
+  interface ens19.801 inside
+  exit
+ exit
+interface ens19.801
+ vlan 801
+ ipv4 address 10.40.10.29/30
+ exit
+"""
+_sh = card_shell()
+_out = load_text(_sh, SAVED_SIDE_ON_NEW_SUB)
+check("does not have it" not in _out and "refusing to load" not in _out,
+      f"a CGNAT side on a sub-interface the load creates failed it: {_out!r}")
+_order = [m for m, a in _sh.api.calls
+          if m in ("create_vlan_subif", "bpa_interface_add_del_feature")]
+check(_order[:2] == ["create_vlan_subif", "bpa_interface_add_del_feature"],
+      f"and the VLAN is created before its CGNAT side: {_order}")
+_sub_idx = [a for m, a in _sh.api.calls if m == "create_vlan_subif"]
+_feat = [a for m, a in _sh.api.calls if m == "bpa_interface_add_del_feature"]
+check(len(_feat) == 1 and _feat[0].get("sw_if_index") not in (None, 1),
+      f"and the side lands on the sub-interface, not its parent: {_feat}")
 
 # A SAVED NAME THE BOX STILL HAS is not renamed: the device is unnamed on
 # this box, the old name is what it holds, and what happens then is the trim

@@ -1982,7 +1982,7 @@ SHOW_CGNAT = {
     "memory": ("the CGNAT's memory: what it holds and what still fits", None),
     "pool": ("configured CGNAT pools", None),
     "session": ("active sessions per thread", None),
-    "blocks": ("blocks allocated in dynamic mode, and how many a forward pins",
+    "blocks": ("blocks allocated in bpa mode, and how many a forward pins",
                None),
     "logging": ("IPFIX export state", None),
     # The COUNT and the instant it was read. Not the entries: an identity is
@@ -2941,7 +2941,7 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_SECONDS),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", "<1-255>"),
-    "initial-allocation": ("ports a new subscriber of a dynamic pool is given "
+    "initial-allocation": ("ports a new subscriber of a bpa pool is given "
                            "at once; it grows from there a block at a time",
                            "<ports>"),
     "block-stride": ("blocks between the ones a subscriber holds; 1 puts them "
@@ -7831,7 +7831,7 @@ def dynamic_export_findings(pools, globals_):
     if udp or other:
         return []
     return [("warning", f"nat / cgnat / pool {name}",
-             ("dynamic, and nothing exports its block events. " if dyn else
+             ("bpa, and nothing exports its block events. " if dyn else
               "a reserve, and nothing exports the blocks it hands out. ")
              + "The exported record is the only evidence of which subscriber "
              "held a public port" + ("" if dyn else " in a reserve block, which "
@@ -12466,7 +12466,7 @@ class Shell:
                 # a value with the VTY's own words behind it folds inside the
                 # sentence at whatever width the operator's window happens to
                 # be (#363). Last on the row, the fold lands after the words.
-                self.err("block-stride applies to dynamic pools only, not "
+                self.err("block-stride applies to bpa pools only, not "
                          f"to pool {pool.name}")
                 # The two statements whole and on their own rows, the #252
                 # idiom: the operator's next move is to go and edit one of
@@ -12481,7 +12481,7 @@ class Shell:
                             "otherwise from wherever its worker's slice of "
                             "the reserve has one, so the setting is never "
                             "read; drop the "
-                            "block-stride, or put the pool in dynamic mode")
+                            "block-stride, or put the pool in mode bpa")
                 ok = False
 
             # A NAT64 POOL (#485), of the finished pool for the stride's
@@ -12766,7 +12766,20 @@ class Shell:
             if not self.set_cgnat_feature(ifname, running.interfaces[ifname],
                                           False):
                 return False
+        # A CGNAT side on an interface THIS commit creates waits for the
+        # creation below: the dataplane has no such interface yet. Measured on
+        # 10.40.200.166 (0.151.2): a saved file with `enp1s0.801` and `cgnat
+        # inside` on it failed `--load` at every boot with "interface
+        # enp1s0.801: the dataplane does not have it", and the box came up
+        # with none of its configuration. The live commit that wrote it had
+        # passed only because the VLAN was committed first and its side after.
+        created_here = (set(d["loopback_add"]) | set(d["subif_add"])
+                        | set(d.get("bundle_add", {})))
+        deferred_sides = {}
         for ifname, direction in d["if_add"].items():
+            if ifname in created_here:
+                deferred_sides[ifname] = direction
+                continue
             if not self.set_cgnat_feature(ifname, direction, True):
                 return False
 
@@ -12998,6 +13011,10 @@ class Shell:
         # can observe it.
         for ifname in d["admin_down"]:
             if ifname in being_created and not self.set_admin(ifname, False):
+                return False
+        # And the CGNAT sides deferred above, now that their interfaces exist.
+        for ifname, direction in deferred_sides.items():
+            if not self.set_cgnat_feature(ifname, direction, True):
                 return False
 
         # IS-IS needs its frames punted before the adjacency can form, and
@@ -24274,7 +24291,7 @@ class Shell:
             # words.
             print(f"note: block-stride {pool.block_stride} dropped from "
                   f"pool {pool.name}")
-            print_prose("it applies to dynamic pools only and this pool "
+            print_prose("it applies to bpa pools only and this pool "
                         "never read it, so the box comes up as it ran; the "
                         "next 'save' writes the file without it, and the "
                         "same pair typed at the prompt is refused")

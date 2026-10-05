@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A saved VLAN with a CGNAT side failed to load at boot.**
+  ([#578](https://github.com/andrediashexa/hexarouting/issues/578)) On
+  10.40.200.166 (0.151.2) `--load` failed at every try with "interface
+  enp1s0.801: the dataplane does not have it", and the box came up with none
+  of its configuration: the apply turned the CGNAT sides on before it created
+  the sub-interfaces, so a load - or one commit - that creates a VLAN together
+  with its `cgnat inside`/`outside` could never succeed. The side of an
+  interface the same commit creates is applied right after it is created.
+
+* **The VTY still said `dynamic` for a BPA pool in its own words.**
+  ([#577](https://github.com/andrediashexa/hexarouting/issues/577)) After
+  #573 renamed the mode, the commit warning for a BPA pool with no log export
+  read "dynamic, and nothing exports its block events" (10.40.200.166,
+  0.151.1), and `block-stride`, `initial-allocation`, `show cgnat blocks`'
+  help and the selftest still said "dynamic pool" or "dynamic mode". They say
+  BPA now; `test/test_bpa_word.py` reads every string the VTY's modules hold
+  and every line the selftest prints, and fails on the old word used as the
+  mode's name. The refusal of a typed `mode dynamic` and the migration note
+  name it on purpose and stay.
+
 ## 0.151.2 - SFP+ modules ixgbe does not list, opt-in
 
 ### Added

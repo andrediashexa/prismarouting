@@ -1840,7 +1840,7 @@ class Pool:
         if not self.initial_ports:
             return None
         if self.mode != "dynamic":
-            return ("initial-allocation applies to dynamic pools only; a "
+            return ("initial-allocation applies to bpa pools only; a "
                     "deterministic subscriber's first block is the formula's")
         if not is_number(str(self.block_size)) or not int(self.block_size):
             return None
