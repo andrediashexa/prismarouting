@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.6 - a login during an upgrade waits instead of failing
+
+### Fixed
+
 * **A login during an upgrade's container recreate printed a Python
   traceback.** ([#581](https://github.com/andrediashexa/hexarouting/issues/581))
   On 10.40.200.166 a login in the ~3 s `system upgrade 0.151.5` spent
