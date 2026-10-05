@@ -400,6 +400,11 @@ wait_for 120 in_fib 198.19.0.0/24
 expect "the IS-IS route comes back when the neighbour does" in_fib 198.19.0.0/24
 wait_for 120 in_fib6 2001:db8:66::/64
 expect "and the OSPFv3 route" in_fib6 2001:db8:66::/64
+# The cut took the static route's session down too: it is back before the
+# removals below read the static route as "still there" (measured: read at
+# once, the first run of this section found it still withdrawn).
+wait_for 60 in_fib 203.0.113.0/24
+expect "and the static route, its BFD session back" in_fib 203.0.113.0/24
 
 # ---------------- taking it away again (#570) ----------------
 # On 10.40.200.166 (0.150.8) `no bfd` and `no peer ...` failed `commit check`:
