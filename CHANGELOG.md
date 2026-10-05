@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.151.2 - SFP+ modules ixgbe does not list, opt-in
+
+### Added
+
 * **An opt-in setting for SFP+ modules ixgbe does not list.**
   ([#574](https://github.com/andrediashexa/hexarouting/issues/574)) On
   10.40.200.166 (X520, 2026-10-05) ixgbe refused the card at boot, `failed to
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   `/boot/grub/grub.cfg` and, on the next boot, off `/proc/cmdline` - the place
   the initramfs's modprobe reads it from; the guest has no ixgbe card, so the
   card itself coming up is not proved there.
-
-### Fixed
 
 ## 0.151.1 - the screens say bpa too
 
