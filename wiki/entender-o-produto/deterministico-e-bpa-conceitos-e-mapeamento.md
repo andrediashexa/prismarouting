@@ -14,8 +14,8 @@ BPA é **só** o modo dinâmico. Determinístico não é um tipo de BPA: o guard
 O módulo do dataplane que faz as duas coisas se chama `bpa`, e esse nome aparece em contadores e identificadores internos para os dois modos. Continua assim para não quebrar scripts e caixas instaladas, mas não quer dizer que um pool determinístico seja BPA. Na VTY, os comandos são `show cgnat ...`.
 
 |     | Determinístico (`mode deterministic`) | BPA (`mode bpa`) |
-|-----|-------------------------------------|--------------------|
-| Como o bloco é atribuído | por fórmula                         | sob demanda        |
+|-----|-------------------------------------|----------------|
+| Como o bloco é atribuído | por fórmula                         | sob demanda    |
 | Log de alocação | **nenhum** — exceto os blocos da `reserve`, registrados um a um | um registro IPFIX por bloco alocado e por bloco liberado |
 | Endereços públicos necessários | todos os assinantes precisam caber  | sobreassinatura possível |
 | Prova para autoridade | algoritmo + configuração vigente (trilha), mais os registros dos blocos da reserva | os registros IPFIX |
