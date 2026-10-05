@@ -171,25 +171,42 @@ never would.
   the session down in 277 ms, the static route left in 277 ms, BGP in 351 ms
   and OSPF (dead time 40 s) in 256 ms.
 
-## What is left after phase 2
+## What phase 3 delivers
 
-* **The IGPs.** `ip ospf bfd`, `ipv6 ospf6 bfd` and `isis bfd` were already
-  in the grammar, and before this phase they were inert on every box: nothing
-  ran bfdd. They now reach a running bfdd and the commit check counts them,
-  but no lab has brought an OSPF or IS-IS adjacency down through BFD yet, and
-  their `bfd profile` form is not offered. Unproven until it has.
-* **The API.** A typed read of the sessions (`ListBfdSessions`, drawn from
-  `Shell.bfd_facts()`, which `show bfd` already prints from), typed BFD
-  configuration in `GetConfig` (a `bfd` area: peers, profiles, their timers),
-  and an event when a session changes state (#558). In phase 1 the API
-  reaches all of it as text: the `bfd` block through `Edit` (with
-  `EditRequest.path ["bfd"]`), and both screens through `Show` -
-  docs/api-coverage.md lists `show bfd` as `text` for that reason.
-* **SNMP.** BFD-STD-MIB (RFC 7331) and a trap on a session going down. FRR
-  10.7.1 ships no `bfdd_snmp` module - `ls /usr/lib/*/frr/modules` has one for
-  bgpd, ospfd, ospf6d, isisd, ldpd, ripd and zebra, and none for bfdd - so the
-  table has to be served by this product's own agent, from `show bfd peers
-  json`.
+* **The configuration as fields.** GetConfig area `bfd` reads the block's
+  sessions and profiles; SetConfig writes a `bfd_peer` or a `bfd_profile`,
+  only the lines that change; DeleteConfig removes a session, a profile or
+  the whole block, each as the `no` of its header (#570). A BGP neighbour's
+  `bfd profile` and a static route's `bfd [multi-hop] [source] [profile]`
+  are fields of theirs. lab/api-grpc.sh's phase 9 commits each and reads it
+  back through GetConfig and the VTY's own text, then removes it.
+* **IS-IS and OSPFv3 over BFD.** lab/bfd.sh drives both down with the same
+  silent cut as OSPF, `isis bfd profile lab` and `ipv6 ospf6 bfd profile
+  lab` at the interface, and then takes their `bfd` away again.
+
+## Traps: designed, not built
+
+`bfdNotificationsEnable` reads false, and stays false until this is built.
+The product sends no notification of its own today - the BGP, OSPF and IS-IS
+ones come from FRR's daemons over AgentX - and FRR 10.7.1 has no `bfdd_snmp`
+to send `bfdSessDown` / `bfdSessUp` (RFC 7331, `1.3.6.1.2.1.222.0.1` and
+`.0.2`). pass_persist, which serves the table, cannot originate one. What it
+takes:
+
+1. A watcher on the host, reading bfdd through the same read-only doors the
+   agent reads (#571), every second, with WatchBfd's comparison: a state
+   change, or a down counter that moved between two readings.
+2. Sent with net-snmp's `snmptrap` / `snmpinform` to the `trap2sink` /
+   `informsink` destinations snmpd.conf already holds, as the root that can
+   read their community or v3 credentials - which is why it is a unit of its
+   own and not the agent, which runs as Debian-snmp.
+3. Rate-limited per session, as docs/snmp-plan.md asks of every
+   notification, and `bfdNotificationsEnable` true only while the watcher
+   runs.
+
+## What is left after phase 3
+
+* **Traps**, as designed above.
 * **The installer.** The next medium SHOULD enable bfdd beside the other four
   daemons, so that the entrypoint is a second line of defence rather than the
   only one.

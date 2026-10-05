@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **BFD, phase 3: its configuration as fields, and IS-IS and OSPFv3 over
+  BFD proved.** ([#559](https://github.com/andrediashexa/hexarouting/issues/559))
+  GetConfig area `bfd` reads the block's sessions (`BfdPeerConfig`, keyed as
+  FRR keys them - address, multihop, local address, interface, VRF) and
+  profiles (`BfdProfileConfig`), with their timers as `BfdTimers`; SetConfig
+  writes a `bfd_peer` or a `bfd_profile`, only the lines that change, a timer
+  removed as the `no` of its line as it is (a bare `no detect-multiplier`
+  leaves the old line in the candidate); DeleteConfig area `bfd` removes a
+  session, a profile or the whole block, each as the `no` of its header,
+  which takes the body with it (#570). A BGP neighbour's `bfd profile` is a
+  field now - the reader dropped it before - and a static route's `bfd
+  [multi-hop] [source] [profile]` are fields rather than `extra`, written
+  back after the distance and tag where `router static` takes them. GetSchema
+  and docs/api-coverage.md know the `bfd`, `bfd peer` and `bfd profile`
+  modes. lab/api-grpc.sh's phase 9 commits each object, reads it back through
+  GetConfig and the VTY's own text, and removes it, the whole block last;
+  lab/bfd.sh drives IS-IS and OSPFv3 down with the same silent cut as OSPF
+  and takes their `bfd` away again. BFD traps are designed in docs/bfd.md and
+  not built: the product sends no notification of its own yet.
+
 ### Fixed
 
 ## 0.150.11 - BFD-STD-MIB answers on a real box
