@@ -77,6 +77,13 @@ version has a chance of seeing it.
 
 ### Added
 
+<!-- #580 is deferred (2026-10-05) and this branch is not merged. Done: the
+statement, the host rules and sysctls at commit, at boot (tuner) and at
+--load, the way-back route in the VRF's table, unit tests with mutations,
+lab/mgmt-vrf.sh (on 29 ok, off red 15). Not done: make test on the rebased
+branch unconfirmed, labs api-grpc/commit-readback/routing/control-plane-dies/
+doors not re-run, no reboot, dataplane or container restart proven, never
+run on a box. -->
 * **Management in a VRF of its own, so the main table can carry the
   subscribers' default.**
   ([#580](https://github.com/andrediashexa/hexarouting/issues/580)) Asked for
