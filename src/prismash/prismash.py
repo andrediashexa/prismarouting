@@ -43,6 +43,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
                     NAT_HIERARCHY, CGNAT_LEVEL, one_line_cgnat,
+                    NAT64_LEVEL, NAT64_WHERE, NAT_LEVELS_SAY,
+                    NAT64_LEVEL_SAYS, nat_level_block,
                     SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
                     MEMORY_LEVEL, SYSTEM_SETTINGS,
@@ -2020,8 +2022,42 @@ SHOW_CGNAT = {
                  "<file>")}),
 }
 
+#: `show nat64` (#572): the NAT64 questions, answered for NAT64 only. The
+#: dataplane keeps one session table, one set of blocks and one public space
+#: for both kinds of pool, so `show cgnat` stays the whole of it - these are
+#: the views that refuse an IPv4 subscriber, or a public address of a CGNAT
+#: pool, and say where its answer is.
+SHOW_NAT64 = {
+    "pool": ("configured NAT64 pools, as the dataplane holds them", None),
+    "subscriber": ("everything about one NAT64 subscriber",
+                   "<IPv6-address>"),
+    "translation": ("which NAT64 subscriber held a public address and port",
+                    "<public-address> <port>"),
+}
+
+def nat64_pool_blocks(text):
+    """
+    The NAT64 pools out of `show bpa pool` (#572), each its own block as the
+    dataplane wrote it. A block starts at `pool <name> [`; a NAT64 one is
+    the one with an `inside6` row, which format_bpa_pool() writes for a
+    NAT64 pool and never for another - the dataplane's own words decide,
+    not this VTY's reading of the file.
+    """
+    blocks, cur = [], []
+    for line in text.splitlines():
+        if re.match(r"^\s*pool \S+ \[", line) and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        blocks.append(cur)
+    return ["\n".join(b) for b in blocks
+            if any(x.strip().startswith("inside6") for x in b)]
+
+
 SHOW = {
     "cgnat": ("CGNAT information", SHOW_CGNAT),
+    "nat64": ("NAT64 information", SHOW_NAT64),
     "configuration": ("candidate configuration", {
         "compare": ("differences against the running configuration", None)}),
     "running-config": ("configuration in effect, CGNAT and routing", None),
@@ -2950,7 +2986,9 @@ CGNAT_POOL = {
                     "where it was", ARG_VRF_ID),
     "mode": ("how the block is assigned", {
         "deterministic": ("by formula, no allocation logging", None),
-        "dynamic": ("on demand, with allocation logging", None),
+        # #573: BPA, bulk port allocation, is the on-demand mode.
+        "bpa": ("on demand (bulk port allocation), with allocation logging",
+                None),
     }),
     "exit": ("leave the pool", None),
 }
@@ -4142,6 +4180,12 @@ TREE = {
                                "block goes after the hold-down",
                                "<A.B.C.D>"),
             }),
+            # #572: NAT64's own, by any address in the subscriber's prefix.
+            "nat64": ("NAT64 state", {
+                "subscriber": ("end every session of one NAT64 subscriber; "
+                               "its block goes after the hold-down",
+                               "<IPv6-address>"),
+            }),
             "ospf": ("OSPF, which has no sessions to reset one at a time", {
                 "process": ("tear the process down and build it again; every "
                             "adjacency goes with it", None),
@@ -4332,6 +4376,8 @@ _EVERY_LEVEL = {k: TREE["config"][k] for k in ("commit", "rollback", "show")}
 TREE["nat"] = {
     "cgnat": ("carrier-grade NAT: pools, interfaces, logging, timeouts",
               None),
+    # #572: NAT64's own level, beside `cgnat`.
+    "nat64": ("NAT64: pools whose inside is IPv6", None),
     "exit": ("leave 'nat'", None),
     **_EVERY_LEVEL,
 }
@@ -4507,6 +4553,15 @@ TREE["cgnat"] = {
         "pool": ("remove a pool", ARG_POOL),
         "interface": ("disable CGNAT on an interface", ARG_INTERFACE)}),
     "exit": ("leave 'cgnat'", None),
+    **_EVERY_LEVEL,
+}
+# `nat` > `nat64` (#572): pools and nothing else. The interfaces, the
+# logging, the timeouts and the memory stay under `cgnat`, shared by both.
+TREE["nat64"] = {
+    "pool": ("create or edit a NAT64 pool", ARG_POOL),
+    "no": ("remove NAT64 configuration", {
+        "pool": ("remove a NAT64 pool", ARG_POOL)}),
+    "exit": ("leave 'nat64'", None),
     **_EVERY_LEVEL,
 }
 
@@ -9082,7 +9137,8 @@ class Shell:
         no warning.
         """
         if self.mode == "pool" and self.pool is not None:
-            return f"{NAT_HIERARCHY} / {CGNAT_LEVEL} / pool {self.pool.name}"
+            _lvl = getattr(self.pool, "level", CGNAT_LEVEL)
+            return f"{NAT_HIERARCHY} / {_lvl} / pool {self.pool.name}"
         if self.mode == "user" and self.user is not None:
             return f"user {self.user.name}"
         if self.mode == "snmp-user" and self.snmp_user is not None:
@@ -15978,15 +16034,22 @@ class Shell:
                 return ""
             return line
         if self.nat_ctx == [NAT_HIERARCHY]:
-            if line.strip() == CGNAT_LEVEL:
-                self.nat_ctx.append(CGNAT_LEVEL)
+            if line.strip() in (CGNAT_LEVEL, NAT64_LEVEL):
+                self.nat_ctx.append(line.strip())
             else:
-                self.err_prose("under 'nat' there is 'cgnat' and nothing else",
-                               "'cgnat' enters it; 'exit' leaves 'nat'")
+                self.err_prose(NAT_LEVELS_SAY,
+                               "each enters its level; 'exit' leaves 'nat'")
+            return ""
+        level = self.nat_ctx[-1]
+        if level == NAT64_LEVEL and w[0] != "pool" and w[:2] != ["no",
+                                                                 "pool"]:
+            # `nat64` holds pools and nothing else (#572).
+            self.err_prose("not a statement of 'nat64'; nothing staged",
+                           NAT64_LEVEL_SAYS)
             return ""
         if w[0] == "no":
-            return f"no {CGNAT_LEVEL} " + " ".join(w[1:])
-        return f"{CGNAT_LEVEL} " + line.strip()
+            return f"no {level} " + " ".join(w[1:])
+        return f"{level} " + line.strip()
 
     def hierarchy_rewrite(self, line):
         """
@@ -16168,7 +16231,8 @@ class Shell:
             self.nat_ctx = []
             return True
 
-        if line.startswith("cgnat pool "):
+        if (line.startswith("cgnat pool ")
+                or line.startswith(f"{NAT64_LEVEL} pool ")) and len(w) > 2:
             name = w[2]
             # Before the pool exists and before the mode changes, for the
             # reason `router bgp` is refused before its block is entered
@@ -16178,12 +16242,30 @@ class Shell:
             if why:
                 self.err_prose(*why)
                 return True
-            self.pool = self.candidate.pools.get(name) or Pool(name)
+            # One name, one pool, across `cgnat` and `nat64` (#572): the
+            # dataplane holds one pool table, keyed by name.
+            held = self.candidate.pools.get(name)
+            if held is not None and held.level != w[0]:
+                self.err_prose(f"pool '{name}' is a pool under "
+                               f"'{held.level}'",
+                               "edit it there, or give this pool a name of "
+                               "its own")
+                return True
+            self.pool = held or Pool(name, w[0])
             self.candidate.pools[name] = self.pool
             self.mode = "pool"
             return True
-        if line.startswith("no cgnat pool "):
-            self.candidate.pools.pop(w[3], None)
+        if (line.startswith("no cgnat pool ")
+                or line.startswith(f"no {NAT64_LEVEL} pool ")) and len(w) > 3:
+            held = self.candidate.pools.get(w[3])
+            # Only from its own level: `no pool v6` under `cgnat` must not
+            # remove the NAT64 pool `v6` the operator is not looking at.
+            if held is not None and held.level == w[1]:
+                self.candidate.pools.pop(w[3], None)
+            elif held is not None:
+                self.err_prose(f"pool '{w[3]}' is a pool under "
+                               f"'{held.level}'; nothing removed",
+                               "remove it from there")
             return True
         if w[:2] == ["snmp", "community"] and len(w) > 2:
             if w[2] not in self.candidate.snmp_communities:
@@ -17813,9 +17895,13 @@ class Shell:
                 if why:
                     raise ValueError(why)
             elif w[0] == "mode":
-                if w[1] not in ("deterministic", "dynamic"):
-                    raise ValueError("mode must be deterministic or dynamic")
-                p.mode = w[1]
+                # #573: `bpa` is the on-demand mode's word; the old one is
+                # refused at the prompt, naming the new.
+                if w[1] == "dynamic":
+                    raise ValueError("mode dynamic is now 'mode bpa' (#573)")
+                if w[1] not in Pool.MODE_WORDS:
+                    raise ValueError("mode must be deterministic or bpa")
+                p.mode = Pool.MODE_WORDS[w[1]]
             elif w[0] == "timeout":
                 if w[1] not in Pool.TIMEOUTS:
                     raise ValueError("timeout must be one of "
@@ -19002,6 +19088,9 @@ class Shell:
         if _ha[:3] == ["show", "cgnat", "ha"]:
             self.show_ha(_ha[3:])
             return
+        if _ha[:2] == ["show", NAT64_LEVEL]:
+            self.show_nat64(_ha[2:])
+            return
         # The ones that carry an argument. Matched by prefix so the argument
         # travels through untouched; prismash is not the place to re-validate an
         # address the dataplane is about to parse anyway.
@@ -19117,7 +19206,7 @@ class Shell:
             # residencial`, not the model's `cgnat pool residencial`.
             lines = (cfg.pools[self.pool.name].lines()
                      if self.pool.name in cfg.pools else self.pool.lines())
-            lines[0] = lines[0][len(CGNAT_LEVEL) + 1:]
+            lines[0] = lines[0].split(" ", 1)[1]
             print("\n".join(lines))
             return
         # Standing in `system` or `dataplane`: that level's block (#457).
@@ -19138,8 +19227,8 @@ class Shell:
         # as `show configuration` writes it.
         if self.nat_ctx and not self.frr_ctx:
             block = cfg.cgnat_block()
-            if self.nat_ctx[-1] == CGNAT_LEVEL:
-                block = [b[1:] for b in block[1:-1]]
+            if self.nat_ctx[-1] in (CGNAT_LEVEL, NAT64_LEVEL):
+                block = nat_level_block(block, self.nat_ctx[-1])
             print("\n".join(block) if block else
                   "nothing is configured here yet")
             return
@@ -21942,6 +22031,9 @@ class Shell:
         if w[1:2] == ["cgnat"]:
             self.clear_cgnat(w[2:])
             return
+        if w[1:2] == [NAT64_LEVEL]:
+            self.clear_nat64(w[2:])
+            return
         if w[:2] != ["clear", "bgp"] or len(w) < 3:
             self.err("usage: clear bgp <neighbour> [soft [in|out]]")
             print("       clear ospf process | clear ospf neighbor <A.B.C.D>")
@@ -22045,6 +22137,79 @@ class Shell:
             return
         for line in out.strip().splitlines():
             print(line)
+
+    def clear_nat64(self, rest):
+        """
+        `clear nat64 subscriber <IPv6 address>` (#572): `clear cgnat
+        subscriber` for NAT64's own subscribers, by any address in the
+        delegated prefix. An IPv4 address is a CGNAT subscriber and is sent
+        there by name rather than cleared from here.
+        """
+        if rest[:1] != ["subscriber"] or len(rest) != 2:
+            self.err("usage: clear nat64 subscriber <IPv6-address>")
+            return
+        try:
+            addr = ipaddress.ip_address(rest[1])
+        except ValueError:
+            self.err(f"a NAT64 subscriber is an IPv6 address: {rest[1]}")
+            return
+        if addr.version == 4:
+            self.err_prose("an IPv4 subscriber is not NAT64's",
+                           f"'clear cgnat subscriber {addr}' clears it")
+            return
+        self.clear_cgnat(["subscriber", str(addr)])
+
+    def show_nat64(self, args):
+        """
+        `show nat64 pool`, `subscriber <IPv6>` and `translation <public>
+        <port>` (#572): the NAT64 half of `show cgnat`, in the dataplane's
+        own words. What is not NAT64 is refused with the `show cgnat`
+        spelling that answers it, so the two never quietly disagree.
+        """
+        if args in ([], ["pool"]):
+            rc, out = self.dp.run("show bpa pool")
+            blocks = nat64_pool_blocks(out) if rc == 0 else []
+            if rc != 0:
+                self.err_prose("the dataplane did not answer",
+                               out.strip() or "nothing came back")
+            elif not blocks:
+                print("no NAT64 pools configured")
+            else:
+                print("\n".join(blocks))
+            return
+        if args[:1] == ["subscriber"] and len(args) == 2:
+            try:
+                addr = ipaddress.ip_address(args[1])
+            except ValueError:
+                self.err(f"a NAT64 subscriber is an IPv6 address: {args[1]}")
+                return
+            if addr.version == 4:
+                self.err_prose("an IPv4 subscriber is not NAT64's",
+                               f"'show cgnat subscriber {addr}' answers it")
+                return
+            self.vpp(f"show bpa subscriber {addr}")
+            return
+        if args[:1] == ["translation"] and len(args) == 3:
+            try:
+                pub = ipaddress.IPv4Address(args[1])
+            except ValueError:
+                self.err(f"a public address is IPv4: {args[1]}")
+                return
+            # Whose public address it is, from the configuration in effect:
+            # a CGNAT pool's answers under `show cgnat translation`.
+            for p in self.running_config().pools.values():
+                if p.level == NAT64_LEVEL:
+                    continue
+                if any(pub in ipaddress.IPv4Network(o, strict=False)
+                       for o in p.outside if ":" not in o):
+                    self.err_prose(f"{pub} is CGNAT pool '{p.name}''s",
+                                   f"'show cgnat translation {pub} "
+                                   f"{args[2]}' answers it")
+                    return
+            self.vpp(f"show bpa translation {pub} {args[2]}")
+            return
+        self.err("usage: show nat64 pool | subscriber <IPv6-address>")
+        print("       show nat64 translation <public-address> <port>")
 
     def clear_ospf(self, rest):
         """
@@ -22740,6 +22905,22 @@ class Shell:
             label = "current" if n == 0 else f"{n} commit(s) ago"
             print(f"  {n:>2}  {when}  {label}"
                   + (f"  {comment}" if comment else ""))
+
+    def write_migrated(self, path, cfg):
+        """
+        `path` written again from `cfg`, the configuration it was read as
+        (#573): the file a migration changed, with the same umask a save
+        uses. Said when it cannot be written - the box runs the new word
+        either way, and the next `save` writes it.
+        """
+        old_umask = os.umask(CONFIG_UMASK)
+        try:
+            with open(path, "w") as f:
+                f.write(cfg.text())
+        except OSError as e:
+            self.err(f"the migrated file could not be written: {e}")
+        finally:
+            os.umask(old_umask)
 
     def save_running(self):
         """
@@ -23838,6 +24019,9 @@ class Shell:
         loop below, and Pool.stride_inert() decides which pools it means
         (#375).
         """
+        # A file read from `path` is one a migration may write back (#573);
+        # text handed in - a peer's, a test's - is not this box's file.
+        from_file = text is None
         if text is None:
             if not os.path.exists(path):
                 return
@@ -24042,7 +24226,23 @@ class Shell:
         if way_back:
             self.apply_management_path(way_back)
 
+        # #573: a file saved before `mode bpa` says `mode dynamic`. It is
+        # read as the BPA pool it is, said here, and - once applied - written
+        # back with the new word, so the box comes up with its pools and the
+        # file stops carrying a word the prompt refuses.
+        migrated = sorted(n for n, p in target.pools.items()
+                          if getattr(p, "_mode_was_dynamic", False))
+        for name in migrated:
+            # The name last: it has no widest, and words behind it would
+            # fold wherever the console ends (#363).
+            print(f"note: 'mode dynamic' is now 'mode bpa' in pool {name}")
+        if migrated:
+            print_prose("the file is rewritten with it once applied (#573)",
+                        indent="    ")
+
         if self.apply(target):
+            if migrated and from_file:
+                self.write_migrated(path, target)
             # A window armed before the reboot is still pending: the file
             # outlives the boot, and so does the deadline (#212).
             pending = self.confirm.read()

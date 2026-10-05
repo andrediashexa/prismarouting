@@ -138,7 +138,7 @@ echo "=========== 1. the pool, the pair and the advertisement ==========="
 # As an operator types it. Off: the same, without `ipv6 nd nat64`.
 P64=yes
 [ "$MODE" = off ] && P64=""
-$HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+$HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
     -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
     -c "nat64-prefix 2001:db8:64::/48" -c "prefix-outside 203.0.113.0/29" \
     -c "block-size 2048" -c "exit" -c "exit" -c "exit" \

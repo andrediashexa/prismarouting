@@ -45,7 +45,9 @@ def screen_error(text):
 #: TranslationSource's names, by what the screen says.
 SOURCE_FORMULA = "formula"
 SOURCE_RESERVE = "reserve"
-SOURCE_DYNAMIC = "dynamic"
+# #573: the enum's SOURCE_BPA (SOURCE_DYNAMIC's number); the dataplane's
+# screen still says DYNAMIC, its own word.
+SOURCE_BPA = "bpa"
 SOURCE_OUTSIDE = "outside_range"
 
 
@@ -78,7 +80,7 @@ def parse_translation(text):
         out["source"] = {"DETERMINISTIC NAT64": SOURCE_FORMULA,
                          "DETERMINISTIC": SOURCE_FORMULA,
                          "DETERMINISTIC RESERVE": SOURCE_RESERVE,
-                         "DYNAMIC": SOURCE_DYNAMIC}[kind]
+                         "DYNAMIC": SOURCE_BPA}[kind]
         out["nat64"] = kind == "DETERMINISTIC NAT64" or ":" in out["subscriber"]
         out["now_only"] = out["source"] != SOURCE_FORMULA
     return out

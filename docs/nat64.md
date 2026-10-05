@@ -51,7 +51,7 @@ pool, NAT44 or NAT64, never both.
 
 ```
 nat
- cgnat
+ nat64
   pool v6
    prefix-inside 2001:db8:1200::/40
    subscriber-length 56
@@ -60,6 +60,27 @@ nat
    block-size 2048
    exit
 ```
+
+**Under `nat` > `nat64`, since #572** - the maintainer's decision of
+2026-10-05, which took NAT64 out of `cgnat`. The form 0.150.0-0.150.11 wrote,
+a NAT64 pool inside `cgnat`, is refused at `commit check` and when a saved
+file is loaded, naming the new one; nothing moves it automatically. `nat64`
+holds pools and nothing else: the interfaces, the logging, the timeouts and
+the memory are under `cgnat`, shared by both kinds of pool. A pool name is
+one pool across both levels, because the dataplane keeps one pool table keyed
+by name (and the log, the trail and `clear` name a pool by it). The model
+keeps one `pools` dict; a Pool carries the level it is written under, and
+what the dataplane answers is placed by its inside.
+
+The views of NAT64 are `show nat64 pool` (the dataplane's own blocks, the
+ones with an `inside6` row), `show nat64 subscriber <IPv6 address>`, `show
+nat64 translation <public> <port>` and `clear nat64 subscriber <IPv6
+address>`. Each refuses what is not NAT64 and names the `show cgnat` or
+`clear cgnat` spelling that answers it. `show cgnat` is unchanged and still
+the whole dataplane: NAT44 and NAT64 share the session table, the blocks and
+the public space, and `show cgnat top`, `blocks`, `forward`, `alg`, `drops`
+and `memory` describe both. Through the API a NAT64 pool is a
+`Nat64PoolConfig`, area `nat64` (docs/api.md).
 
 An IPv6 `prefix-inside` is what makes it a NAT64 pool; an inside is one
 family, never both. Without `nat64-prefix` the pool takes `64:ff9b::/96`.
@@ -105,7 +126,7 @@ block; `show cgnat top` names it by its prefix.
 
 ## Dynamic mode and the log (phase 3)
 
-`mode dynamic` with `max-blocks`, `initial-allocation` and `block-stride`, as
+`mode bpa` with `max-blocks`, `initial-allocation` and `block-stride`, as
 on an IPv4 pool: bpa-in2out's allocator, run on the subscriber's index - the
 pool's pseudo inside address IS the index, so the allocator, the hold-down,
 the slices per worker and the lending between them are the IPv4 ones,

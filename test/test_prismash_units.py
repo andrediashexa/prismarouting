@@ -2038,7 +2038,11 @@ check(sh.pool.ports == "1024 65535", "a legal range is taken")
 rv, text = driven(sh.do_pool, "policy sideways")
 check(rows(text) == ["error: invalid argument: policy must be interleaved "
                      "or blocked"], f"policy is one of two: {text!r}")
-sh.do_pool("mode dynamic")
+# #573: `bpa` is the on-demand mode's word; the old one is refused.
+_rv573, _old573 = driven(sh.do_pool, "mode dynamic")
+check("mode bpa" in _old573 and sh.pool.mode != "dynamic",
+      f"#573: mode dynamic is refused at the prompt, naming mode bpa: {_old573}")
+sh.do_pool("mode bpa")
 check(sh.pool.mode == "dynamic", "mode is taken")
 rv, text = driven(sh.do_pool, "no block-size")
 check(rows(text)[0] == "error: block-size cannot be removed",

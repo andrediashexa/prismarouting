@@ -264,9 +264,10 @@ check(A.is_lcp_tap("tap4096") and not A.is_lcp_tap("pg0") and not A.is_lcp_tap("
 check(A.cfg_addresses(sh.cfg, "pg0") == ["100.64.3.254/22"] and A.cfg_addresses(sh.cfg, "x") == [],
       "an interface's configured addresses")
 P = A.pools_of(sh)
-check(P == [{"name": "nb", "mode": "dynamic", "policy": "interleaved", "block_size": 256,
+check(P == [{"name": "nb", "mode": "bpa", "policy": "interleaved", "block_size": 256,
              "prefixes_inside": ["100.64.0.0/22"], "prefixes_outside": ["200.150.0.16/30"],
-             "capacity": 6, "guaranteed": 3}], f"a pool with the dataplane's capacity: {P}")
+             "capacity": 6, "guaranteed": 3, "level": "cgnat"}],
+      f"a pool with the dataplane's capacity, and its level (#572): {P}")
 B = A.bgp_of(sh)
 check(B == [{"vrf": "default", "peer": "10.0.0.2", "remote_as": 65001, "state": "Established",
              "uptime_seconds": 61, "prefixes_received": 3, "description": "up"}],
@@ -1127,7 +1128,7 @@ _TXT = """nat
    prefix-outside 200.0.0.0/24
    block-size 256
    policy interleaved
-   mode dynamic
+   mode bpa
    exit
   logging syslog 10.0.0.2 port 601 enterprise 67033 facility 16 severity 6
   exit
@@ -1223,6 +1224,9 @@ class _FPB:
     InterfaceConfig = PortForwardConfig = PoolConfig = LogCollectorConfig = \
         LoggingConfig = _M
 
+    class Nat64PoolConfig(_M):
+        """#572: told apart from PoolConfig by its class."""
+
 
 _ip = A.interface_pb(_FPB, _tc["interfaces"][0])
 check(_ip.name == "ens18" and _ip.mtu == 9000 and _ip.ipv4 == ["10.0.0.1/24"],
@@ -1252,6 +1256,24 @@ _pd = A.pool_dict(_pm)
 check(_pd["vrf"] == 3 and _pd["outside_vrf"] is None and _pd["timeouts"] == {"udp": 5},
       "pool_dict: a set VRF, an unset one None")
 check(A._has(_pm, "vrf") and not A._has(_pm, "outside_vrf"), "_has")
+# #572: a NAT64 pool is a Nat64PoolConfig, with its two fields and no bypass,
+# and a PoolConfig no longer carries either of the two.
+_n64 = dict(_tc["pools"][0], subscriber_length=56, nat64_prefix="")
+_np = A.pool_pb(_FPB, _n64, nat64=True)
+check(isinstance(_np, _FPB.Nat64PoolConfig) and _np.subscriber_length == 56
+      and not hasattr(_np, "bypass_source"),
+      "#572: pool_pb(nat64) is a Nat64PoolConfig, less the bypass")
+check(not hasattr(A.pool_pb(_FPB, _tc["pools"][0]), "subscriber_length"),
+      "#572: and a PoolConfig carries nothing NAT64")
+_nm = _Msg(has=set(), timeouts={}, algs={"ftp": True}, forwards=[], vrf=0,
+           outside_vrf=0, **{k: 0 for k in A.NAT64_SCALARS},
+           **{k: [] for k in A.NAT64_LISTS})
+_nd = A.pool_dict(_nm, nat64=True)
+check("subscriber_length" in _nd and "bypass_source" not in _nd
+      and _nd["algs"] == {"ftp": True},
+      f"#572: pool_dict(nat64) reads a Nat64PoolConfig's fields: {_nd}")
+check(A.AREA_OF_FIELD["nat64_pool"] == "nat64",
+      "#572: SetConfig's nat64_pool edits the nat64 area")
 _im = _Msg(**{k: "" for k in A.INTERFACE_KEYS})
 _im.ipv4, _im.ipv6, _im.name = ["10.0.0.9/24"], [], "x"
 check(A.interface_dict(_im)["ipv4"] == ["10.0.0.9/24"] and A.interface_dict(_im)["name"] == "x",

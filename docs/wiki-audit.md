@@ -63,7 +63,7 @@ versus BPA**.
 * **BPA** is **Bulk Port Allocation**: blocks of ports are **allocated
   dynamically**, handed to a subscriber on demand in configured steps, and
   every allocation is logged (one IPFIX record per block, RFC 8158, not per
-  flow). `mode dynamic`.
+  flow). `mode bpa`.
 
 Both give a subscriber a contiguous block instead of a record per flow; the
 umbrella for the two is *CGNAT by port block*, not BPA.

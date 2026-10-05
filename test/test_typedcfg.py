@@ -40,7 +40,7 @@ TEXT = """nat
    block-size 256
    ports 1024 65535
    policy interleaved
-   mode dynamic
+   mode bpa
    vrf 7
    max-blocks 8
    timeout udp 120
@@ -86,7 +86,7 @@ check(T.interface_kind(cfg, "lo1") == "loopback" and T.interface_kind(cfg, "ens1
       "interface_kind: a loopback, a port")
 p = T.pool_typed(cfg.pools["A"])
 check(p["prefix_inside"] == ["100.64.0.0/10"] and p["block_size"] == 256
-      and (p["port_first"], p["port_last"]) == (1024, 65535) and p["mode"] == "dynamic"
+      and (p["port_first"], p["port_last"]) == (1024, 65535) and p["mode"] == "bpa"
       and p["vrf"] == 7 and p["outside_vrf"] is None and p["max_blocks"] == 8
       and p["timeouts"] == {"udp": 120} and p["algs"] == {"ftp": False}
       and p["forwards"] == [{"protocol": "tcp", "public_port": 8080,
@@ -454,7 +454,7 @@ check(not v6, f"every ipv6 statement's address/prefix is an IPv6 or either-famil
 print("=== schema: every mode the VTY has ===")
 sch = T.schema(P)
 by = {m["mode"]: m for m in sch}
-check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 30,
+check([m["mode"] for m in sch] == [m[0] for m in T.config_modes(P)] and len(sch) == 32,
       f"every mode of config_modes, in its order: {len(sch)}")
 check(sum(len(m["statements"]) for m in sch) > 350,
       f"{sum(len(m['statements']) for m in sch)} statements")
@@ -511,6 +511,65 @@ check([s_["words"] for s_ in st] == [["a"]], "_walk skips the session's words")
 check(T._negations({"no": ("n", {"x": ("", None)})}) == {"x"}, "_negations")
 check(T._int("7") == 7 and T._int("x") == 0, "_int")
 check(T._blank_collector("syslog")["facility"] is None, "_blank_collector")
+
+# #572: the `nat64` area - NAT64 pools read and set apart from `pools`, at
+# their own path, with their own fields; one name across both levels.
+print("=== #572: the nat64 area ===")
+import config as _C572  # noqa: E402
+_c572 = _C572.Config.parse("""nat
+ cgnat
+  pool res
+   prefix-inside 100.64.0.0/22
+   prefix-outside 203.0.113.0/29
+   exit
+  exit
+ nat64
+  pool v6
+   prefix-inside 2001:db8:1200::/40
+   subscriber-length 56
+   prefix-outside 203.0.113.8/29
+   exit
+  exit
+ exit
+""")
+_t572 = T.config_typed(_c572, ["pools", "nat64"])
+check([p["name"] for p in _t572["pools"]] == ["res"]
+      and [p["name"] for p in _t572["nat64"]] == ["v6"],
+      f"#572: pools holds the CGNAT pools, nat64 the NAT64 ones: {_t572}")
+check(T.nat64_pools_typed(_c572)[0] == T.nat64_pool_typed(_c572.pools["v6"])
+      and "bypass_source" not in _t572["nat64"][0]
+      and _t572["nat64"][0]["subscriber_length"] == 56,
+      f"#572: a NAT64 pool's fields, less the bypass: {_t572['nat64'][0]}")
+check("nat64" in T.AREAS and "nat64" in T.config_typed(_c572),
+      "#572: and nat64 is one of the areas every read answers")
+_path, _lines = T.edit_for(_c572, "nat64", {"name": "v7",
+                                            "prefix_inside": ["2001:db8:7::/48"],
+                                            "subscriber_length": 56,
+                                            "nat64_prefix": "64:ff9b:1::/48"})
+check(_path == ["nat", "nat64", "pool v7"]
+      and "subscriber-length 56" in _lines
+      and "nat64-prefix 64:ff9b:1::/48" in _lines,
+      f"#572: SetConfig's nat64 lines, at nat64's path: {_path} {_lines}")
+_path, _lines = T.edit_for(_c572, "pools", {"name": "res2",
+                                            "prefix_inside": ["100.64.4.0/22"]})
+check(_path == ["nat", "cgnat", "pool res2"]
+      and not any("subscriber-length" in x or "nat64-prefix" in x
+                  for x in _lines),
+      f"#572: a CGNAT pool's lines carry nothing NAT64: {_lines}")
+try:
+    T.edit_for(_c572, "pools", {"name": "v6", "block_size": 1024})
+    _why = None
+except ValueError as e:
+    _why = str(e)
+check(_why and "is a pool under 'nat64'" in _why,
+      f"#572: one name across both levels, at SetConfig too: {_why}")
+check(T.delete_lines("nat64", "v6") == (["nat", "nat64"], ["no pool v6"]),
+      "#572: DeleteConfig's nat64 removes the pool at its level")
+check(T.names_for(_c572, "nat64") == ["v6"]
+      and T.names_for(_c572, "pools") == ["res"],
+      "#572: and each area names its own pools")
+check("nat64 pool" in T.TYPED_MODES and by.get("nat64 pool"),
+      "#572: GetSchema has the nat64 pool mode, typed")
 
 if fail:
     print(f"\n{fail} FAILURES")

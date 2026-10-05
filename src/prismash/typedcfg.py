@@ -26,7 +26,10 @@ from config import (block_paths, is_number, is_static_route, static_route_key,
 
 #: The configuration-half areas (#558 phase 2) and the routing-half ones
 #: (phase 3). Empty in a request is all of them.
-CONFIG_AREAS = ("interfaces", "pools", "logging")
+# `nat64` (#572): NAT64's pools, written under `nat` > `nat64` since
+# 2026-10-05, read and written apart from `pools` - which since then holds the
+# CGNAT pools only.
+CONFIG_AREAS = ("interfaces", "pools", "nat64", "logging")
 ROUTING_AREAS = ("static", "bgp", "ospf", "ospf6", "isis", "interface_routing",
                  "bfd")
 #: The areas of #558 phase 4 - system, accounts, policy and the rest; kept
@@ -102,7 +105,8 @@ def pool_typed(pool):
         "port_first": _int(lo),
         "port_last": _int(hi),
         "policy": pool.policy,
-        "mode": pool.mode,
+        # #573: the statement's word, `bpa` for on demand.
+        "mode": pool.mode_word,
         # "" is every VRF, which is not VRF 0: None says it.
         "vrf": None if pool.vrf == "" else _int(pool.vrf),
         "outside_vrf": None if pool.outside_vrf == "" else _int(pool.outside_vrf),
@@ -128,8 +132,27 @@ def pool_typed(pool):
 
 
 def pools_typed(cfg):
-    """Every pool of `cfg`, by name."""
-    return [pool_typed(cfg.pools[n]) for n in sorted(cfg.pools)]
+    """Every CGNAT pool of `cfg`, by name - those under `nat` > `cgnat`."""
+    return [pool_typed(cfg.pools[n]) for n in sorted(cfg.pools)
+            if getattr(cfg.pools[n], "level", "cgnat") == "cgnat"]
+
+
+def nat64_pool_typed(pool):
+    """
+    One NAT64 pool as Nat64PoolConfig's fields (#572): a pool's, less the
+    bypass a NAT64 pool never takes - refused for good by #485, so a field
+    for it would be a field nothing can ever set.
+    """
+    d = pool_typed(pool)
+    for k in ("bypass_source", "bypass_destination"):
+        d.pop(k)
+    return d
+
+
+def nat64_pools_typed(cfg):
+    """Every NAT64 pool of `cfg`, by name - those under `nat` > `nat64`."""
+    return [nat64_pool_typed(cfg.pools[n]) for n in sorted(cfg.pools)
+            if getattr(cfg.pools[n], "level", "cgnat") == "nat64"]
 
 
 def _blank_collector(transport):
@@ -201,6 +224,8 @@ def config_typed(cfg, areas=()):
         out["interfaces"] = interfaces_typed(cfg)
     if "pools" in want:
         out["pools"] = pools_typed(cfg)
+    if "nat64" in want:
+        out["nat64"] = nat64_pools_typed(cfg)
     if "logging" in want:
         out["logging"] = logging_typed(cfg)
     if want & set(ROUTING_AREAS):
@@ -1804,7 +1829,12 @@ POOL_FIELDS = ("prefix_inside", "prefix_outside", "block_size", "ports",
                "max_blocks", "initial_allocation", "block_stride",
                "bypass_source", "bypass_destination", "utilisation_alarm",
                "max_sessions", "max_session_rate", "tcp_mss", "filter",
-               "algs", "forwards", "subscriber_length", "nat64_prefix")
+               "algs", "forwards")
+#: A NAT64 pool's (#572): a CGNAT pool's, less the bypass it never takes,
+#: and with the two statements that make it NAT64.
+NAT64_POOL_FIELDS = tuple(f for f in POOL_FIELDS
+                          if f not in ("bypass_source", "bypass_destination")
+                          ) + ("subscriber_length", "nat64_prefix")
 
 LOGGING_FIELDS = ("collectors", "enabled")
 
@@ -1890,14 +1920,15 @@ def _forward_line(f):
             f"{f['private_address']} {int(f['private_port'])}")
 
 
-def pool_lines(current, desired, fields=()):
+def pool_lines(current, desired, fields=(), known=POOL_FIELDS):
     """
-    The VTY lines, typed under `nat` > `cgnat` > `pool <name>`, that take pool
+    The VTY lines, typed under `nat` > `cgnat` > `pool <name>` - or, with
+    `known` NAT64_POOL_FIELDS, under `nat` > `nat64` (#572) - that take pool
     `current` (pool_typed's shape, None for a new one) to `desired`.
     """
     cur = current or pool_typed_blank(desired["name"])
     out = []
-    for f in _mask(fields, POOL_FIELDS):
+    for f in _mask(fields, known):
         if f == "ports":
             want = (int(desired.get("port_first", 0)),
                     int(desired.get("port_last", 0)))
@@ -2023,8 +2054,8 @@ def interface_path(name):
     return [f"interface {name}"]
 
 
-def pool_path(name):
-    return ["nat", "cgnat", f"pool {name}"]
+def pool_path(name, level="cgnat"):
+    return ["nat", level, f"pool {name}"]
 
 
 LOGGING_PATH = ["nat", "cgnat"]
@@ -2044,6 +2075,8 @@ def delete_lines(area, name="", transport="", prefix="", next_hop="",
         return [], [f"no interface {name}"]
     if area == "pools":
         return ["nat", "cgnat"], [f"no pool {name}"]
+    if area == "nat64":
+        return ["nat", "nat64"], [f"no pool {name}"]
     if area == "logging":
         if transport not in TRANSPORTS:
             raise ValueError(f"logging: name the transport to remove: "
@@ -2054,7 +2087,7 @@ def delete_lines(area, name="", transport="", prefix="", next_hop="",
             raise ValueError("vrfs: name the VRF device to remove")
         return [], [f"no vrf {name} table"]
     raise ValueError(f"unknown area {area!r}: the removable areas are "
-                     f"interfaces, pools, logging, static, bgp, vrfs")
+                     f"interfaces, pools, nat64, logging, static, bgp, vrfs")
 
 
 # ------------------------------------------------------------------ schema
@@ -2098,6 +2131,12 @@ def config_modes(P):
          ["nat", "cgnat"]),
         ("pool", "nat > cgnat > pool <name>", '["nat","cgnat","pool <name>"]',
          P.TREE["pool"], cg, ["nat", "cgnat", "pool <name>"]),
+        # #572: NAT64's level and its pool, the same pool grammar.
+        ("nat64", "nat > nat64", '["nat","nat64"]', P.TREE["nat64"], cg,
+         ["nat", "nat64"]),
+        ("nat64 pool", "nat > nat64 > pool <name>",
+         '["nat","nat64","pool <name>"]', P.TREE["pool"], cg,
+         ["nat", "nat64", "pool <name>"]),
         ("system", "system", '["system"]', P.TREE["system"], adm, ["system"]),
         ("system memory", "system > memory", '["system","memory"]',
          P.TREE["memory"], adm, ["system", "memory"]),
@@ -2166,6 +2205,7 @@ def config_modes(P):
 TYPED_MODES = {"interface (port)": ("interfaces", None),
                "interface (bundle)": ("interfaces", None),
                "pool": ("pools", None),
+               "nat64 pool": ("nat64", None),
                "cgnat": ("logging", ("logging",)),
                # Phase 4: SetConfig's `system` and `vrf_device`. `snmp` is
                # left out on purpose: its community and trap-host carry a
@@ -2715,12 +2755,21 @@ def edit_for(cfg, area, obj, fields=()):
         cur = interface_typed(cfg, name) if name in cfg.interface_names() \
             else None
         return interface_path(name), interface_lines(cur, obj, fields)
-    if area == "pools":
+    if area in ("pools", "nat64"):
         name = obj.get("name") or ""
         if not name:
             raise ValueError("pool: name the pool")
-        cur = pool_typed(cfg.pools[name]) if name in cfg.pools else None
-        return pool_path(name), pool_lines(cur, obj, fields)
+        level = "nat64" if area == "nat64" else "cgnat"
+        held = cfg.pools.get(name)
+        # One name, one pool, across both levels (#572), refused here with
+        # the VTY's sentence rather than staged under the wrong level.
+        if held is not None and getattr(held, "level", "cgnat") != level:
+            raise ValueError(f"pool '{name}' is a pool under "
+                             f"'{held.level}'")
+        cur = pool_typed(held) if held is not None else None
+        return pool_path(name, level), pool_lines(
+            cur, obj, fields,
+            NAT64_POOL_FIELDS if area == "nat64" else POOL_FIELDS)
     if area == "logging":
         return list(LOGGING_PATH), logging_lines(logging_typed(cfg), obj,
                                                  fields)
@@ -2749,8 +2798,8 @@ def edit_for(cfg, area, obj, fields=()):
                     if p["name"] == obj.get("name")), None)
         return list(BFD_PATH), bfd_profile_lines(cur, obj, fields)
     raise ValueError(f"unknown area {area!r}: the editable areas are "
-                     f"interfaces, pools, logging, static, bgp, system, vrfs, "
-                     f"bfd_peers, bfd_profiles")
+                     f"interfaces, pools, nat64, logging, static, bgp, "
+                     f"system, vrfs, bfd_peers, bfd_profiles")
 
 
 def names_for(cfg, area, known_interfaces=()):
@@ -2759,5 +2808,9 @@ def names_for(cfg, area, known_interfaces=()):
     if area == "interfaces":
         return sorted(set(cfg.interface_names()) | set(known_interfaces))
     if area == "pools":
-        return sorted(cfg.pools)
+        return sorted(n for n, p in cfg.pools.items()
+                      if getattr(p, "level", "cgnat") == "cgnat")
+    if area == "nat64":
+        return sorted(n for n, p in cfg.pools.items()
+                      if getattr(p, "level", "cgnat") == "nat64")
     return []

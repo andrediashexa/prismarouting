@@ -191,7 +191,7 @@ SHOWN_FRR_REFUSED = set()
 # gone (#446) - excused under the same rule, so a page still teaching it by
 # mistake fails.
 ONE_LINE_VERDICT = ("error: the one-line CGNAT form is gone",
-                    "error: under 'nat' there is 'cgnat' and nothing else")
+                    "error: under 'nat' there is 'cgnat' and 'nat64'")
 
 
 def prompt_lines():

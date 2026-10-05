@@ -459,7 +459,7 @@ message PoolConfig {
   uint32 port_last = 6;
   // "interleaved" or "blocked".
   string policy = 7;
-  // "deterministic" or "dynamic".
+  // "deterministic" or "bpa" (#573).
   string mode = 8;
   // Unset: every VRF (no statement), which is not VRF 0.
   optional uint32 vrf = 9;
@@ -487,8 +487,51 @@ message PoolConfig {
   // Only the ALGs the operator chose ("ftp", "rtsp", "pptp", "esp", "sip").
   map<string, bool> algs = 23;
   repeated PortForwardConfig forwards = 24;
-  // NAT64 (#485), when prefix_inside is IPv6: the prefix length one
-  // subscriber holds; 0 on an IPv4 pool.
+  // BREAKING (#572, 2026-10-05): a NAT64 pool is no longer a PoolConfig. It
+  // is written under `nat` > `nat64` and read and set as Nat64PoolConfig, in
+  // TypedConfig.nat64_pools and SetConfigRequest.nat64_pool. The two numbers
+  // it held are never reused.
+  reserved 25, 26;
+  reserved "subscriber_length", "nat64_prefix";
+}
+
+// A NAT64 pool as its `pool <name>` block under `nat` > `nat64` states it
+// (#572). The fields a CGNAT pool has, with the numbers it has them under,
+// less the bypass a NAT64 pool never takes (#485); plus the two that make it
+// NAT64. prefix_inside is IPv6; prefix_outside is IPv4.
+message Nat64PoolConfig {
+  string name = 1;
+  repeated string prefix_inside = 2;
+  repeated string prefix_outside = 3;
+  uint32 block_size = 4;
+  // The public port range; 0 and 0: the device default.
+  uint32 port_first = 5;
+  uint32 port_last = 6;
+  string policy = 7;
+  // "deterministic" or "bpa" (#573).
+  string mode = 8;
+  optional uint32 vrf = 9;
+  optional uint32 outside_vrf = 10;
+  map<string, uint32> timeouts = 11;
+  uint32 max_blocks = 12;
+  uint32 initial_allocation = 13;
+  uint32 block_stride = 14;
+  uint32 reserve = 15;
+  // A NAT64 pool takes no bypass (#485): an IPv6 packet to the NAT64 prefix
+  // reaches IPv4 only translated.
+  reserved 16, 17;
+  reserved "bypass_source", "bypass_destination";
+  uint32 utilisation_alarm = 18;
+  uint32 max_sessions = 19;
+  uint32 max_session_rate = 20;
+  string tcp_mss = 21;
+  string filter = 22;
+  // Only "ftp" can be on (FTP64, RFC 6384); "rtsp", "sip", "pptp" and "esp"
+  // are refused on a NAT64 pool for good.
+  map<string, bool> algs = 23;
+  // private_address is an IPv6 host of one of the subscribers' prefixes.
+  repeated PortForwardConfig forwards = 24;
+  // The prefix length one subscriber holds (the delegated prefix).
   uint32 subscriber_length = 25;
   // RFC 6052's prefix; "": the well-known 64:ff9b::/96 (no statement).
   string nat64_prefix = 26;
@@ -526,6 +569,7 @@ message TypedConfig {
   string revision = 2;
   string candidate_id = 3;
   repeated InterfaceConfig interfaces = 4;
+  // The CGNAT pools, under `nat` > `cgnat` (since #572, IPv4 inside only).
   repeated PoolConfig pools = 5;
   LoggingConfig logging = 6;
   // Lines of this configuration that are the BOX's, not the operator's
@@ -549,6 +593,8 @@ message TypedConfig {
   SystemConfig system = 14;
   repeated UserConfig users = 15;
   repeated SnmpUserConfig snmp_users = 16;
+  // The NAT64 pools, under `nat` > `nat64` (#572): GetConfig area "nat64".
+  repeated Nat64PoolConfig nat64_pools = 30;
   // policy-options (#458), as policy.py parses it for the commit.
   PolicyConfig policy = 17;
   // The route-maps an operator wrote in the routing half; the compiled
@@ -1133,7 +1179,9 @@ message SetConfigRequest {
   string candidate_id = 1;
   oneof object {
     InterfaceConfig interface = 2;
+    // A CGNAT pool. A NAT64 pool is nat64_pool (#572).
     PoolConfig pool = 3;
+    Nat64PoolConfig nat64_pool = 15;
     LoggingConfig logging = 4;
     // #558 phase 3: a top-level static route (`router static`), and a BGP
     // neighbour of a `router bgp` block.
@@ -1167,9 +1215,9 @@ message SetConfigResponse {
 
 message DeleteConfigRequest {
   string candidate_id = 1;
-  // "interfaces", "pools", "logging", "static", "bgp", "vrfs" or "bfd".
-  // "bfd" removes the profile `name`, or the session `bfd_peer` (by its key
-  // fields), or - neither given - the whole `bfd` block, body and all.
+  // "interfaces", "pools", "nat64", "logging", "static", "bgp", "vrfs" or
+  // "bfd". "bfd" removes the profile `name`, or the session `bfd_peer` (by
+  // its key fields), or - neither given - the whole `bfd` block, body and all.
   string area = 2;
   // The interface, pool or VRF device.
   string name = 3;
@@ -1464,7 +1512,8 @@ message Translation {
     SOURCE_RESERVE = 2;
     // A dynamic pool's block: the holder NOW only; for a past instant, the
     // RFC 8158 log says who held it.
-    SOURCE_DYNAMIC = 3;
+    // BREAKING (#573): SOURCE_DYNAMIC's name; the number is the same.
+    SOURCE_BPA = 3;
     // The port is outside the pool's usable range: nothing was ever
     // translated there.
     SOURCE_OUTSIDE_RANGE = 4;
@@ -1481,7 +1530,7 @@ message Translation {
   Source source = 6;
   // True on a NAT64 pool.
   bool nat64 = 7;
-  // True when the answer is about now only (SOURCE_RESERVE, SOURCE_DYNAMIC).
+  // True when the answer is about now only (SOURCE_RESERVE, SOURCE_BPA).
   bool now_only = 8;
   // `show cgnat translation <public> <port>`, verbatim.
   string text = 9;
@@ -2311,7 +2360,7 @@ message ListPoolsRequest {}
 
 message Pool {
   string name = 1;
-  // "dynamic" or "deterministic".
+  // "bpa" or "deterministic" (#573).
   string mode = 2;
   // "interleaved" or "blocked".
   string policy = 3;
@@ -2326,6 +2375,9 @@ message Pool {
   uint64 ports_in_use = 10;
   uint64 refusals = 11;
   uint64 sessions = 12;
+  // The level the pool is written under (#572): "cgnat" (an IPv4 inside) or
+  // "nat64" (an IPv6 inside, `show nat64 pool`'s).
+  string level = 13;
 }
 
 message ListPoolsResponse {

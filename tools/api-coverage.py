@@ -99,6 +99,17 @@ OPERATIONAL_RULES = [
      "TelemetryService.Subscribe / GetHistory", "rates from the counter stream"),
     (["show", "interface"], "typed", "OperationalService.ListInterfaces", ""),
     (["show", "cgnat", "pool"], "typed", "OperationalService.ListPools", ""),
+    # #572: the NAT64 half of `show cgnat`, refusing what is not NAT64. Its
+    # answers are typed where `show cgnat`'s are - ListPools, GetSubscriber
+    # and LookupTranslation answer a NAT64 pool and subscriber as well.
+    (["show", "nat64", "pool"], "typed", "OperationalService.ListPools",
+     "the pools whose level is nat64 (#572)"),
+    (["show", "nat64", "subscriber"], "typed",
+     "OperationalService.GetSubscriber",
+     "an IPv6 address: the NAT64 subscriber (#572)"),
+    (["show", "nat64", "translation"], "typed",
+     "OperationalService.LookupTranslation",
+     "a NAT64 pool's public address answers its /56 (#572)"),
     (["show", "cgnat", "subscriber"], "typed", "OperationalService.GetSubscriber", ""),
     (["show", "cgnat", "session"], "typed",
      "OperationalService.GetSessionsSummary", ""),
@@ -199,9 +210,25 @@ TYPED_CONFIG = {
              "policy", "timeout", "max-blocks", "initial-allocation",
              "block-stride", "reserve", "bypass", "utilisation-alarm",
              "max-sessions", "max-session-rate", "tcp-mss", "forward",
-             "filter", "alg", "vrf", "outside-vrf", "mode",
-             "subscriber-length", "nat64-prefix"),
+             "filter", "alg", "vrf", "outside-vrf", "mode"),
+    # #572: a NAT64 pool's, as Nat64PoolConfig - the pool's less the bypass,
+    # plus its own two.
+    "nat64 pool": ("prefix-inside", "prefix-outside", "block-size", "ports",
+                   "policy", "timeout", "max-blocks", "initial-allocation",
+                   "block-stride", "reserve", "utilisation-alarm",
+                   "max-sessions", "max-session-rate", "tcp-mss", "forward",
+                   "filter", "alg", "vrf", "outside-vrf", "mode",
+                   "subscriber-length", "nat64-prefix"),
     "cgnat": ("logging",),
+}
+#: Statements one level's pool grammar offers and that level refuses at
+#: commit (#572): the same Pool grammar serves both levels.
+REFUSED_AT_LEVEL = {
+    "pool": {"subscriber-length": "NAT64's: refused under cgnat since #572, "
+                                  "typed under nat64 > pool",
+             "nat64-prefix": "NAT64's: refused under cgnat since #572, typed "
+                             "under nat64 > pool"},
+    "nat64 pool": {"bypass": "refused on a NAT64 pool for good (#485)"},
 }
 TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"
 
@@ -286,6 +313,8 @@ TYPED_PHASE4 = {
               ("session-table", "cgnat_globals", False),
               ("memory", "cgnat_globals", False),
               ("pool", "pools", True), ("interface", "interfaces", True)),
+    # #572: NAT64's level holds its pools, area nat64.
+    "nat64": (("pool", "nat64", True),),
     "system": (("*", "system", False),),
     "system memory": (("*", "system", False),),
     "system cpu": (("*", "system", False),),
@@ -329,7 +358,7 @@ BLOCK_ENTRIES = {"config": ("nat", "rpki", "bfd", "router", "interface",
                             "route-map"),
                  # `vrf <name>` (FRR's block) vs `vrf <name> table <id>`:
                  # the second is a statement, area vrfs (phase 4).
-                 "nat": ("cgnat",)}
+                 "nat": ("cgnat", "nat64")}
 
 
 def classify_phase4(level, stmt):
@@ -366,6 +395,8 @@ def classify_config(level, words):
     # listed as text in 0.149.22's document for that reason).
     words = " ".join(words).split()
     stmt = words[1:] if words[0] == "no" else words
+    if stmt and stmt[0] in REFUSED_AT_LEVEL.get(level, {}):
+        return "n/a", "-", REFUSED_AT_LEVEL[level][stmt[0]]
     if words[0] != "no" and len(words) <= 3 \
             and words[0] in BLOCK_ENTRIES.get(level, ()) \
             and (words[0] != "interface" or level != "cgnat"):

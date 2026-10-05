@@ -27,12 +27,12 @@ O prompt diz sempre em que nível você está. `?` e TAB oferecem só o que vale
 
 `commit` (com todas as suas variantes) e `show` funcionam em qualquer nível, inclusive dentro de um pool. Não é preciso sair para aplicar, e depois do `commit` você continua no nível em que estava. `rollback` funciona em `nat` e em `cgnat`; dentro de um pool, dê `exit` antes. `ping`, `traceroute` e `mtr` também respondem em qualquer nível.
 
-Em `nat` só existe `cgnat`. Qualquer outra coisa é recusada:
+Em `nat` existem dois níveis: `cgnat`, para os pools com dentro IPv4, e `nat64`, para os pools NAT64 (dentro IPv6). Qualquer outra coisa é recusada:
 
 ```
 prisma# [edit nat] pool x
-error: under 'nat' there is 'cgnat' and nothing else
-    'cgnat' enters it; 'exit' leaves 'nat'
+error: under 'nat' there is 'cgnat' and 'nat64'
+    each enters its level; 'exit' leaves 'nat'
 ```
 
 

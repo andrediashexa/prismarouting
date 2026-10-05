@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 46
+# OFF-RED-AT-LEAST: 48
 # (the floor: what the off run of 2026-10-04 measured red, every check)
 # NAT64: an IPv6-only subscriber reaches an IPv4 server (#485), through a
 # deterministic pool (sections 1-12) and then a dynamic one whose blocks are
@@ -114,7 +114,7 @@ echo "=========== 1. the pool ==========="
 if [ "$MODE" != off ]; then
   # Through the VTY, so the grammar, the commit check, bpa_nat64_pool_add
   # and the readback are what built it.
-  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+  $HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
       -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
       -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.0/29" \
       -c "block-size 2048" -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
@@ -299,9 +299,9 @@ echo
 echo "=========== 10. the VTY: a change in place, and a refusal ==========="
 SESS0=$(vppctl show bpa session | awk '/^ *total:/ {print $2}')
 if [ "$MODE" != off ]; then
-  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" -c "timeout udp 600" \
+  $HX -c "configure" -c "nat" -c "nat64" -c "pool v6" -c "timeout udp 600" \
       -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
-  REFUSED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+  REFUSED=$($HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
       -c "bypass source 10.0.0.0/8" -c "exit" -c "commit" 2>&1)
   echo "$REFUSED" | sed 's/^/  /'
 else
@@ -320,6 +320,17 @@ $HX -c "show cgnat translation 203.0.113.3 44100" > /tmp/n64-xlt.txt 2>&1
 $HX -c "show cgnat subscriber 2001:db8:1200:ab00::10" > /tmp/n64-sub.txt 2>&1
 $HX -c "show cgnat top" > /tmp/n64-top.txt 2>&1
 cat /tmp/n64-xlt.txt /tmp/n64-sub.txt /tmp/n64-top.txt | sed 's/^/  /'
+# #572: the NAT64 half of `show cgnat` under its own name, and the form of
+# 0.150.0-0.150.11 - a NAT64 pool under `cgnat` - refused at commit check,
+# naming the new one. The check stages nothing: `commit check` applies
+# nothing and the candidate is left behind with the session.
+$HX -c "show nat64 pool" > /tmp/n64-npool.txt 2>&1
+$HX -c "show nat64 subscriber 2001:db8:1200:ab00::10" > /tmp/n64-nsub.txt 2>&1
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool old64" \
+    -c "prefix-inside 2001:db8:5500::/40" -c "subscriber-length 56" \
+    -c "prefix-outside 203.0.113.6/32" -c "exit" -c "commit check" \
+    > /tmp/n64-oldform.txt 2>&1
+cat /tmp/n64-npool.txt /tmp/n64-nsub.txt /tmp/n64-oldform.txt | sed 's/^/  /'
 
 # ======================================================================
 # PHASE 3 (#485): the pool turned dynamic, and what it logs.
@@ -387,8 +398,9 @@ cfg_dyn() {  # <collector> <source> <the pool's own lines>
       -c "logging enable" \
       -c "logging syslog 10.99.0.2 enterprise 44444 port 601" \
       -c "identity radius secret lab-s3cr3t port 1813" \
-      -c "pool v6" "$@" -c "prefix-outside 203.0.113.3/32" \
-      -c "block-size 64" -c "ports 1024 $PORT_HI" -c "mode dynamic" \
+      -c "exit" -c "nat64" -c "pool v6" "$@" \
+      -c "prefix-outside 203.0.113.3/32" \
+      -c "block-size 64" -c "ports 1024 $PORT_HI" -c "mode bpa" \
       -c "max-blocks 2" -c "exit" -c "commit remap"
 }
 
@@ -442,7 +454,7 @@ dyn_phase() {  # <A|B> <netns> <IPFIX collector> <source>: one cycle
   flows $B_ADDR 21000 5                            # B, now there is a block
   sleep 2
   if [ "$MODE" != off ]; then
-    $HX -c "configure" -c "nat" -c "cgnat" -c "no pool v6" -c "commit" \
+    $HX -c "configure" -c "nat" -c "nat64" -c "no pool v6" -c "commit" \
       2>&1 | grep -E "error" | sed 's/^/  /'
   fi
   sleep 3
@@ -488,7 +500,7 @@ echo "=========== 15. reserve, tcp-mss, max-sessions, utilisation-alarm ========
 # is clamped to 1300 both ways; B is held to 100 sessions; and A's block
 # crossing half full raises the alarm.
 if [ "$MODE" != off ]; then
-  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+  $HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
       -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
       -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.3/32" \
       -c "block-size 64" -c "mode deterministic" -c "reserve 8" \
@@ -566,7 +578,7 @@ vppctl set ip neighbor host-host-sub2 2001:db8:1200:ab00::10 \
   "$(ip netns exec sub2 cat /sys/class/net/v-sub2/address)"
 vppctl set interface bpa in2out host-host-sub2
 if [ "$MODE" != off ]; then
-  $HX -c "configure" -c "nat" -c "cgnat" -c "pool t10" \
+  $HX -c "configure" -c "nat" -c "nat64" -c "pool t10" \
       -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
       -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.4/32" \
       -c "block-size 64" -c "vrf 10" -c "outside-vrf 0" -c "exit" \
@@ -610,7 +622,7 @@ c.sendall(b"pong:" + d); c.close()
 PY
 sleep 1
 if [ "$MODE" != off ]; then
-  $HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+  $HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
       -c "forward tcp 12000 to 2001:db8:1200:ab00::10 8080" -c "exit" \
       -c "commit" 2>&1 | grep -E "error|complete" | sed 's/^/  /'
 fi
@@ -661,6 +673,12 @@ expect "show cgnat subscriber takes an IPv6 address and gives the block" \
   grep -q "the formula gives it 203.0.113.3 ports 44032-46079" /tmp/n64-sub.txt
 expect "show cgnat top names the subscriber by its prefix" \
   grep -q "^2001:db8:1200:ab00::/56 " /tmp/n64-top.txt
+expect "#572: show nat64 pool lists the NAT64 pool, as the dataplane holds it" \
+  sh -c "grep -q '^pool v6 ' /tmp/n64-npool.txt && grep -q 'inside6' /tmp/n64-npool.txt"
+expect "#572: show nat64 subscriber gives the same block as show cgnat" \
+  grep -q "the formula gives it 203.0.113.3 ports 44032-46079" /tmp/n64-nsub.txt
+expect "#572: a NAT64 pool under cgnat is refused, naming nat > nat64 > pool" \
+  sh -c "grep -q \"NAT64 is not written under 'cgnat'\" /tmp/n64-oldform.txt && tr -s ' \n' ' ' < /tmp/n64-oldform.txt | grep -q 'nat > nat64 > pool old64'"
 for _p in A B; do
   [ $_p = A ] && _who="VPP" || _who="the log container"
   expect "$_who: IPFIX names A by its prefix, block and extension (2 allocations)" \

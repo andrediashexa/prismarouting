@@ -39,7 +39,7 @@ A linha que importa: conexões em curso caem nos dois casos, mas no determiníst
 
 Isso não é HA. É o piso de onde a HA parte, e ele já é mais alto que o usual.
 
-**Isso vale para pools determinísticos.** Um pool BPA (`mode dynamic`) aloca blocos sob demanda, e a caixa que assume não sabe o que a outra alocou: nele, a troca se comporta como a coluna do NAT convencional — o assinante volta com outro bloco, e possivelmente outro endereço público.
+**Isso vale para pools determinísticos.** Um pool BPA (`mode bpa`) aloca blocos sob demanda, e a caixa que assume não sabe o que a outra alocou: nele, a troca se comporta como a coluna do NAT convencional — o assinante volta com outro bloco, e possivelmente outro endereço público.
 
 # O que ainda falta
 

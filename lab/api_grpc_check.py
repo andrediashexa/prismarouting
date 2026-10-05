@@ -48,7 +48,7 @@ POOL = ["nat", "cgnat", "pool API"]
 c = cfg.OpenCandidate(pb.OpenCandidateRequest())
 result("open", bool(c.candidate_id and c.base_revision), c.base_revision)
 cfg.Edit(pb.EditRequest(candidate_id=c.candidate_id, path=POOL,
-                        lines=["mode dynamic", "block-size 256"]))
+                        lines=["mode bpa", "block-size 256"]))
 chk = cfg.Check(pb.CandidateRef(candidate_id=c.candidate_id))
 said = " | ".join(d.message for d in chk.diagnostics)
 result("check-refuses", not chk.passed and "outside" in said, said[:160])

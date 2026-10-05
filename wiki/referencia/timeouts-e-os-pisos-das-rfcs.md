@@ -104,7 +104,7 @@ O `port-holddown` existe para que um segmento atrasado da conexão que acabou n�
 
 ## Retenção de bloco, em BPA
 
-Num pool BPA (`mode dynamic`), um bloco que ficou ocioso não volta para o pool na hora: fica reservado ao assinante por `block-holddown` segundos, global, no nível `nat` > `cgnat`. O padrão é 120 s.
+Num pool BPA (`mode bpa`), um bloco que ficou ocioso não volta para o pool na hora: fica reservado ao assinante por `block-holddown` segundos, global, no nível `nat` > `cgnat`. O padrão é 120 s.
 
 ```
 configure

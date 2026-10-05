@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 186
+# OFF-RED-AT-LEAST: 191
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -251,7 +251,7 @@ vppctl set interface bpa out2in pg1 >/dev/null 2>&1
 # nothing on demand and so writes no line (the second run of this section
 # had one, the boot marker, and nothing to wait for).
 $HX -c configure -c nat -c cgnat -c "pool lg" -c "prefix-inside 100.64.8.0/22" \
-    -c "prefix-outside 200.150.0.32/30" -c "mode dynamic" -c top -c commit 2>&1 \
+    -c "prefix-outside 200.150.0.32/30" -c "mode bpa" -c top -c commit 2>&1 \
     | tail -1 | sed 's/^/  pool: /'
 $HX -c configure -c nat -c cgnat -c "logging syslog 192.168.209.2 port 601 enterprise 32473" \
     -c top -c commit 2>&1 | tail -1 | sed 's/^/  /'
@@ -472,8 +472,9 @@ echo "=========== #558, phase 6: the CGNAT's screens, typed ==========="
 # NAT64 pool (lab/nat64.sh's) with FTP64 on and a forward to an IPv6 host.
 $HX -c configure -c nat -c cgnat -c "pool residential-cgnat" \
     -c "prefix-inside 100.64.16.0/22" -c "prefix-outside 200.150.0.40/30" \
-    -c "mode dynamic" -c "alg ftp on" -c "alg rtsp off" \
+    -c "mode bpa" -c "alg ftp on" -c "alg rtsp off" \
     -c "forward tcp 1600 to 100.64.16.5 80" -c exit \
+    -c exit -c nat64 \
     -c "pool v6" -c "prefix-inside 2001:db8:1200::/48" -c "subscriber-length 56" \
     -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 200.150.0.48/29" \
     -c "block-size 1024" -c "alg ftp on" \
@@ -767,6 +768,11 @@ expect "ListForwards: the IPv4 forward and the NAT64 pool's to an IPv6 host, the
 expect "  and one pool's alone" t6 forwards-pool
 expect "GetHaStatus: this box read, no peer copy said so, and no agreement claimed" t6 ha
 expect "  an account with no role gets what the VTY gives it, screen or refusal" t6 netview-reads
+expect "#572: GetConfig's nat64 area reads the NAT64 pool, and pools does not" t6 nat64-read
+expect "#572: ListPools says each pool's level" t6 nat64-listpools
+expect "#572: SetConfig's nat64_pool stages a pool under nat > nat64" t6 nat64-set
+expect "#572: DeleteConfig's nat64 removes it from there" t6 nat64-delete
+expect "#572: a PoolConfig with a NAT64 pool's name is refused" t6 nat64-one-name
 TAIL6=$(tail -5 /tmp/apiserver6.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL6"
 t7() { printf '%s\n' "$T7" "$T7T" | grep -q "^RESULT $1 ok"; }

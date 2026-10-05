@@ -64,7 +64,7 @@
 # the same pool with `reserve 0`, which is what every configuration written
 # before this existed means, and the extension assertions MUST then go red.
 # That argument is the only thing that makes the green run worth anything.
-# OFF-RED-AT-LEAST: 10
+# OFF-RED-AT-LEAST: 17
 #
 # A FLOOR, not a target, and measured rather than chosen: `sh tools/lab.sh
 # detreserve off` on 2026-09-14 went red on exactly these ten, which are the
@@ -674,7 +674,7 @@ VTY_DYNSTRIDE_SAY=$($HX -c "configure" \
     -c "block-size $VTY_BSZ" \
     -c "ports $VTY_PORTS" \
     -c "policy interleaved" \
-    -c "mode dynamic" \
+    -c "mode bpa" \
     -c "max-blocks 2" \
     -c "block-stride $STRIDE" \
     -c "exit" \

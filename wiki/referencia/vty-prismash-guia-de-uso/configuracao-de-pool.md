@@ -57,7 +57,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 | `subscriber-length <n>` | `<32-128>` | só NAT64: o tamanho do prefixo IPv6 de **um** assinante — o prefixo delegado, por exemplo `56` |
 | `nat64-prefix <prefixo>` | `<X:X::X:X/M>` | só NAT64: onde ficam os destinos IPv4 (RFC 6052); ausente, vale `64:ff9b::/96` |
 
-Até a 0.148.2 essas duas instruções se chamavam `inside` e `outside`. Os nomes antigos continuam sendo lidos - de uma configuração salva, de uma revisão de rollback ou digitados -, mas a caixa só escreve os novos, e o `?` só oferece os novos. O papel de uma interface no CGNAT (`interface <nome> inside|outside`) não mudou. | `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois; padrão `512`. Um número que não é potência de dois é recusado com as duas potências mais próximas | | `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável; ausente, vale a faixa do próprio equipamento | | `policy interleaved` |           | vizinhos em endereços públicos distintos; é o padrão | | `policy blocked` |           | vizinhos no mesmo endereço público | | `mode deterministic` |           | por fórmula, sem log de alocação: o assinante se acha pela configuração em vigor. É o padrão. Só o bloco entregue da reserva é registrado | | `mode dynamic` |           | BPA: blocos alocados sob demanda, cada alocação registrada. Sem exportação de logging configurada, `commit check` e `commit` avisam — nesse modo o registro é a única prova de quem usou uma porta | | `vrf <n>` | `<0-4294967295>` | a VRF cujos assinantes este pool atende; ausente = todas | | `outside-vrf <n>` | `<0-4294967295>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava | | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
+Até a 0.148.2 essas duas instruções se chamavam `inside` e `outside`. Os nomes antigos continuam sendo lidos - de uma configuração salva, de uma revisão de rollback ou digitados -, mas a caixa só escreve os novos, e o `?` só oferece os novos. O papel de uma interface no CGNAT (`interface <nome> inside|outside`) não mudou. | `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois; padrão `512`. Um número que não é potência de dois é recusado com as duas potências mais próximas | | `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável; ausente, vale a faixa do próprio equipamento | | `policy interleaved` |           | vizinhos em endereços públicos distintos; é o padrão | | `policy blocked` |           | vizinhos no mesmo endereço público | | `mode deterministic` |           | por fórmula, sem log de alocação: o assinante se acha pela configuração em vigor. É o padrão. Só o bloco entregue da reserva é registrado | | `mode bpa` |           | BPA: blocos alocados sob demanda, cada alocação registrada. Sem exportação de logging configurada, `commit check` e `commit` avisam — nesse modo o registro é a única prova de quem usou uma porta | | `vrf <n>` | `<0-4294967295>` | a VRF cujos assinantes este pool atende; ausente = todas | | `outside-vrf <n>` | `<0-4294967295>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava | | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
 
 **Os prefixos.** `outside` e `bypass` são IPv4; `inside` é IPv4 ou, num pool NAT64, IPv6 — nunca os dois no mesmo pool. Um prefixo com bits de host (`100.64.0.1/10`) é recusado dizendo qual rede ele nomeia (`100.64.0.0/10`), e um `/0` é recusado: todo endereço não é pool nem bypass.
 
@@ -148,7 +148,7 @@ Um assinante **começa com 64 portas**. Só recebe um segundo bloco quando enche
 
 ## Uma primeira alocação maior que o degrau
 
-Num pool `mode dynamic`, a primeira alocação pode ser maior que o degrau em que o assinante cresce. Para começar com 512 portas e crescer de 256 em 256, até 2560:
+Num pool `mode bpa`, a primeira alocação pode ser maior que o degrau em que o assinante cresce. Para começar com 512 portas e crescer de 256 em 256, até 2560:
 
 ```
 block-size 256
@@ -214,11 +214,11 @@ Três coisas que vale saber antes de escolher o número:
 
 * **Uma reserva menor que o número de workers deixa workers sem nada.** A caixa avisa na criação do pool e cria o pool assim mesmo - recusar faria um pool aceito hoje não subir depois de a máquina ganhar workers, o que derruba todo mundo.
 * **A caixa prefere um bloco do próprio endereço público do assinante**, para que quem está do outro lado continue vendo um host só. É preferência, não garantia: se não houver um livre na fatia daquele worker, ela entrega outro em vez de recusar.
-* `**reserve**` **não vale em** `**mode dynamic**` e é recusado lá. Um pool dinâmico já tem blocos sobrando - a lista de livres é exatamente de onde sai o bloco extra - então uma reserva tiraria blocos da própria lista de onde eles vêm.
+* `**reserve**` **não vale em** `**mode bpa**` e é recusado lá. Um pool dinâmico já tem blocos sobrando - a lista de livres é exatamente de onde sai o bloco extra - então uma reserva tiraria blocos da própria lista de onde eles vêm.
 
 # Onde ficam os blocos extras de um assinante
 
-`block-stride <n>` decide a distância entre os blocos que um mesmo assinante segura. Vale só em `mode dynamic`: num pool determinístico o bloco extra vem da reserva, que é um conjunto à parte, e a distância não se aplica a ele - e o `commit` recusa a combinação, em vez de guardar um ajuste que nunca teria efeito; a frase está em [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA).
+`block-stride <n>` decide a distância entre os blocos que um mesmo assinante segura. Vale só em `mode bpa`: num pool determinístico o bloco extra vem da reserva, que é um conjunto à parte, e a distância não se aplica a ele - e o `commit` recusa a combinação, em vez de guardar um ajuste que nunca teria efeito; a frase está em [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA).
 
 | Valor | O que acontece |
 |-------|----------------|
@@ -350,7 +350,7 @@ Um pool com `prefix-inside` IPv6 é um pool NAT64 (RFC 6146): o assinante que s�
 
 ```
 nat
- cgnat
+ nat64
   pool v6
    prefix-inside 2001:db8:1200::/40
    subscriber-length 56
@@ -364,7 +364,9 @@ Cada /56 de `2001:db8:1200::/40` recebe um bloco de 2048 portas pela mesma fórm
 
 `subscriber-length` e `nat64-prefix` são campos de **mapeamento**: mudar qualquer um reconstrói o pool.
 
-**Determinístico ou dinâmico.** Em `mode dynamic`, com `max-blocks`, `initial-allocation` e `block-stride`, o pool NAT64 aloca blocos sob demanda como um pool IPv4, e cada alocação e liberação sai no log nomeando o assinante pelo prefixo delegado (veja [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq)). Os outros ajustes do pool valem num pool NAT64 como num pool IPv4 — `reserve`, `tcp-mss`, `vrf` e `outside-vrf`, `max-sessions`, `max-session-rate`, `utilisation-alarm`, timeouts e `filter` —, com duas diferenças. O `tcp-mss auto` fica 20 bytes abaixo do de um pool IPv4, porque o cabeçalho IPv6 do lado do assinante é 20 bytes maior. E o `vrf` de um pool NAT64 é uma tabela IPv6: dois clientes podem ter o mesmo prefixo interno em VRFs diferentes, cada um com o seu pool.
+**Atenção:** o pool NAT64 fica em `nat` > `nat64`, não em `cgnat`. Escrito dentro de `cgnat`, como nas versões 0.150.0 a 0.150.11, ele é recusado no `commit check` e ao carregar o arquivo salvo, com a forma nova na mensagem — reescreva o pool em `nat64` antes de atualizar a caixa. Em `nat64` só existem pools; interfaces, logging, timeouts e memória continuam em `cgnat`, valendo para os dois tipos de pool. Um nome de pool é um pool só, nos dois níveis. Para ver só o NAT64 há `show nat64 pool`, `show nat64 subscriber <IPv6>`, `show nat64 translation <público> <porta>` e `clear nat64 subscriber <IPv6>`; o `show cgnat` continua mostrando a caixa inteira, NAT44 e NAT64.
+
+**Determinístico ou BPA.** Em `mode bpa`, com `max-blocks`, `initial-allocation` e `block-stride`, o pool NAT64 aloca blocos sob demanda como um pool IPv4, e cada alocação e liberação sai no log nomeando o assinante pelo prefixo delegado (veja [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq)). Os outros ajustes do pool valem num pool NAT64 como num pool IPv4 — `reserve`, `tcp-mss`, `vrf` e `outside-vrf`, `max-sessions`, `max-session-rate`, `utilisation-alarm`, timeouts e `filter` —, com duas diferenças. O `tcp-mss auto` fica 20 bytes abaixo do de um pool IPv4, porque o cabeçalho IPv6 do lado do assinante é 20 bytes maior. E o `vrf` de um pool NAT64 é uma tabela IPv6: dois clientes podem ter o mesmo prefixo interno em VRFs diferentes, cada um com o seu pool.
 
 **Encaminhamento de porta para um host IPv6.** Num pool NAT64 o `forward` aponta para um host do prefixo do assinante, e quem está na internet IPv4 alcança esse host pela porta pública:
 

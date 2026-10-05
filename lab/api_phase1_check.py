@@ -72,7 +72,7 @@ if MODE == "before":
     # validation: a pool without its prefixes, refused by the commit and
     # named by the check
     cfg.Edit(pb.EditRequest(candidate_id=c.candidate_id, path=POOL + ["pool P558"],
-                            lines=["mode dynamic"]))
+                            lines=["mode bpa"]))
     chk = cfg.Check(pb.CandidateRef(candidate_id=c.candidate_id))
     code, d = refused(lambda: cfg.Commit(pb.CommitRequest(candidate_id=c.candidate_id)))
     result("reason-validation", code == grpc.StatusCode.FAILED_PRECONDITION

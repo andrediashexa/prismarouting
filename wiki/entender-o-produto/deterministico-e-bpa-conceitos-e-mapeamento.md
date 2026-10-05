@@ -7,15 +7,15 @@ Como o bloco de portas de um assinante é decidido em cada um dos dois modos de 
 Os dois dão a cada assinante um **bloco contíguo de portas**, em vez de um registro por fluxo. O que muda é como o bloco é atribuído, e com isso o que precisa ser registrado:
 
 * **Determinístico** — o bloco sai de uma **fórmula** sobre a configuração do pool. Para achar quem usava um IP e uma porta basta a conta, sem log nenhum de alocação. É o `mode deterministic`.
-* **BPA** — *Bulk Port Allocation* — os blocos são **alocados dinamicamente**, sob demanda: o assinante recebe uma primeira alocação e ganha mais blocos em degraus, conforme enche os que tem. Cada alocação e cada liberação vira um registro, e são esses registros que respondem quem usava a porta. É o `mode dynamic`, com `block-size` como degrau, `max-blocks` como teto e, se quiser uma primeira alocação maior que o degrau, `initial-allocation`.
+* **BPA** — *Bulk Port Allocation* — os blocos são **alocados dinamicamente**, sob demanda: o assinante recebe uma primeira alocação e ganha mais blocos em degraus, conforme enche os que tem. Cada alocação e cada liberação vira um registro, e são esses registros que respondem quem usava a porta. É o `mode bpa`, com `block-size` como degrau, `max-blocks` como teto e, se quiser uma primeira alocação maior que o degrau, `initial-allocation`.
 
 BPA é **só** o modo dinâmico. Determinístico não é um tipo de BPA: o guarda-chuva dos dois é *CGNAT por bloco de portas*, e a escolha é entre determinístico e BPA.
 
 O módulo do dataplane que faz as duas coisas se chama `bpa`, e esse nome aparece em contadores e identificadores internos para os dois modos. Continua assim para não quebrar scripts e caixas instaladas, mas não quer dizer que um pool determinístico seja BPA. Na VTY, os comandos são `show cgnat ...`.
 
-|     | Determinístico (`mode deterministic`) | BPA (`mode dynamic`) |
-|-----|-------------------------------------|--------------------|
-| Como o bloco é atribuído | por fórmula                         | sob demanda        |
+|     | Determinístico (`mode deterministic`) | BPA (`mode bpa`) |
+|-----|-------------------------------------|----------------|
+| Como o bloco é atribuído | por fórmula                         | sob demanda    |
 | Log de alocação | **nenhum** — exceto os blocos da `reserve`, registrados um a um | um registro IPFIX por bloco alocado e por bloco liberado |
 | Endereços públicos necessários | todos os assinantes precisam caber  | sobreassinatura possível |
 | Prova para autoridade | algoritmo + configuração vigente (trilha), mais os registros dos blocos da reserva | os registros IPFIX |

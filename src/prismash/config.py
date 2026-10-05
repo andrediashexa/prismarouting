@@ -85,6 +85,13 @@ STATIC_BLOCK = "router static"
 #: The level under `nat` that CGNAT is (#446). A level of its own, and not
 #: `nat` itself, so that other kinds of translation can sit beside it.
 CGNAT_LEVEL = "cgnat"
+#: NAT64's level under `nat` (#572), beside `cgnat`: the maintainer's decision
+#: of 2026-10-05, which moved the NAT64 pools of #485 out of `cgnat`. The
+#: dataplane keeps one pool table and one namespace for both, so the model
+#: keeps one `pools` dict and a Pool says which level it is written under.
+NAT64_LEVEL = "nat64"
+#: Where a NAT64 pool is written now, said by every refusal of the old form.
+NAT64_WHERE = "nat > nat64 > pool"
 #: The machine's own configuration, as levels (#457): `system` > `dataplane`
 #: > `interface <card>`. The maintainer asked for the dataplane statement
 #: under `system` and nothing else yet (2026-09-25).
@@ -189,17 +196,46 @@ def nest_cgnat(flat) -> list[str]:
     `cgnat` block (#446). The inverse of denest_nat(), and the one writer of
     the block: what the box saves, shows and reads back are one shape.
     """
-    body = []
+    # One body per level (#572): `nat64 pool p` and its lines go under
+    # ` nat64`, beside ` cgnat`, each level written only when it has
+    # something, `cgnat` first.
+    bodies = {CGNAT_LEVEL: [], NAT64_LEVEL: []}
+    level = CGNAT_LEVEL
     for line in flat:
         if line.startswith(" "):
-            body.append("  " + line)
-        elif line.startswith(CGNAT_LEVEL + " "):
-            body.append("  " + line[len(CGNAT_LEVEL) + 1:])
+            bodies[level].append("  " + line)
+            continue
+        for lv in (CGNAT_LEVEL, NAT64_LEVEL):
+            if line.startswith(lv + " "):
+                level = lv
+                bodies[lv].append("  " + line[len(lv) + 1:])
+                break
         else:
             raise ValueError(f"not a CGNAT statement: {line!r}")
-    if not body:
+    out = []
+    for lv in (CGNAT_LEVEL, NAT64_LEVEL):
+        if bodies[lv]:
+            out += [f" {lv}"] + bodies[lv] + ["  exit"]
+    if not out:
         return []
-    return [NAT_HIERARCHY, f" {CGNAT_LEVEL}"] + body + ["  exit", " exit"]
+    return [NAT_HIERARCHY] + out + [" exit"]
+
+
+def nat_level_block(block, level) -> list[str]:
+    """
+    One level's statements out of the `nat` block nest_cgnat() wrote, at the
+    indent they are typed at when standing in it: what `show this` prints
+    under `nat` > `cgnat` or `nat` > `nat64` (#572).
+    """
+    out, inside = [], False
+    for line in block:
+        if line == f" {level}":
+            inside = True
+        elif inside and line == "  exit":
+            inside = False
+        elif inside:
+            out.append(line[2:])
+    return out
 
 
 def denest_nat(numbered):
@@ -218,7 +254,8 @@ def denest_nat(numbered):
     section is FRR's, and its words are not this file's to reinterpret.
     """
     out, bad = [], []
-    depth = 0          # 0 top, 1 in nat, 2 in cgnat, 3 in a pool
+    depth = 0          # 0 top, 1 in nat, 2 in cgnat or nat64, 3 in a pool
+    level = CGNAT_LEVEL
     routing = False
     for n, raw in numbered:
         s = raw.strip()
@@ -239,23 +276,30 @@ def denest_nat(numbered):
             else:
                 out.append((n, raw))
         elif depth == 1:
-            if s == CGNAT_LEVEL:
+            if s in (CGNAT_LEVEL, NAT64_LEVEL):
                 depth = 2
+                level = s
             elif s in ("exit", "quit", "end"):
                 depth = 0
             else:
-                bad.append((n, s, "under 'nat' there is 'cgnat' and nothing "
-                                  "else"))
+                bad.append((n, s, NAT_LEVELS_SAY))
         elif depth == 2:
             if s in ("exit", "quit", "end"):
                 depth = 1
                 continue
+            if level == NAT64_LEVEL and not (
+                    s.startswith("pool ") or s.startswith("no pool ")):
+                # `nat64` holds pools and nothing else: the interfaces, the
+                # logging, the timeouts and the memory are the CGNAT's, shared
+                # by both kinds of pool (#572).
+                bad.append((n, s, NAT64_LEVEL_SAYS))
+                continue
             if s.startswith("pool "):
                 depth = 3
             if s.startswith("no "):
-                out.append((n, f"no {CGNAT_LEVEL} {s[3:]}"))
+                out.append((n, f"no {level} {s[3:]}"))
             else:
-                out.append((n, f"{CGNAT_LEVEL} {s}"))
+                out.append((n, f"{level} {s}"))
         else:
             # A pool's own lines are indented under it. One that is not - a
             # pool a hand closed without its `exit` - ends the pool, and the
@@ -265,16 +309,24 @@ def denest_nat(numbered):
                 if s in ("exit", "quit", "end"):
                     depth = 1
                 elif s.startswith("no "):
-                    out.append((n, f"no {CGNAT_LEVEL} {s[3:]}"))
+                    out.append((n, f"no {level} {s[3:]}"))
                 else:
                     if s.startswith("pool "):
                         depth = 3
-                    out.append((n, f"{CGNAT_LEVEL} {s}"))
+                    out.append((n, f"{level} {s}"))
                 continue
             out.append((n, " " + s))
             if s == "exit":
                 depth = 2
     return out, bad
+
+
+#: What a word under `nat` that is neither level is told, in a file and at the
+#: prompt (#572).
+NAT_LEVELS_SAY = "under 'nat' there is 'cgnat' and 'nat64'"
+#: And a statement under `nat64` that is not a pool.
+NAT64_LEVEL_SAYS = ("under 'nat64' there are pools; interfaces, logging and "
+                    "timeouts are under 'cgnat'")
 
 
 def nest_system(dataplane_if, cpu=None, memory=None) -> list[str]:
@@ -1223,8 +1275,14 @@ class Pool:
                 "sip": 1 << 4}
     ALG_DEFAULT_ON = ("ftp", "rtsp", "pptp", "esp", "sip")
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, level: str = CGNAT_LEVEL):
         self.name = name
+        # The level under `nat` the pool is written under (#572): `cgnat` for
+        # an IPv4 inside, `nat64` for an IPv6 one. Held, not derived from the
+        # inside, so that a NAT64 pool typed under `cgnat` - the form of
+        # 0.150.0-0.150.11 - is a pool nat64_fits() can refuse by name rather
+        # than one the file silently moves.
+        self.level = level
         self.inside: list[str] = []
         self.outside: list[str] = []
         self.block_size = "512"
@@ -1310,7 +1368,7 @@ class Pool:
         turn off one ALG, cap one infected host or give one customer an inbound
         port is not a change anyone would ask for (issue #69).
         """
-        out = [f"cgnat pool {self.name}"]
+        out = [f"{self.level} pool {self.name}"]
         out += [f" prefix-inside {p}" for p in self.inside]
         # Rendered with the prefix even when none was typed, because the
         # dataplane prints the one it took and these lines are compared with
@@ -1327,7 +1385,7 @@ class Pool:
         if self.ports:
             out.append(f" ports {self.ports}")
         out.append(f" policy {self.policy}")
-        out.append(f" mode {self.mode}")
+        out.append(f" mode {self.mode_word}")
         # Deliberately not behind `in_place`. A reserve reduces capacity,
         # which is the divisor under the blocked policy and the ceiling under
         # every policy - so changing it re-maps subscribers and the pool has
@@ -1509,6 +1567,20 @@ class Pool:
 
     NAT64_WKP = "64:ff9b::/96"
 
+    #: The statement's words for the two modes (#573, the maintainer's
+    #: decision of 2026-10-05): BPA, bulk port allocation, is the on-demand
+    #: mode, and its word is `bpa`. The model keeps the dataplane's value,
+    #: "dynamic" - BPA_API_MODE_DYNAMIC and `show bpa config`'s word - so the
+    #: plugin and the log are not touched by a rename of a VTY word.
+    MODE_WORDS = {"deterministic": "deterministic", "bpa": "dynamic"}
+
+    # not a unit: a property is read and never called, so no test can name
+    # it for the reader; test_prismash_config.py reads it all the same
+    @property
+    def mode_word(self) -> str:
+        """The mode as the statement writes it: `bpa` for on demand (#573)."""
+        return "bpa" if self.mode == "dynamic" else self.mode
+
     # not a unit: a property is read and never called, so no test can name
     # it for the reader; test_prismash_config.py reads it all the same
     @property
@@ -1528,6 +1600,19 @@ class Pool:
         """
         v6 = [p for p in self.inside if ":" in p]
         n = f"pool '{self.name}'"
+        # THE LEVEL FIRST (#572): NAT64 is written under `nat` > `nat64`, and
+        # a pool under `cgnat` that says anything NAT64 is the old form,
+        # refused with no automatic move - the maintainer's decision of
+        # 2026-10-05.
+        if self.level == CGNAT_LEVEL and (
+                v6 or self.subscriber_length or self.nat64_prefix):
+            return (f"{n}: NAT64 is not written under 'cgnat'",
+                    f"a NAT64 pool is written as {NAT64_WHERE} "
+                    f"{self.name}; remove it here and enter it there")
+        if self.level == NAT64_LEVEL and self.inside and not v6:
+            return (f"{n}: an IPv4 inside is not NAT64",
+                    "a pool with an IPv4 prefix-inside is a CGNAT pool, "
+                    "written under 'nat' > 'cgnat'")
         if not v6 and any(":" in f[2] for f in self.forwards):
             return (f"{n}: a forward names an IPv6 host",
                     "an IPv6 host is a NAT64 pool's, whose prefix-inside is "
@@ -3661,6 +3746,7 @@ class Config:
         section = "cgnat"
         routing_lines = []     # the file's line number of each routing line
         pool = None
+        pool_at = {}           # each pool's header line, for its refusals
         iface = None
         user = None
         snmp_user = None
@@ -3922,7 +4008,8 @@ class Config:
                 if s == "exit":
                     user = None
                 continue
-            if s.startswith("cgnat pool"):
+            if s.startswith("cgnat pool") or s.startswith(
+                    f"{NAT64_LEVEL} pool"):
                 w = s.split()
                 if len(w) < 3:
                     cfg.unknown.append((lineno, s, "a pool needs a name"))
@@ -3931,8 +4018,23 @@ class Config:
                 if why:
                     cfg.unknown.append((lineno, s, text_why(why)))
                     continue
-                pool = Pool(w[2])
+                # ONE NAMESPACE FOR BOTH LEVELS (#572): the dataplane holds
+                # one pool table keyed by name (bpa_pool_add_del), and the
+                # log, the trail and `clear` name a pool by it. A name under
+                # both levels would be two pools the dataplane cannot tell
+                # apart, so the second is refused.
+                held = cfg.pools.get(w[2])
+                if held is not None and held.level != w[0]:
+                    cfg.unknown.append(
+                        (lineno, s, f"pool '{w[2]}' is already a pool under "
+                                    f"'{held.level}'; one name, one pool"))
+                    # Its body is read into a pool nothing keeps, so the
+                    # refusal is one line and not one per statement.
+                    pool = Pool(w[2], w[0])
+                    continue
+                pool = Pool(w[2], w[0])
                 cfg.pools[pool.name] = pool
+                pool_at[pool.name] = lineno
             elif pool is not None and line.startswith(" "):
                 why = cfg._pool_line(pool, s)
                 if why:
@@ -4234,6 +4336,26 @@ class Config:
         # test_tune.py's 20,000 took 2 min 44 s, in the tuner at boot.
         named = cfg.interface_names()
         cfg.declared.update(i for i in headers if i not in named)
+        # The plugin knows one `cgnat pool` for both families (#572): what it
+        # answers is NAT64 by its inside, and is written under `nat64` like
+        # the candidate it is compared with.
+        if dataplane:
+            for p in cfg.pools.values():
+                if p.is_nat64:
+                    p.level = NAT64_LEVEL
+        else:
+            # A FILE IN THE OLD FORM IS REFUSED (#572), as #446 refused the
+            # one-line form: the maintainer chose no automatic move on
+            # 2026-10-05. Every level refusal nat64_fits() makes is one the
+            # file is refused for at load, with the same words.
+            for p in cfg.pools.values():
+                why = p.nat64_fits()
+                if why and why[0].endswith(("NAT64 is not written under "
+                                            "'cgnat'",
+                                            "an IPv4 inside is not NAT64")):
+                    cfg.unknown.append((pool_at.get(p.name, 0),
+                                        f"{p.level} pool {p.name}",
+                                        f"{why[0]}: {why[1]}"))
         return cfg
 
     @staticmethod
@@ -4359,9 +4481,19 @@ class Config:
             else:
                 pool.outside_vrf = w[1]
         elif w[0] == "mode" and len(w) > 1:
-            if w[1] not in ("deterministic", "dynamic"):
-                return f"mode '{w[1]}': expected deterministic or dynamic"
-            pool.mode = w[1]
+            if w[1] in Pool.MODE_WORDS:
+                pool.mode = Pool.MODE_WORDS[w[1]]
+            elif w[1] == "dynamic":
+                # The word of every file saved before #573, and the one the
+                # dataplane's own `show bpa config` still prints. Read, and
+                # remembered, so that a FILE that says it is migrated - said
+                # and saved by Shell.load - rather than refused: 10.95.200.198
+                # carries one, and a box upgraded to this release must come
+                # up with its pools. The prompt refuses the word (Shell).
+                pool.mode = "dynamic"
+                pool._mode_was_dynamic = True
+            else:
+                return f"mode '{w[1]}': expected deterministic or bpa"
         elif w[0] == "timeout" and len(w) > 2:
             if w[1] not in Pool.TIMEOUTS:
                 return (f"timeout '{w[1]}': expected one of "

@@ -258,7 +258,11 @@ def check_schema():
     udp = [st for st in modes["cgnat"].statements if list(st.words) == ["logging", "udp"]]
     srcs = {a.source for m in s.modes for st in m.statements for f in st.forms
             for a in f.arguments if a.source}
-    ok = (len(modes) == 30 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
+    # 32 since #572: `nat64` and `nat64 pool`, NAT64's level and its pool,
+    # beside 0.150.12's three BFD modes.
+    ok = (len(modes) == 32 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
+          and list(modes["nat64 pool"].path) == ["nat", "nat64", "pool <name>"]
+          and modes["nat64 pool"].typed_area == "nat64"
           and arg is not None and arg.kind == "integer" and (arg.min, arg.max) == (64, 32768)
           and list(modes["pool"].path) == ["nat", "cgnat", "pool <name>"]
           and modes["pool"].typed_area == "pools" and bs[0].typed

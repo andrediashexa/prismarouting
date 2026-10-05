@@ -27,6 +27,28 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.0 - NAT64 in its own hierarchy, and mode bpa
+
+* **Contract:** BREAKING (`prisma.proto` sha256 `d804c1426273155583621247c0e43bc7f04896523e560f14a214dce07a3966c8`).
+* **NAT64 pools moved (#572), breaking:** written under `nat` > `nat64`,
+  they are `Nat64PoolConfig` - in `TypedConfig.nat64_pools`, set with
+  `SetConfigRequest.nat64_pool`, removed with DeleteConfig area `nat64`.
+  `PoolConfig` no longer has `subscriber_length` / `nat64_prefix` (25 and 26
+  reserved) and area `pools` holds the CGNAT pools only. A pool name is one
+  pool across both areas: a `PoolConfig` named for a NAT64 pool is
+  INVALID_ARGUMENT ("is a pool under 'nat64'"). Edit lines for a NAT64 pool
+  use path `["nat","nat64","pool <name>"]`; the old path is refused at
+  commit check. `ListPools` adds `level` ("cgnat" / "nat64"). GetSchema adds
+  the `nat64` and `nat64 pool` modes.
+* **`mode bpa` (#573), breaking:** `PoolConfig.mode` and
+  `Nat64PoolConfig.mode` are "deterministic" or "bpa"; "dynamic" is refused.
+  `Translation.Source` `SOURCE_DYNAMIC` is renamed `SOURCE_BPA` (same
+  number, 3). A box upgraded with a saved `mode dynamic` pool migrates it on
+  load and reads "bpa" from then on.
+* **Choosing the path by release:** a box on 0.150.x answers the old shapes;
+  `GetVersion.release` 0.151.0 or later answers these.
+* **Lab box:** .166 is on 0.150.12.
+
 ## 0.150.12 - BFD's configuration as fields
 
 * **Contract:** additive (`prisma.proto` sha256 `89101b5086029a0be8983270a06a07e407c83e5683df3a392dbbf7e1abf9792b`).
