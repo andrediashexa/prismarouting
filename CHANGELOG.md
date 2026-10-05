@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.150.10 - BFD's sessions typed and streamed, and in SNMP
+
+### Added
+
 * **BFD, phase 2: its sessions through the API, BFD-STD-MIB, and OSPF over
   BFD proved.** ([#559](https://github.com/andrediashexa/hexarouting/issues/559))
   `OperationalService.ListBfdSessions` carries `show bfd peers` as fields -
@@ -99,8 +105,6 @@ version has a chance of seeing it.
   the session through snmpd as Debian-snmp. Not in this phase: BFD traps
   (bfdNotificationsEnable reads false - pass_persist cannot send one), typed
   BFD configuration in GetConfig, and IS-IS and OSPFv3 driven down in a lab.
-
-### Fixed
 
 ## 0.150.9 - BFD configuration can be removed
 
