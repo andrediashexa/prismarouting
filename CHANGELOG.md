@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.8 - SNMP and the API listen on IPv4 and IPv6
+
+### Fixed
+
 * **SNMP and the management API listened on one address, and wrote IPv6
   wrong.** ([#582](https://github.com/andrediashexa/hexarouting/issues/582))
   10.40.200.166 had to answer both on its management interface's IPv4 and
