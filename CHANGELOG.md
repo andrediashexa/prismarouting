@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.150.11 - BFD-STD-MIB answers on a real box
+
+### Fixed
+
 * **BFD-STD-MIB answered nothing on a real box.**
   ([#571](https://github.com/andrediashexa/hexarouting/issues/571)) snmpd runs
   the agent as Debian-snmp, and 0.150.10 had it run vtysh as that user, in
