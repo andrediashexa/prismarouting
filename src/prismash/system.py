@@ -1299,6 +1299,9 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              ".1.3.6.1.2.1.234",        # NATV2-MIB, the pools (#512)
              ".1.3.6.1.2.1.207",        # VRRPV3-MIB, the VRRP routers (#513)
              ".1.2.840.10006.300.43",   # IEEE8023-LAG-MIB, LACP (#515)
+             # BFD-STD-MIB (#559): bfdd's sessions, served by the agent from
+             # vtysh - FRR 10.7.1 has no bfdd_snmp to serve it over AgentX.
+             ".1.3.6.1.2.1.222",
              # IP-MIB (#522): the forwarding scalars and the address tables,
              # the agent's; the rest of IP-MIB is Linux's and stays out.
              *(f".1.3.6.1.2.1.4.{sub}" for sub in IP_MIB_SUBTREES),
@@ -1460,6 +1463,9 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     out.append(f"pass_persist .1.3.6.1.2.1.234 {agent}")
     out.append(f"pass_persist .1.3.6.1.2.1.207 {agent}")
     out.append(f"pass_persist .1.2.840.10006.300.43 {agent}")
+    # BFD-STD-MIB (#559), its own process: it reads bfdd, not the dataplane,
+    # and answers while the dataplane does not.
+    out.append(f"pass_persist .1.3.6.1.2.1.222 {agent} --bfd")
     if pen:
         # The number on the agent's own command line (#499): it runs as
         # Debian-snmp and cannot read this 0600 file to find it.
@@ -1673,6 +1679,9 @@ class SnmpDaemon:
         # dataplane answers. Before the restart, because a group is read
         # when the process starts; gpasswd -a is a no-op on a member.
         self._run(["gpasswd", "-a", SNMPD_USER, "vpp"])
+        # And bfdd, for BFD-STD-MIB (#559): vtysh talks to the daemons'
+        # .vty sockets, which are frrvty's.
+        self._run(["gpasswd", "-a", SNMPD_USER, "frrvty"])
 
         # v3 users are created in net-snmp's own persistent store, which it
         # rewrites on first use. Written only when absent, or every restart

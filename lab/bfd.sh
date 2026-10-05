@@ -57,6 +57,10 @@ ip netns exec peer ip link set dum-bgp up
 ip netns exec peer ip link add dum-st type dummy
 ip netns exec peer ip addr add 203.0.113.1/24 dev dum-st
 ip netns exec peer ip link set dum-st up
+# And a prefix only OSPF carries (#559 phase 2), for the IGP over BFD.
+ip netns exec peer ip link add dum-ospf type dummy
+ip netns exec peer ip addr add 192.0.2.1/24 dev dum-ospf
+ip netns exec peer ip link set dum-ospf up
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 wait_vpp || exit 1
@@ -117,8 +121,25 @@ $PEER_NB_BFD
  exit-address-family
 exit
 EOF
+# OSPF over the same wire (#559 phase 2): its hellos and dead time left at
+# FRR's defaults, 10 s and 40 s, so without BFD the adjacency outlives the
+# cut by up to 40 s. mtu-ignore because the box's TAP and this veth need not
+# agree, and the subject here is BFD, not the MTU lab/igp.sh is about.
+if [ "$MODE" = off ]; then PEER_OSPF_BFD=""; else PEER_OSPF_BFD=" ip ospf bfd"; fi
+cat > /etc/frr/peer/ospfd.conf <<EOF
+hostname upstream
+interface veth-out
+ ip ospf mtu-ignore
+$PEER_OSPF_BFD
+exit
+router ospf
+ ospf router-id 10.0.0.2
+ network 10.0.0.0/24 area 0
+ network 192.0.2.0/24 area 0
+exit
+EOF
 chown -R frr:frr /var/run/frr/peer /etc/frr/peer
-for d in zebra bfdd bgpd; do
+for d in zebra bfdd bgpd ospfd; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf 2>/dev/null
 done
 
@@ -231,6 +252,49 @@ expect "the static route is back in the dataplane" in_fib 203.0.113.0/24
 wait_for 90 in_fib 198.51.100.0/24
 expect "and the BGP route" in_fib 198.51.100.0/24
 
+# ---------------- OSPF over BFD (#559 phase 2) ----------------
+# The IGP the phase 1 lab never drove down: `ip ospf bfd profile lab` at the
+# interface, through the VTY, and the same silent cut. OSPF's own dead time
+# is 40 s; BFD's is the profile's 300 ms. The off run configures OSPF alone,
+# and the route outlives the cut by tens of seconds.
+echo
+echo "=========== OSPF over BFD, the same silent cut ==========="
+set -- -c configure -c "router ospf" -c "ospf router-id 10.0.0.1" \
+  -c "network 10.0.0.0/24 area 0" -c exit -c "interface vppwan0" \
+  -c "ip ospf mtu-ignore"
+[ "$MODE" = off ] || set -- "$@" -c "ip ospf bfd profile lab"
+set -- "$@" -c exit -c commit
+OSPFCFG=$($HX "$@" 2>&1)
+echo "$OSPFCFG" | sed 's/^/  /'
+expect_in "the VTY commits OSPF on vppwan0" "commit complete" "$OSPFCFG"
+[ "$MODE" = off ] || expect_in "and FRR's interface asks bfdd, with the profile" \
+  "ip ospf bfd profile lab" "$(vtysh -c 'show running-config' 2>/dev/null)"
+wait_for 90 in_fib 192.0.2.0/24
+expect "OSPF's route (192.0.2.0/24) is in the dataplane's table" in_fib 192.0.2.0/24
+python3 - <<'EOF' > /tmp/bfd-ospf-cut.txt 2>&1
+import subprocess, time
+def gone(prefix):
+    out = subprocess.run(["vppctl", "show", "ip", "fib", prefix],
+                         capture_output=True, text=True).stdout
+    return not any(l.startswith(prefix) for l in out.splitlines())
+t0 = time.monotonic()
+subprocess.run(["ip", "netns", "exec", "peer", "tc", "qdisc", "add", "dev",
+                "veth-out", "root", "netem", "loss", "100%"], check=True)
+seen = None
+while time.monotonic() - t0 < 12 and seen is None:
+    if gone("192.0.2.0/24"):
+        seen = int((time.monotonic() - t0) * 1000)
+    time.sleep(0.02)
+print(f"ospf={seen if seen is not None else 'never'}")
+EOF
+sed 's/^/  measured, ms after the cut: /' /tmp/bfd-ospf-cut.txt
+OSPFCUT=$(sed -n 's/^ospf=//p' /tmp/bfd-ospf-cut.txt)
+expect "the OSPF route left the dataplane within 2 s ($OSPFCUT ms; dead time 40 s)" \
+  num "$OSPFCUT" 2000
+ip netns exec peer tc qdisc del dev veth-out root
+wait_for 90 in_fib 192.0.2.0/24
+expect "and comes back when the neighbour does" in_fib 192.0.2.0/24
+
 # ---------------- taking it away again (#570) ----------------
 # On 10.40.200.166 (0.150.8) `no bfd` and `no peer ...` failed `commit check`:
 # the VTY deleted the block's header line and left its body behind, and FRR
@@ -251,6 +315,14 @@ if [ "$MODE" != off ]; then
     expect "after $1: and so is the static route" in_fib 203.0.113.0/24
   }
   frr_run() { vtysh -c 'show running-config' 2>/dev/null; }
+
+  OUT=$($HX -c configure -c "interface vppwan0" -c "no ip ospf bfd" \
+            -c exit -c commit 2>&1)
+  expect_in "BFD off OSPF's interface commits" "commit complete" "$OUT"
+  expect_not_in "and FRR's interface has no ospf bfd left, profile line included" \
+    "ip ospf bfd" "$(frr_run)"
+  expect "and OSPF's route stays" in_fib 192.0.2.0/24
+  routes_intact "OSPF's bfd"
 
   OUT=$($HX -c configure -c "router bgp 65000" \
             -c "no neighbor 10.0.0.2 bfd" -c exit -c commit 2>&1)

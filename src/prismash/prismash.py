@@ -1125,6 +1125,24 @@ ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
 #: The daemon that runs BFD sessions (#559).
 BFD_DAEMON = "bfdd"
 
+#: An interface's `bfd` for each IGP, as its words (#559): OSPF, OSPFv3 and
+#: IS-IS each ask bfdd for a session per adjacency with these.
+IGP_BFD = (["ip", "ospf", "bfd"], ["ipv6", "ospf6", "bfd"], ["isis", "bfd"])
+
+
+def igp_bfd_bare(line):
+    """
+    `ip ospf bfd` for `ip ospf bfd profile <name>` (and OSPFv3's and
+    IS-IS's the same), None for anything else: the statement FRR needs in
+    place before it takes the profile.
+    """
+    w = line.split()
+    for igp in IGP_BFD:
+        if w[:len(igp)] == igp and w[len(igp):len(igp) + 1] == ["profile"] \
+                and len(w) == len(igp) + 2:
+            return " ".join(igp)
+    return None
+
 
 def bfd_statements(routing):
     """
@@ -1142,8 +1160,7 @@ def bfd_statements(routing):
         if (w == [BFD_BLOCK_WORD]
                 or (w[0] == "neighbor" and len(w) > 2 and w[2] == "bfd")
                 or (is_static_route(line.strip()) and "bfd" in w[4:])
-                or w[:3] in (["ip", "ospf", "bfd"], ["ipv6", "ospf6", "bfd"])
-                or w[:2] == ["isis", "bfd"]):
+                or w[:3] in IGP_BFD or w[:2] in IGP_BFD):
             out.append(line.strip())
     return out
 
@@ -2194,7 +2211,7 @@ ISIS_INTERFACE = {
                          "<2-100>"),
     "password": ("per-interface authentication; never printed back",
                  "[clear|md5] <password>"),
-    "bfd": ("track the adjacency with BFD", None),
+    "bfd": ("track the adjacency with BFD", "[profile <name>]"),
 }
 
 # Offered inside `router ospf`. The statements an ISP edge or aggregation box
@@ -2278,7 +2295,7 @@ OSPF_INTERFACE = {
     "message-digest-key": ("an MD5 key; never printed back",
                            "<1-255> md5 <key>"),
     "passive": ("run OSPF here and send no hellos", None),
-    "bfd": ("track the adjacency with BFD", None),
+    "bfd": ("track the adjacency with BFD", "[profile <name>]"),
     "mtu-ignore": ("do not compare MTU in database description packets - the "
                    "escape hatch when the two sides disagree and cannot be "
                    "made to agree", None),
@@ -2352,7 +2369,7 @@ OSPF6_INTERFACE = {
         "broadcast": ("elect a DR (the default on Ethernet)", None),
     }),
     "passive": ("run OSPFv3 here and send no hellos", None),
-    "bfd": ("track the adjacency with BFD", None),
+    "bfd": ("track the adjacency with BFD", "[profile <name>]"),
     "mtu-ignore": ("do not compare MTU in database description packets - the "
                    "escape hatch when the two sides disagree and cannot be "
                    "made to agree", None),
@@ -16867,12 +16884,15 @@ class Shell:
                 # profile is named - `neighbor X bfd` and `neighbor X bfd
                 # profile P` (FRR 10.7.1, measured) - so taking BFD off a
                 # neighbour takes both, or the second puts it back (#570).
+                # The IGPs' `bfd` at an interface takes a profile the same
+                # way (#559 phase 2), so theirs goes whole as well.
                 nw = negated.split()
-                if len(nw) == 3 and nw[0] == "neighbor" and nw[2] == "bfd":
+                if (len(nw) == 3 and nw[0] == "neighbor" and nw[2] == "bfd") \
+                        or nw in IGP_BFD:
                     paths = block_paths(self.candidate.routing)
                     self.candidate.routing = [
                         l for i, l in enumerate(self.candidate.routing)
-                        if not (l.split()[:3] == nw and paths[i] == block)]
+                        if not (l.split()[:len(nw)] == nw and paths[i] == block)]
                 return True
         # FRR IS ASKED BEFORE ANYTHING IS STAGED (#431). Until this, every
         # line that reached here went into the candidate unread - `banana
@@ -16980,6 +17000,17 @@ class Shell:
             if desc:
                 self.candidate.static_descriptions[key] = desc
             return True
+        # An IGP's `bfd profile` needs its `bfd` first (#559 phase 2):
+        # measured on FRR 10.7.1 in lab/bfd.sh, `ip ospf bfd profile lab`
+        # alone is answered "ip ospf bfd has not been set", nothing is
+        # stored, and the commit failed as a statement FRR did not keep.
+        bare = igp_bfd_bare(line)
+        if bare:
+            here = [b for b in self.frr_ctx if b != STATIC_BLOCK]
+            paths = block_paths(self.candidate.routing)
+            if not any(l.strip() == bare and paths[i] == here
+                       for i, l in enumerate(self.candidate.routing)):
+                self.candidate.routing.append(bare)
         self.candidate.routing.append(line)
         # `address-family` is a block, and leaving it out was not an omission
         # anybody noticed - it was invisible because everything in the routing

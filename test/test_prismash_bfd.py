@@ -302,6 +302,42 @@ check(not any(l.split()[:3] == ["neighbor", "10.0.0.2", "bfd"] for l in got),
       f"`no neighbor X bfd` takes both of FRR's lines for it: {got!r}")
 check(" neighbor 10.0.0.2 remote-as 65001" in got,
       "and the neighbour itself stays")
+# The IGPs' `bfd` at an interface (#559 phase 2), with a profile: both of the
+# interface's lines go, for OSPF, OSPFv3 and IS-IS alike, and only that
+# interface's. Mutation shown red: the second pass compared three words, so
+# IS-IS's two-word `isis bfd profile lab` stayed and put BFD back.
+READ_BACK[:0] = ["interface vppwan0", " ip ospf bfd", " ip ospf bfd profile lab",
+                 " ipv6 ospf6 bfd", " ipv6 ospf6 bfd profile lab", " isis bfd",
+                 " isis bfd profile lab", "exit", "!", "interface vppwan1",
+                 " ip ospf bfd", "exit", "!"]
+for stmt in ("ip ospf bfd", "ipv6 ospf6 bfd", "isis bfd"):
+    got = candidate_after("interface vppwan0", f"no {stmt}", "exit")
+    mine = got[:got.index("exit")]
+    check(not any(l.split()[:len(stmt.split())] == stmt.split() for l in mine)
+          and " ip ospf bfd" in got[got.index("interface vppwan1"):],
+          f"`no {stmt}` takes its line and its profile's, on that interface "
+          f"only: {got!r}")
+
+print("\n=== an IGP's `bfd profile` stages its `bfd` first (#559 phase 2) ===")
+# Measured on FRR 10.7.1 in lab/bfd.sh: `ip ospf bfd profile lab` alone is
+# answered "ip ospf bfd has not been set" and nothing is stored, so the
+# commit failed as a statement FRR did not keep. Mutation shown red: the bare
+# line not staged - the profile line went alone, as before.
+check(prismash.igp_bfd_bare("ip ospf bfd profile lab") == "ip ospf bfd"
+      and prismash.igp_bfd_bare("isis bfd profile x") == "isis bfd"
+      and prismash.igp_bfd_bare("ipv6 ospf6 bfd profile x") == "ipv6 ospf6 bfd"
+      and prismash.igp_bfd_bare("ip ospf bfd") is None
+      and prismash.igp_bfd_bare("neighbor 10.0.0.2 bfd profile x") is None,
+      "the bare statement for an IGP's profile form, and nothing else")
+got = candidate_after("interface vppwan2", "ip ospf bfd profile lab", "exit")
+mine = got[got.index("interface vppwan2"):]
+check(mine[:4] == ["interface vppwan2", "ip ospf bfd", "ip ospf bfd profile lab",
+                   "exit"],
+      f"typed alone, the profile line goes with its `ip ospf bfd` first: {mine!r}")
+got = candidate_after("interface vppwan1", "ip ospf bfd profile lab", "exit")
+mine = got[got.index("interface vppwan1"):]
+check([l.strip() for l in mine].count("ip ospf bfd") == 1,
+      f"and not twice on an interface that already has it: {mine!r}")
 
 print("\n=== the empty bfd block frr-reload leaves behind (#570) ===")
 
