@@ -738,26 +738,32 @@ def bfd_body_statement(t, other, stmt):
     other.append(stmt)
 
 
+def bfd_peer_of(peers, header):
+    """The session `header` names in list `peers`, added when it is new: one
+    entry per key, however many blocks state it."""
+    key = bfd_peer_key(header)
+    p = next((x for x in peers if same_bfd_peer(x, key)), None)
+    if p is None:
+        p = dict(key, profile="", timers=bfd_timers_blank(), other=[],
+                 header=bfd_peer_header(key))
+        peers.append(p)
+    return p
+
+
+def bfd_profile_of(profiles, name):
+    """Profile `name` in list `profiles`, added when it is new."""
+    p = next((x for x in profiles if x["name"] == name), None)
+    if p is None:
+        p = {"name": name, "timers": bfd_timers_blank(), "other": []}
+        profiles.append(p)
+    return p
+
+
 def bfd_typed(cfg):
     """{"peers": [...], "profiles": [...]} of every `bfd` block in `cfg`."""
     peers, profiles = [], []
-
-    def peer_of(header):
-        key = bfd_peer_key(header)
-        p = next((x for x in peers if same_bfd_peer(x, key)), None)
-        if p is None:
-            p = dict(key, profile="", timers=bfd_timers_blank(), other=[],
-                     header=bfd_peer_header(key))
-            peers.append(p)
-        return p
-
-    def profile_of(name):
-        p = next((x for x in profiles if x["name"] == name), None)
-        if p is None:
-            p = {"name": name, "timers": bfd_timers_blank(), "other": []}
-            profiles.append(p)
-        return p
-
+    peer_of = (lambda header: bfd_peer_of(peers, header))
+    profile_of = (lambda name: bfd_profile_of(profiles, name))
     for path, stmt in routing_statements(cfg):
         if not path or path[0] != "bfd":
             continue

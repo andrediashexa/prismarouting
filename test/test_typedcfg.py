@@ -266,6 +266,61 @@ check(len(tw) == 1 and tw[0]["timers"]["detect_multiplier"] == 5
       and tw[0]["timers"]["receive_interval_ms"] == 50,
       f"a session staged in two `bfd` blocks reads as one: {tw}")
 
+print("=== BFD: the helpers, one by one ===")
+blank = T.bfd_timers_blank()
+check(set(blank) == set(T.BFD_TIMER_FIELDS) and not any(blank.values()),
+      f"bfd_timers_blank: every timer, nothing stated: {blank}")
+check(T.same_bfd_peer({"address": "10.0.0.2", "interface": "eth0",
+                       "profile": "a"},
+                      {"address": "10.0.0.2", "interface": "eth0",
+                       "multihop": False})
+      and not T.same_bfd_peer({"address": "10.0.0.2"},
+                              {"address": "10.0.0.2", "multihop": True}),
+      "same_bfd_peer: the key decides, a profile does not; multihop does")
+t, o = T.bfd_timers_blank(), []
+for s in ("detect-multiplier 4", "echo transmit-interval 70", "shutdown",
+          "detect-multiplier nonsense"):
+    T.bfd_body_statement(t, o, s)
+check(t["detect_multiplier"] == 4 and t["echo_transmit_interval_ms"] == 70
+      and t["shutdown"] and o == ["detect-multiplier nonsense"],
+      f"bfd_body_statement: timers into fields, a malformed one into other: "
+      f"{t} {o}")
+check(T._echo_rx({"echo_receive_disabled": True}) == "disabled"
+      and T._echo_rx({"echo_receive_interval_ms": 40}) == "40"
+      and T._echo_rx({}) == "",
+      "_echo_rx: disabled, a value, or nothing stated")
+check(T.bfd_timer_lines({"echo_mode": True}, {}) == ["no echo-mode"]
+      and T.bfd_timer_lines({}, {"echo_receive_disabled": True})
+      == ["echo receive-interval disabled"]
+      and T.bfd_timer_lines({"detect_multiplier": 3},
+                            {"detect_multiplier": 9},
+                            ["receive_interval_ms"]) == [],
+      "bfd_timer_lines: a flag off, echo disabled, and a timer not named left")
+check(T.bfd_timer_mask([]) == ([], ()) and
+      T.bfd_timer_mask(["profile"]) == (["profile"], None) and
+      T.bfd_timer_mask(["timers.shutdown"]) == ([], ["shutdown"]),
+      "bfd_timer_mask: nothing named is everything; `profile` alone leaves "
+      "the timers; one timer named is that one")
+check(T.bfd_peer_lines(None, {"address": "10.0.0.5"}) ==
+      ["peer 10.0.0.5", "exit"]
+      and T.bfd_profile_lines(None, {"name": "p",
+                                     "timers": {"passive_mode": True}})
+      == ["profile p", "passive-mode", "exit"],
+      "bfd_peer_lines / bfd_profile_lines: a new session, a new profile")
+try:
+    T.bfd_delete_lines(Config(), "", None)
+    check(False, "bfd_delete_lines: no block, nothing to remove, refused")
+except ValueError as e:
+    check("no bfd block" in str(e), f"bfd_delete_lines refuses: {e}")
+lst = []
+first = T.bfd_peer_of(lst, "peer 10.0.0.2 vrf red")
+again = T.bfd_peer_of(lst, "peer 10.0.0.2 vrf red")
+check(first is again and len(lst) == 1 and first["vrf"] == "red",
+      "bfd_peer_of: one entry per key")
+pl = []
+check(T.bfd_profile_of(pl, "x") is T.bfd_profile_of(pl, "x") and len(pl) == 1,
+      "bfd_profile_of: one entry per name")
+
 print("=== BFD edits: the lines, and only the ones that change ===")
 path, bl = T.edit_for(BFD, "bfd_peers", {
     "address": "10.0.0.2", "interface": "eth0", "profile": "",
