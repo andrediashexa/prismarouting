@@ -86,7 +86,7 @@ vppctl set interface bpa out2in host-host-srv
 echo "=========== 1. the pool, through the VTY ==========="
 ALG="alg ftp on"
 [ "$MODE" = off ] && ALG=""
-$HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+$HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
     -c "prefix-inside 2001:db8:1200::/40" -c "subscriber-length 56" \
     -c "nat64-prefix 64:ff9b:1::/48" -c "prefix-outside 203.0.113.0/29" \
     -c "block-size 2048" ${ALG:+-c} ${ALG:+"$ALG"} -c "exit" -c "commit" \
@@ -220,7 +220,7 @@ cf() { sed -n "s/^$1=//p" /tmp/f64-client.txt | head -1; }
 
 echo
 echo "=========== 2. what the VTY refuses ==========="
-REFUSED=$($HX -c "configure" -c "nat" -c "cgnat" -c "pool v6" \
+REFUSED=$($HX -c "configure" -c "nat" -c "nat64" -c "pool v6" \
     -c "alg rtsp on" -c "exit" -c "commit" 2>&1)
 printf '%s\n' "$REFUSED" | sed 's/^/  /'
 DPREFUSED=$(vppctl bpa alg v6 sip on 2>&1 | tr -d '\r')

@@ -238,10 +238,67 @@ def unprivileged():
                f"refused {e.code().name}, as the VTY: {vty.strip()[:80]!r}")
 
 
+def nat64_area():
+    # #572: NAT64's pools under `nat` > `nat64`, read and set as their own
+    # area and message - over the wire, through the account's worker, where
+    # 0.150.2's repeated field once failed to cross.
+    c = rpc.ConfigServiceStub(channel("root"))
+    run_cfg = c.GetConfig(pb.GetConfigRequest(areas=["pools", "nat64"]),
+                          timeout=60)
+    n64 = {p.name: p for p in run_cfg.nat64_pools}
+    result("nat64-read", "v6" in n64 and n64["v6"].subscriber_length == 56
+           and "v6" not in [p.name for p in run_cfg.pools]
+           and n64["v6"].algs.get("ftp") is True
+           and [f.private_address for f in n64["v6"].forwards]
+           == ["2001:db8:1200:ab00::10"],
+           f"nat64={sorted(n64)} pools={[p.name for p in run_cfg.pools]}")
+    o = rpc.OperationalServiceStub(channel("root"))
+    lv = {p.name: p.level for p in o.ListPools(pb.ListPoolsRequest(),
+                                               timeout=T).pools}
+    result("nat64-listpools", lv.get("v6") == "nat64"
+           and lv.get(LONG) == "cgnat", f"{lv}")
+    cid = c.OpenCandidate(pb.OpenCandidateRequest(), timeout=60).candidate_id
+    try:
+        r = c.SetConfig(pb.SetConfigRequest(
+            candidate_id=cid, nat64_pool=pb.Nat64PoolConfig(
+                name="v7", prefix_inside=["2001:db8:7700::/40"],
+                subscriber_length=56, nat64_prefix="64:ff9b:1::/48",
+                prefix_outside=["200.150.0.60/30"], block_size=1024)),
+            timeout=60)
+        cand = c.GetConfig(pb.GetConfigRequest(candidate_id=cid,
+                                               areas=["nat64"]), timeout=60)
+        v7 = [p for p in cand.nat64_pools if p.name == "v7"]
+        result("nat64-set", list(r.path) == ["nat", "nat64", "pool v7"]
+               and v7 and v7[0].subscriber_length == 56,
+               f"path={list(r.path)} lines={list(r.lines)[:4]}")
+        d = c.DeleteConfig(pb.DeleteConfigRequest(candidate_id=cid,
+                                                  area="nat64", name="v7"),
+                           timeout=60)
+        cand = c.GetConfig(pb.GetConfigRequest(candidate_id=cid,
+                                               areas=["nat64"]), timeout=60)
+        result("nat64-delete", list(d.path) == ["nat", "nat64"]
+               and "v7" not in [p.name for p in cand.nat64_pools],
+               f"path={list(d.path)} lines={list(d.lines)}")
+        try:
+            c.SetConfig(pb.SetConfigRequest(
+                candidate_id=cid, pool=pb.PoolConfig(name="v6",
+                                                     block_size=2048)),
+                timeout=60)
+            result("nat64-one-name", False, "a PoolConfig named v6 was taken")
+        except grpc.RpcError as e:
+            result("nat64-one-name",
+                   e.code() == grpc.StatusCode.INVALID_ARGUMENT
+                   and "is a pool under 'nat64'" in e.details(),
+                   f"{e.code().name} {e.details()[:100]}")
+    finally:
+        c.CloseCandidate(pb.CandidateRef(candidate_id=cid), timeout=30)
+
+
 for name, fn in (("translation", translation),
                  ("translation-dynamic", translation_dynamic),
                  ("translation-refused", translation_refused), ("top", top), ("drops", drops),
                  ("memory", memory), ("blocks", blocks), ("identity", identity),
                  ("history", history), ("algs", algs), ("forwards", forwards),
-                 ("ha", ha), ("netview-reads", unprivileged)):
+                 ("ha", ha), ("netview-reads", unprivileged),
+                 ("nat64-area", nat64_area)):
     run(name, fn)
