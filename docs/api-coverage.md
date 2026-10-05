@@ -21,8 +21,8 @@
 
 | Class | Commands |
 |---|---|
-| typed | 659 |
-| text | 3 |
+| typed | 661 |
+| text | 1 |
 | n/a | 27 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -159,8 +159,8 @@ reachable in the phase their note names.
 | `show ospf interface` | typed | OperationalService.ListOspfInterfaces | every account | both MTUs and the stall |
 | `show isis adjacency` | typed | OperationalService.ListIsisAdjacencies | every account |  |
 | `show isis interface` | typed | OperationalService.ListIsisInterfaces | every account | the circuits and the dataplane's IS-IS punt |
-| `show bfd peers` | text | OperationalService.Show | every account | BFD phase 1 (#559); typed sessions are its phase 2 |
-| `show bfd peer <address>` | text | OperationalService.Show | every account | BFD phase 1 (#559); typed sessions are its phase 2 |
+| `show bfd peers` | typed | OperationalService.ListBfdSessions | every account | and WatchBfd for state changes (#559) |
+| `show bfd peer <address>` | typed | OperationalService.ListBfdSessions | every account | and WatchBfd for state changes (#559) |
 | `show interface terse` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface description` | typed | OperationalService.ListInterfaces | every account |  |
 | `show interface utilization interval <seconds>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |

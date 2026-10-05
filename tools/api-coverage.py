@@ -123,9 +123,10 @@ OPERATIONAL_RULES = [
      "path"),
     (["show", "cgnat", "ha"], "typed", "OperationalService.GetHaStatus",
      "the peer copy at its default path"),
-    # #559 phase 1: the screens; a typed read of the sessions is phase 2.
-    (["show", "bfd"], "text", "OperationalService.Show",
-     "BFD phase 1 (#559); typed sessions are its phase 2"),
+    # #559 phase 2: the sessions typed, from the reading the screen prints;
+    # WatchBfd streams their state changes.
+    (["show", "bfd"], "typed", "OperationalService.ListBfdSessions",
+     "and WatchBfd for state changes (#559)"),
     (["show", "bgp"], "typed", "OperationalService.ListBgpNeighbors",
      "per-neighbor detail beyond the summary is text (phase 6)"),
     (["show", "ospf", "neighbor"], "typed", "OperationalService.ListOspfNeighbors", ""),

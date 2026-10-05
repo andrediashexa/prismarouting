@@ -1357,6 +1357,18 @@ service OperationalService {
   rpc Ping(ProbeRequest) returns (stream ProbeEvent);
   rpc Traceroute(ProbeRequest) returns (stream ProbeEvent);
   rpc Mtr(ProbeRequest) returns (stream ProbeEvent);
+  // #559 phase 2: bfdd's sessions, `show bfd peers` as fields - the one
+  // reading the screen in `text` is drawn from. `peer` narrows it to the
+  // sessions with that neighbour, as `show bfd peer <address>` does;
+  // INVALID_ARGUMENT for a peer that is not an address.
+  rpc ListBfdSessions(ListBfdSessionsRequest) returns (BfdSessions);
+  // Every change of a BFD session's state, streamed: the sessions as they
+  // are when the call starts (`initial`), then one event per session whose
+  // state changed, appeared or went away, read from bfdd every
+  // `interval_seconds` (1-60; 0 is 2). A session going down and back up
+  // between two readings is seen as its `session_down_count` moving, which
+  // the event carries. Cancelling the call stops it.
+  rpc WatchBfd(WatchBfdRequest) returns (stream BfdEvent);
 }
 
 // ------------------------------------------------- the CGNAT's reads (#558)
@@ -1749,6 +1761,108 @@ message OspfInterfaces {
   repeated OspfInterface interfaces = 2;
   // `show ospf interface`, verbatim.
   string text = 3;
+}
+
+// ------------------------------------------------------- BFD (#559 phase 2)
+
+message ListBfdSessionsRequest {
+  // Empty: every session. An address: the sessions with that neighbour.
+  string peer = 1;
+}
+
+message BfdSession {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_UP = 1;
+    STATE_DOWN = 2;
+    STATE_INIT = 3;
+    STATE_ADMIN_DOWN = 4;
+    // A state bfdd wrote that this server does not know; `status` has it.
+    STATE_OTHER = 5;
+  }
+  // The neighbour's address, RFC 5952 for IPv6.
+  string peer = 1;
+  // The source address the session runs from; "" when bfdd did not say.
+  string local = 2;
+  // The interface a single-hop session runs on; "" for multihop.
+  string interface = 3;
+  // "default" outside a VRF.
+  string vrf = 4;
+  bool multihop = 5;
+  // The profile the session takes its timers from; "" for none.
+  string profile = 6;
+  State state = 7;
+  // bfdd's word for the state, verbatim ("up", "down", "init", ...).
+  string status = 8;
+  // Gauge, seconds: how long the session has been in `state`.
+  uint64 seconds_in_state = 9;
+  // Why the session last went down, in bfdd's words ("ok" when it did not);
+  // and the neighbour's own diagnostic, "" when bfdd did not say.
+  string diagnostic = 10;
+  string remote_diagnostic = 11;
+  // True for a `peer` statement; false for a session a protocol's `bfd`
+  // asked for (bfdd's "dynamic").
+  bool configured = 12;
+  // This box's timers, milliseconds, as negotiated; 0 when bfdd did not say.
+  uint32 detect_multiplier = 13;
+  uint32 receive_interval_ms = 14;
+  uint32 transmit_interval_ms = 15;
+  // How long without a packet before the session goes down, milliseconds.
+  uint32 detection_timeout_ms = 16;
+  uint32 echo_receive_interval_ms = 17;
+  uint32 echo_transmit_interval_ms = 18;
+  // The neighbour's timers; 0 while it has not told us (a session down).
+  uint32 remote_receive_interval_ms = 19;
+  uint32 remote_transmit_interval_ms = 20;
+  uint32 remote_detect_multiplier = 21;
+  // Multihop only: the lowest TTL accepted; 0 otherwise.
+  uint32 minimum_ttl = 22;
+  // False when bfdd gave no counters for the session; the five below are
+  // then 0 and mean nothing.
+  bool counters_known = 23;
+  // Counters since bfdd started: control packets in, out, and refused.
+  uint64 control_packets_in = 24;
+  uint64 control_packets_out = 25;
+  uint64 control_packets_bad = 26;
+  // Counters: how many times the session came up and went down.
+  uint64 session_up_count = 27;
+  uint64 session_down_count = 28;
+}
+
+message BfdSessions {
+  // False when bfdd did not answer: nothing below was read.
+  bool answered = 1;
+  repeated BfdSession sessions = 2;
+  // `show bfd peers` (or `show bfd peer <address>`), verbatim.
+  string text = 3;
+}
+
+message WatchBfdRequest {
+  // 1-60 seconds between readings of bfdd; 0 is 2.
+  uint32 interval_seconds = 1;
+}
+
+message BfdEvent {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // A session as it was when the call started.
+    KIND_INITIAL = 1;
+    // A session whose state changed, or whose down counter moved.
+    KIND_CHANGED = 2;
+    // A session that was not there at the last reading.
+    KIND_APPEARED = 3;
+    // A session that is no longer there; `session` is its last reading.
+    KIND_GONE = 4;
+    // bfdd stopped answering (`session` empty); the next answer sends every
+    // session again as KIND_INITIAL.
+    KIND_UNANSWERED = 5;
+  }
+  Kind kind = 1;
+  google.protobuf.Timestamp at = 2;
+  BfdSession session = 3;
+  // The state at the previous reading; STATE_UNSPECIFIED for an initial or
+  // appeared session.
+  BfdSession.State previous_state = 4;
 }
 
 message ListIsisInterfacesRequest {}

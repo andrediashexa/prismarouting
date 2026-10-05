@@ -980,6 +980,11 @@ READERS = {
     "hardware": lambda sh, a: facts_screen(
         sh, sh.hardware_facts, lambda f: sh.show_hardware([], f)),
     "routing_logging": lambda sh, a: screen(sh, "show logging"),
+    # #559 phase 2: bfdd's sessions, `show bfd peers` (or `peer <a>`) drawn
+    # from the reading the fields carry; `a` is the peer, "" for every one.
+    "bfd": lambda sh, a: facts_screen(
+        sh, sh.bfd_facts,
+        lambda f: sh.show_bfd(["peer", a] if a else ["peers"], f)),
     "snmp_file": lambda sh, a: snmp_file_read(sh, a),
 }
 
@@ -3087,6 +3092,12 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         t.FromSeconds(int(epoch))
         return t
 
+    # not a unit: a closure of build(), driven by lab/api-grpc.sh;
+    # opshow.bfd_session_fields() builds what it converts, and is tested.
+    def bfd_session_pb(s):
+        f = dict(s)
+        return pb.BfdSession(state=pb.BfdSession.State.Value(f.pop("state")), **f)
+
     class Config(rpc.ConfigServiceServicer):
         # not a unit: an rpc, driven by lab/api-grpc.sh.
         def OpenCandidate(self, req, context):
@@ -3781,6 +3792,42 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
         def Mtr(self, req, context):
             yield from self._probe("mtr", req, context)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh and lab/bfd.sh;
+        # opshow.bfd_fields() / bfd_only() / bfd_peer() are what it does.
+        def ListBfdSessions(self, req, context):
+            peer, why = opshow.bfd_peer(req.peer)
+            if why:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, why)
+            got = self._ask(context, "bfd", peer)
+            f = opshow.bfd_only(opshow.bfd_fields(got["facts"]), peer)
+            return pb.BfdSessions(
+                answered=f["answered"], text=got["text"],
+                sessions=[bfd_session_pb(s) for s in f["sessions"]])
+
+        # not a unit: a streaming rpc, driven by lab/bfd.sh;
+        # opshow.bfd_changes() and bfd_interval() are what it does.
+        def WatchBfd(self, req, context):
+            every = opshow.bfd_interval(req.interval_seconds)
+            if every is None:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                              "interval_seconds is 1-60, or 0 for 2")
+            prev = None
+            while context.is_active():
+                got = self._ask(context, "bfd", "")
+                cur = opshow.bfd_fields(got["facts"])
+                now = time.time()
+                for kind, s, before in opshow.bfd_changes(prev, cur):
+                    ev = pb.BfdEvent(
+                        kind=pb.BfdEvent.Kind.Value(kind), at=ts(now),
+                        previous_state=pb.BfdSession.State.Value(before))
+                    if s is not None:
+                        ev.session.CopyFrom(bfd_session_pb(s))
+                    yield ev
+                prev = cur
+                end = time.time() + every
+                while context.is_active() and time.time() < end:
+                    time.sleep(0.2)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh; logging_fields() and
         # logstate are what it does, and are tested.
