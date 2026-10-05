@@ -1740,7 +1740,7 @@ if [ -d "$ROOT/var/log/prisma-routing" ]; then
           say "         the records are on one disk. Members: $_members"
         else
           bad "the records mirror is DEGRADED: $_have of $_want disks ($_members)"
-          say "        a disk has died and the records are on one. In dynamic mode"
+          say "        a disk has died and the records are on one. In bpa mode"
           say "        those records are what this box answers a court order with,"
           say "        and the next failure loses them - a reinstall does not put"
           say "        them back. Replace the disk and add it with 'mdadm --add'."
@@ -1892,9 +1892,9 @@ if vppctl show version >/dev/null 2>&1; then
   # which the box is translating traffic and keeping no record of it.
   if [ "$udp_on" = no ] && [ -z "$tcp_dst" ] \
      && vppctl show bpa config 2>/dev/null | grep -q "^ mode dynamic"; then
-    warn "a pool runs in dynamic mode and NOTHING is being exported:"
+    warn "a pool runs in bpa mode and NOTHING is being exported:"
     say "         block allocations are not being recorded anywhere. In"
-    say "         dynamic mode that log is the connection record."
+    say "         bpa mode that log is the connection record."
   fi
 fi
 

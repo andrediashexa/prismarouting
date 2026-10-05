@@ -276,7 +276,7 @@ check(p.initial_fits() == "initial-allocation is above the 2560 ports "
 p.initial_ports = 512
 p.mode = "deterministic"
 check((p.initial_fits() or "").startswith("initial-allocation applies to "
-                                          "dynamic pools only"),
+                                          "bpa pools only"),
       f"on a deterministic pool: {p.initial_fits()!r}")
 ok("512 over 256-port blocks is 2; not whole, over the cap, not dynamic: "
    "refused")

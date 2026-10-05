@@ -304,7 +304,7 @@ São os **prefixos do pool** - quem chega (`prefix-inside`) e para onde é tradu
 
 O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de prefixo, capacidade, e se a faixa pública colide com um endereço local - e disse que não. A linha seguinte traz o motivo dele, nas palavras dele.
 
-### `block-stride applies to dynamic pools only, not to pool <nome>`
+### `block-stride applies to bpa pools only, not to pool <nome>`
 
 O `block-stride` diz a que distância fica o **segundo** bloco de um assinante que encheu o primeiro, contada ao longo dos blocos **mapeados** do endereço público dele. Num pool `deterministic` o bloco a mais não sai dali: sai da **reserva**, que é um conjunto à parte com regra própria de escolha - um bloco livre da reserva no próprio endereço do assinante, se a fatia daquele worker tiver um; senão, qualquer bloco livre que a fatia daquele worker tenha na reserva, em qualquer endereço, como descreve a página de [configuração de pool](/doc/configuracao-de-pool-btyS572Ih6). Esse caminho nunca passa pelos blocos mapeados, e por isso o `block-stride` nunca é lido ali - em nenhum tamanho, e em nenhuma máquina.
 
@@ -451,7 +451,7 @@ A `prisma-routing.service` roda `prismash --load /etc/prisma-routing/prisma-rout
 
 O `--load` **recusa o arquivo inteiro** se houver uma linha que a VTY não consiga interpretar, em vez de aplicar o resto. Isso é deliberado: rodando sem ninguém olhando, aplicar um arquivo *menos uma linha* deixaria a configuração em disco e a em execução diferentes, e alguém descobriria isso lendo as duas muito depois.
 
-Há uma linha, e só uma, que o `--load` deixa de fora em vez de recusar o arquivo: o `block-stride` de um pool `deterministic`, que nunca teve efeito ali. O pool sobe como já rodava, o log do boot diz `note: block-stride <n> dropped from pool <nome>`, e até o próximo `save` o arquivo em disco e a configuração em execução diferem por essa linha. A recusa `block-stride applies to dynamic pools only`, acima, explica por quê.
+Há uma linha, e só uma, que o `--load` deixa de fora em vez de recusar o arquivo: o `block-stride` de um pool `deterministic`, que nunca teve efeito ali. O pool sobe como já rodava, o log do boot diz `note: block-stride <n> dropped from pool <nome>`, e até o próximo `save` o arquivo em disco e a configuração em execução diferem por essa linha. A recusa `block-stride applies to bpa pools only`, acima, explica por quê.
 
 A recusa é lida no boot, num console de 80 colunas, então ela é quebrada em partes que cabem: o caminho do arquivo e a linha recusada saem **inteiros**, cada um na sua própria linha, para você conseguir copiar e procurar; o motivo vem em texto corrido embaixo.
 

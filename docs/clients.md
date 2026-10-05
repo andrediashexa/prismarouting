@@ -27,6 +27,18 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.3 - a VLAN with a CGNAT side loads at boot; the VTY's words say bpa
+
+* **Contract:** unchanged (`prisma.proto` sha256 `e2c8775ff68e9937fe092aa4102792786d248e6ef1fefa1850ac9fa88a7041e2`).
+* **A VLAN and its CGNAT side in one commit** (#578): SetConfig/Edit
+  creating a sub-interface together with its `cgnat inside`/`outside` now
+  commits; it failed with "the dataplane does not have it", and a box saved
+  that way came up with nothing at boot.
+* **Nothing else changes through the API** (#577): commit-check warnings and
+  refusals that a client relays from `Diagnostic.message` say "bpa" where
+  0.151.2 still said "dynamic" for the pool's mode.
+* **Lab box:** .166 is on 0.151.2.
+
 ## 0.151.2 - SFP+ modules ixgbe does not list, opt-in
 
 * **Contract:** additive (`prisma.proto` sha256 `e2c8775ff68e9937fe092aa4102792786d248e6ef1fefa1850ac9fa88a7041e2`).

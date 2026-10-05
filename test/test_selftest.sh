@@ -699,7 +699,7 @@ printf '\n' > "$FAKE/prisma-routing.conf"
 logging disabled "none: nothing is sent over UDP"
 printf 'cgnat pool din\n mode dynamic\n' > "$FAKE/bpa_config"
 run
-if said '\[warn\] a pool runs in dynamic mode and NOTHING is being exported'; then
+if said '\[warn\] a pool runs in bpa mode and NOTHING is being exported'; then
   ok "translating traffic and recording none of it is said out loud"
 else
   bad "a dynamic pool with no export was passed over in silence"

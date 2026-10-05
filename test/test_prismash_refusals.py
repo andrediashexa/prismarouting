@@ -522,7 +522,7 @@ print("\n=== a block-stride on a deterministic pool, by all three routes ===")
 # AND A FOURTH BOX, below the control, for `rollback`: it loads a revision and
 # applies nothing, so the refusal is the commit after it, on the delta the
 # ordinary box has - which is the third of the three.
-_STRIDE_ROW = ("error: block-stride applies to dynamic pools only, not to "
+_STRIDE_ROW = ("error: block-stride applies to bpa pools only, not to "
                "pool subs")
 
 
