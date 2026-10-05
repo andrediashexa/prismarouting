@@ -423,6 +423,11 @@ if [ "$MODE" != off ]; then
                     | grep -A6 'Known via "static"' | grep -q "10.0.0.2"; }
   routes_intact() {  # <what was just removed>
     expect "after $1: the static default route is still in FRR" default_via
+    # Waited for, not read once: the BFD-tracked route follows a 100 ms x 3
+    # session, which under run-all-labs' on and off runs at once flapped and
+    # was read withdrawn for an instant (measured, #559 phase 3) - while
+    # #570's removal withdrew it for good, which this still catches.
+    wait_for 30 in_fib 203.0.113.0/24
     expect "after $1: and so is the static route" in_fib 203.0.113.0/24
   }
   frr_run() { vtysh -c 'show running-config' 2>/dev/null; }
