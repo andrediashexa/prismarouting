@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.150.9 - BFD configuration can be removed
+
+### Fixed
+
 * **Removing BFD configuration failed `commit check`.**
   ([#570](https://github.com/andrediashexa/hexarouting/issues/570)) On
   10.40.200.166 (0.150.8) `no bfd`, and `no peer ...` inside `bfd`, answered
