@@ -311,8 +311,31 @@ the screen in `text` is printed from. A `peer` that is not an address is
 then CHANGED, APPEARED, GONE, and UNANSWERED when bfdd does not answer;
 `interval_seconds` is 1-60 and 0 means 2. A session that went down and came
 back between two readings is a CHANGED with its down counter moved - the flap
-a comparison of states alone would never report. BFD configuration is lines
-through `Edit` (the `bfd` block, `EditRequest.path ["bfd"]`), not typed yet.
+a comparison of states alone would never report.
+
+BFD's configuration is fields too (#559 phase 3). `GetConfig` area `bfd`
+answers `bfd_peers` and `bfd_profiles`; `SetConfig` takes a `bfd_peer` or a
+`bfd_profile`, and `DeleteConfig` area `bfd` removes a profile (`name`), a
+session (`bfd_peer`) or, with neither, the whole block.
+
+* **A session is its key.** `address`, `multihop`, `local_address`,
+  `interface` and `vrf` are what FRR keys a session on, so SetConfig finds
+  the session by them whatever order a client gives them in, and changing
+  one of them is a different session. `header` is the `peer ...` line as the
+  configuration holds it, read only.
+* **Timers.** `BfdTimers` is one message for a session and a profile; every
+  field at 0 / false is a statement the block does not have, and FRR's
+  default applies (detect-multiplier 3, intervals 300 ms, echo 50 ms,
+  minimum-ttl 254). `fields` names them as `timers` (every one) or
+  `timers.<field>` (that one): `["timers.transmit_interval_ms"]` moves the
+  transmit interval and nothing else.
+* **Removed whole.** A removal is the `no` of the header, which takes the
+  block's body with it (#570): nothing of a session or a profile is left
+  behind for vtysh to refuse.
+* **On a neighbour and a route.** `BgpNeighborConfig.bfd_profile` and
+  `StaticRouteConfig.bfd`, `bfd_multihop`, `bfd_source`, `bfd_profile`
+  carry the attachment; a static route's BFD words are no longer in its
+  `extra`.
 
 ### The probes
 

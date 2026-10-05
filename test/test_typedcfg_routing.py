@@ -195,7 +195,10 @@ s = T.static_typed("ip route 10.77.0.0/16 10.0.0.2 tag 5 200", "lab route")
 check(s == {"prefix": "10.77.0.0/16", "next_hop": "10.0.0.2", "distance": 200,
             "tag": 5, "description": "lab route", "vrf": "", "family": "ipv4",
             "extra": [], "line": "10.77.0.0/16 next-hop 10.0.0.2 distance 200 "
-            "tag 5 description lab route"},
+            "tag 5 description lab route",
+            # #559 phase 3: a route with no BFD says so in its four fields.
+            "bfd": False, "bfd_multihop": False, "bfd_source": "",
+            "bfd_profile": ""},
       f"static_typed: FRR's spelling read through the VTY's own: {s}")
 check(T.static_typed("ip route 10.1.0.0/16 10.0.0.2 ens18 onlink")["extra"]
       == ["ens18", "onlink"], "static_typed: FRR's words after the hop kept")
@@ -302,7 +305,9 @@ check(len(ir) == 1 and ir[0]["name"] == "ens18" and ir[0]["ospf_area"] == "0"
 rt = T.routing_typed(cfg, {"static", "isis"})
 check(sorted(rt) == ["isis", "static"], "routing_typed: only the areas asked for")
 allt = T.config_typed(cfg)
-check(set(allt) >= set(T.AREAS) - {"logging"} | {"box_owned"},
+# Area "bfd" (#559 phase 3) answers as two lists, its sessions and profiles.
+check(set(allt) >= (set(T.AREAS) - {"logging", "bfd"})
+      | {"box_owned", "bfd_peers", "bfd_profiles"},
       "config_typed: no area named is every area, routing included")
 
 print("=== edits ===")

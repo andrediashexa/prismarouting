@@ -199,6 +199,8 @@ No OSPF, no OSPFv3 e no IS-IS o BFD vai na interface, com ou sem perfil: `ip osp
 
 As sessões também saem pela API, campo a campo e com um aviso a cada mudança de estado, e pelo SNMP, na BFD-STD-MIB (RFC 7331), que o agente da própria caixa responde. Ainda não há trap de sessão caindo: para alarme, consulte a tabela da MIB periodicamente.
 
+A configuração do BFD também é lida e escrita campo a campo pela API: as sessões e os perfis do bloco `bfd`, o perfil de BFD de um vizinho BGP e o BFD de uma rota estática. Uma sessão é identificada pelo endereço, pelo multihop, pelo endereço local, pela interface e pela VRF, como o FRR a identifica; remover uma sessão, um perfil ou o bloco inteiro remove tudo o que está dentro deles.
+
 
 :::warning
 **Numa caixa atualizada por uma versão de correção, o BFD só funciona depois do reboot.** Quem roda as sessões é o `bfdd`, e ele é ligado pelo contêiner de roteamento quando esse contêiner sobe na versão nova - o que, numa atualização de correção, acontece no próximo reboot. Até lá o `commit` recusa qualquer configuração com `bfd`, dizendo que o `bfdd` não está rodando e que o reboot o liga. É de propósito: sem o `bfdd`, o BGP e a rota estática aceitam a palavra `bfd` e nenhuma sessão é criada - o vizinho ficaria vigiado por ninguém.

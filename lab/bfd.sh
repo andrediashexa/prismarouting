@@ -1,6 +1,7 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 10
-# (the floor: what the off run of 2026-10-04 measured red)
+# OFF-RED-AT-LEAST: 13
+# (the floor: what the off run of 2026-10-05 measured red - 13 with IS-IS and
+# OSPFv3 driven down too, #559 phase 3; 10 before them)
 # BFD (#559): a BGP session and a static route watched by BFD, configured
 # through the VTY, and a link failure that keeps the link up detected in the
 # time the configuration says.
@@ -61,6 +62,16 @@ ip netns exec peer ip link set dum-st up
 ip netns exec peer ip link add dum-ospf type dummy
 ip netns exec peer ip addr add 192.0.2.1/24 dev dum-ospf
 ip netns exec peer ip link set dum-ospf up
+# And one prefix only IS-IS carries, one only OSPFv3 does (#559 phase 3), with
+# IPv6 on the wire for OSPFv3 and IS-IS's IPv6 topology - the addresses
+# lab/igp.sh uses.
+ip netns exec peer ip link add dum-isis type dummy
+ip netns exec peer ip addr add 198.19.0.1/24 dev dum-isis
+ip netns exec peer ip link set dum-isis up
+ip netns exec peer ip link add dum-ospf6 type dummy
+ip netns exec peer ip addr add 2001:db8:66::1/64 dev dum-ospf6
+ip netns exec peer ip link set dum-ospf6 up
+ip netns exec peer ip addr add 2001:db8::2/64 dev veth-out
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 wait_vpp || exit 1
@@ -71,6 +82,7 @@ vppctl set interface state host-veth-vpp up
 $HX -c "configure" -c "interface host-veth-vpp" -c "linux-name vppwan0" \
     -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
+vppctl set interface ip address host-veth-vpp 2001:db8::1/64
 
 # ---------------- which daemons: the installer, then the entrypoint ----------
 mkdir -p /var/run/frr /etc/frr
@@ -138,8 +150,41 @@ router ospf
  network 192.0.2.0/24 area 0
 exit
 EOF
+# IS-IS and OSPFv3 over the same wire (#559 phase 3), at FRR's own timers -
+# IS-IS's hold time 30 s, OSPFv3's dead time 40 s - so without BFD both
+# adjacencies outlive the cut by tens of seconds. The peer asks bfdd with the
+# defaults (300 ms x 3); the box's side names the lab profile.
+if [ "$MODE" = off ]; then PEER_ISIS_BFD=""; PEER_OSPF6_BFD=""
+else PEER_ISIS_BFD=" isis bfd"; PEER_OSPF6_BFD=" ipv6 ospf6 bfd"; fi
+cat > /etc/frr/peer/isisd.conf <<EOF
+hostname upstream
+interface veth-out
+ ip router isis HEXA
+$PEER_ISIS_BFD
+exit
+interface dum-isis
+ ip router isis HEXA
+exit
+router isis HEXA
+ net 49.0001.0000.0000.0002.00
+ is-type level-2-only
+exit
+EOF
+cat > /etc/frr/peer/ospf6d.conf <<EOF
+hostname upstream
+interface veth-out
+ ipv6 ospf6 area 0
+$PEER_OSPF6_BFD
+exit
+interface dum-ospf6
+ ipv6 ospf6 area 0
+exit
+router ospf6
+ ospf6 router-id 10.0.0.2
+exit
+EOF
 chown -R frr:frr /var/run/frr/peer /etc/frr/peer
-for d in zebra bfdd bgpd ospfd; do
+for d in zebra bfdd bgpd ospfd isisd ospf6d; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf 2>/dev/null
 done
 
@@ -295,6 +340,72 @@ ip netns exec peer tc qdisc del dev veth-out root
 wait_for 90 in_fib 192.0.2.0/24
 expect "and comes back when the neighbour does" in_fib 192.0.2.0/24
 
+# ---------------- IS-IS and OSPFv3 over BFD (#559 phase 3) ----------------
+# The two IGPs phase 2 left unproven: `isis bfd profile lab` and `ipv6 ospf6
+# bfd profile lab` at the interface, through the VTY, and the same silent
+# cut. The MTU is set to the wire's first: FRR pads IS-IS hellos to the
+# interface's MTU and the TAP comes up at 9000 on a 1500 wire (lab/igp.sh);
+# the OSI punt IS-IS needs is the product's, turned on by this commit (#168).
+echo
+echo "=========== IS-IS and OSPFv3 over BFD, the same silent cut ==========="
+in_fib6() { vppctl show ip6 fib "$1" 2>/dev/null | grep -q "^$1"; }
+set -- -c configure -c "interface host-veth-vpp" -c "mtu 1500" -c exit \
+  -c "router isis HEXA" -c "net 49.0001.0000.0000.0001.00" \
+  -c "is-type level-2-only" -c exit -c "router ospf6" \
+  -c "ospf6 router-id 10.0.0.1" -c exit -c "interface vppwan0" \
+  -c "ip router isis HEXA" -c "ipv6 ospf6 area 0"
+[ "$MODE" = off ] || set -- "$@" -c "isis bfd profile lab" \
+  -c "ipv6 ospf6 bfd profile lab"
+set -- "$@" -c exit -c commit
+IGPCFG=$($HX "$@" 2>&1)
+echo "$IGPCFG" | tail -4 | sed 's/^/  /'
+expect_in "the VTY commits IS-IS and OSPFv3 on vppwan0" "commit complete" "$IGPCFG"
+[ "$MODE" = off ] || expect_in "and FRR's interface asks bfdd for IS-IS, with the profile" \
+  "isis bfd profile lab" "$(vtysh -c 'show running-config' 2>/dev/null)"
+[ "$MODE" = off ] || expect_in "and for OSPFv3" \
+  "ipv6 ospf6 bfd profile lab" "$(vtysh -c 'show running-config' 2>/dev/null)"
+wait_for 120 in_fib 198.19.0.0/24
+expect "IS-IS's route (198.19.0.0/24) is in the dataplane's table" in_fib 198.19.0.0/24
+wait_for 120 in_fib6 2001:db8:66::/64
+expect "OSPFv3's route (2001:db8:66::/64) is in the dataplane's table" \
+  in_fib6 2001:db8:66::/64
+python3 - <<'EOF' > /tmp/bfd-igp-cut.txt 2>&1
+import subprocess, time
+def gone(table, prefix):
+    out = subprocess.run(["vppctl", "show", table, "fib", prefix],
+                         capture_output=True, text=True).stdout
+    return not any(l.startswith(prefix) for l in out.splitlines())
+t0 = time.monotonic()
+subprocess.run(["ip", "netns", "exec", "peer", "tc", "qdisc", "add", "dev",
+                "veth-out", "root", "netem", "loss", "100%"], check=True)
+seen = {}
+while time.monotonic() - t0 < 12 and len(seen) < 2:
+    now = int((time.monotonic() - t0) * 1000)
+    if "isis" not in seen and gone("ip", "198.19.0.0/24"):
+        seen["isis"] = now
+    if "ospf6" not in seen and gone("ip6", "2001:db8:66::/64"):
+        seen["ospf6"] = now
+    time.sleep(0.02)
+for k in ("isis", "ospf6"):
+    print(f"{k}={seen.get(k, 'never')}")
+EOF
+sed 's/^/  measured, ms after the cut: /' /tmp/bfd-igp-cut.txt
+igpcut() { sed -n "s/^$1=//p" /tmp/bfd-igp-cut.txt; }
+expect "the IS-IS route left the dataplane within 2 s ($(igpcut isis) ms; hold time 30 s)" \
+  num "$(igpcut isis)" 2000
+expect "the OSPFv3 route left the dataplane within 2 s ($(igpcut ospf6) ms; dead time 40 s)" \
+  num "$(igpcut ospf6)" 2000
+ip netns exec peer tc qdisc del dev veth-out root
+wait_for 120 in_fib 198.19.0.0/24
+expect "the IS-IS route comes back when the neighbour does" in_fib 198.19.0.0/24
+wait_for 120 in_fib6 2001:db8:66::/64
+expect "and the OSPFv3 route" in_fib6 2001:db8:66::/64
+# The cut took the static route's session down too: it is back before the
+# removals below read the static route as "still there" (measured: read at
+# once, the first run of this section found it still withdrawn).
+wait_for 60 in_fib 203.0.113.0/24
+expect "and the static route, its BFD session back" in_fib 203.0.113.0/24
+
 # ---------------- taking it away again (#570) ----------------
 # On 10.40.200.166 (0.150.8) `no bfd` and `no peer ...` failed `commit check`:
 # the VTY deleted the block's header line and left its body behind, and FRR
@@ -312,6 +423,11 @@ if [ "$MODE" != off ]; then
                     | grep -A6 'Known via "static"' | grep -q "10.0.0.2"; }
   routes_intact() {  # <what was just removed>
     expect "after $1: the static default route is still in FRR" default_via
+    # Waited for, not read once: the BFD-tracked route follows a 100 ms x 3
+    # session, which under run-all-labs' on and off runs at once flapped and
+    # was read withdrawn for an instant (measured, #559 phase 3) - while
+    # #570's removal withdrew it for good, which this still catches.
+    wait_for 30 in_fib 203.0.113.0/24
     expect "after $1: and so is the static route" in_fib 203.0.113.0/24
   }
   frr_run() { vtysh -c 'show running-config' 2>/dev/null; }
@@ -323,6 +439,15 @@ if [ "$MODE" != off ]; then
     "ip ospf bfd" "$(frr_run)"
   expect "and OSPF's route stays" in_fib 192.0.2.0/24
   routes_intact "OSPF's bfd"
+
+  OUT=$($HX -c configure -c "interface vppwan0" -c "no isis bfd" \
+            -c "no ipv6 ospf6 bfd" -c exit -c commit 2>&1)
+  expect_in "BFD off IS-IS's and OSPFv3's interface commits" "commit complete" "$OUT"
+  expect_not_in "and FRR's interface has no isis bfd left" "isis bfd" "$(frr_run)"
+  expect_not_in "nor ospf6 bfd" "ospf6 bfd" "$(frr_run)"
+  expect "and IS-IS's route stays" in_fib 198.19.0.0/24
+  expect "and OSPFv3's" in_fib6 2001:db8:66::/64
+  routes_intact "the IGPs' bfd"
 
   OUT=$($HX -c configure -c "router bgp 65000" \
             -c "no neighbor 10.0.0.2 bfd" -c exit -c commit 2>&1)

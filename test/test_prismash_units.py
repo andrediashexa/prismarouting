@@ -9116,12 +9116,20 @@ try:
           f"uptime_facts reads each clock where it lives: {_fx}")
     check(shell(dp=_ClockDp(None)).uptime_facts()["dataplane"] is None,
           "a dataplane that does not answer is a clock not read")
-    _, _out = driven(_sh.show_system_uptime)
+    # One instant for both readings: the dataplane's clock is "now minus how
+    # long VPP has run", so two calls that straddle a second printed
+    # different rows and this check failed at random (0.150.12's first gate).
+    _now = time.time()
+    _real_time, prismash.time.time = prismash.time.time, (lambda: _now)
+    try:
+        _, _out = driven(_sh.show_system_uptime)
+        with contextlib.redirect_stdout(io.StringIO()) as _buf:
+            _sh.show_system_uptime()
+    finally:
+        prismash.time.time = _real_time
     check("  box          since" in _out and "  dataplane    since" in _out
           and "restarted after the boot" in _out and "last boot: system reboot by root" in _out,
           f"show system uptime prints the rows: {_out}")
-    with contextlib.redirect_stdout(io.StringIO()) as _buf:
-        _sh.show_system_uptime()
     check(_buf.getvalue() == _out, "and prints the same rows asked again")
     prismash.REBOOT_RECORD = os.path.join(_ud, "no-such-dir", "last-reboot")
     _sh.record_reboot("shutdown")

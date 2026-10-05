@@ -27,7 +27,8 @@ from config import (block_paths, is_number, is_static_route, static_route_key,
 #: The configuration-half areas (#558 phase 2) and the routing-half ones
 #: (phase 3). Empty in a request is all of them.
 CONFIG_AREAS = ("interfaces", "pools", "logging")
-ROUTING_AREAS = ("static", "bgp", "ospf", "ospf6", "isis", "interface_routing")
+ROUTING_AREAS = ("static", "bgp", "ospf", "ospf6", "isis", "interface_routing",
+                 "bfd")
 #: The areas of #558 phase 4 - system, accounts, policy and the rest; kept
 #: in step with SYSTEM_AREAS below, which the readers are keyed by.
 OTHER_AREAS = ("system", "users", "snmp_users", "policy", "route_maps",
@@ -257,6 +258,26 @@ def static_typed(line, description="", vrf=""):
             continue
         out["extra"].append(words[i])
         i += 1
+    # The route's BFD words (#559): FRR writes them last, so everything from
+    # `bfd` on is the session's. As fields, so a client writing the route
+    # back puts them where `router static` takes them - after the distance
+    # and tag - rather than as `extra`, which goes before them.
+    out.update(bfd=False, bfd_multihop=False, bfd_source="", bfd_profile="")
+    if "bfd" in out["extra"]:
+        at = out["extra"].index("bfd")
+        tail, out["extra"] = out["extra"][at + 1:], out["extra"][:at]
+        out["bfd"] = True
+        j = 0
+        while j < len(tail):
+            if tail[j] == "multi-hop":
+                out["bfd_multihop"] = True
+                j += 1
+            elif tail[j] in ("source", "profile") and j + 1 < len(tail):
+                out["bfd_" + tail[j]] = tail[j + 1]
+                j += 2
+            else:
+                out["extra"] += tail[j:]
+                break
     out["line"] = static_route_words(line, description or None)
     return out
 
@@ -312,7 +333,8 @@ def _neighbor(table, who):
                       "update_source": "", "keepalive": 0, "holdtime": 0,
                       "password_set": False, "peer_group": "",
                       "is_peer_group": False, "ebgp_multihop": 0,
-                      "shutdown": False, "bfd": False, "other": []}
+                      "shutdown": False, "bfd": False, "bfd_profile": "",
+                      "other": []}
     return table[who]
 
 
@@ -350,7 +372,14 @@ def _bgp_neighbor_statement(nb, w):
     elif k == "shutdown":
         nb["shutdown"] = True
     elif k == "bfd":
+        # FRR reads a neighbour with a profile back as TWO lines, `bfd` and
+        # `bfd profile P` (#570); the profile was dropped here until #559's
+        # phase 3, and a client writing the neighbour back lost it.
         nb["bfd"] = True
+        if len(v) == 2 and v[0] == "profile":
+            nb["bfd_profile"] = v[1]
+        elif v:
+            nb["other"].append("neighbor " + nb["address"] + " " + " ".join(w))
     else:
         nb["other"].append("neighbor " + nb["address"] + " " + " ".join(w))
 
@@ -601,9 +630,281 @@ def interface_routing_typed(cfg):
     return [out[n] for n in order]
 
 
+# --------------------------------------------------------- BFD (#559 phase 3)
+#
+# The `bfd` block, read off the same statements the screens print: its
+# `peer` sessions and its `profile` timer sets. A peer IS its header - FRR
+# keys a session on the address, multihop, local address, interface and VRF -
+# so the header is read into those fields and matched by them, never by its
+# text: FRR writes the words in its own order, a client may give them in any.
+#
+# A block may appear more than once in a candidate - every SetConfig enters
+# `bfd` again and leaves it, and this VTY stages the second `bfd` as a second
+# block (measured: FRR merges them at the commit) - so the reader merges
+# sessions and profiles by their key across every `bfd` block.
+
+#: The timers a peer and a profile both take: (field, FRR's word, number?).
+BFD_TIMER_WORDS = (("detect_multiplier", "detect-multiplier", True),
+                   ("receive_interval_ms", "receive-interval", True),
+                   ("transmit_interval_ms", "transmit-interval", True),
+                   ("minimum_ttl", "minimum-ttl", True),
+                   ("echo_mode", "echo-mode", False),
+                   ("passive_mode", "passive-mode", False),
+                   ("shutdown", "shutdown", False))
+BFD_TIMER_FIELDS = tuple(f for f, _w, _n in BFD_TIMER_WORDS) + (
+    "echo_receive_interval_ms", "echo_receive_disabled",
+    "echo_transmit_interval_ms")
+BFD_PEER_FIELDS = ("profile", "timers")
+BFD_PROFILE_FIELDS = ("timers",)
+BFD_PATH = ["bfd"]
+BFD_KEY = ("address", "multihop", "local_address", "interface", "vrf")
+
+
+def bfd_timers_blank():
+    """A body with nothing stated: 0 / False is FRR's default."""
+    return {f: (False if f in ("echo_mode", "passive_mode", "shutdown",
+                               "echo_receive_disabled") else 0)
+            for f in BFD_TIMER_FIELDS}
+
+
+def bfd_peer_key(header):
+    """`peer A [multihop] [local-address L] [interface I] [vrf V]` as the
+    session's key fields, in whatever order the words came."""
+    w = header.split()
+    if len(w) < 2 or w[0] != "peer":
+        raise ValueError(f"bfd: not a peer: {header!r}")
+    out = {"address": w[1], "multihop": False, "local_address": "",
+           "interface": "", "vrf": ""}
+    i = 2
+    while i < len(w):
+        if w[i] == "multihop":
+            out["multihop"] = True
+            i += 1
+        elif w[i] in ("local-address", "interface", "vrf") and i + 1 < len(w):
+            out[w[i].replace("-", "_")] = w[i + 1]
+            i += 2
+        else:
+            raise ValueError(f"bfd: unknown word {w[i]!r} in {header!r}")
+    return out
+
+
+def bfd_peer_header(p):
+    """The `peer ...` line of a session's key fields, in FRR's own order."""
+    if not p.get("address"):
+        raise ValueError("bfd peer: give its address")
+    for k in ("local_address", "interface", "vrf"):
+        if len((p.get(k) or "x").split()) != 1:
+            raise ValueError(f"bfd peer: {k} is one word")
+    line = f"peer {p['address']}"
+    if p.get("multihop"):
+        line += " multihop"
+    for f, word in (("local_address", "local-address"),
+                    ("interface", "interface"), ("vrf", "vrf")):
+        if p.get(f):
+            line += f" {word} {p[f]}"
+    return line
+
+
+def same_bfd_peer(a, b):
+    """Are `a` and `b` one session: the same key, whatever else differs."""
+    return all(bool(a.get(k)) == bool(b.get(k)) if k == "multihop"
+               else (a.get(k) or "") == (b.get(k) or "") for k in BFD_KEY)
+
+
+def bfd_body_statement(t, other, stmt):
+    """One statement of a peer's or a profile's body, into timers `t`; what
+    no field takes goes to `other` verbatim."""
+    w = stmt.split()
+    for f, word, number in BFD_TIMER_WORDS:
+        if w[0] != word:
+            continue
+        if number and len(w) == 2 and is_number(w[1]):
+            t[f] = _int(w[1])
+            return
+        if not number and len(w) == 1:
+            t[f] = True
+            return
+    if len(w) == 3 and w[0] == "echo" and w[1] == "receive-interval":
+        if w[2] == "disabled":
+            t["echo_receive_disabled"] = True
+            return
+        if is_number(w[2]):
+            t["echo_receive_interval_ms"] = _int(w[2])
+            return
+    if len(w) == 3 and w[:2] == ["echo", "transmit-interval"] and \
+            is_number(w[2]):
+        t["echo_transmit_interval_ms"] = _int(w[2])
+        return
+    other.append(stmt)
+
+
+def bfd_peer_of(peers, header):
+    """The session `header` names in list `peers`, added when it is new: one
+    entry per key, however many blocks state it."""
+    key = bfd_peer_key(header)
+    p = next((x for x in peers if same_bfd_peer(x, key)), None)
+    if p is None:
+        p = dict(key, profile="", timers=bfd_timers_blank(), other=[],
+                 header=bfd_peer_header(key))
+        peers.append(p)
+    return p
+
+
+def bfd_profile_of(profiles, name):
+    """Profile `name` in list `profiles`, added when it is new."""
+    p = next((x for x in profiles if x["name"] == name), None)
+    if p is None:
+        p = {"name": name, "timers": bfd_timers_blank(), "other": []}
+        profiles.append(p)
+    return p
+
+
+def bfd_typed(cfg):
+    """{"peers": [...], "profiles": [...]} of every `bfd` block in `cfg`."""
+    peers, profiles = [], []
+    peer_of = (lambda header: bfd_peer_of(peers, header))
+    profile_of = (lambda name: bfd_profile_of(profiles, name))
+    for path, stmt in routing_statements(cfg):
+        if not path or path[0] != "bfd":
+            continue
+        w = stmt.split()
+        if len(path) == 1:
+            if w[0] == "peer":
+                peer_of(stmt)
+            elif w[0] == "profile" and len(w) == 2:
+                profile_of(w[1])
+            continue
+        head = path[1].split()
+        if head[0] == "peer":
+            p = peer_of(path[1])
+            if w[0] == "profile" and len(w) == 2:
+                p["profile"] = w[1]
+            else:
+                bfd_body_statement(p["timers"], p["other"], stmt)
+        elif head[0] == "profile" and len(head) == 2:
+            p = profile_of(head[1])
+            bfd_body_statement(p["timers"], p["other"], stmt)
+    return {"peers": peers, "profiles": profiles}
+
+
+def _echo_rx(t):
+    if t.get("echo_receive_disabled"):
+        return "disabled"
+    return str(int(t.get("echo_receive_interval_ms") or 0) or "")
+
+
+def bfd_timer_lines(now, want, fields=()):
+    """
+    The body lines that take timers `now` to `want`, for the timer `fields`
+    named (all when none are). A value is removed as `no <the line as it
+    is>`, which this VTY reads as taking that very line out of the candidate
+    (#570) - measured: a bare `no detect-multiplier` is staged as a statement
+    of its own and leaves the old line in the candidate, so a read of the
+    candidate after it would still show the old value.
+    """
+    now = now or bfd_timers_blank()
+    want = want or {}
+    on = (lambda f: not fields or f in fields)
+    lines = []
+    for f, word, number in BFD_TIMER_WORDS:
+        if not on(f):
+            continue
+        a = int(now.get(f) or 0) if number else bool(now.get(f))
+        b = int(want.get(f) or 0) if number else bool(want.get(f))
+        if a == b:
+            continue
+        if number:
+            lines += ([f"no {word} {a}"] if a else []) + \
+                ([f"{word} {b}"] if b else [])
+        else:
+            lines.append(word if b else f"no {word}")
+    if on("echo_receive_interval_ms") or on("echo_receive_disabled"):
+        a, b = _echo_rx(now), _echo_rx(want)
+        if a != b:
+            lines += ([f"no echo receive-interval {a}"] if a else []) + \
+                ([f"echo receive-interval {b}"] if b else [])
+    if on("echo_transmit_interval_ms"):
+        a = int(now.get("echo_transmit_interval_ms") or 0)
+        b = int(want.get("echo_transmit_interval_ms") or 0)
+        if a != b:
+            lines += ([f"no echo transmit-interval {a}"] if a else []) + \
+                ([f"echo transmit-interval {b}"] if b else [])
+    return lines
+
+
+def bfd_timer_mask(fields):
+    """(the plain fields, the timer fields) of an edit's `fields`: `timers`
+    names every timer, `timers.<field>` one; None is no timer at all."""
+    plain = [f for f in fields if not f.startswith("timers.")]
+    named = [f.split(".", 1)[1] for f in fields if f.startswith("timers.")]
+    bad = [f for f in named if f not in BFD_TIMER_FIELDS]
+    if bad:
+        raise ValueError(f"unknown field 'timers.{bad[0]}': the timer fields "
+                         f"are {', '.join(BFD_TIMER_FIELDS)}")
+    if not fields or "timers" in plain:
+        return plain, ()
+    return plain, (named or None)
+
+
+def bfd_peer_lines(cur, desired, fields=()):
+    """The lines, at `bfd`, that set one session: its header, the body lines
+    that change, `exit`. `cur` is the session as bfd_typed reads it from the
+    candidate, None when it is new."""
+    plain, timers = bfd_timer_mask(fields)
+    _mask(plain, BFD_PEER_FIELDS)
+    cur = cur or {}
+    body = []
+    # `fields` empty is every field; `timers.<f>` alone names no plain one.
+    # Measured in lab/api-grpc.sh: `["timers.transmit_interval_ms"]` read
+    # as "no plain field named, so all of them" wrote `no profile api9`.
+    if not fields or "profile" in plain:
+        a, b = cur.get("profile") or "", desired.get("profile") or ""
+        if len(b.split()) > 1:
+            raise ValueError("bfd peer: a profile name is one word")
+        if a != b:
+            body += ([f"no profile {a}"] if a else []) + \
+                ([f"profile {b}"] if b else [])
+    if timers is not None:
+        body += bfd_timer_lines(cur.get("timers"), desired.get("timers"),
+                                timers)
+    return [bfd_peer_header(desired)] + body + ["exit"]
+
+
+def bfd_profile_lines(cur, desired, fields=()):
+    """The lines, at `bfd`, that set one profile."""
+    plain, timers = bfd_timer_mask(fields)
+    _mask(plain, BFD_PROFILE_FIELDS)
+    name = desired.get("name") or ""
+    if len(name.split()) != 1:
+        raise ValueError("bfd profile: give its name, one word")
+    body = [] if timers is None else bfd_timer_lines(
+        (cur or {}).get("timers"), desired.get("timers"), timers)
+    return [f"profile {name}"] + body + ["exit"]
+
+
+def bfd_delete_lines(cfg, name="", peer=None):
+    """(path, lines) that take a profile (`name`), a session (`peer`, its
+    key fields) or - neither given - the whole `bfd` block out of `cfg`. Each
+    as the `no` of its header, which takes its body with it (#570)."""
+    cur = bfd_typed(cfg)
+    if peer and peer.get("address"):
+        p = next((x for x in cur["peers"] if same_bfd_peer(x, peer)), None)
+        if p is None:
+            raise ValueError(f"bfd: no session {bfd_peer_header(peer)!r}")
+        return list(BFD_PATH), [f"no {p['header']}"]
+    if name:
+        if not any(x["name"] == name for x in cur["profiles"]):
+            raise ValueError(f"bfd: no profile {name}")
+        return list(BFD_PATH), [f"no profile {name}"]
+    if not any(s == "bfd" and p == [] for p, s in routing_statements(cfg)):
+        raise ValueError("bfd: no bfd block to remove")
+    return [], ["no bfd"]
+
+
 # ------------------------------------------------- routing edits (phase 3)
 
-STATIC_FIELDS = ("next_hop", "distance", "tag", "description", "extra")
+STATIC_FIELDS = ("next_hop", "distance", "tag", "description", "extra",
+                 "bfd", "bfd_multihop", "bfd_source", "bfd_profile")
 STATIC_PATH = ["router static"]
 
 
@@ -618,6 +919,18 @@ def static_line(r):
         line += f" distance {int(r['distance'])}"
     if r.get("tag"):
         line += f" tag {int(r['tag'])}"
+    if r.get("bfd"):
+        line += " bfd"
+        if r.get("bfd_multihop"):
+            line += " multi-hop"
+        for k in ("source", "profile"):
+            v = r.get("bfd_" + k) or ""
+            if len(v.split()) > 1:
+                raise ValueError(f"static route: bfd {k} is one word")
+            if v:
+                line += f" {k} {v}"
+    elif r.get("bfd_multihop") or r.get("bfd_source") or r.get("bfd_profile"):
+        raise ValueError("static route: a BFD option needs bfd")
     if r.get("description"):
         line += f" description {r['description']}"
     return line
@@ -650,7 +963,7 @@ def find_static(cfg, prefix, next_hop):
 
 NEIGHBOR_FIELDS = ("remote_as", "description", "update_source", "timers",
                    "password", "peer_group", "ebgp_multihop", "shutdown",
-                   "bfd", "families")
+                   "bfd", "bfd_profile", "families")
 FAMILY_FIELDS = ("activate", "route_map_in", "route_map_out",
                  "prefix_list_in", "prefix_list_out", "maximum_prefix",
                  "next_hop_self", "soft_reconfiguration_inbound",
@@ -740,6 +1053,17 @@ def bgp_neighbor_lines(cur_router, edit, fields=()):
                        want.get("shutdown"))
     if on("bfd"):
         lines += _flag(n, "bfd", cur.get("bfd"), want.get("bfd"))
+    # The profile only while BFD stays on: `no neighbor X bfd` takes the
+    # profile line with it (#570), and a second `no` for the profile would
+    # name a line that is no longer there.
+    if on("bfd_profile") and (want.get("bfd") or (not on("bfd") and
+                                                   cur.get("bfd"))):
+        a, b = cur.get("bfd_profile") or "", want.get("bfd_profile") or ""
+        if len(b.split()) > 1:
+            raise ValueError("bgp neighbor: a BFD profile name is one word")
+        if a != b:
+            lines += ([f"no neighbor {n} bfd profile {a}"] if a else []) + \
+                ([f"neighbor {n} bfd profile {b}"] if b else [])
     if on("families"):
         fams = {(f["afi"], f["safi"]): f
                 for f in (cur_router or {}).get("families", [])}
@@ -795,9 +1119,19 @@ def bgp_neighbor_delete_lines(cfg, asn, vrf, name):
     """
     header = bgp_path(asn, vrf)[0]
     fams, top, last = {}, [], []
-    for path, stmt in routing_statements(cfg):
+    stmts = [(p, s) for p, s in routing_statements(cfg)]
+    # `no neighbor X bfd` takes FRR's second line, `bfd profile P`, with it
+    # (#570): a `no` for that line too names one that is gone, and measured
+    # in lab/api-grpc.sh (#559 phase 3) the commit then failed "routing
+    # reload failed". So the profile line is left to the `bfd` one.
+    plain_bfd = any(p and p[0] == header and s.split() == ["neighbor", name,
+                                                          "bfd"]
+                    for p, s in stmts)
+    for path, stmt in stmts:
         w = stmt.split()
         if not path or path[0] != header or w[:2] != ["neighbor", name]:
+            continue
+        if plain_bfd and w[2:4] == ["bfd", "profile"]:
             continue
         if len(path) == 2:
             fams.setdefault(path[1], []).append("no " + stmt)
@@ -825,10 +1159,13 @@ def shown_lines(lines):
 
 
 def delete_for(cfg, area, name="", transport="", prefix="", next_hop="",
-               asn="", vrf=""):
+               asn="", vrf="", bfd_peer=None):
     """(path, lines) that remove one object from Config `cfg` - the
     candidate: a BGP neighbour is removed by its own statements, read off
-    `cfg`; everything else as delete_lines says."""
+    `cfg`, and so is a BFD session (by the header the candidate holds it
+    under); everything else as delete_lines says."""
+    if area == "bfd":
+        return bfd_delete_lines(cfg, name, bfd_peer)
     if area == "bgp":
         if not name:
             raise ValueError("bgp: name the neighbour to remove")
@@ -935,6 +1272,9 @@ def routing_typed(cfg, areas):
         out["isis"] = isis_typed(cfg)
     if "interface_routing" in areas:
         out["interface_routing"] = interface_routing_typed(cfg)
+    if "bfd" in areas:
+        b = bfd_typed(cfg)
+        out["bfd_peers"], out["bfd_profiles"] = b["peers"], b["profiles"]
     return routing_settings(out)
 
 
@@ -1786,6 +2126,12 @@ def config_modes(P):
         ("router static", "router static", '["router static"]',
          P.STATIC_BLOCK_GRAMMAR, adm, ["router static"]),
         ("rpki", "rpki", '["rpki"]', P.RPKI_BLOCK, adm, ["rpki"]),
+        # #559 phase 3: the `bfd` block and its two kinds of entry.
+        ("bfd", "bfd", '["bfd"]', P.BFD_BLOCK, adm, ["bfd"]),
+        ("bfd peer", "bfd > peer <address> ...", '["bfd","peer <address>"]',
+         P.BFD_PEER, adm, ["bfd", "peer <address>"]),
+        ("bfd profile", "bfd > profile <name>", '["bfd","profile <name>"]',
+         P.BFD_PROFILE, adm, ["bfd", "profile <name>"]),
         ("router bgp", "router bgp <asn>", '["router bgp <asn>"]', P.BGP_BLOCK,
          adm, ["router bgp <asn>"]),
         ("bgp neighbor", "router bgp <asn>: neighbor <address> ...",
@@ -1826,7 +2172,10 @@ TYPED_MODES = {"interface (port)": ("interfaces", None),
                # secret and are written as lines (its other settings are
                # typed, which the first word alone cannot say).
                "config": ("system", ("hostname", "dns", "ssh", "api",
-                                     "vrf"))}
+                                     "vrf")),
+               # #559 phase 3: SetConfig's `bfd_peer` and `bfd_profile`.
+               "bfd": ("bfd", ("peer", "profile")),
+               "bfd peer": ("bfd", None), "bfd profile": ("bfd", None)}
 
 #: The modes GetConfig READS as fields though they are written as lines
 #: (#558 phases 3 and 4): their statements are `read_typed`, and `typed`
@@ -2391,8 +2740,17 @@ def edit_for(cfg, area, obj, fields=()):
         cur = ({"name": name, "table": cfg.vrf_devices[name]}
                if name in cfg.vrf_devices else None)
         return [], vrf_lines(cur, obj)
+    if area == "bfd_peers":
+        cur = next((p for p in bfd_typed(cfg)["peers"]
+                    if same_bfd_peer(p, obj)), None)
+        return list(BFD_PATH), bfd_peer_lines(cur, obj, fields)
+    if area == "bfd_profiles":
+        cur = next((p for p in bfd_typed(cfg)["profiles"]
+                    if p["name"] == obj.get("name")), None)
+        return list(BFD_PATH), bfd_profile_lines(cur, obj, fields)
     raise ValueError(f"unknown area {area!r}: the editable areas are "
-                     f"interfaces, pools, logging, static, bgp, system, vrfs")
+                     f"interfaces, pools, logging, static, bgp, system, vrfs, "
+                     f"bfd_peers, bfd_profiles")
 
 
 def names_for(cfg, area, known_interfaces=()):

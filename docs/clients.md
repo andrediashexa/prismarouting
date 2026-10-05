@@ -27,6 +27,26 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.150.12 - BFD's configuration as fields
+
+* **Contract:** additive (`prisma.proto` sha256 `89101b5086029a0be8983270a06a07e407c83e5683df3a392dbbf7e1abf9792b`).
+* **ConfigService, BFD (#559 phase 3):** GetConfig area `bfd` answers
+  `bfd_peers` (BfdPeerConfig) and `bfd_profiles` (BfdProfileConfig), their
+  timers as BfdTimers (0 / false: not stated, FRR's default applies).
+  SetConfig takes `bfd_peer` (found by address, multihop, local_address,
+  interface, vrf) or `bfd_profile` (by name); `fields` names timers as
+  `timers` or `timers.<field>`. DeleteConfig area `bfd` removes the
+  profile `name`, the session `bfd_peer`, or - neither given - the whole
+  block. GetSchema has the `bfd`, `bfd peer` and `bfd profile` modes.
+* **Changed reads, additive:** `BgpNeighborConfig.bfd_profile` (15), read
+  where it was dropped before; `StaticRouteConfig.bfd`, `bfd_multihop`,
+  `bfd_source`, `bfd_profile` (10-13) - a static route's BFD words are no
+  longer in its `extra`, so a client that read them there reads them here.
+* **Coming, breaking:** NAT64 moves to `nat > nat64` with its own API area
+  (#572), and a pool's `mode dynamic` becomes `mode bpa` (#573), in one
+  release after this one.
+* **Lab box:** .166 is on 0.150.11.
+
 ## 0.150.11 - BFD-STD-MIB answers on a real box
 
 * **Contract:** unchanged (`prisma.proto` sha256 `3c758e3cf29cdcf8cc738e973502cd69fcb07ec93969d83a99bdf26a0c1c5305`).

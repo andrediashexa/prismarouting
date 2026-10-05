@@ -1,5 +1,5 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 166
+# OFF-RED-AT-LEAST: 186
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -570,6 +570,22 @@ sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50556 --dir $C/
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver8.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
 T8=$(python3 lab/api_phase8_check.py /tmp/apistubs $C 127.0.0.1:50556 $S8 2>&1)
 printf '%s\n' "$T8" | sed 's/^/  /'
+# #559 phase 3: the `bfd` block as fields, on the same server - a profile, a
+# session, a neighbour's and a static route's BFD, each committed and read
+# back as the VTY prints it, then removed: a session, a profile, and the
+# whole block last (#570). Phase 8's session on d0 goes first, through vtysh
+# as it came: d0 is a dummy no dataplane holds, and the commit check of every
+# phase 9 commit - which reads the whole configuration - refuses it ("this
+# box has no such interface"), measured on this lab's first run. And phase
+# 7's IS-IS circuit and OSPF network on d0 with it, for the same reason
+# (measured on the second): nothing of d0 is left for a commit to refuse.
+vtysh -c "conf t" -c "bfd" -c "no peer 192.0.2.77 interface d0" -c exit \
+  -c "interface d0" -c "no ip router isis HEXA" -c exit \
+  -c "router ospf" -c "no network 192.0.2.0/24 area 0" -c exit \
+  2>&1 | sed 's/^/  frr: /'
+vtysh -c "show running-config" 2>/dev/null | grep -n "d0" | sed 's/^/  left on d0: /'
+T9=$(python3 lab/api_phase9_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
+printf '%s\n' "$T9" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -782,6 +798,19 @@ expect "WatchBfd: the session as it is when the call starts" t8 watch-initial
 expect "  a peer added under it arrives as APPEARED" t8 watch-appeared
 expect "  and removed, as GONE, with the state it had" t8 watch-gone
 expect "  an interval outside 1-60: INVALID_ARGUMENT" t8 interval-refused
+t9() { printf '%s\n' "$T9" | grep -q "^RESULT $1 ok"; }
+expect "#559 phase 3: SetConfig bfd_profile: committed, GetConfig and the VTY read its timers" t9 set-profile
+expect "  SetConfig bfd_peer: its profile and a timer, read back by key" t9 set-peer
+expect "  one timer named: only that line moves, the profile kept" t9 set-peer-one-field
+expect "  a BGP neighbour's bfd profile is a field, written where FRR reads it" t9 neighbor-bfd-profile
+expect "  and the neighbour, BFD and all, is removed" t9 neighbor-with-bfd-deleted
+expect "  a static route's BFD as fields, after its tag" t9 static-bfd
+expect "  and the route removed" t9 static-bfd-deleted
+expect "  DeleteConfig a session by its key" t9 delete-peer
+expect "  DeleteConfig a profile by its name" t9 delete-profile
+expect "  DeleteConfig the whole block, body and all, the static routes kept (#570)" t9 delete-block
+expect "  a session that is not there: INVALID_ARGUMENT" t9 delete-unknown-refused
+expect "  GetSchema knows the bfd peer mode, its statements typed" t9 schema-bfd
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
