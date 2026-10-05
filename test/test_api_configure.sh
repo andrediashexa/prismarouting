@@ -44,6 +44,27 @@ API_PORT=50051
 grep -qx "ListenStream=\[2001:db8::1\]:50051" "$U" && ok "[2001:db8::1]:50051" \
   || bad "$(grep ListenStream "$U")"
 
+echo "=== IPv4 and IPv6 together: one ListenStream each (#582) ==="
+# 10.40.200.166: the API had to answer on the management interface's IPv6
+# address as well as its IPv4 one, and api.env carried one address.
+run "API_ENABLED=yes
+API_LISTEN=10.40.200.166 2804:4ed4:1000:6::166
+API_PORT=50051
+"
+_ls=$(grep -c "^ListenStream=" "$U" 2>/dev/null)
+grep -qx "ListenStream=10.40.200.166:50051" "$U" \
+  && grep -qx "ListenStream=\[2804:4ed4:1000:6::166\]:50051" "$U" && [ "$_ls" = 2 ] \
+  && ok "10.40.200.166:50051 and [2804:4ed4:1000:6::166]:50051" \
+  || bad "the listeners: $(grep ListenStream "$U" 2>/dev/null)"
+case "$OUT" in *"10.40.200.166:50051 [2804:4ed4:1000:6::166]:50051"*) ok "and says both" ;;
+  *) bad "said: $OUT" ;; esac
+run "API_ENABLED=yes
+API_LISTEN=10.40.200.166 10.0.0.1;reboot
+API_PORT=9443
+"
+[ ! -e "$U" ] && ok "one untrustworthy word in the list is no listener at all" \
+  || bad "a socket from: $(cat "$U")"
+
 echo "=== off, or anything it cannot trust, is no listener ==="
 run "API_ENABLED=no
 API_LISTEN=10.40.200.166

@@ -79,7 +79,11 @@ fi
 
 # The same rules the VTY applies, again, because this runs as root.
 case "$API_PORT" in ''|*[!0-9]*) API_PORT=0 ;; esac
-case "$API_LISTEN" in *[!0-9a-fA-F.:]*) API_LISTEN= ;; esac
+# A list since #582, space-separated: each word an address, or the whole
+# setting is dropped, as a single bad address always was.
+for a in $API_LISTEN; do
+  case "$a" in *[!0-9a-fA-F.:]*) API_LISTEN= ;; esac
+done
 if [ "$API_ENABLED" != yes ] || [ -z "$API_LISTEN" ] \
    || [ "$API_PORT" -lt 1 ] || [ "$API_PORT" -gt 65535 ]; then
   "$SYSTEMCTL" stop "$SOCKET" prisma-routing-api-proxy.service \
@@ -90,7 +94,14 @@ if [ "$API_ENABLED" != yes ] || [ -z "$API_LISTEN" ] \
   exit 0
 fi
 
-case "$API_LISTEN" in *:*) LISTEN="[$API_LISTEN]:$API_PORT" ;; *) LISTEN="$API_LISTEN:$API_PORT" ;; esac
+# One ListenStream per address (#582), an IPv6 one in brackets.
+LISTEN_LINES=; LISTEN=
+for a in $API_LISTEN; do
+  case "$a" in *:*) l="[$a]:$API_PORT" ;; *) l="$a:$API_PORT" ;; esac
+  LISTEN_LINES="${LISTEN_LINES}ListenStream=$l
+"
+  LISTEN="${LISTEN:+$LISTEN }$l"
+done
 mkdir -p "$UNITS"
 cat > "$UNITS/$SOCKET.new" <<UNIT
 # Written by /usr/lib/prisma-routing/api-configure from $ENV.
@@ -99,8 +110,7 @@ Description=Prisma Routing - the management API's listener on the management net
 After=prisma-routing-containers.service
 
 [Socket]
-ListenStream=$LISTEN
-FreeBind=yes
+${LISTEN_LINES}FreeBind=yes
 
 [Install]
 WantedBy=sockets.target

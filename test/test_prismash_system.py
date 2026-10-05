@@ -844,6 +844,54 @@ with _tf.TemporaryDirectory() as _d:
                                   root="", conf=_conf).read()[0]
     check(_settings.get("enterprise-number", "") == "67033",
           f"and the product's where the operator set none (#508): {_settings}")
+# LISTEN ON IPv4 AND IPv6 TOGETHER (#582). 10.40.200.166 had to answer SNMP
+# on its management interface's IPv6 address as well as its IPv4 one, the
+# setting took one address, and an IPv6 one was written `udp:<v6>:161`, which
+# snmpd does not read as IPv6.
+print("--- listen-address: one or more addresses, v4 and v6 (#582)")
+check(system.listen_addresses("10.40.200.166  2804:4ed4:1000:6::166")
+      == ["10.40.200.166", "2804:4ed4:1000:6::166"]
+      and system.listen_addresses("") == [] and system.listen_addresses(None) == [],
+      "listen_addresses: the words of the setting, in order; none for empty")
+check(system.listen_error("snmp listen-address", "10.40.200.166") is None,
+      "one IPv4 address, as before")
+check(system.listen_error("snmp listen-address",
+                          "10.40.200.166 2804:4ed4:1000:6::166") is None,
+      "an IPv4 and an IPv6 address")
+check(system.listen_error("snmp listen-address", "10.40.200.166 potato")
+      is not None, "a word that is not an address refuses the list")
+check("named twice" in (system.listen_error("snmp listen-address",
+                                            "10.0.0.1 10.0.0.1") or ""),
+      "an address named twice is refused")
+check(system.validate_snmp({"listen-address": "10.40.200.166 2804:4ed4:1000:6::166"})
+      is None and system.validate_api({"listen-address":
+                                       "10.40.200.166 2804:4ed4:1000:6::166"}) is None,
+      "validate_snmp and validate_api take the list")
+check(system.snmp_agent_address("10.40.200.166", "161") == "udp:10.40.200.166:161",
+      "one IPv4 address writes what it always wrote")
+check(system.snmp_agent_address("2804:4ed4:1000:6::166", "161")
+      == "udp6:[2804:4ed4:1000:6::166]:161", "an IPv6 address is udp6, bracketed")
+check(system.snmp_agent_address("10.40.200.166 2804:4ed4:1000:6::166", "161")
+      == "udp:10.40.200.166:161,udp6:[2804:4ed4:1000:6::166]:161",
+      "both, comma-separated, in order")
+for _w, _want in (("udp:10.40.200.166:161", ("10.40.200.166", "161")),
+                  ("udp6:[2804:4ed4:1000:6::166]:161", ("2804:4ed4:1000:6::166", "161")),
+                  ("udp:10.40.200.166:161,udp6:[2804:4ed4:1000:6::166]:161",
+                   ("10.40.200.166 2804:4ed4:1000:6::166", "161")),
+                  ("tcp:1.2.3.4:161", (None, None))):
+    check(system.parse_agent_address(_w) == _want,
+          f"agentAddress {_w} reads as {_want}: {system.parse_agent_address(_w)}")
+with _tf.TemporaryDirectory() as _d:
+    _conf = os.path.join(_d, "snmpd.conf")
+    _both = "10.40.200.166 2804:4ed4:1000:6::166"
+    with open(_conf, "w") as _f:
+        _f.write(system._snmpd_body({"listen-address": _both}, ["p"], {}, release="x"))
+    _txt = open(_conf).read()
+    _settings = system.SnmpDaemon(runner=lambda a, stdin=None, timeout=30: (1, ""),
+                                  root="", conf=_conf).read()[0]
+    check("agentAddress udp:10.40.200.166:161,udp6:[2804:4ed4:1000:6::166]:161"
+          in _txt and _settings.get("listen-address") == _both,
+          f"the file the VTY writes reads back to the same list: {_settings}")
 print("  the view answers the box's identity, CPU, memory and disks")
 print("--- _release: the release sysDescr names")
 _old = system.SNMP_VERSION_FILE

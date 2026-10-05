@@ -27,6 +27,15 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.8 - SNMP and the API listen on IPv4 and IPv6
+
+* **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **`SystemConfig` `api.listen-address` / `snmp.listen-address`** (#582) may
+  hold several addresses, space-separated (`10.40.200.166
+  2804:4ed4:1000:6::166`); one address reads as before. SetConfig and Edit
+  take the list. The API then answers on each address, IPv6 included.
+* **Lab box:** .166 is on 0.151.7.
+
 ## 0.151.7 - FRR's `ip address` is refused in an interface block
 
 * **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).

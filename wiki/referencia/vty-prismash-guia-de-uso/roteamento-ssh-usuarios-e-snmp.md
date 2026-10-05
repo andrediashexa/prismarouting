@@ -508,7 +508,7 @@ O agente é **somente leitura por construção** — não existe caminho de escr
 ```
 configure
  snmp enabled yes|no
- snmp listen-address <endereço>
+ snmp listen-address <endereço> [<endereço> ...]
  snmp port <1-65535>
  snmp enterprise-number <1-4294967295>
  snmp community <string>
@@ -517,12 +517,14 @@ configure
 | Comando | O que define | Padrão |
 |---------|--------------|--------|
 | `snmp enabled` | roda o agente ou não | `no`   |
-| `snmp listen-address` | endereço de escuta | `127.0.0.1` |
+| `snmp listen-address` | um ou mais endereços de escuta, IPv4 e IPv6 | `127.0.0.1` |
 | `snmp port` | porta UDP    | `161`  |
 | `snmp enterprise-number` | o Private Enterprise Number IANA da sua organização | nenhum |
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | nenhuma |
 
 Com o padrão `127.0.0.1`, o agente só responde de dentro da caixa: para o NMS alcançá-lo, `listen-address` precisa ser um endereço que ele alcança.
+
+Para responder em IPv4 e IPv6 ao mesmo tempo, liste os dois endereços na mesma linha, separados por espaço — `snmp listen-address 10.40.200.166 2804:4ed4:1000:6::166`. O `api listen-address` aceita a lista do mesmo jeito. Escutar em `0.0.0.0` ou `::` não é o caminho: abriria o serviço também nas interfaces do dataplane, inclusive as públicas.
 
 **Ligar o agente sem comunidade e sem usuário v3 é recusado**: seria um agente que ninguém consegue consultar. A comunidade e as senhas dos usuários v3 aparecem como `<set, not shown>` em `show configuration`.
 
