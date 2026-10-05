@@ -951,6 +951,24 @@ check(A.health_status(A.LOG_HEALTH, True, "NOT_SERVING") == "NOT_SERVING"
       and A.health_status("prisma.v1.OperationalService", True, "NOT_SERVING") == "SERVING",
       "#555: the log export answers under a name of its own, and its stall "
       "reaches neither the server's \"\" nor OperationalService")
+# #575: the saved configuration all applied, or not - a name of its own, so a
+# box short of a card does not read as a server to stop calling.
+import tempfile as _tf575  # noqa: E402
+_d575 = _tf575.mkdtemp()
+_rec575 = os.path.join(_d575, "config-pending.json")
+check(A.config_pending(_rec575) is False, "#575: no record, nothing pending")
+with open(_rec575, "w") as _f575:
+    _f575.write("{}")
+check(A.config_pending(_rec575) is True, "#575: a record is something pending")
+os.unlink(_rec575)
+os.rmdir(_d575)
+check(A.health_status(A.CONFIG_HEALTH, True, pending=True) == "NOT_SERVING"
+      and A.health_status(A.CONFIG_HEALTH, True, pending=False) == "SERVING"
+      and A.health_status("", True, pending=True) == "SERVING"
+      and A.health_status("prisma.v1.ConfigService", True,
+                          pending=True) == "SERVING",
+      "#575: prisma.v1.Configuration is NOT_SERVING while statements wait "
+      "for a card, and that reaches no other service")
 check(A.stats_ok(lambda: {"/sys/heartbeat": 1}) and not A.stats_ok(lambda: {})
       and not A.stats_ok(lambda: 1 / 0), "the statistics segment answers, or does not")
 
