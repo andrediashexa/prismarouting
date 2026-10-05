@@ -27,6 +27,18 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.2 - SFP+ modules ixgbe does not list, opt-in
+
+* **Contract:** additive (`prisma.proto` sha256 `e2c8775ff68e9937fe092aa4102792786d248e6ef1fefa1850ac9fa88a7041e2`).
+* **`SystemConfig.hardware`** (10, KeyValue, read as fields, written as lines
+  through Edit under `["system","hardware"]`): `unsupported-sfp allow`, or
+  absent for ixgbe's default, refuse. In effect from the next boot.
+* **`SystemInfo`** gains `unsupported_sfp_configured` (21),
+  `unsupported_sfp_booted` (22), `unsupported_sfp_booted_known` (23, false
+  when the kernel command line could not be read) and `hardware_text` (24,
+  `show system hardware`). GetSchema adds the `system hardware` mode.
+* **Lab box:** .166 is on 0.151.1.
+
 ## 0.151.1 - the screens say bpa too
 
 * **Contract:** unchanged (`prisma.proto` sha256 `d804c1426273155583621247c0e43bc7f04896523e560f14a214dce07a3966c8`).
