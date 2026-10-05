@@ -2953,6 +2953,51 @@ with contextlib.redirect_stdout(_buf):
     _sh2.write_pending(["x"], [" a"], "/p", "text")
     _sh2.forget_pending()
 check(_sh2.read_pending() is None, "#575: forget_pending left the record")
+print("\n=== a boot puts management's rules back, a tuner or not (#580) ===")
+# The running config reads management back from tune.env, so the file and the
+# box agree and the commit has no change to apply: the rules and sysctls the
+# tuner puts in at boot are the only ones, and a boot whose tuner did not run
+# would leave the box's own traffic on the subscribers' default. load() puts
+# the same set back whenever the file says management is in a VRF.
+_m580 = config.Config()
+_m580.vrf_devices = {"mgmt": 100}
+_m580.management = {"vrf": "mgmt"}
+for _with, _want in ((True, 1), (False, 0)):
+    _f = config.Config()
+    _f.vrf_devices = {"mgmt": 100}
+    if _with:
+        _f.management = {"vrf": "mgmt"}
+    api = FakeApi()
+    sh = shell_with(api)
+    sh.running_config = lambda f=_f: f
+    _seen = []
+    sh.apply_management = lambda t: (_seen.append(t.management), (True, ""))[1]
+    with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+        fh.write(_f.text())
+        saved = fh.name
+    _o580 = io.StringIO()
+    with contextlib.redirect_stdout(_o580):
+        sh.load(saved)
+    os.unlink(saved)
+    check(len(_seen) == _want and "refusing" not in _o580.getvalue(),
+          f"#580: management {'in a VRF' if _with else 'in main'}: "
+          f"{_want} re-apply at load, saw {_seen}: {_o580.getvalue()[-200:]!r}")
+# And a re-apply that fails is said, and counted as the boot's failure.
+api = FakeApi()
+sh = shell_with(api)
+sh.running_config = lambda: _m580
+sh.apply_management = lambda t: (False, "ip rule add: Operation not permitted")
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write(_m580.text())
+    saved = fh.name
+_o580 = io.StringIO()
+_b580 = sh.failed
+with contextlib.redirect_stdout(_o580):
+    sh.load(saved)
+os.unlink(saved)
+check("management could not be put in its VRF" in _o580.getvalue()
+      and sh.failed > _b580,
+      f"#580: a failed re-apply is said and counted: {_o580.getvalue()!r}")
 
 print("\n=== a pool given by prefix-lists: resolved, sent, refused (#589) ===")
 # Mutations shown red: the resolve_pool_lists() call at the top of _apply

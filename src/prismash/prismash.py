@@ -26144,6 +26144,16 @@ class Shell:
         # reachable only at its console is better than one that is neither.
         if way_back:
             self.apply_management_path(way_back, management_table(target))
+        # #580: the running config reads management back from tune.env, so
+        # the commit below sees no change and would put no rule in. The
+        # tuner puts them in at every boot, before the dataplane; this is the
+        # same set again, for a boot whose tuner did not run - without the
+        # rules the box's own traffic follows the subscribers' default and
+        # its replies to an SSH session in the VRF leave by the wrong table.
+        if target.management.get("vrf"):
+            ok, msg = self.apply_management(target)
+            if not ok:
+                self.err_prose("management could not be put in its VRF", msg)
 
         # #573: a file saved before `mode bpa` says `mode dynamic`. It is
         # read as the BPA pool it is, said here, and - once applied - written
