@@ -849,6 +849,10 @@ with _tf.TemporaryDirectory() as _d:
 # setting took one address, and an IPv6 one was written `udp:<v6>:161`, which
 # snmpd does not read as IPv6.
 print("--- listen-address: one or more addresses, v4 and v6 (#582)")
+check(system.listen_addresses("10.40.200.166  2804:4ed4:1000:6::166")
+      == ["10.40.200.166", "2804:4ed4:1000:6::166"]
+      and system.listen_addresses("") == [] and system.listen_addresses(None) == [],
+      "listen_addresses: the words of the setting, in order; none for empty")
 check(system.listen_error("snmp listen-address", "10.40.200.166") is None,
       "one IPv4 address, as before")
 check(system.listen_error("snmp listen-address",

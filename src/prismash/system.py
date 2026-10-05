@@ -1082,7 +1082,7 @@ def parse_agent_address(word: str):
             _, a, p = part.split(":")
         else:
             return None, None
-        if not p.isdigit() or (port is not None and p != port):
+        if not is_number(p) or (port is not None and p != port):
             return None, None
         addrs.append(a)
         port = p
