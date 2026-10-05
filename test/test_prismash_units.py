@@ -2679,6 +2679,19 @@ try:
     rv, text = driven(lambda: sh3.do_commit([]))
     check("management could not be put in its VRF" in text,
           f"an unwritable tune.env fails the commit: {text!r}")
+    # And the commit's own check refuses a VRF the configuration does not
+    # make, before anything reaches the host.
+    sh4 = shell()
+    sh4.running_config = lambda: _copy.deepcopy(_run3)
+    sh4.candidate = _copy.deepcopy(_run3)
+    del sh4.candidate.vrf_devices["mgmt"]
+    sh4.candidate.management = {"vrf": "mgmt"}
+    _calls4 = []
+    sh4.sys._run = lambda argv, *a, **k: (_calls4.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh4.do_commit([]))
+    check("management vrf mgmt: no such VRF here" in text
+          and not any("rule" in a for a in _calls4),
+          f"commit refuses management in a VRF it does not make: {text!r}")
 finally:
     prismash.Shell.TUNE_ENV = _saved_te
 ok("system > management: stored, put on the host now, shown")
