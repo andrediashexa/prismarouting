@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.151.13 - replace pattern and rename, as in Junos
+
+### Added
+
 * **`replace pattern` and `rename` in configuration mode, Junos-style.**
   ([#585](https://github.com/andrediashexa/hexarouting/issues/585))
   `replace pattern <regex> with <replacement> [upto <n>]` substitutes a
@@ -117,8 +123,6 @@ version has a chance of seeing it.
   while the apply removes the old pool before adding the new. A pool that
   is a removed one in every line but its name is no longer sent back to the
   dataplane's check (measured in lab/replace-rename.sh).
-
-### Fixed
 
 ## 0.151.12 - a CGNAT pool's sides as prefix-lists
 
