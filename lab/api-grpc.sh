@@ -626,6 +626,16 @@ kill $DOORS11 2>/dev/null; wait $DOORS11 2>/dev/null
 rm -f /run/prisma-routing/doors.sock
 echo "  the doors daemon journaled, in phase 11: $(grep -c 'door:' /tmp/doors11.log) line(s), none an event's"
 grep 'door:' /tmp/doors11.log | cut -c1-100 | sort | uniq -c | sed 's/^/    /'
+# #590: ListTransceivers. pg0 is given a module's EEPROM through the
+# plugin's stand-in - the lab has no SFP - and the reader for a Linux card is
+# where install.sh puts it, so a name that is neither a port nor a card is
+# read and found missing as on a box.
+echo "=========== #590: ListTransceivers ==========="
+install -D -m 0644 src/prismash/transceiver.py /usr/lib/prisma-routing/transceiver.py
+vppctl bpa transceiver stand-in pg0 type sff-8472 hex "$(python3 -c "import sys; \
+sys.path.insert(0, 'test'); import transceiver_fixtures as F; print(F.sfp_low_rx().hex())")"
+T12=$(python3 lab/api_phase12_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
+printf '%s\n' "$T12" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -875,6 +885,15 @@ expect "  a since that is no time: INVALID_ARGUMENT, in the VTY's words" t11 eve
 expect "  a source the box has not got: INVALID_ARGUMENT" t11 events-source-refused
 expect "  a read-only account reads the same record, through the door" t11 events-any-account
 expect "  GetSystem: why the dataplane last started, as recorded - unexpected" t11 system-start-cause
+t12() { printf '%s\n' "$T12" | grep -q "^RESULT $1 ok"; }
+expect "#590: ListTransceivers reads pg0's module, from the plugin's stand-in" t12 xcvr-one
+expect "  its identity, as the module's EEPROM names it" t12 xcvr-identity
+expect "  its RX power, -19.00 dBm, past its -18.01 dBm low warning" t12 xcvr-rx-low
+expect "  its temperature, voltage, bias and TX power beside their thresholds" t12 xcvr-levels
+expect "  its text is the VTY's show interface pg0 transceiver" t12 xcvr-text-is-vty
+expect "  every port asked: pg0, and no TAP" t12 xcvr-all
+expect "  a name that is neither a port nor a card is missing" t12 xcvr-missing
+expect "  a read-only account reads it too" t12 xcvr-any-account
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
