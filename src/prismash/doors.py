@@ -47,6 +47,7 @@ from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
                     hostname_error, is_number)
 import events
+import transceiver
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
                     VRF_RESERVED_PREFIX, probe_host_ok, probe_source_ok,
                     vrf_device_error)
@@ -264,6 +265,30 @@ QUERIES = {
     # account on the host reads with `ip link`.
     LINKS_ARGV: "list the Linux interfaces, VRFs and members",
 }
+
+def query_of(argv):
+    """
+    The question a shaped query `argv` asks, or None when it is none (#590).
+
+    QUERIES above are whole argvs; this is the one question that takes an
+    argument: a card's module EEPROM, read by the installed
+    transceiver.py with the ioctl `ethtool -m` sends. The kernel wants
+    CAP_NET_ADMIN for it (ETHTOOL_GMODULEEEPROM is not in the list ethtool's
+    ioctl lets anyone ask), so the VTY in its container and the SNMP agent
+    as Debian-snmp both ask the host; and what it gives back - the module's
+    identity and levels - is what any account may read, as `show interface`
+    is. The device is a netdev name and nothing else: the program, its
+    interpreter and its verb are fixed.
+    """
+    if not isinstance(argv, (list, tuple)) or len(argv) != 4 or \
+            not all(isinstance(a, str) for a in argv):
+        return None
+    dev = argv[3]
+    if NETDEV.match(dev) and \
+            tuple(argv) == transceiver.read_argv(dev, transceiver.PROGRAM):
+        return "read a card's module EEPROM"
+    return None
+
 
 #: The longest a door may take. The VTY's own default is 30 seconds.
 MAX_TIMEOUT = 120
@@ -690,7 +715,8 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
         timeout = r.get("timeout", 30)
     except (ValueError, KeyError, TypeError):
         return {"rc": 126, "out": "the host's door: not a request"}
-    if stdin is None and isinstance(argv, list) and tuple(argv) in QUERIES:
+    if stdin is None and isinstance(argv, list) and \
+            (tuple(argv) in QUERIES or query_of(argv)):
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             timeout = 30
         rc, out = execute(argv, None, min(timeout, MAX_TIMEOUT))

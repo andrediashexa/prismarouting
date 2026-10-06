@@ -41,7 +41,7 @@ the CGNAT's totals, pools and workers, the connection records, HA, LACP, BGP,
 OSPF, OSPFv3, IS-IS, the FIB's size, the control plane's CPU, memory and
 disks, the box's own state - the tuning in effect, the boot self-test, the
 configuration's commits and confirm window, the configuration trail's head
-(#524) - and the box's notifications. The box prints it with its enterprise
+(#524) - the ports' transceivers (#590), and the box's notifications. The box prints it with its enterprise
 number filled in, the same way it prints the MIB:
 
 ```
@@ -69,6 +69,9 @@ exactly as it does YAML. Then give the host an SNMP interface - v2c with an
 | `{$MEMORY.UTIL.MAX}` | 90 | the control plane's memory |
 | `{$BGP4V2.INDEX.MATCHES}` | `^[0-9]+\.2\.` | BGP4V2-MIB peers discovered: IPv6 only, since BGP4-MIB has the IPv4 ones |
 | `{$SNMP.TIMEOUT}` | 5m | no answer for this long is "no SNMP data collection" |
+| `{$PRISMA.XCVR.CONTROL:"<port>"}` | 1 | 0 silences a port's transceiver alarms - an empty cage, a port expected dark; a QSFP lane is `"<port> lane <n>"` (#590) |
+| `{$PRISMA.XCVR.TEMP.MAX}` | 70 | a module's temperature, degrees C, that raises "temperature is high", beside the module's own high warning |
+| `{$PRISMA.XCVR.RX.MIN}`, `{$PRISMA.XCVR.RX.MAX}` | -40, 10 | RX power in dBm that raises "RX power is low" or "high", beside the module's own warnings: -40 is no light, so by default only the module's thresholds decide |
 
 **What it alarms on** is the table in *What is worth an alarm* below, with
 three decisions:
@@ -364,6 +367,54 @@ whose dataplane did not come up is the one somebody reads them for.
 | `.1.19.4.0` | `prAuditHeadDigest` | DisplayString | the last entry's SHA-256: kept by the NMS, the chain's head off the box | the same |
 | `.1.19.5.0` | `prAuditLost` | Gauge32 | entries this dataplane could not write | the same |
 
+### The ports' transceivers - `.1.20` (#590)
+
+Each port's module and, when it implements diagnostics (DDM), its levels
+beside the alarm and warning thresholds the module itself carries - what
+`show interface transceiver` prints, decoded by the same code. A row per
+port the dataplane drives through DPDK, and per card Linux owns (an AF_XDP
+hot card or af_packet port under the dataplane's name, the management card
+under its own), indexed by the port's **ifIndex in IF-MIB**; the lane table
+beside it is indexed ifIndex.lane - one lane for an SFP, four for a QSFP. A
+value the module does not give, and the thresholds of a quantity that has
+none (all zero in the module, or a flat-memory QSFP), are **absent**, not 0.
+
+| OID | Object | Type | What it is |
+|---|---|---|---|
+| `.1.20.1.1.2.<if>` | `prXcvrName` | DisplayString | the port |
+| `.1.20.1.1.3.<if>` | `prXcvrStatus` | INTEGER | ddm(1), noDdm(2), copper(3), absent(4), unreadable(5) |
+| `.1.20.1.1.4` to `.6` | `prXcvrVendor`, `prXcvrPartNumber`, `prXcvrSerialNumber` | DisplayString | the module's identity; a new serial is a module swapped |
+| `.1.20.1.1.7.<if>` | `prXcvrWavelength` | Unsigned32 | nm; 0 for copper |
+| `.1.20.1.1.8.<if>` | `prXcvrTemperature` | Integer32 | hundredths of a degree C; `.9` to `.12` its high alarm, high warning, low warning and low alarm |
+| `.1.20.1.1.13.<if>` | `prXcvrVoltage` | Unsigned32 | millivolts; `.14` to `.17` its thresholds |
+| `.1.20.1.1.18.<if>` | `prXcvrState` | INTEGER | the worst level any reading stands at: normal(1), warning(2), alarm(3), unknown(4) |
+| `.1.20.1.1.19.<if>` | `prXcvrSource` | DisplayString | `dpdk`, `linux`, or `stand-in` (a lab's bytes) |
+| `.1.20.2.1.2.<if>.<lane>` | `prXcvrLaneName` | DisplayString | the port, and the lane on a QSFP |
+| `.1.20.2.1.3.<if>.<lane>` | `prXcvrLaneRxPower` | Integer32 | hundredths of a dBm, **-4000 for no light** (0 mW); `.4` to `.7` its thresholds; `.8` `prXcvrLaneRxLevel` |
+| `.1.20.2.1.9.<if>.<lane>` | `prXcvrLaneTxPower` | Integer32 | the same for TX; `.10` to `.13`, `.14` `prXcvrLaneTxLevel` |
+| `.1.20.2.1.15.<if>.<lane>` | `prXcvrLaneBias` | Unsigned32 | microamperes; `.16` to `.19`, `.20` `prXcvrLaneBiasLevel` |
+
+The lane levels are normal(1), highWarning(2), lowWarning(3), highAlarm(4),
+lowAlarm(5), unknown(6): past a threshold is strictly beyond it, as SFF-8472
+sets its own flags.
+
+**Not ENTITY-SENSOR-MIB.** RFC 3433's `entPhySensorTable` is the standard
+home of a sensor and was the first choice. It does not fit three things this
+needs: its rows hang off ENTITY-MIB's `entPhysicalIndex`, so serving it means
+serving an `entPhysicalTable` - chassis, ports, modules, sensors - that the
+box does not model and an NMS would then trust; its units have watts and no
+dBm, the unit an optical level is read in and the one the switch at the
+other end prints; and it has no thresholds, which are what says whether
+-14 dBm is fine.
+
+**What a read costs.** The agent answers this subtree from a process of its
+own (`--transceivers`), so a module read over I2C never delays the rest of
+the product's objects, and caches it 30 seconds. The dataplane keeps each
+module's identity and thresholds a minute and answers a second ask within
+2 seconds from its last read, so a poll costs the 24 bytes of readings per
+SFP. A dataplane that does not answer serves none of its ports; the cards
+Linux owns are still served.
+
 **Why the state files.** The agent is Debian-snmp and must not read
 `/etc/prisma-routing` (2770 root:prisma-cgnat): every revision there, the
 confirm store and the saved file carry password hashes. So the self-test and
@@ -462,6 +513,8 @@ password, and it is not an account: asked from outside, it answers
 | `prConfigConfirmReverts` rising | a change made and lost, usually because it cut the session it was made from |
 | `prConfigSavedDiffers` true for long | a reboot would come back without the changes |
 | `prAuditState` 3 or more, or `prAuditHeadDigest` other than the one the NMS kept | the configuration trail was altered, cut or rewritten |
+| `prXcvrLaneRxLevel` lowWarning or lowAlarm, or `prXcvrState` alarm | a fibre, a connector or a module failing: compare the RX power with the far end's TX |
+| `prXcvrSerialNumber` changing | a module swapped in the cage |
 
 ## Where the values come from, and what reading them costs
 
@@ -495,3 +548,4 @@ last one seen.
 | the tuning in effect, the boot self-test, commits and the confirm window, the configuration trail | PRISMA-ROUTING-MIB | served (#524) |
 | static forwards | `show cgnat forward` | not over SNMP |
 | notifications | traps or informs, per destination | served (#507) |
+| the ports' transceivers: identity, temperature, voltage, bias, TX and RX power, thresholds | PRISMA-ROUTING-MIB `prTransceiver` | served (#590) |

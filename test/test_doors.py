@@ -715,6 +715,34 @@ for argv, why in (
         check(r["rc"] == 126, f"#571: vtysh with {why} is no door, uid {uid}: "
               f"{r}")
 
+# #590: a card's module EEPROM, the one query that takes an argument. Any
+# account may ask it (the VTY in its container, the agent as Debian-snmp),
+# for a netdev name and nothing else, through the installed reader only.
+_xr = doors.transceiver.read_argv("eno1", doors.transceiver.PROGRAM)
+check(doors.query_of(list(_xr)) == "read a card's module EEPROM",
+      f"#590: the reader's argv is a query: {_xr}")
+r = doors.answer(json.dumps({"argv": list(_xr)}), 1000,
+                 execute=lambda a, st, t: (0, "interface eno1 source linux"))
+check(r == {"rc": 0, "out": "interface eno1 source linux"},
+      f"#590: uid 1000 may read a module: {r}")
+check(tuple(_agent.transceiver_module().read_argv(
+    "eno1", doors.transceiver.PROGRAM)) == _xr,
+      "#590: and it is the argv the SNMP agent builds")
+for argv, why in (
+        (list(_xr[:3]) + ["-rf"], "an option for a card"),
+        (list(_xr[:3]) + ["../../etc/shadow"], "a path for a card"),
+        (list(_xr[:3]) + ["eno1", "eno2"], "two cards"),
+        (["/usr/bin/python3", "/tmp/transceiver.py", "read", "eno1"],
+         "a reader off its installed path"),
+        (["/usr/bin/python3", _xr[1], "write", "eno1"], "another verb"),
+        (["python3", _xr[1], "read", "eno1"], "the interpreter off its path")):
+    check(doors.query_of(argv) is None, f"#590: {why} is no query: {argv}")
+    r = doors.answer(json.dumps({"argv": argv}), 1000,
+                     execute=lambda a, st, t: (0, "ran"))
+    check(r["rc"] == 126, f"#590: and the door refuses it: {r}")
+check(doors.query_of(None) is None and doors.query_of(["a", 1, "b", "c"]) is None,
+      "#590: not a list of words, no query")
+
 _ask = []
 _real_runner = doors.runner
 doors.runner = lambda path=doors.SOCKET: (

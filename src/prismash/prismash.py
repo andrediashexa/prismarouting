@@ -94,6 +94,7 @@ import routes
 import typedcfg
 import logmon
 import logstate
+import transceiver
 import vppapi
 import policy as policy_mod
 from cfgedit import (EDIT_WORDS, REPLACE_HINT, RENAME_FORMS, edit_tokens,
@@ -2177,7 +2178,14 @@ SHOW = {
             "count": ("how many samples to take (default 5)", "<count>"),
             ARG_INTERFACE: ("only this interface", None),
         }),
-        ARG_INTERFACE: ("one interface, in detail, with its counters", None),
+        # #590: the module in each port's cage, and its optical levels.
+        # `show interface <name> transceiver` is the same screen for one
+        # port; the tree cannot walk past a name the box supplies, so that
+        # form is in the help of <interface> rather than offered after it.
+        "transceiver": ("each port's module: identity, optical levels and "
+                        "thresholds", None),
+        ARG_INTERFACE: ("one interface, in detail, with its counters; "
+                        "add 'transceiver' for its module", None),
     }),
     # Answers the question `show interface` cannot answer on a fresh box: the
     # dataplane has been given no NIC, so its list is empty exactly when the
@@ -21003,6 +21011,9 @@ class Shell:
                     print(f"      {row}")
             else:
                 print("    counters    all zero")
+        # #590: the same notes `show interface` prints under its table.
+        for line in self.interface_notes([name], one=name):
+            print(line)
 
     #: Where the tuner writes what it decided, and where it writes it down.
     STARTUP_CONF = os.environ.get("PRISMA_STARTUP_CONF", "/etc/vpp/startup.conf")
@@ -22214,6 +22225,12 @@ class Shell:
         if args[:1] and args[0].rstrip("s") in ("utilization", "utilisation"):
             self.show_interface_utilisation(args[1:])
             return
+        # #590: `show interface transceiver` and `show interface <name>
+        # transceiver`, the module's identity and optical levels. Either
+        # order is read, as `show interface utilization <name>` is.
+        if "transceiver" in args:
+            self.show_transceivers([a for a in args if a != "transceiver"])
+            return
 
         rc, out = self.dp.run("show interface")
         if rc != 0 or not out.strip():
@@ -22313,6 +22330,128 @@ class Shell:
             print(line)
         for line in hot_card_notes(ifaces):
             print(line)
+        # #590: a module whose RX power is outside its warning thresholds,
+        # and a port whose CRC errors are more than a small fraction of what
+        # it received. Notes, under the count: the port forwards, and what
+        # these say is where to look.
+        for line in self.interface_notes(sorted(ifaces)):
+            print(line)
+
+    def interface_notes(self, names, one=None):
+        """
+        The `show interface` notes for `names` (#590): rx power outside its
+        warning thresholds (transceiver.rx_power_notes) and a CRC error
+        ratio above transceiver.CRC_NOTE_RATIO (transceiver.crc_note). Read
+        from the dataplane's ports only - a card Linux owns is a door away,
+        and this is the screen read most often. `one` asks the plugin for
+        that interface alone.
+        """
+        out = []
+        rc, hw = self.dp.run("show hardware-interfaces")
+        counts = transceiver.crc_counts(hw) if rc == 0 else {}
+        rc, dump = self.dp.run("show bpa transceiver"
+                               + (f" {one}" if one else ""))
+        mods = transceiver.parse_dump(dump) if rc == 0 else {}
+        for n in names:
+            r = mods.get(n)
+            if r and not r["unread"]:
+                out += transceiver.rx_power_notes(transceiver.decode(r))
+            if n in counts:
+                out += transceiver.crc_note(n, *counts[n])
+        return out
+
+    def linux_transceiver(self, dev, shown=None):
+        """
+        The module of the card `dev` as Linux has it - the dataplane's AF_XDP
+        hot card, an af_packet port's card, the management card - read on
+        the host through the door (transceiver.read_argv), as a
+        parse_dump() reading named `shown` (the dataplane's name for it).
+        """
+        rc, out = doors.runner()(list(transceiver.read_argv(dev)),
+                                 timeout=15)
+        r = transceiver.parse_dump(out).get(dev)
+        if rc != 0 or r is None:
+            first = (out or "").strip().splitlines()[:1]
+            r = {"name": dev, "source": "linux", "type": "", "length": 0,
+                 "port": None, "device": "", "age": None, "bytes": [],
+                 "unread": "unavailable",
+                 "why": "the host could not read it"
+                        + (f": {first[0]}" if first else "")}
+        r["name"] = shown or dev
+        if not r["unread"]:
+            r["device"] = dev
+        return r
+
+    def transceiver_facts(self, names=()):
+        """
+        The modules of this box's ports, decoded (#590): {"dataplane",
+        "modules", "missing"}. `dataplane` is whether the dataplane answered
+        `show bpa transceiver`; `modules` is transceiver.decode() of each
+        port asked for - every port the dataplane drives through DPDK and
+        every card Linux owns, or the ones `names` names; `missing` the
+        names that are neither. The one reading `show interface
+        transceiver` prints and ListTransceivers carries.
+        """
+        rc, out = self.dp.run("show bpa transceiver")
+        dp = transceiver.parse_dump(out) if rc == 0 else {}
+        hot = hot_cards()
+        # not a unit: a closure of transceiver_facts over `hot`, measured
+        # through it by test/test_prismash_transceiver.py
+        def linux_name(name):
+            if name in hot:
+                return name
+            return name[5:] if name.startswith("host-") else None
+        readings, missing = [], []
+        if names:
+            for want in names:
+                hit = next((n for n in dp if n.lower() == want.lower()), None)
+                if hit is not None:
+                    r = dp[hit]
+                    if r["unread"] == "not-dpdk" and linux_name(hit):
+                        r = self.linux_transceiver(linux_name(hit), hit)
+                    readings.append(r)
+                    continue
+                r = self.linux_transceiver(want)
+                if r["unread"] == "no-device":
+                    missing.append(want)
+                else:
+                    readings.append(r)
+        else:
+            for n in sorted(dp):
+                r = dp[n]
+                if r["unread"] == "not-dpdk":
+                    if not linux_name(n):
+                        continue        # a TAP, a loopback: no cage
+                    r = self.linux_transceiver(linux_name(n), n)
+                readings.append(r)
+            seen = {r.get("device") for r in readings} | set(dp)
+            for nic in self.host_nics():
+                if nic["name"] not in seen:
+                    readings.append(self.linux_transceiver(nic["name"]))
+        return {"dataplane": rc == 0,
+                "modules": [transceiver.decode(r) for r in readings],
+                "missing": missing}
+
+    def show_transceivers(self, args, facts=None):
+        """
+        `show interface transceiver` and `show interface <name>
+        transceiver` (#590): each port's module - its identity, and its
+        temperature, voltage, bias, TX and RX power beside the thresholds
+        the module carries, in mW and dBm. `facts` is a reading already
+        taken (the API's), so the screen is drawn from it.
+        """
+        f = self.transceiver_facts(args) if facts is None else facts
+        if not f["dataplane"]:
+            self.err("the dataplane is not answering")
+            print_prose("so the modules of its ports cannot be read; a card "
+                        "Linux holds still can")
+        for name in f["missing"]:
+            print(f"  no interface matches {name}")
+        blocks = [transceiver.screen(m) for m in f["modules"]]
+        if not blocks and not f["missing"] and f["dataplane"]:
+            print("  no port of this box has a module to read")
+        if blocks:
+            print("\n\n".join("\n".join(b) for b in blocks))
 
 
     def bfd_facts(self):

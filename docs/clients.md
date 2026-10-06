@@ -27,6 +27,45 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.15 - a port's transceiver: its optical levels
+
+* **Contract:** additive (`prisma.proto` sha256 `4e80a06cf449690c7347efa451ae2e43791b7920c5b4aef2e4ae8648a350133e`).
+  One rpc and six messages (#590).
+* **`OperationalService.ListTransceivers(ListTransceiversRequest) returns
+  (Transceivers)`**: `show interface transceiver` - each port's module, and
+  `names` narrows it as `show interface <name> transceiver` does (a port of
+  the dataplane, or a card Linux owns such as the management card); a name
+  that is neither comes back in `missing`, not as an error. Any account.
+  `dataplane_answered` false means the dataplane's ports are absent and the
+  Linux cards are still there; `text` is the VTY's screen.
+* **`Transceiver`**: `name`, `source` (`dpdk`, `linux`, or `stand-in` - a
+  lab's bytes, never on a box), `device` (a PCI address or a Linux card),
+  `map` (`sff-8472`, `sff-8079`, `sff-8636`, `sff-8436`), `status`
+  (`STATUS_DDM` with levels; `STATUS_NO_DDM`, `STATUS_COPPER`,
+  `STATUS_ABSENT`, `STATUS_UNREADABLE` without, `why` saying it in the
+  box's words), the identity (`identifier`, `connector`, `vendor`, `oui`,
+  `part_number`, `revision`, `serial_number`, `date_code` as `YYYY-MM-DD`,
+  `wavelength_nm`, 0 for copper), `calibration` and `rx_power_average`;
+  `temperature_c` and `voltage_v`, and `lanes` - one for an SFP, four for a
+  QSFP - each with `bias_ma`, `tx_power_mw` and `rx_power_mw`.
+* **`TransceiverLevel`** (every level): `value` in the field's unit, the
+  module's own `high_alarm`, `low_alarm`, `high_warning`, `low_warning`,
+  and `level` (`LEVEL_NORMAL`, `_HIGH_WARNING`, `_LOW_WARNING`,
+  `_HIGH_ALARM`, `_LOW_ALARM`, `_UNKNOWN`). **0 is not absent:** read
+  `known` before `value` (a QSFP+ that does not measure TX power) and
+  `thresholds_known` before the four (a module that carries none, or a
+  flat-memory QSFP) - `LEVEL_UNKNOWN` then, never an alarm. Powers carry
+  `dbm` and the four `*_dbm` too; **`no_light`** is a power of 0 mW, which
+  has no dBm (`dbm` is then 0): show "no light", not 0 dBm.
+* **Polling:** a call reads each module over I2C. The dataplane answers a
+  second call within 2 s from its last read and keeps identity and
+  thresholds a minute, so polling every minute is cheap; every second is
+  not what it is for. The same readings are in SNMP (`prTransceiver`).
+* **`show interface` has two new notes** under its table - in the text
+  `Show` returns for it, with no field of their own: an RX power past its
+  warning thresholds, and a CRC error ratio above 0.01% of the frames
+  received. `ListInterfaces` is unchanged.
+
 ## 0.151.14 - show log: what happened on the box
 
 * **Contract:** additive (`prisma.proto` sha256 `4a495aa2af8217b138a20a364611114576addf3db0cb0f3b272e9b74adb25834`).

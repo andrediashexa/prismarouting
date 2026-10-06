@@ -19,7 +19,7 @@ PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
 
 IMPORTS
     MODULE-IDENTITY, OBJECT-TYPE, enterprises,
-    Counter32, Counter64, Gauge32, Unsigned32, TimeTicks
+    Counter32, Counter64, Gauge32, Integer32, Unsigned32, TimeTicks
         FROM SNMPv2-SMI
     DisplayString, TruthValue
         FROM SNMPv2-TC
@@ -27,13 +27,17 @@ IMPORTS
         FROM SNMPv2-CONF;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202610020000Z"
+    LAST-UPDATED "202610060000Z"
     ORGANIZATION "NetConfig"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202610060000Z"
+    DESCRIPTION
+        "The ports' transceivers: each module's identity and its optical
+        levels beside the thresholds it carries (#590)."
     REVISION "202610020000Z"
     DESCRIPTION
         "Rooted at the product's own IANA Private Enterprise Number, 67033,
@@ -1014,6 +1018,428 @@ prAuditLost OBJECT-TYPE
     ::= { prAudit 5 }
 
 --
+-- The ports' transceivers (#590): each module's identity and, when it
+-- implements diagnostics (DDM), its levels beside the alarm and warning
+-- thresholds the module itself carries - what `show interface transceiver`
+-- prints. A row per port of the dataplane driven through DPDK and per card
+-- Linux owns, under the port's ifIndex in IF-MIB; a lane table beside it
+-- for the optical levels, one lane for an SFP and four for a QSFP.
+-- Not ENTITY-SENSOR-MIB: its sensors hang off an ENTITY-MIB the box does
+-- not serve, it has no dBm and no thresholds (docs/snmp-mib.md).
+-- A value the module does not give, and the thresholds of a quantity that
+-- has none, are absent rather than 0.
+--
+
+prTransceiver OBJECT IDENTIFIER ::= { prObjects 20 }
+
+prXcvrTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrXcvrEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "One row per port with a cage: its module, the module's temperature
+        and supply voltage, and the worst level any of its readings stands
+        at."
+    ::= { prTransceiver 1 }
+
+prXcvrEntry OBJECT-TYPE
+    SYNTAX      PrXcvrEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One port's module."
+    INDEX       { prXcvrIndex }
+    ::= { prXcvrTable 1 }
+
+PrXcvrEntry ::= SEQUENCE {
+    prXcvrIndex                  Unsigned32,
+    prXcvrName                   DisplayString,
+    prXcvrStatus                 INTEGER,
+    prXcvrVendor                 DisplayString,
+    prXcvrPartNumber             DisplayString,
+    prXcvrSerialNumber           DisplayString,
+    prXcvrWavelength             Unsigned32,
+    prXcvrTemperature            Integer32,
+    prXcvrTemperatureHighAlarm   Integer32,
+    prXcvrTemperatureHighWarning Integer32,
+    prXcvrTemperatureLowWarning  Integer32,
+    prXcvrTemperatureLowAlarm    Integer32,
+    prXcvrVoltage                Unsigned32,
+    prXcvrVoltageHighAlarm       Unsigned32,
+    prXcvrVoltageHighWarning     Unsigned32,
+    prXcvrVoltageLowWarning      Unsigned32,
+    prXcvrVoltageLowAlarm        Unsigned32,
+    prXcvrState                  INTEGER,
+    prXcvrSource                 DisplayString
+}
+
+prXcvrIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The port's ifIndex in IF-MIB."
+    ::= { prXcvrEntry 1 }
+
+prXcvrName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The port: the dataplane's name for it, or the Linux card's."
+    ::= { prXcvrEntry 2 }
+
+prXcvrStatus OBJECT-TYPE
+    SYNTAX      INTEGER { ddm(1), noDdm(2), copper(3), absent(4),
+                          unreadable(5) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "ddm: a module with diagnostics, whose levels are below. noDdm:
+        a module without them, or whose diagnostics page the driver cannot
+        reach. copper: a copper cable or RJ45 module. absent: no module
+        answered. unreadable: the card's driver cannot read a module."
+    ::= { prXcvrEntry 3 }
+
+prXcvrVendor OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's vendor, as its EEPROM names it."
+    ::= { prXcvrEntry 4 }
+
+prXcvrPartNumber OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's part number."
+    ::= { prXcvrEntry 5 }
+
+prXcvrSerialNumber OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's serial number."
+    ::= { prXcvrEntry 6 }
+
+prXcvrWavelength OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The laser's wavelength, nm; 0 for a copper module."
+    ::= { prXcvrEntry 7 }
+
+prXcvrTemperature OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's temperature, hundredths of a degree Celsius."
+    ::= { prXcvrEntry 8 }
+
+prXcvrTemperatureHighAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high alarm threshold for prXcvrTemperature."
+    ::= { prXcvrEntry 9 }
+
+prXcvrTemperatureHighWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high warning threshold for prXcvrTemperature."
+    ::= { prXcvrEntry 10 }
+
+prXcvrTemperatureLowWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low warning threshold for prXcvrTemperature."
+    ::= { prXcvrEntry 11 }
+
+prXcvrTemperatureLowAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low alarm threshold for prXcvrTemperature."
+    ::= { prXcvrEntry 12 }
+
+prXcvrVoltage OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's supply voltage, millivolts."
+    ::= { prXcvrEntry 13 }
+
+prXcvrVoltageHighAlarm OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high alarm threshold for prXcvrVoltage."
+    ::= { prXcvrEntry 14 }
+
+prXcvrVoltageHighWarning OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high warning threshold for prXcvrVoltage."
+    ::= { prXcvrEntry 15 }
+
+prXcvrVoltageLowWarning OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low warning threshold for prXcvrVoltage."
+    ::= { prXcvrEntry 16 }
+
+prXcvrVoltageLowAlarm OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low alarm threshold for prXcvrVoltage."
+    ::= { prXcvrEntry 17 }
+
+prXcvrState OBJECT-TYPE
+    SYNTAX      INTEGER { normal(1), warning(2), alarm(3), unknown(4) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The worst level any reading of the module stands at against
+        its thresholds: temperature, voltage, and every lane's bias, TX
+        and RX power. unknown: no reading had thresholds to stand against."
+    ::= { prXcvrEntry 18 }
+
+prXcvrSource OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Where the bytes were read: dpdk (the dataplane), linux (the
+        host), or stand-in (a lab's bytes, never on a box)."
+    ::= { prXcvrEntry 19 }
+
+prXcvrLaneTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrXcvrLaneEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "One row per optical lane of a module with diagnostics: one for an
+        SFP, four for a QSFP. Power is in hundredths of a dBm; a receiver
+        reading 0 mW - no light - reads -4000 (-40.00 dBm), below any
+        receiver's sensitivity."
+    ::= { prTransceiver 2 }
+
+prXcvrLaneEntry OBJECT-TYPE
+    SYNTAX      PrXcvrLaneEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One lane."
+    INDEX       { prXcvrIndex, prXcvrLaneIndex }
+    ::= { prXcvrLaneTable 1 }
+
+PrXcvrLaneEntry ::= SEQUENCE {
+    prXcvrLaneIndex              Unsigned32,
+    prXcvrLaneName               DisplayString,
+    prXcvrLaneRxPower            Integer32,
+    prXcvrLaneRxPowerHighAlarm   Integer32,
+    prXcvrLaneRxPowerHighWarning Integer32,
+    prXcvrLaneRxPowerLowWarning  Integer32,
+    prXcvrLaneRxPowerLowAlarm    Integer32,
+    prXcvrLaneRxLevel            INTEGER,
+    prXcvrLaneTxPower            Integer32,
+    prXcvrLaneTxPowerHighAlarm   Integer32,
+    prXcvrLaneTxPowerHighWarning Integer32,
+    prXcvrLaneTxPowerLowWarning  Integer32,
+    prXcvrLaneTxPowerLowAlarm    Integer32,
+    prXcvrLaneTxLevel            INTEGER,
+    prXcvrLaneBias               Unsigned32,
+    prXcvrLaneBiasHighAlarm      Unsigned32,
+    prXcvrLaneBiasHighWarning    Unsigned32,
+    prXcvrLaneBiasLowWarning     Unsigned32,
+    prXcvrLaneBiasLowAlarm       Unsigned32,
+    prXcvrLaneBiasLevel          INTEGER
+}
+
+prXcvrLaneIndex OBJECT-TYPE
+    SYNTAX      Unsigned32 (1..4)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The lane, from 1."
+    ::= { prXcvrLaneEntry 1 }
+
+prXcvrLaneName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The port, and the lane on a module with more than one."
+    ::= { prXcvrLaneEntry 2 }
+
+prXcvrLaneRxPower OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The lane's RX power, hundredths of a dBm."
+    ::= { prXcvrLaneEntry 3 }
+
+prXcvrLaneRxPowerHighAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high alarm threshold for prXcvrLaneRxPower."
+    ::= { prXcvrLaneEntry 4 }
+
+prXcvrLaneRxPowerHighWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high warning threshold for prXcvrLaneRxPower."
+    ::= { prXcvrLaneEntry 5 }
+
+prXcvrLaneRxPowerLowWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low warning threshold for prXcvrLaneRxPower."
+    ::= { prXcvrLaneEntry 6 }
+
+prXcvrLaneRxPowerLowAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low alarm threshold for prXcvrLaneRxPower."
+    ::= { prXcvrLaneEntry 7 }
+
+prXcvrLaneRxLevel OBJECT-TYPE
+    SYNTAX      INTEGER { normal(1), highWarning(2), lowWarning(3), highAlarm(4),
+                          lowAlarm(5), unknown(6) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Where prXcvrLaneRxPower stands against its thresholds; unknown
+        when the module carries none."
+    ::= { prXcvrLaneEntry 8 }
+
+prXcvrLaneTxPower OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The lane's TX power, hundredths of a dBm."
+    ::= { prXcvrLaneEntry 9 }
+
+prXcvrLaneTxPowerHighAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high alarm threshold for prXcvrLaneTxPower."
+    ::= { prXcvrLaneEntry 10 }
+
+prXcvrLaneTxPowerHighWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high warning threshold for prXcvrLaneTxPower."
+    ::= { prXcvrLaneEntry 11 }
+
+prXcvrLaneTxPowerLowWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low warning threshold for prXcvrLaneTxPower."
+    ::= { prXcvrLaneEntry 12 }
+
+prXcvrLaneTxPowerLowAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low alarm threshold for prXcvrLaneTxPower."
+    ::= { prXcvrLaneEntry 13 }
+
+prXcvrLaneTxLevel OBJECT-TYPE
+    SYNTAX      INTEGER { normal(1), highWarning(2), lowWarning(3), highAlarm(4),
+                          lowAlarm(5), unknown(6) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Where prXcvrLaneTxPower stands against its thresholds; unknown
+        when the module carries none."
+    ::= { prXcvrLaneEntry 14 }
+
+prXcvrLaneBias OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The lane's laser bias current, microamperes."
+    ::= { prXcvrLaneEntry 15 }
+
+prXcvrLaneBiasHighAlarm OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high alarm threshold for prXcvrLaneBias."
+    ::= { prXcvrLaneEntry 16 }
+
+prXcvrLaneBiasHighWarning OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's high warning threshold for prXcvrLaneBias."
+    ::= { prXcvrLaneEntry 17 }
+
+prXcvrLaneBiasLowWarning OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low warning threshold for prXcvrLaneBias."
+    ::= { prXcvrLaneEntry 18 }
+
+prXcvrLaneBiasLowAlarm OBJECT-TYPE
+    SYNTAX      Unsigned32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The module's low alarm threshold for prXcvrLaneBias."
+    ::= { prXcvrLaneEntry 19 }
+
+prXcvrLaneBiasLevel OBJECT-TYPE
+    SYNTAX      INTEGER { normal(1), highWarning(2), lowWarning(3), highAlarm(4),
+                          lowAlarm(5), unknown(6) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Where prXcvrLaneBias stands against its thresholds; unknown
+        when the module carries none."
+    ::= { prXcvrLaneEntry 20 }
+
+--
 -- Conformance.
 --
 
@@ -1109,6 +1535,27 @@ prAuditGroup OBJECT-GROUP
     DESCRIPTION "The configuration trail."
     ::= { prGroups 11 }
 
+prTransceiverGroup OBJECT-GROUP
+    OBJECTS { prXcvrName, prXcvrStatus, prXcvrVendor, prXcvrPartNumber,
+              prXcvrSerialNumber, prXcvrWavelength, prXcvrTemperature,
+              prXcvrTemperatureHighAlarm, prXcvrTemperatureHighWarning,
+              prXcvrTemperatureLowWarning, prXcvrTemperatureLowAlarm,
+              prXcvrVoltage, prXcvrVoltageHighAlarm,
+              prXcvrVoltageHighWarning, prXcvrVoltageLowWarning,
+              prXcvrVoltageLowAlarm, prXcvrState, prXcvrSource,
+              prXcvrLaneName, prXcvrLaneRxPower, prXcvrLaneRxPowerHighAlarm,
+              prXcvrLaneRxPowerHighWarning, prXcvrLaneRxPowerLowWarning,
+              prXcvrLaneRxPowerLowAlarm, prXcvrLaneRxLevel,
+              prXcvrLaneTxPower, prXcvrLaneTxPowerHighAlarm,
+              prXcvrLaneTxPowerHighWarning, prXcvrLaneTxPowerLowWarning,
+              prXcvrLaneTxPowerLowAlarm, prXcvrLaneTxLevel, prXcvrLaneBias,
+              prXcvrLaneBiasHighAlarm, prXcvrLaneBiasHighWarning,
+              prXcvrLaneBiasLowWarning, prXcvrLaneBiasLowAlarm,
+              prXcvrLaneBiasLevel }
+    STATUS      current
+    DESCRIPTION "The ports' transceivers."
+    ::= { prGroups 12 }
+
 prCompliance MODULE-COMPLIANCE
     STATUS      current
     DESCRIPTION "What every Prisma Routing box serves."
@@ -1116,7 +1563,8 @@ prCompliance MODULE-COMPLIANCE
         MANDATORY-GROUPS { prTotalsGroup, prCgnatGroup, prLoggingGroup,
                            prSystemGroup, prHaGroup, prLacpGroup,
                            prIdentityGroup, prTuningGroup, prSelfTestGroup,
-                           prConfigGroup, prAuditGroup }
+                           prConfigGroup, prAuditGroup,
+                           prTransceiverGroup }
     ::= { prCompliances 1 }
 
 END

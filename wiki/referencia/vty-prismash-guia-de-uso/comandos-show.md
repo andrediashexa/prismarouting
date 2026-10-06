@@ -230,6 +230,57 @@ O que vale saber para ler a tela:
 * **Não é para script.** Em `prismash -c`, num pipe ou num arquivo o comando se recusa e indica `show interface utilization`, sem escrever nenhuma sequência de controle.
 * **O custo foi medido antes do padrão de 1 segundo**: com 201 interfaces e tráfego, cada leitura levou 4 ms e ocupou 2,2 ms da thread principal do VPP — menos de 1% de um núcleo a uma leitura por segundo.
 
+### `show interface transceiver` — o módulo óptico de cada porta
+
+```
+show interface transceiver
+show interface <nome> transceiver
+```
+
+O módulo que está na gaiola da porta (SFP, SFP+, QSFP): quem fez, qual é, e — quando ele tem diagnóstico (DDM) — a temperatura, a tensão, a corrente do laser e as potências de TX e RX, cada uma ao lado dos limites de alarme e de aviso **que o próprio módulo grava** e dizendo se passou de algum. É a mesma leitura que o `display transceiver ... verbose` do switch do outro lado dá, e é a que se compara com ela:
+
+```
+prisma> show interface ens18 transceiver
+  ens18: SFP/SFP+/SFP28, LC connector, 1310 nm
+    vendor      Rei do SFP (OUI 00:90:65)
+    part        RSMPP8510GL-03D  revision 2.1
+    serial      FP23H150378  date 2023-08-15
+    read from   the dataplane, through DPDK (0000:01:00.0)
+    ddm         internally calibrated; rx power is an average
+
+                     value  hi alarm   hi warn   lo warn  lo alarm  state
+    temp (C)         36.50     75.00     70.00      0.00     -5.00  ok
+    voltage (V)      3.300     3.600     3.500     3.100     3.000  ok
+    bias (mA)        7.500    15.000    12.000     2.000     1.000  ok
+    tx power (mW)   0.6166    1.5849    1.2589    0.1514    0.1202  ok
+    tx power (dBm)   -2.10      2.00      1.00     -8.20     -9.20  ok
+    rx power (mW)   0.0126    1.0000    0.7943    0.0158    0.0100  low warn
+    rx power (dBm)  -19.00      0.00     -1.00    -18.01    -20.00  low warn
+```
+
+* **A potência vem em mW e em dBm**, com os limites nas duas unidades. Um receptor que lê 0 mW não tem dBm: a linha diz `-inf` e o estado `no light` — sem luz chegando, não um nível baixo.
+* **O estado** é onde o valor está contra os limites do módulo: `ok`, `high warn`, `low warn`, `high alarm`, `low alarm`. Estar **exatamente** no limite não é passar dele, como o próprio módulo marca. Um módulo que não grava limites (todos zero) mostra `-` nas colunas e nenhum estado — não "tudo em alarme".
+* **Um QSFP** mostra as quatro faixas: `bias1` a `bias4`, `tx1` a `tx4`, `rx1` a `rx4`.
+* **Sem DDM, cabo de cobre, gaiola vazia**: cada um diz o que é, numa linha, em vez de uma tabela de zeros.
+* **Calibração externa** (SFF-8472) é aplicada: o módulo grava a contagem bruta do conversor e as constantes, e a tela mostra o valor já calibrado.
+* `read from` diz **de onde** os bytes vieram. Numa placa do dataplane, pelo próprio DPDK, sem tirar a placa do dataplane e sem parar o encaminhamento; numa placa do Linux — a de gerência, uma placa *hot* em AF_XDP, uma porta af_packet —, pelo host, como o `ethtool -m` lê.
+
+**O custo da leitura.** O módulo é lido por I2C, e no 82599 (X520) cada byte é uma transação de fração de milissegundo. A caixa lê a identidade e os limites uma vez por minuto e, no resto das vezes, só os 24 bytes das leituras; dois pedidos em menos de 2 segundos (a tela e o SNMP, por exemplo) custam uma leitura só. A leitura roda na thread principal **sem parar os workers**: numa caixa com workers o encaminhamento não sente. Numa caixa sem workers, a thread principal é a que encaminha, e cada leitura a ocupa por alguns milissegundos.
+
+**Quando a leitura não acontece.** `the card's driver cannot read a module` é um driver sem acesso ao módulo (virtio, por exemplo). `no module answered` é gaiola vazia — ou um módulo que não responde. Um dataplane que não é o build para o qual a caixa foi feita diz `unavailable` e não tenta.
+
+**No** `**show interface**`, duas notas aparecem embaixo da lista quando valem — notas, não erros: a porta encaminha, e a nota diz onde olhar.
+
+```
+  ens18: rx power -19.00 dBm, below its low warning (-18.01 dBm)
+    'show interface ens18 transceiver' has the module's levels
+  ens18: 0.58% of received frames failed their CRC (60,674 of 10,460,674) since
+    the counters started: look at the fibre, the connectors and the modules at
+    both ends; 'show interface ens18 transceiver' has this end's
+```
+
+A primeira, quando a potência de RX de um módulo passou de um dos avisos dele. A segunda, quando os erros de CRC de uma porta passam de **0,01%** dos quadros recebidos desde que os contadores começaram (e são pelo menos dez, para que um enlace que pegou meia dúzia ao subir não diga isso para sempre). Óptica e fibra limpas não contam erro nenhum — a taxa de erro especificada de um enlace de 10G é de 1 bit em 10¹², alguns quadros por dia —, então uma taxa desse tamanho é fibra, conector ou módulo. A porta que motivou isso contava 0,58%: 58 vezes acima.
+
 ## `show hardware` — as placas de rede que a caixa tem
 
 `show interface` responde pelo **dataplane**. Numa caixa recém-instalada o dataplane não recebeu placa nenhuma, então essa tela vem vazia — justamente no momento em que é preciso ver quais placas existem para escolher uma. `show hardware` responde a outra pergunta: **quais placas físicas o Linux enxerga nesta caixa**, com o que basta para decidir.
@@ -545,6 +596,7 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show rollback` | revisões commitadas disponíveis, com data e comentário |
 | `show interface [<nome>]` (ou `show interfaces`) | as interfaces do dataplane; com o nome, uma interface em detalhe, com os contadores |
 | `show interface terse`, `description`, `utilization` | as três leituras de interface descritas acima |
+| `show interface transceiver`, `show interface <nome> transceiver` | o módulo de cada porta: identidade, temperatura, tensão, bias, potências de TX e RX e os limites do módulo (acima) |
 | `show hardware` | as placas de rede físicas da caixa, com endereço PCI, driver, enlace e **qual delas carrega a rota padrão** |
 | `show lacp` | os bundles LACP: cada membro e se ele está no bundle |
 | `show system cpu` | quais núcleos fazem o quê: o configurado e o que está em vigor |
@@ -664,6 +716,7 @@ A barra vertical só é filtro depois de um `show`. Numa declaração de configu
 | "para que serve essa porta?" | `show interface description` |
 | "o dataplane não tem interface nenhuma" | `show hardware` |
 | "o enlace está cheio?" | `show interface utilization <nome>` |
+| "quanta luz está chegando? erros de CRC?" | `show interface <nome> transceiver` |
 
 ## Como ler a resposta de `show cgnat translation`
 

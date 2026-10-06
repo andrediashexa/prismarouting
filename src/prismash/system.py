@@ -1541,6 +1541,11 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
         # The number on the agent's own command line (#499): it runs as
         # Debian-snmp and cannot read this 0600 file to find it.
         out.append(f"pass_persist .1.3.6.1.4.1.{pen} {agent} --enterprise {pen}")
+        # prTransceiver (#590), its own process on its own subtree: a module
+        # is read over I2C, and the rest of the product's objects should not
+        # wait on it. The more specific registration answers its subtree.
+        out.append(f"pass_persist .1.3.6.1.4.1.{pen}.1.20 {agent} "
+                   f"--transceivers --enterprise {pen}")
     if trap_hosts:
         # NOTIFICATIONS (#507). snmpd polls its own objects to decide what to
         # send - as the user named below, read-only on the same view - and
@@ -1695,8 +1700,11 @@ class SnmpDaemon:
                 # the view carries UCD-SNMP-MIB's .1.3.6.1.4.1.2021 too, and
                 # reading the first enterprise OID there would take net-snmp's
                 # number for the operator's (#497).
+                # The number is the arc right after .1.3.6.1.4.1, not the
+                # last one: prTransceiver's own registration (#590) is
+                # .1.3.6.1.4.1.<pen>.1.20, whose last arc is 20.
                 if w[1].startswith(".1.3.6.1.4.1."):
-                    settings["enterprise-number"] = w[1].rsplit(".", 1)[-1]
+                    settings["enterprise-number"] = w[1].split(".")[7]
         # The service state answers "is it running", which is not the same
         # question as "is it configured", and on a system systemd is not
         # managing it cannot answer either. Consulted only where it means

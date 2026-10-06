@@ -21,6 +21,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_radius \
       $(BUILD)/test_bpa_static \
       $(BUILD)/test_bpa_top \
+      $(BUILD)/test_bpa_xcvr \
       $(BUILD)/test_bpa_rate \
       $(BUILD)/test_bpa_keys $(BUILD)/test_bpa_nat64 \
       $(BUILD)/test_bpa_subblock \
@@ -136,6 +137,13 @@ $(BUILD)/test_bpa_top: test/test_bpa_top.c \
                    src/plugins/bpa/bpa_top.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_top.c
+
+# A transceiver read's ranges and the build-id it compares (#590): bytes
+# only, no VPP and no DPDK.
+$(BUILD)/test_bpa_xcvr: test/test_bpa_xcvr.c \
+                   src/plugins/bpa/bpa_xcvr.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_xcvr.c
 
 # The subscriber's creation-rate bucket: two fields and a clock, which is
 # what `max-rate` on a pool buys. It was inside bpa_session.c and nothing

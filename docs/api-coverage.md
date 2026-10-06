@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 765 |
+| typed | 766 |
 | text | 1 |
 | n/a | 53 |
 
@@ -170,6 +170,7 @@ reachable in the phase their note names.
 | `show interface utilization interval <seconds>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
 | `show interface utilization count <count>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
 | `show interface utilization <interface>` | typed | TelemetryService.Subscribe / GetHistory | every account | rates from the counter stream |
+| `show interface transceiver` | typed | OperationalService.ListTransceivers | every account | and `show interface <name> transceiver` by its names (#590) |
 | `show interface <interface>` | typed | OperationalService.ListInterfaces | every account |  |
 | `show hardware` | typed | OperationalService.GetHardware | every account |  |
 | `show version` | typed | OperationalService.GetVersion | every account |  |

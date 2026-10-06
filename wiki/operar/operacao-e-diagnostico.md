@@ -464,6 +464,7 @@ flowchart TD
 | "a porta caiu ou alguém deu shutdown?" | `show interface terse` |
 | "para que serve essa porta?" | `show interface description` |
 | "o enlace está cheio?" | `show interface utilization <nome>` |
+| "quanta luz chega nessa porta? o módulo está bem?" | `show interface <nome> transceiver` |
 | "cabe mais sessão na memória do CGNAT?" | `show cgnat memory` |
 | "quais ALGs estão valendo?" | `show cgnat alg` |
 | "a trilha de configuração foi adulterada?" | `show cgnat history verify` |
@@ -479,6 +480,8 @@ flowchart TD
 |---------|----------------|
 | Adjacência OSPF travada em Exchange | MTU herdada do TAP (9000). Ajuste com `mtu` dentro de `interface` |
 | Um lado reclama de queda e a configuração está de pé | `show interface terse`: `Admin up` com `Link down` é cabo, transceiver ou o outro lado |
+| `show interface` anota erros de CRC numa porta | fibra suja ou danificada, conector, ou um dos módulos: compare a potência de RX de `show interface <nome> transceiver` com a de TX do outro lado (abaixo) |
+| `show interface` anota `rx power ... below its low warning` | pouca luz chegando: fibra, conector, um vão longo demais, ou o laser do outro lado |
 | FTP/RTSP/PPTP conectam mas a transferência não começa | ALG correspondente desligado no pool |
 | Conexões travam sem erro, em certos caminhos | MSS não rebaixado — configure `tcp-mss auto` |
 | Assinante sem tradução e o pool não enche | prefixo dele coberto por um `bypass source` |
@@ -490,6 +493,18 @@ flowchart TD
 | `show system uptime` diz `restarted after the boot` | `show log source dataplane` diz a causa: um `system dataplane restart` (de quem), uma atualização, ou `unexpected` — ninguém pediu, e `why-the-dataplane-stopped` costuma ter o motivo |
 | Sessões novas recusadas com a caixa de pé | `show cgnat memory`: a memória do CGNAT encheu, e a caixa recusa em vez de cair. `memory` em `nat` > `cgnat` dá mais, a partir do próximo boot |
 | Assinante não alcança a própria caixa (gateway, DNS, SSH) | versões anteriores à 0.136.1 traduziam o tráfego para os endereços da caixa; atualize |
+
+## Erros de CRC numa porta óptica
+
+Erro de CRC é quadro que chegou corrompido. Numa porta óptica, quase sempre é a camada física: fibra suja, dobrada ou danificada, conector mal encaixado, ou um módulo no fim da vida — deste lado ou do outro. Foi assim que este diagnóstico nasceu: uma porta do X520 contando 0,58% dos quadros com erro de CRC, e ninguém conseguia ler a potência óptica do lado da caixa para comparar com a do switch.
+
+
+1. `show interface` mostra a nota quando a taxa passa de 0,01% desde que os contadores começaram.
+2. `show interface <nome> transceiver` dá a potência de RX **deste** lado, e a de TX. No switch do outro lado, `display transceiver interface <porta> verbose` (Huawei) ou `show interfaces diagnostics optics <porta>` (Junos) dá as dele.
+3. Compare: a RX de um lado deve ser a TX do outro menos a perda do enlace (fibra e conectores, alguns dB num enlace curto). RX muito abaixo da TX do outro lado é perda no caminho — limpe e reencaixe os conectores, troque o cordão. RX normal dos dois lados com CRC continuando aponta para um dos módulos.
+4. O estado de cada linha diz se o próprio módulo considera o valor fora: `low warn` antes de `low alarm`.
+
+A leitura não para o encaminhamento: não é preciso devolver a placa ao Linux para usar o `ethtool -m`, que era o único caminho antes da 0.151.15 e derrubava o dataplane. O mesmo valor vai pelo SNMP (`prTransceiver`, com itens e gatilhos no template do Zabbix) e pela API (`ListTransceivers`).
 
 ## Duas armadilhas de diagnóstico
 
