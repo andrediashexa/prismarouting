@@ -2822,5 +2822,57 @@ with contextlib.redirect_stdout(_buf):
     _sh2.forget_pending()
 check(_sh2.read_pending() is None, "#575: forget_pending left the record")
 
+print("\n=== a pool given by prefix-lists: resolved, sent, refused (#589) ===")
+# Mutations shown red: the resolve_pool_lists() call at the top of _apply
+# removed (the pool reaches the dataplane with no inside at all); the
+# bpa_pool_lists_set loop removed (the denies never leave untranslated); the
+# refusal on the unchecked path removed (a rollback builds a pool from a
+# list that is gone).
+
+
+def listed_target(out_permit="200.150.0.16/30"):
+    cfg = config.Config()
+    p = config.Pool("pl")
+    p.inside_list, p.outside_list = "IN", "OUT"
+    cfg.pools["pl"] = p
+    cfg.routing = ["ip prefix-list IN seq 5 deny 100.64.1.0/24",
+                   "ip prefix-list IN seq 10 permit 100.64.0.0/22 le 32",
+                   "ip prefix-list OUT seq 5 deny 200.150.0.17/32",
+                   f"ip prefix-list OUT seq 10 permit {out_permit}"]
+    return cfg
+
+
+api = FakeApi()
+sh = shell_with(api)
+# The lists are FRR's; FRR is not what this asks about, so the routing half
+# is taken as nothing to hand it, as on a box with no daemon to hand it to.
+sh.real_routing = lambda routing: False
+ok = sh.apply(listed_target())
+adds = [a for m, a in api.calls if m == "bpa_pool_add_del" and a["is_add"]]
+lists = [a for m, a in api.calls if m == "bpa_pool_lists_set"]
+check(ok is True, "a pool given by lists commits")
+check(adds and adds[0]["prefixes"] == ["100.64.0.0/24", "100.64.2.0/23",
+                                       "200.150.0.16/32", "200.150.0.18/31"],
+      f"the dataplane is handed the effective sets: {adds}")
+check(lists and lists[0]["prefixes"] == ["100.64.1.0/24", "200.150.0.17/32"]
+      and lists[0]["n_untranslated"] == 1
+      and lists[0]["inside_list"] == "IN",
+      f"and the lists, with what they leave out: {lists}")
+api = FakeApi()
+sh = shell_with(api)
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    ok = sh.apply(listed_target("200.150.0.17/32"), check_only=True)
+check(ok is False and "leaves no public address" in _buf.getvalue(),
+      f"a check refuses an outside its deny empties: {_buf.getvalue()!r}")
+api = FakeApi()
+sh = shell_with(api)
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    ok = sh.apply(listed_target("200.150.0.17/32"))
+check(ok is False and not [m for m, a in api.calls
+                           if m in vppapi.WRITE_MESSAGES],
+      f"and so does an apply nobody checked, before any write: {api.calls}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

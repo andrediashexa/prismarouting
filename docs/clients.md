@@ -27,6 +27,45 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.12 - a CGNAT pool's sides can be prefix-lists
+
+* **Contract:** additive (`prisma.proto` sha256 `98c0792a12131f8918bdc7a0c87a96e6e0e446da03f1f3f44bd4e3442bc9ba69`).
+* **`PoolConfig.prefix_list_inside` (27) / `prefix_list_outside` (28)**
+  (#589): the `ip prefix-list` a side is given by, `""` when the side is
+  typed in `prefix_inside` / `prefix_outside`. A side is one or the other:
+  SetConfig with both on one side is refused at commit, with a diagnostic
+  naming the pool and the side (`pool '<name>': prefix-inside and
+  prefix-list-inside both given`). Setting a name writes `prefix-list-inside
+  <name>`; `""` writes `no prefix-list-inside`. `Nat64PoolConfig` has
+  neither: a NAT64 pool takes no prefix-list.
+* **`PrefixListEntry.description` (6)**: an entry's own description, kept by
+  the box (FRR has none on an entry), `""` when there is none. Written
+  through Edit at the end of the entry's line:
+  `ip prefix-list L seq 5 deny 100.64.1.0/24 description "management"`. The
+  quotes are not part of the text; at most 63 bytes.
+* **ListPools' `Pool`**: `prefix_list_inside` (14), `prefix_list_outside`
+  (15), `untranslated` (16, the sources the inside list denies - routed with
+  their own address) and `outside_excluded` (17, public addresses the outside
+  list's denies took out). With a list, `prefixes_inside` /
+  `prefixes_outside` are what it resolved to - permits less denies - which is
+  what the dataplane maps; before this they were always the typed prefixes.
+* **How a pool reads a list:** as addresses. An entry with neither `ge` nor
+  `le` covers its whole prefix; with either, an address counts as a /32 and
+  the entry covers its prefix when 32 is in the window. An entry that can
+  match no address (`le 24`) is refused at commit for a pool using the list.
+  The same list keeps FRR's route rule for BGP and route-maps.
+* **New Edit lines** (no new rpc): `ip prefix-list <list> insert seq <n>
+  before|after seq <m>` and `ip prefix-list <list> resequence`; GetSchema's
+  `ip prefix-list` hint names both and the entry's `[description <text>]`.
+* **New refusals at commit**, each a diagnostic on SetConfig/Commit: a list
+  that does not exist or has no entry, an inside list that translates
+  nothing, an outside deny that leaves no public address, a deny another
+  pool translates, more than 255 prefixes in one message.
+* **A list change re-applies the pools using it:** a SetConfig/Edit that
+  only changes `ip prefix-list` lines can now rebuild pools (every session on
+  them ends, and a deterministic pool re-maps), and `show configuration
+  compare` shows `! <pool> translates ...` lines under the pools it moves.
+
 ## 0.151.11 - make test reaches no mirror
 
 * **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).

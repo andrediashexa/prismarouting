@@ -9280,5 +9280,130 @@ finally:
     else:
         os.environ["PRISMA_IN_MGMT"] = _mg3
 
+print("\n=== an ip prefix-list entry at the prompt: description, insert, "
+      "resequence (#589) ===")
+# Mutations shown red: prefix_list_rewrite() handing FRR the line with its
+# description on it (FRR is asked about a statement it has no word for); the
+# replace-by-key in do_config removed (re-typing seq 5 adds a second seq 5);
+# `no ... seq 5` leaving the description behind; insert's renumber taking the
+# descriptions' keys with it removed.
+_sh = at()
+_sh.frr = RecFrr()
+with spoken() as _o:
+    _sh.do_config('ip prefix-list IN seq 5 deny 100.64.1.0/24 description '
+                  '"management range"')
+check(_sh.candidate.routing == ["ip prefix-list IN seq 5 deny 100.64.1.0/24"]
+      and _sh.candidate.list_descriptions == {"ip IN 5": "management range"},
+      f"staged without the text, the text kept by the entry: "
+      f"{_sh.candidate.routing!r} {_sh.candidate.list_descriptions!r}")
+check(_sh.frr.dry == [([], "ip prefix-list IN seq 5 deny 100.64.1.0/24")],
+      f"FRR was asked about the entry alone: {_sh.frr.dry!r}")
+_sh.do_config("ip prefix-list IN seq 5 deny 100.64.2.0/24")
+check(_sh.candidate.routing == ["ip prefix-list IN seq 5 deny 100.64.2.0/24"]
+      and _sh.candidate.list_descriptions == {},
+      f"re-typing seq 5 replaces it, and its text with it: "
+      f"{_sh.candidate.routing!r} {_sh.candidate.list_descriptions!r}")
+_sh.do_config('ip prefix-list IN permit 100.64.0.0/22 le 32 description "x"')
+check(_sh.candidate.routing[-1]
+      == "ip prefix-list IN seq 10 permit 100.64.0.0/22 le 32"
+      and _sh.candidate.list_descriptions == {"ip IN 10": "x"},
+      f"an entry with a text and no seq is numbered as FRR would: "
+      f"{_sh.candidate.routing!r}")
+_sh.do_config("ip prefix-list IN insert seq 10 before seq 5")
+check(_sh.candidate.routing == [
+      "ip prefix-list IN seq 5 deny 100.64.2.0/24",
+      "ip prefix-list IN seq 2 permit 100.64.0.0/22 le 32"]
+      and _sh.candidate.list_descriptions == {"ip IN 2": "x"},
+      f"insert moved the entry and its text: {_sh.candidate.routing!r} "
+      f"{_sh.candidate.list_descriptions!r}")
+_sh.do_config("ip prefix-list IN resequence")
+check(_sh.candidate.routing == [
+      "ip prefix-list IN seq 20 deny 100.64.2.0/24",
+      "ip prefix-list IN seq 10 permit 100.64.0.0/22 le 32"]
+      and _sh.candidate.list_descriptions == {"ip IN 10": "x"},
+      f"resequence numbered by 10 in seq order: {_sh.candidate.routing!r}")
+_rv, _text = driven(_sh.do_config, "ip prefix-list IN insert seq 99 after "
+                    "seq 10")
+check("there is no entry seq 99" in _text, f"no such entry: {_text!r}")
+_rv, _text = driven(_sh.do_config, "ip prefix-list IN resequence by 5")
+check("usage: ip prefix-list <name> resequence" in _text,
+      f"resequence takes nothing: {_text!r}")
+_rv, _text = driven(_sh.do_config, "ip prefix-list NOPE resequence")
+check("no entry to resequence in prefix-list NOPE" in _text,
+      f"no such list: {_text!r}")
+_rv, _text = driven(_sh.do_config, "ip prefix-list IN insert seq 10 behind")
+check("usage: ip prefix-list <name> insert seq <n> before|after seq <m>"
+      in _text, f"a malformed insert: {_text!r}")
+_sh.do_config("no ip prefix-list IN seq 10 permit 100.64.0.0/22 le 32")
+check(_sh.candidate.list_descriptions == {},
+      f"'no' of an entry takes its text: {_sh.candidate.list_descriptions!r}")
+_sh.candidate.list_descriptions = {"ip IN 20": "a", "ip OUT 5": "b"}
+_sh.prefix_list_rewrite("no ip prefix-list IN")
+check(_sh.candidate.list_descriptions == {"ip OUT 5": "b"},
+      "'no' of a list takes every text of that list, and only that list's")
+check(_sh.prefix_list_rewrite("ip prefix-list IN description the list")
+      == "ip prefix-list IN description the list",
+      "a list's own description is FRR's and passes untouched")
+_rv, _text = driven(_sh.prefix_list_rewrite,
+                    'ip prefix-list IN seq 5 permit 1.0.0.0/8 description ""')
+check(_rv == "" and "no text" in _text, f"an empty text: {_text!r}")
+_sh = at()
+_sh.frr = RecFrr(refuses={"ip prefix-list": "% Unknown command: x"})
+with spoken():
+    _sh.do_config('ip prefix-list IN seq 5 deny 1.0.0.0/8 description "n"')
+check(_sh.candidate.list_descriptions == {} and _sh.list_pending is None,
+      "an entry FRR refuses leaves no text behind")
+ok("the text off FRR's line and kept by its entry; insert and resequence")
+
+print("\n=== show cgnat pool <name>: the sets and their source (#589) ===")
+# Mutation shown red: pool_effective_rows() printing pool.inside (the typed
+# prefixes) - a list pool then shows nothing it translates.
+_DP_POOL = ("cgnat pool A\n inside 100.64.0.0/24\n outside 45.0.0.0/31\n"
+            " block-size 512\n prefix-list-inside IN\n"
+            " untranslated 100.64.1.0/24\n exit\n")
+_rows = prismash.pool_effective_rows(Config.parse(_DP_POOL,
+                                                  dataplane=True).pools["A"])
+check(_rows == ["  inside         prefix-list IN",
+                "    translated   100.64.0.0/24",
+                "    untranslated 100.64.1.0/24",
+                "  outside        typed",
+                "    public       45.0.0.0/31"],
+      f"pool_effective_rows: {_rows!r}")
+_sh = shell(dp=RecDp({"show bpa pool": (0, "pool B [1]\n  x\npool A [0]\n"
+                                            "  inside 100.64.0.0/24\n")}))
+_sh.running_config = lambda: Config.parse(_DP_POOL, dataplane=True)
+_rv, _text = driven(_sh.show_or_pass, "show cgnat pool A")
+check(_text.startswith("pool A [0]\n  inside 100.64.0.0/24\n  inside ")
+      and "pool B" not in _text and "untranslated 100.64.1.0/24" in _text,
+      f"its own dataplane rows, then the sets: {_text!r}")
+_rv, _text = driven(_sh.show_cgnat_pool, "Z")
+_sh.show_cgnat_pool("A")
+check("no pool named Z" in _text, f"no such pool: {_text!r}")
+ok("one pool's rows and what it translates, from the dataplane's reading")
+
+print("\n=== a prefix-list entry's text, kept in the box's own file (#589) ===")
+# Mutation shown red: read_list_descriptions() without the filter - a text
+# whose entry FRR no longer holds is shown for an entry that is gone.
+_ld = tempfile.mkdtemp()
+_saved_ld = prismash.LIST_DESC_PATH
+prismash.LIST_DESC_PATH = os.path.join(_ld, "prefix-list-descriptions")
+try:
+    _sh = shell()
+    check(_sh.read_list_descriptions(["ip prefix-list L seq 5 permit "
+                                      "1.0.0.0/8"]) == {},
+          "no file is no texts")
+    check(_sh.write_list_descriptions({"ip L 5": "a b", "ip L 9": "gone"}),
+          "written")
+    check(_sh.read_list_descriptions(["ip prefix-list L seq 5 permit "
+                                      "1.0.0.0/8"]) == {"ip L 5": "a b"},
+          "read back for the entries FRR holds, and only those")
+    prismash.LIST_DESC_PATH = os.path.join(_ld, "no", "such", "dir", "x")
+    _rv, _text = driven(_sh.write_list_descriptions, {"ip L 5": "a"})
+    check(_rv is False and "prefix-list descriptions: not written" in _text,
+          f"a file that cannot be written is said: {_text!r}")
+finally:
+    prismash.LIST_DESC_PATH = _saved_ld
+ok("written whole, read back filtered by what FRR holds")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

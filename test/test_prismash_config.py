@@ -49,6 +49,15 @@ def base_pool(name="p"):
     return p
 
 
+def _by_list(p, side, more):
+    """Pool `p`'s `side` given by a prefix-list resolving to what it had
+    typed, plus `more` (#589)."""
+    typed = p.inside if side == "inside" else p.outside
+    setattr(p, f"{side}_list", "L")
+    setattr(p, f"list_{side}", list(typed) + more)
+    typed.clear()
+
+
 def cfg_with(pool):
     c = config.Config()
     c.pools[pool.name] = pool
@@ -116,6 +125,22 @@ MUTATIONS = {
 
     "forwards":     (lambda p: p.forwards.append(("tcp", 8080, "100.64.0.5",
                                                   80)), "fwd_add"),
+
+    # A side given by a prefix-list (#589). The NAME alone is in place: the
+    # same addresses reached through a list are the same mapping. What the
+    # list resolves to IS the mapping, and rebuilds the pool like a typed
+    # prefix. What the lists leave out is in place: an untranslated source
+    # is in no pool's inside, and an excluded public address in no outside.
+    "inside_list":  (lambda p: _by_list(p, "inside", []), "lists_set"),
+    "outside_list": (lambda p: _by_list(p, "outside", []), "lists_set"),
+    "list_inside":  (lambda p: _by_list(p, "inside", ["100.64.4.0/22"]),
+                     "pool_replace"),
+    "list_outside": (lambda p: _by_list(p, "outside", ["45.170.16.0/28"]),
+                     "pool_replace"),
+    "untranslated": (lambda p: p.untranslated.append("100.64.9.0/24"),
+                     "lists_set"),
+    "outside_excluded": (lambda p: p.outside_excluded.append(
+        "200.150.0.17/32"), "lists_set"),
 }
 
 # Fields that are not settings at all: the pool's identity, and the tables the

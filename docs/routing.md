@@ -3204,7 +3204,7 @@ prisma> show cgnat ?
   identity     how many identities this box holds, and when it read them
   logging      IPFIX export state
   memory       the CGNAT's memory: what it holds and what still fits
-  pool         configured CGNAT pools
+  pool         configured CGNAT pools; one by name adds what it translates
   session      active sessions per thread
   subscriber   everything about one subscriber
   top          subscribers closest to exhausting their blocks
@@ -5425,6 +5425,68 @@ keeps the rejected entry in its candidate datastore and fails the *next*
 configuration commit with the same message - naming a prefix-list that is in no
 running configuration, on no disk, and in nothing the VTY sent. That is why the
 VTY refuses a bad `ge`/`le` itself, before FRR sees it.
+
+### A prefix-list as a CGNAT pool's side (#589)
+
+A pool under `nat` > `cgnat` can take either side from an `ip prefix-list`:
+`prefix-list-inside <list>` and `prefix-list-outside <list>`, one form per
+side. It is the routing half's own list - one namespace, so an operator keeps
+one kind - and three things are this VTY's on top of FRR's statement:
+
+```
+prisma# [edit] ip prefix-list CGN-IN seq 5 deny 100.64.1.0/24 description "management range"
+prisma# [edit] ip prefix-list CGN-IN seq 10 permit 100.64.0.0/22 le 32
+prisma# [edit] ip prefix-list CGN-IN insert seq 10 before seq 5
+prisma# [edit] ip prefix-list CGN-IN resequence
+```
+
+* **An entry's `description "<text>"`.** FRR 10.7 has `ip prefix-list L
+  description` for a whole list and nothing for an entry, so the text comes off
+  the line before FRR is asked, and is kept in
+  `/etc/prisma-routing/prefix-list-descriptions` by the entry's family, list
+  and seq - the arrangement a static route's description has (#436). An entry
+  typed with a description and no seq is given the seq FRR would give it.
+* **`insert seq <n> before|after seq <m>`**, Junos's move: only entry `n`
+  is renumbered, to a free seq between its new neighbours; with no room the
+  whole list is renumbered by 10 in its new order, and the VTY says so.
+* **`resequence`** renumbers the list by 10. Descriptions move with their
+  entries in both.
+
+**How a pool reads a list differs from how FRR does**, and it has to. FRR
+matches a ROUTE: `permit 203.0.113.128/28` matches the /28 route and nothing
+longer, so read that way the issue's own example - a /28 less one /32 - would
+be a pool with no address in it. A pool reads the list as ADDRESSES: an entry
+with neither `ge` nor `le` covers its whole prefix; with either, an address
+counts as a /32 and the entry covers its prefix when 32 is in the window
+(`le 32`, or `ge` alone, which runs to 32); an entry whose window leaves /32
+out can match no address, and the commit refuses a pool using that list,
+naming the entry. Decided with the operator on 2026-10-05. Where BGP or a
+route-map uses the same list, FRR's route rule holds as before - only
+`Config.resolve_pool_lists()` reads it as addresses.
+
+First match wins in seq order. An inside source whose first match is a
+`permit` is translated; a `deny` leaves untranslated, with its own address;
+no match is not this pool's (another pool's, or the "no pool" drop). The
+public addresses are the outside list's permits less its denies.
+
+**What the dataplane is given** is the resolution, never the list: the pool's
+inside and outside are the effective sets, CIDR-decomposed exactly as
+`format_bpa_range_as_prefixes()` prints a merged range back, so a
+deterministic mapping is computed over the permitted addresses alone and the
+readback matches what was sent line for line. The inside denies go on a set of
+their own - `bpa_pool_lists_set`, API 0.20.0 - which `bpa-in2out` consults
+only for a source no pool claims; they are NOT in the inside, because a
+bypass source inside a pool's inside holds a subscriber index of the formula,
+and a deny must not. The outside's excluded addresses, the two names, and the
+untranslated set are in `show bpa config` (read back as the pool's
+statements and facts), in the dated trail, and in `show cgnat pool <name>`.
+
+**A list change re-applies the pools using it.** The candidate's lists are
+resolved at every check and apply (`_apply`), so a pool whose effective set
+moved is in `pool_replace` like a typed prefix change - a deterministic pool
+re-maps, and `commit remap` is asked for. `show configuration compare` renders
+each list pool with what it resolves to under it, as `! <pool> translates
+...` lines, because a list edit changes no line of the pool itself.
 
 ## A policy whose daemon is not running
 

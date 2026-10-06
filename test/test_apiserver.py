@@ -266,6 +266,8 @@ check(A.cfg_addresses(sh.cfg, "pg0") == ["100.64.3.254/22"] and A.cfg_addresses(
 P = A.pools_of(sh)
 check(P == [{"name": "nb", "mode": "bpa", "policy": "interleaved", "block_size": 256,
              "prefixes_inside": ["100.64.0.0/22"], "prefixes_outside": ["200.150.0.16/30"],
+             "prefix_list_inside": "", "prefix_list_outside": "",
+             "untranslated": [], "outside_excluded": [],
              "capacity": 6, "guaranteed": 3, "level": "cgnat"}],
       f"a pool with the dataplane's capacity, and its level (#572): {P}")
 B = A.bgp_of(sh)
@@ -1291,8 +1293,11 @@ class _Msg:
 
 
 _pm = _Msg(has={"vrf"}, timeouts={"udp": 5}, algs={}, forwards=[], vrf=3, outside_vrf=0,
-           **{k: 0 for k in A.POOL_SCALARS}, **{k: [] for k in A.POOL_LISTS})
+           **{k: 0 for k in A.POOL_SCALARS}, **{k: [] for k in A.POOL_LISTS},
+           prefix_list_inside="IN", prefix_list_outside="")
 _pd = A.pool_dict(_pm)
+check(_pd["prefix_list_inside"] == "IN" and _pd["prefix_list_outside"] == "",
+      "#589: pool_dict carries a pool's two prefix-list names")
 check(_pd["vrf"] == 3 and _pd["outside_vrf"] is None and _pd["timeouts"] == {"udp": 5},
       "pool_dict: a set VRF, an unset one None")
 check(A._has(_pm, "vrf") and not A._has(_pm, "outside_vrf"), "_has")

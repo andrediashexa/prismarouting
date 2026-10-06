@@ -1623,6 +1623,61 @@ bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
   return 0;
 }
 
+/* not a unit: it builds two address sets and stores them, with two names,
+ * on a pool in bpa_main. The set builder is bpa_addr_set_build(), which
+ * test/test_bpa_pool.c drives with the untranslated set (#589);
+ * lab/cgnat-prefix-list.sh applies it through the VTY and reads it back. */
+clib_error_t *
+bpa_pool_lists_set (u8 *name, const char *inside_list,
+		    const char *outside_list, const u32 *bases,
+		    const u32 *counts, u32 n_untranslated, u32 n)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_addr_set_t untr = { 0 }, excl = { 0 };
+  clib_error_t *e;
+  bpa_pool_t *p;
+  uword *q;
+
+  q = hash_get_mem (bm->pool_by_name, name);
+  if (!q)
+    return clib_error_return (0, "no such pool '%v'", name);
+  if (n_untranslated > n)
+    return clib_error_return (0, "%u untranslated prefixes of %u",
+			      n_untranslated, n);
+
+  /* Built before the barrier, for bpa_bypass_set()'s reason: a half-built
+   * set on a running datapath would let past whatever its partial ranges
+   * happened to cover. Empty is legal for both - a side given by prefixes,
+   * a list with no deny - and is how either is removed. */
+  if (n_untranslated)
+    {
+      e = bpa_addr_set_build (&untr, bases, counts, n_untranslated);
+      if (e)
+	return e;
+    }
+  if (n > n_untranslated)
+    {
+      e = bpa_addr_set_build (&excl, bases + n_untranslated,
+			      counts + n_untranslated, n - n_untranslated);
+      if (e)
+	return e;
+    }
+
+  p = pool_elt_at_index (bm->pools, q[0]);
+  if ((n || inside_list[0] || outside_list[0]) && p->is_nat64)
+    return clib_error_return (0, "a NAT64 pool takes no prefix-list: its "
+				 "sides are IPv6 and IPv4 prefixes");
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  p->untranslated = untr;
+  p->outside_excluded = excl;
+  snprintf (p->inside_list, sizeof (p->inside_list), "%s", inside_list);
+  snprintf (p->outside_list, sizeof (p->outside_list), "%s", outside_list);
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  bpa_audit ("prefix-lists", p, 0);
+  return 0;
+}
+
 /* not a unit: it stores two numbers on a pool in bpa_main. What they do
  * is measured on a box by lab/limits.sh, which fills a pool to its session
  * limit and reads the refusal. */

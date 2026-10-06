@@ -112,6 +112,31 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
 		  p->bypass_dst.ranges[i].count);
     }
 
+  /*
+   * A pool whose sides are prefix-lists (#589). Its inside and outside above
+   * are already what the lists resolved to, so a deterministic mapping is
+   * recomputable from this line as before; what is added is which lists,
+   * the sources a deny let past untranslated - who held them is not this
+   * box's to answer - and the public addresses a deny kept out, which a
+   * reader would otherwise have to infer from a gap in the outside.
+   */
+  if (p->inside_list[0])
+    s = format (s, " inside-list %s", p->inside_list);
+  if (p->outside_list[0])
+    s = format (s, " outside-list %s", p->outside_list);
+  for (i = 0; i < p->untranslated.n_ranges; i++)
+    {
+      a.as_u32 = clib_host_to_net_u32 (p->untranslated.ranges[i].base);
+      s = format (s, " untranslated %U+%u", format_ip4_address, &a,
+		  p->untranslated.ranges[i].count);
+    }
+  for (i = 0; i < p->outside_excluded.n_ranges; i++)
+    {
+      a.as_u32 = clib_host_to_net_u32 (p->outside_excluded.ranges[i].base);
+      s = format (s, " outside-excluded %U+%u", format_ip4_address, &a,
+		  p->outside_excluded.ranges[i].count);
+    }
+
   if (p->max_sessions || p->max_rate)
     s = format (s, " limits sessions %u rate %u", p->max_sessions,
 		p->max_rate);

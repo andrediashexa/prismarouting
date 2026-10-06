@@ -63,6 +63,65 @@ Até a 0.148.2 essas duas instruções se chamavam `inside` e `outside`. Os nome
 
 `**policy interleaved**` **vs** `**blocked**` — `interleaved` espalha vizinhos por endereços públicos distintos, o que dilui o impacto de um bloqueio de reputação em um IP. `blocked` mantém vizinhos no mesmo endereço público.
 
+# Lados dados por prefix-list
+
+Um lado do pool pode vir de uma `ip prefix-list` em vez de prefixos digitados: a mesma lista do roteamento, com `seq`, `permit`/`deny`, `ge`/`le` e uma descrição por entrada.
+
+| Comando | Argumento | O que define |
+|---------|-----------|--------------|
+| `prefix-list-inside <lista>` | `<prefix-list>` | os assinantes: origem que casa um `permit` é traduzida; origem que casa um `deny` **sai sem NAT**, com o próprio endereço; origem que não casa nada não é deste pool |
+| `prefix-list-outside <lista>` | `<prefix-list>` | os endereços públicos: os `permit` **menos** os `deny` |
+
+Cada lado é **um ou outro**: `prefix-inside` ou `prefix-list-inside`, `prefix-outside` ou `prefix-list-outside`. O `commit` recusa um pool com os dois no mesmo lado e diz qual pool e qual lado.
+
+```
+prisma# [edit] ip prefix-list CGN-IN seq 5 deny 100.64.1.0/24 description "faixa de gerência"
+prisma# [edit] ip prefix-list CGN-IN seq 10 permit 100.64.0.0/22 le 32
+prisma# [edit] ip prefix-list CGN-OUT seq 5 deny 203.0.113.129/32
+prisma# [edit] ip prefix-list CGN-OUT seq 10 permit 203.0.113.128/28
+prisma# [edit] nat
+prisma# [edit nat] cgnat
+prisma# [edit nat / cgnat] pool residencial
+prisma# [edit nat / cgnat / pool residencial] prefix-list-inside CGN-IN
+prisma# [edit nat / cgnat / pool residencial] prefix-list-outside CGN-OUT
+```
+
+Com isso o pool traduz `100.64.0.0/24` e `100.64.2.0/23`, deixa `100.64.1.0/24` passar sem tradução, e usa os quinze endereços de `203.0.113.128/28` que sobram tirando o `.129`.
+
+**Como uma lista vira um conjunto de endereços.** No roteamento, uma entrada casa uma **rota** pelo tamanho: `permit 203.0.113.128/28` casa só a rota `/28`. Um pool lê a mesma lista como **endereços**, e por isso a regra aqui é outra:
+
+* uma entrada sem `ge` nem `le` cobre **todos** os endereços do prefixo;
+* com `ge` ou `le`, cada endereço conta como um `/32`, e a entrada cobre o prefixo quando 32 está na janela - `le 32` ou um `ge` sozinho cobrem tudo;
+* uma entrada cuja janela deixa o `/32` de fora (`le 24`, por exemplo) não casa endereço nenhum, e o `commit` recusa o pool que usa a lista, nomeando a entrada.
+
+Vale a primeira entrada que casar, na ordem do `seq`, como no roteamento. Onde a mesma lista é usada por um vizinho BGP ou por uma route-map, ela continua valendo pela regra de rotas: só o pool a lê como endereços.
+
+**O que o** `**commit**` **recusa:** uma lista que não existe ou que não tem entrada; uma entrada que não casa endereço nenhum; uma `prefix-list-inside` que não traduz ninguém; um `deny` na `prefix-list-outside` que deixa o pool **sem endereço público**; um `deny` de origem que outro pool traduz (a origem é de um pool ou sai sem tradução, não as duas coisas); e uma lista que se desdobra em mais de 255 prefixos, o máximo que o dataplane recebe numa mensagem. Um pool NAT64 não aceita prefix-list.
+
+**Mudar a lista reaplica o pool.** O conjunto que a lista dá é o mapeamento: se ele muda, o pool é reconstruído no `commit`, como se o prefixo tivesse sido digitado de novo - e, num pool determinístico, isso remapeia assinantes. O `show configuration compare` mostra a linha da lista que mudou e, embaixo do pool, o que ele passa a traduzir, em linhas `!`:
+
+```
+prisma# [edit] ip prefix-list CGN-OUT seq 10 permit 203.0.113.128/27
+prisma# [edit] show configuration compare
+```
+
+Só o nome da lista e o que ela deixa de fora (as origens sem tradução, os públicos excluídos) mudam **no lugar**; trocar a lista por outra que dá os mesmos endereços não derruba ninguém.
+
+**Mover entradas, como no Junos.** `ip prefix-list <lista> insert seq <n> before|after seq <m>` move a entrada `n` para antes ou depois da `m`; se não há número livre entre as duas, a lista inteira é renumerada de 10 em 10 na nova ordem, e a caixa avisa. `ip prefix-list <lista> resequence` renumera de 10 em 10. A descrição de cada entrada vai junto.
+
+```
+prisma# [edit] ip prefix-list CGN-IN insert seq 10 before seq 5
+prisma# [edit] ip prefix-list CGN-IN resequence
+```
+
+**A descrição por entrada** é guardada pela própria caixa - o roteamento só tem descrição para a lista inteira - e aparece no `show configuration` no fim da linha da entrada. Uma entrada com descrição precisa de `seq`; digitada sem, a caixa dá a ela o `seq` que o roteamento daria.
+
+**O que o pool usa de fato:** `show cgnat pool <nome>` mostra as linhas do dataplane para o pool e, embaixo, cada lado com a sua origem (`prefix-list CGN-IN` ou `typed`), o que ele traduz (`translated`, `public`) e o que as listas deixaram de fora (`untranslated`, `excluded`). A trilha datada (`show cgnat history`) registra os mesmos conjuntos e os nomes das listas, para que um mapeamento determinístico possa ser recalculado sabendo quais endereços ficaram fora.
+
+```
+prisma> show cgnat pool <nome>
+```
+
 ## As duas pontas de `ports` são conferidas na hora, e a faixa no `commit`
 
 Uma porta é um número de 16 bits dos dois lados: se `ports 70000 80000` fosse aceito, o que chegaria ao dataplane seria `4464-14464`, e a partir daí nenhuma recusa conseguiria nomear os 70000 - o número já não existiria. Então cada ponta é recusada onde você a digita, e a recusa diz **qual das duas**:

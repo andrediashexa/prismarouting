@@ -487,6 +487,12 @@ message PoolConfig {
   // Only the ALGs the operator chose ("ftp", "rtsp", "pptp", "esp", "sip").
   map<string, bool> algs = 23;
   repeated PortForwardConfig forwards = 24;
+  // The `ip prefix-list` a side is given by instead of its prefixes (#589):
+  // "" when the side is typed (prefix_inside / prefix_outside). A side is
+  // one or the other, never both - the commit refuses a pool with both. What
+  // the list resolves to is ListPools' Pool.prefixes_inside / _outside.
+  string prefix_list_inside = 27;
+  string prefix_list_outside = 28;
   // BREAKING (#572, 2026-10-05): a NAT64 pool is no longer a PoolConfig. It
   // is written under `nat` > `nat64` and read and set as Nat64PoolConfig, in
   // TypedConfig.nat64_pools and SetConfigRequest.nat64_pool. The two numbers
@@ -850,6 +856,10 @@ message PrefixListEntry {
   // 0: not stated.
   uint32 ge = 4;
   uint32 le = 5;
+  // The entry's own description (#589), kept by the box: FRR has none on an
+  // entry. "" when there is none. Written as `... description "<text>"` at
+  // the end of the entry's line through Edit.
+  string description = 6;
 }
 
 message FrrPrefixList {
@@ -2418,6 +2428,16 @@ message Pool {
   // The level the pool is written under (#572): "cgnat" (an IPv4 inside) or
   // "nat64" (an IPv6 inside, `show nat64 pool`'s).
   string level = 13;
+  // The prefix-lists a side is given by (#589), "" when typed. With one,
+  // prefixes_inside and prefixes_outside are what the list resolved to -
+  // permits less denies - which is what the dataplane maps.
+  string prefix_list_inside = 14;
+  string prefix_list_outside = 15;
+  // Sources the inside list denies: routed with their own address,
+  // untranslated.
+  repeated string untranslated = 16;
+  // Public addresses the outside list's denies took out of its permits.
+  repeated string outside_excluded = 17;
 }
 
 message ListPoolsResponse {

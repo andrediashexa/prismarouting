@@ -77,6 +77,46 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A CGNAT pool's sides can be prefix-lists.**
+  ([#589](https://github.com/andrediashexa/hexarouting/issues/589)) Under
+  `nat` > `cgnat` > `pool <name>`, `prefix-list-inside <list>` and
+  `prefix-list-outside <list>` name an `ip prefix-list` - the routing
+  half's own lists, one namespace. A source matching an inside `permit` is
+  translated; one matching a `deny` leaves untranslated, with its own
+  address; one matching nothing is not the pool's. The public addresses are
+  the outside list's permits less its denies. A side is given by its
+  prefixes or by its list, never both, and the commit refuses a pool with
+  both on one side, naming the pool and the side. It also refuses a list
+  that is missing or empty, an entry that can match no address, an inside
+  that translates nothing, an outside deny that leaves the pool no public
+  address, a deny another pool translates, and lists that unfold into more
+  than the 255 prefixes a dataplane message carries.
+
+  A pool reads a list as addresses, not routes: an entry with neither `ge`
+  nor `le` covers its whole prefix (FRR's route rule would make `permit
+  203.0.113.128/28` match no single address), and with either an address is
+  a /32. The same list keeps FRR's route rule wherever BGP or a route-map
+  uses it.
+
+  The dataplane is given the effective sets, for bpa and deterministic pools
+  alike, so a deterministic mapping is computed over exactly the permitted
+  addresses. A new per-pool set holds the inside denies: a source no pool
+  claims and a list denies leaves untranslated, counted in `show errors` as
+  "prefix-list deny, left untranslated", where it
+  used to be dropped as "no pool". The dated trail, `show bpa config` and the
+  new `show cgnat pool <name>` say which lists, what is translated and what
+  was left out. A list change rebuilds the pools using it, and
+  `show configuration compare` shows those pools' new sets under them.
+
+  Prefix-list entries take a `description "<text>"` of their own, kept by
+  the box since FRR has none on an entry, and two Junos-style moves:
+  `ip prefix-list <list> insert seq <n> before|after seq <m>` and
+  `ip prefix-list <list> resequence`. Through the API: `PoolConfig`
+  `prefix_list_inside` / `prefix_list_outside`, `PrefixListEntry.description`,
+  and ListPools' `Pool` with the two names, `untranslated` and
+  `outside_excluded` (docs/clients.md). The plugin's API is 0.20.0, with
+  `bpa_pool_lists_set`.
+
 ### Fixed
 
 ## 0.151.11 - make test reaches no mirror

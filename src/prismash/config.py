@@ -11,6 +11,7 @@ a state that never existed.
 
 from __future__ import annotations
 
+import copy
 import difflib
 import ipaddress
 import re
@@ -1069,6 +1070,290 @@ CGNAT_HEADER = "! cgnat"
 POOL_PREFIX_WORDS = {"prefix-inside": "inside", "prefix-outside": "outside",
                      "inside": "inside", "outside": "outside"}
 
+#: A pool's two prefix-list statements (#589), by the side each gives. One
+#: side is given by its prefixes or by its list, never both: the commit
+#: refuses a pool that has both on one side (Config.resolve_pool_lists).
+POOL_LIST_WORDS = {"prefix-list-inside": "inside",
+                   "prefix-list-outside": "outside"}
+
+#: The most prefixes one dataplane message carries (#589): n_prefixes is a
+#: u8 in bpa.api's bpa_pool_add_del and bpa_pool_lists_set alike.
+POOL_MESSAGE_PREFIXES = 255
+
+
+def prefix_list_entries(routing, name, family="ip"):
+    """
+    The entries of `family prefix-list name` in the order FRR walks them:
+    [(seq, action, prefix, ge, le)], ge and le None when not stated. None
+    when the list has no entry at all (#589).
+
+    An entry typed with no `seq` is numbered as FRR numbers it - the highest
+    so far, rounded down to a multiple of 5, plus 5 - and a seq typed twice is
+    the later line, which is what FRR keeps. `any` is 0.0.0.0/0 with `le 32`,
+    FRR's own meaning.
+    """
+    entries = {}
+    top = 0
+    for raw in routing:
+        w = raw.strip().split()
+        if w[:3] != [family, "prefix-list", name] or len(w) < 5:
+            continue
+        rest = w[3:]
+        if rest[0] == "seq" and len(rest) > 1 and is_number(rest[1]):
+            seq, rest = int(rest[1]), rest[2:]
+        elif rest[0] in ("permit", "deny"):
+            seq = top // 5 * 5 + 5
+        else:
+            continue
+        if len(rest) < 2 or rest[0] not in ("permit", "deny"):
+            continue
+        top = max(top, seq)
+        action, pfx, tail = rest[0], rest[1], rest[2:]
+        ge = le = None
+        if pfx == "any":
+            pfx = "0.0.0.0/0" if family == "ip" else "::/0"
+            le = 32 if family == "ip" else 128
+        try:
+            ipaddress.ip_network(pfx, strict=False)
+        except ValueError:
+            # FRR's to refuse, at the prompt and at commit; nothing an
+            # address set can be read from.
+            continue
+        for k in ("ge", "le"):
+            if k in tail and tail.index(k) + 1 < len(tail) \
+                    and is_number(tail[tail.index(k) + 1]):
+                n = int(tail[tail.index(k) + 1])
+                if k == "ge":
+                    ge = n
+                else:
+                    le = n
+        entries[seq] = (seq, action, pfx, ge, le)
+    if not entries:
+        return None
+    return [entries[s] for s in sorted(entries)]
+
+
+def prefix_entry_covers_addresses(prefix, ge, le) -> bool:
+    """
+    Does this entry match an ADDRESS (#589)? A CGNAT pool reads a list as a
+    set of addresses, and FRR's rule - a route matches when its length is in
+    the entry's window - asks about routes, under which `permit
+    45.237.115.128/28` matches no single address at all and the issue's own
+    example would describe an empty pool. So: an entry with neither ge nor le
+    covers every address in its prefix; with either, an address is a /32 and
+    the entry covers its prefix when 32 is in the window (`ge` alone runs to
+    32, FRR's rule). Decided with the operator on 2026-10-05. The list keeps
+    FRR's route rule wherever BGP or a route-map uses it: only this reader
+    reads it as addresses.
+    """
+    if ge is None and le is None:
+        return True
+    length = ipaddress.ip_network(prefix, strict=False).prefixlen
+    lo = ge if ge is not None else length
+    hi = le if le is not None else 32
+    return lo <= 32 <= hi
+
+
+def _span_minus(lo, hi, taken):
+    """[lo, hi] less the sorted disjoint spans `taken`, as spans."""
+    out = []
+    for a, b in taken:
+        if b < lo or a > hi:
+            continue
+        if a > lo:
+            out.append((lo, a - 1))
+        lo = b + 1
+        if lo > hi:
+            return out
+    out.append((lo, hi))
+    return out
+
+
+def _span_union(spans):
+    """The sorted, merged union of spans: adjacent ones are one."""
+    out = []
+    for a, b in sorted(spans):
+        if out and a <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def spans_as_prefixes(spans) -> list:
+    """
+    The spans as CIDR prefixes, in address order, each span in the fewest -
+    the decomposition format_bpa_range_as_prefixes() in bpa_cli.c gives a
+    merged range back in, so what the VTY sends is what `show bpa config`
+    reads back, line for line (#589).
+    """
+    out = []
+    for a, b in _span_union(spans):
+        out += [str(n) for n in ipaddress.summarize_address_range(
+            ipaddress.IPv4Address(a), ipaddress.IPv4Address(b))]
+    return out
+
+
+def prefix_list_spans(entries):
+    """
+    (permitted, denied, covering, inert): the addresses whose FIRST matching
+    entry permits and denies, as merged spans; every address some permit
+    covers, matched first or not; and the entries that can match no address
+    (#589). First match wins, in seq order, as in a routing prefix-list; an
+    address no entry matches is in neither.
+    """
+    taken, permit, deny, covering, inert = [], [], [], [], []
+    for seq, action, pfx, ge, le in entries:
+        if not prefix_entry_covers_addresses(pfx, ge, le):
+            inert.append((seq, action, pfx, ge, le))
+            continue
+        net = ipaddress.IPv4Network(pfx, strict=False)
+        lo, hi = int(net.network_address), int(net.broadcast_address)
+        fresh = _span_minus(lo, hi, taken)
+        (permit if action == "permit" else deny).extend(fresh)
+        if action == "permit":
+            covering.append((lo, hi))
+        taken = _span_union(taken + fresh)
+    return (_span_union(permit), _span_union(deny), _span_union(covering),
+            inert)
+
+
+def list_entry_key(line):
+    """
+    `ip L 10`: the family, the list and the seq that name one prefix-list
+    entry, or None for a line that is not a numbered entry (#589). The key a
+    description is kept under, since FRR keeps none on an entry.
+    """
+    w = line.strip().split()
+    if len(w) >= 6 and w[0] in ("ip", "ipv6") and w[1] == "prefix-list" \
+            and w[3] == "seq" and is_number(w[4]) \
+            and w[5] in ("permit", "deny"):
+        return f"{w[0]} {w[2]} {w[4]}"
+    return None
+
+
+def split_list_description(line):
+    """
+    (the entry as FRR takes it, its description or None, why or None) for a
+    prefix-list entry carrying `description "<text>"` after its prefix
+    (#589). FRR 10.7 has `ip prefix-list L description` for a whole list and
+    nothing for an entry, so the text comes off here and is kept by this box;
+    a list's own description - `ip prefix-list L description x` - is FRR's
+    and is left alone. The quotes are the operator's way of keeping spaces;
+    they are not part of the text.
+    """
+    w = line.strip().split()
+    if len(w) < 5 or w[0] not in ("ip", "ipv6") or w[1] != "prefix-list" \
+            or "description" not in w[4:]:
+        return line, None, None
+    at = w.index("description", 4)
+    if not any(x in ("permit", "deny") for x in w[3:at]):
+        return line, None, None
+    text = " ".join(w[at + 1:])
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        text = text[1:-1]
+    entry = " ".join(w[:at])
+    if not text:
+        return entry, None, ("prefix-list description: no text",
+                             'e.g. description "management range"')
+    why = text_error("prefix-list description", text)
+    if why:
+        return entry, None, why
+    if list_entry_key(entry) is None:
+        return entry, None, ("prefix-list description: the entry has no seq",
+                             "a description is kept by the entry's seq; "
+                             "type it as 'ip prefix-list <name> seq <n> ...'")
+    return entry, text, None
+
+
+def with_list_descriptions(routing, descriptions) -> list:
+    """The routing lines with each numbered prefix-list entry's description
+    put back on it (#589), as `show configuration` and a saved file read."""
+    out = []
+    for line in routing:
+        text = descriptions.get(list_entry_key(line) or "")
+        out.append(f'{line} description "{text}"' if text else line)
+    return out
+
+
+def number_list_entries(routing, name, family="ip") -> list:
+    """
+    The routing lines with every entry of `family prefix-list name` that was
+    typed with no seq given the seq FRR would give it (#589): an entry is
+    moved by its number, so before `insert` or `resequence` every entry has
+    to have one written down.
+    """
+    out, top = [], 0
+    for line in routing:
+        w = line.strip().split()
+        if w[:3] == [family, "prefix-list", name] and len(w) > 4:
+            if w[3] == "seq" and is_number(w[4]):
+                top = max(top, int(w[4]))
+            elif w[3] in ("permit", "deny"):
+                top = top // 5 * 5 + 5
+                line = " ".join(w[:3] + ["seq", str(top)] + w[3:])
+        out.append(line)
+    return out
+
+
+def list_moves(seqs, n, where, m):
+    """
+    {old seq: new seq} that moves entry `n` just `where` ("before" or
+    "after") entry `m` of a list numbered `seqs`, Junos's `insert` (#589);
+    or a string saying why it cannot. Only `n` moves when there is a free
+    number between its new neighbours; when there is none the whole list is
+    renumbered by 10 in its new order, which is the one way to make room
+    without moving any other entry relative to the rest.
+    """
+    if n not in seqs:
+        return f"there is no entry seq {n}"
+    if m not in seqs:
+        return f"there is no entry seq {m}"
+    if n == m:
+        return "an entry cannot move relative to itself"
+    rest = [s for s in sorted(seqs) if s != n]
+    at = rest.index(m) + (1 if where == "after" else 0)
+    lo = rest[at - 1] if at > 0 else 0
+    hi = rest[at] if at < len(rest) else None
+    if hi is None:
+        return {n: lo // 5 * 5 + 5}
+    if hi - lo >= 2:
+        return {n: (lo + hi) // 2}
+    order = rest[:at] + [n] + rest[at:]
+    return {old: 10 * (i + 1) for i, old in enumerate(order)}
+
+
+def renumber_list(routing, descriptions, name, mapping, family="ip"):
+    """
+    (routing, descriptions) with the entries of one prefix-list renumbered by
+    `mapping`, {old seq: new seq}, every entry at once so no two collide on
+    the way; each description moves with its entry (#589).
+    """
+    out = []
+    for line in routing:
+        w = line.strip().split()
+        if w[:3] == [family, "prefix-list", name] and len(w) > 4 \
+                and w[3] == "seq" and is_number(w[4]) \
+                and int(w[4]) in mapping:
+            line = " ".join(w[:4] + [str(mapping[int(w[4])])] + w[5:])
+        out.append(line)
+    descs = {}
+    head = f"{family} {name} "
+    for key, text in descriptions.items():
+        seq = key[len(head):]
+        if key.startswith(head) and is_number(seq) and int(seq) in mapping:
+            key = head + str(mapping[int(seq)])
+        descs[key] = text
+    return out, descs
+
+
+def prefix_entry_text(entry) -> str:
+    """One entry as it is typed, for a refusal to name (#589)."""
+    seq, action, pfx, ge, le = entry
+    return (f"seq {seq} {action} {pfx}"
+            + (f" ge {ge}" if ge is not None else "")
+            + (f" le {le}" if le is not None else ""))
+
 
 class Pool:
     """One CGNAT pool. Order of prefixes is preserved for a stable diff."""
@@ -1362,6 +1647,21 @@ class Pool:
         # its own output.
         self.bypass_src: list[str] = []
         self.bypass_dst: list[str] = []
+        # The prefix-lists a side is given by instead of its prefixes (#589),
+        # "" when that side is typed. What they resolve to is held beside
+        # them: list_inside and list_outside are the EFFECTIVE sets - permits
+        # less denies - which are the pool's mapping; untranslated is what
+        # the inside list denies, which leaves with its own address; and
+        # outside_excluded is what the outside list's denies took out of its
+        # permits, carried so the trail and `show` can name it. Filled by
+        # Config.resolve_pool_lists() from the routing half, or read back
+        # from the dataplane, which holds all four.
+        self.inside_list = ""
+        self.outside_list = ""
+        self.list_inside: list[str] = []
+        self.list_outside: list[str] = []
+        self.untranslated: list[str] = []
+        self.outside_excluded: list[str] = []
         self.filter = "endpoint-independent"
         self.algs: dict[str, bool] = {}  # only where the operator chose
         # Static port forwards, as (proto, public port, private ip, private
@@ -1376,9 +1676,14 @@ class Pool:
     def _fwd_key(f):
         return (f[1], Pool.FWD_PROTOS.index(f[0]))
 
-    def lines(self, in_place=True) -> list[str]:
+    def lines(self, in_place=True, effective=False) -> list[str]:
         """
         The pool as configuration text.
+
+        `effective` adds, under each prefix-list statement, what the list
+        resolved to, as `!` lines (#589): `show | compare` is where an
+        operator changing a list must see the pools it moves, and the
+        statement itself does not change when only the list did.
 
         `in_place=False` gives only the part of a pool that can be changed
         ONLY by recreating it: the prefixes, the block size, the port range,
@@ -1392,7 +1697,20 @@ class Pool:
         port is not a change anyone would ask for (issue #69).
         """
         out = [f"{self.level} pool {self.name}"]
-        out += [f" prefix-inside {p}" for p in self.inside]
+        # The MAPPING text (in_place=False) carries the effective sets
+        # whichever way a side was given (#589): a prefix-list change that
+        # moves an address re-maps subscribers exactly as typing the prefix
+        # would, and two HA peers that reach one set two ways map alike. The
+        # whole text carries what was typed: the list's name, never the
+        # prefixes it resolved to, which are the routing half's to say.
+        out += [f" prefix-inside {p}" for p in (
+            self.eff_inside if not in_place else self.inside)]
+        if in_place and self.inside_list:
+            out.append(f" prefix-list-inside {self.inside_list}")
+            out += [f" ! {self.name} translates {p}"
+                    for p in self.list_inside if effective]
+            out += [f" ! {self.name} leaves untranslated {p}"
+                    for p in self.untranslated if effective]
         # Rendered with the prefix even when none was typed, because the
         # dataplane prints the one it took and these lines are compared with
         # its readback: a pool that said nothing would differ on every
@@ -1403,7 +1721,14 @@ class Pool:
         # that at commit, and it can only refuse what it is shown.
         if self.is_nat64 or self.nat64_prefix:
             out.append(f" nat64-prefix {self.nat64_prefix_eff}")
-        out += [f" prefix-outside {p}" for p in self.outside]
+        out += [f" prefix-outside {p}" for p in (
+            self.eff_outside if not in_place else self.outside)]
+        if in_place and self.outside_list:
+            out.append(f" prefix-list-outside {self.outside_list}")
+            out += [f" ! {self.name} translates to {p}"
+                    for p in self.list_outside if effective]
+            out += [f" ! {self.name} excludes {p}"
+                    for p in self.outside_excluded if effective]
         out.append(f" block-size {self.block_size}")
         if self.ports:
             out.append(f" ports {self.ports}")
@@ -1461,15 +1786,47 @@ class Pool:
         out.append(" exit")
         return out
 
+    # not a unit: a property is read and never called, so no test can name
+    # it for the reader; test_cgnat_prefix_lists.py reads it all the same
+    @property
+    def eff_inside(self) -> list:
+        """The inside the dataplane is given: the list's, when one names it
+        (#589), otherwise the prefixes typed."""
+        return list(self.list_inside) if self.inside_list else list(
+            self.inside)
+
+    # not a unit: a property, as eff_inside above
+    @property
+    def eff_outside(self) -> list:
+        """The outside the dataplane is given, the same way (#589)."""
+        return list(self.list_outside) if self.outside_list else list(
+            self.outside)
+
+    def lists_api_args(self) -> dict:
+        """
+        bpa_pool_lists_set's arguments (#589): the two names, the sources
+        the inside list denies - which leave untranslated - and the public
+        addresses the outside list's denies took out, replaced whole like a
+        bypass list and for its reason.
+        """
+        return {
+            "name": self.name,
+            "inside_list": self.inside_list,
+            "outside_list": self.outside_list,
+            "n_untranslated": len(self.untranslated),
+            "n_prefixes": len(self.untranslated) + len(self.outside_excluded),
+            "prefixes": list(self.untranslated) + list(self.outside_excluded),
+        }
+
     def device_command(self) -> str:
         parts = ["bpa pool", self.name]
-        for p in self.inside:
+        for p in self.eff_inside:
             parts += ["inside", p]
         if self.subscriber_length:
             parts += ["subscriber-length", str(self.subscriber_length)]
         if self.nat64_prefix:
             parts += ["nat64-prefix", self.nat64_prefix]
-        for p in self.outside:
+        for p in self.eff_outside:
             parts += ["outside", p]
         parts += ["block", self.block_size]
         if self.ports:
@@ -1632,6 +1989,15 @@ class Pool:
             return (f"{n}: NAT64 is not written under 'cgnat'",
                     f"a NAT64 pool is written as {NAT64_WHERE} "
                     f"{self.name}; remove it here and enter it there")
+        # A prefix-list is a set of IPv4 addresses to this box (#589), and an
+        # inside deny's untranslated path is the one a NAT64 pool has none of
+        # - the bypass refusal below, for the same reason.
+        if self.level == NAT64_LEVEL and (self.inside_list
+                                          or self.outside_list):
+            return (f"{n}: a NAT64 pool takes no prefix-list",
+                    "a CGNAT pool's prefix-list-inside and "
+                    "prefix-list-outside are IPv4 sets; a NAT64 pool's "
+                    "sides are its prefixes")
         if self.level == NAT64_LEVEL and self.inside and not v6:
             return (f"{n}: an IPv4 inside is not NAT64",
                     "a pool with an IPv4 prefix-inside is a CGNAT pool, "
@@ -1806,9 +2172,9 @@ class Pool:
             "alg": alg,
             "alg_set": alg_set,
             "timeouts": timeouts,
-            "n_inside": len(self.inside),
-            "n_prefixes": len(self.inside) + len(self.outside),
-            "prefixes": list(self.inside) + list(self.outside),
+            "n_inside": len(self.eff_inside),
+            "n_prefixes": len(self.eff_inside) + len(self.eff_outside),
+            "prefixes": self.eff_inside + self.eff_outside,
         }
 
     def initial_blocks(self) -> int:
@@ -2137,6 +2503,14 @@ TEXT_LIMITS = {
     #: 63 an interface description has, so one habit fits both.
     "static route description": (63, "this box's own file; kept to what an "
                                      "interface description holds"),
+    #: A pool's prefix-list name travels to the dataplane, which keeps it so
+    #: `show bpa config` can give it back (#589).
+    "prefix-list": (63, "bpa.api, bpa_pool_lists_set inside_list[64], which "
+                        "holds 63 characters and a terminator"),
+    #: A prefix-list entry's description, which FRR has no field for: kept
+    #: in this box's own file like a static route's, and to its bound (#589).
+    "prefix-list description": (63, "this box's own file; FRR keeps no "
+                                    "description on an entry"),
     "cgnat identity file": (255, "bpa.api, bpa_identity_source_set path[256], "
                                      "which holds 255 characters and a NUL"),
     "cgnat identity dhcp-leases": (255, "bpa.api, bpa_identity_source_set "
@@ -3202,6 +3576,9 @@ class Config:
         # A static route's description, keyed by static_route_key(): FRR has
         # no field for one, so this box keeps it (#436).
         self.static_descriptions: dict[str, str] = {}
+        # A prefix-list entry's description, keyed by list_entry_key(): FRR
+        # has no field for one either (#589).
+        self.list_descriptions: dict[str, str] = {}
         # Addresses per interface, in the order written. A list and not a set:
         # more than one address per family is ordinary on a router, and the
         # order is what an operator reads back to check their own work.
@@ -3484,7 +3861,7 @@ class Config:
                            f"decrement {vr['track'][tracked]}")
         return out
 
-    def cgnat_block(self) -> list[str]:
+    def cgnat_block(self, effective=False) -> list[str]:
         """
         Every CGNAT statement, as the `nat` > `cgnat` block an operator types
         (#446): pools, then the globals. The interfaces' roles are in their
@@ -3497,7 +3874,7 @@ class Config:
         """
         flat = []
         for name in sorted(self.pools):
-            flat += self.pools[name].lines()
+            flat += self.pools[name].lines(effective=effective)
         # No interface lines: the role is written in the interface's own
         # block since #465.
         if self.cgnat_memory_gb:
@@ -3505,9 +3882,14 @@ class Config:
         flat += ordered_globals(self.globals)
         return nest_cgnat(flat)
 
-    def text(self) -> str:
+    def text(self, effective=False) -> str:
+        """
+        The whole configuration, as saved and shown. `effective` is
+        compare()'s: each pool's prefix-lists with what they resolved to
+        under them (#589), lines no file carries.
+        """
         out = [CGNAT_HEADER]
-        out += self.cgnat_block()
+        out += self.cgnat_block(effective)
         # Ahead of the interfaces whose `vrf <n>` names their tables (#540).
         out += [f"vrf {name} table {self.vrf_devices[name]}"
                 for name in sorted(self.vrf_devices)]
@@ -3559,7 +3941,9 @@ class Config:
         for name in sorted(self.snmp_users):
             out += self.snmp_users[name].lines()
         out.append(ROUTING_HEADER)
-        out += group_static(self.routing, self.static_descriptions)
+        out += with_list_descriptions(
+            group_static(self.routing, self.static_descriptions),
+            self.list_descriptions)
         return "\n".join(out) + "\n"
 
     def frr_interface_names(self) -> list:
@@ -4196,7 +4580,7 @@ class Config:
                 cfg.pools[pool.name] = pool
                 pool_at[pool.name] = lineno
             elif pool is not None and line.startswith(" "):
-                why = cfg._pool_line(pool, s)
+                why = cfg._pool_line(pool, s, dataplane)
                 if why:
                     cfg.unknown.append((lineno, s, why))
                 if s == "exit":
@@ -4466,6 +4850,19 @@ class Config:
         # `router static` back into the top-level `ip route` statements FRR
         # takes. Done after the loop rather than in it, because the block is
         # only recognisable as one from its own `exit`.
+        #
+        # A prefix-list entry's description comes off the line FRR is handed
+        # first, into the box's own keeping (#589). Line for line - a refused
+        # description leaves its entry behind, and the line is named - so the
+        # indices `refused` counts in below still match the file's.
+        for idx, line in enumerate(cfg.routing):
+            entry, text, why = split_list_description(line)
+            if why:
+                cfg.unknown.append((routing_lines[idx], line.strip(),
+                                    text_why(why)))
+            elif text:
+                cfg.list_descriptions[list_entry_key(entry)] = text
+            cfg.routing[idx] = entry
         refused = []
         cfg.routing = ungroup_static(cfg.routing, cfg.static_descriptions,
                                      refused)
@@ -4503,6 +4900,15 @@ class Config:
             for p in cfg.pools.values():
                 if p.is_nat64:
                     p.level = NAT64_LEVEL
+                # A side given by a prefix-list is read back as the list's
+                # name AND the prefixes the dataplane was handed (#589). Those
+                # are what the list resolved to, not prefixes anybody typed:
+                # left in `inside`, the next commit would find the pool with
+                # both on one side and refuse it.
+                if p.inside_list:
+                    p.list_inside, p.inside = p.inside, []
+                if p.outside_list:
+                    p.list_outside, p.outside = p.outside, []
         else:
             # A FILE IN THE OLD FORM IS REFUSED (#572), as #446 refused the
             # one-line form: the maintainer chose no automatic move on
@@ -4559,7 +4965,7 @@ class Config:
         return None
 
     @staticmethod
-    def _pool_line(pool: Pool, s: str):
+    def _pool_line(pool: Pool, s: str, dataplane: bool = False):
         """
         Apply one line of a pool block. Returns None, or why it was refused.
 
@@ -4583,6 +4989,26 @@ class Config:
                 return prefix_why(why)
             (pool.inside if side == "inside" else pool.outside).append(
                 canonical_prefix(w[1]))
+        elif w[0] in POOL_LIST_WORDS and len(w) == 2:
+            # A name, and only its length and its characters are this line's
+            # to judge (#589): whether the list exists, and what it holds, is
+            # the routing half's, asked of the finished candidate at commit -
+            # the list may be typed after the pool.
+            why = text_error("prefix-list", w[1])
+            if why:
+                return text_why(why)
+            if POOL_LIST_WORDS[w[0]] == "inside":
+                pool.inside_list = w[1]
+            else:
+                pool.outside_list = w[1]
+        elif w[0] in ("untranslated", "outside-excluded") and len(w) > 1 \
+                and dataplane:
+            # What the dataplane holds of a list it was given (#589), read
+            # back as the fact it is. Never a statement: typed, or in a file,
+            # it is refused below like any other word - it is what a
+            # prefix-list resolved to, and only the list may say it.
+            (pool.untranslated if w[0] == "untranslated"
+             else pool.outside_excluded).append(w[1])
         elif w[0] == "subscriber-length" and len(w) > 1:
             why = Pool.check_number("subscriber-length", w[1])
             if why:
@@ -4794,9 +5220,26 @@ class Config:
     # ------------------------------------------------------------ diff
 
     def compare(self, other: "Config") -> str:
-        """Unified diff from `self` (running) to `other` (candidate)."""
-        a = self.text().splitlines(keepends=True)
-        b = other.text().splitlines(keepends=True)
+        """
+        Unified diff from `self` (running) to `other` (candidate).
+
+        With what each pool's prefix-lists resolve to (#589): a list edited
+        in the routing half changes no line of the pools that use it, and
+        `show | compare` MUST show those pools too. The candidate is resolved
+        on a copy, against its own lists; the running side is what the
+        dataplane holds, resolved only when nothing has been - a file read
+        with no dataplane behind it.
+        """
+        sides = []
+        for cfg in (self, other):
+            if any((p.inside_list and not p.list_inside)
+                   or (p.outside_list and not p.list_outside)
+                   for p in cfg.pools.values()) or cfg is other:
+                cfg = copy.deepcopy(cfg)
+                cfg.resolve_pool_lists()
+            sides.append(cfg.text(effective=True))
+        a = sides[0].splitlines(keepends=True)
+        b = sides[1].splitlines(keepends=True)
         d = list(difflib.unified_diff(a, b, fromfile="running", tofile="candidate",
                                       n=1))
         return "".join(d)
@@ -4828,8 +5271,19 @@ class Config:
         subscriber identically - the refusal on a correct configuration is the
         harm, not the absence of one.
         """
+        # A configuration read from a file - the peer's copy, above all -
+        # names its prefix-lists and has not resolved them (#589): its
+        # mapping is what they resolve to, against its own routing half, or
+        # two boxes whose lists give the same addresses would read as two
+        # mappings.
+        cfg = self
+        if any((p.inside_list and not p.list_inside)
+               or (p.outside_list and not p.list_outside)
+               for p in self.pools.values()):
+            cfg = copy.deepcopy(self)
+            cfg.resolve_pool_lists()
         out = []
-        for _, pool in sorted(self.pools.items()):
+        for _, pool in sorted(cfg.pools.items()):
             out += pool.lines(in_place=False)
         return out
 
@@ -4896,6 +5350,139 @@ class Config:
                      "; ".join(l.strip() for l in their_rows)))
         return findings
 
+    # ------------------------------------------------------- prefix-lists
+
+    def resolve_pool_lists(self) -> list:
+        """
+        Every pool that names a prefix-list given what the list says now, in
+        this configuration's own routing half (#589), and the refusals: each
+        a tuple of a verdict row and its prose, the shape err_prose prints.
+
+        Resolved, not remembered: a list is edited where it is written, and a
+        pool that kept what its list said at the last commit would be a pool
+        a list change did not reach - which the issue requires it does. The
+        sets land on the pool (list_inside, list_outside, untranslated,
+        outside_excluded), so delta_to() rebuilds a pool whose mapping moved
+        and re-sends the lists of one whose did not.
+
+        A refused pool keeps the sets that could be worked out; the commit
+        that asked is refused, so none of them reaches the dataplane.
+        """
+        out = []
+        for name in sorted(self.pools):
+            p = self.pools[name]
+            n = f"pool '{name}'"
+            for side, typed, listed in (("inside", p.inside, p.inside_list),
+                                        ("outside", p.outside,
+                                         p.outside_list)):
+                if typed and listed:
+                    out.append((f"{n}: prefix-{side} and prefix-list-{side} "
+                                "both given",
+                                f"a side is given by its prefixes or by its "
+                                f"prefix-list, never both: remove "
+                                f"'prefix-{side}' or 'prefix-list-{side} "
+                                f"{listed}'"))
+            # What a side no longer given by a list resolved to goes with
+            # the list: otherwise a pool taken back to typed prefixes would
+            # keep sending the old list's untranslated sources.
+            if not p.inside_list:
+                p.list_inside, p.untranslated = [], []
+            if not p.outside_list:
+                p.list_outside, p.outside_excluded = [], []
+            if not (p.inside_list or p.outside_list) or p.is_nat64 \
+                    or p.level == NAT64_LEVEL:
+                continue
+            spans = {}
+            for side, listed in (("inside", p.inside_list),
+                                 ("outside", p.outside_list)):
+                if not listed:
+                    continue
+                entries = prefix_list_entries(self.routing, listed)
+                if entries is None:
+                    has = any(l.strip().split()[:3] == ["ip", "prefix-list",
+                                                        listed]
+                              for l in self.routing)
+                    out.append((f"{n}: prefix-list-{side} {listed} "
+                                + ("has no entry" if has
+                                   else "does not exist"),
+                                "the pool's addresses come from an 'ip "
+                                "prefix-list' with at least one permit; "
+                                "write it, or name another"))
+                    continue
+                permit, deny, cover, inert = prefix_list_spans(entries)
+                for e in inert:
+                    out.append((f"{n}: prefix-list {listed} "
+                                f"{prefix_entry_text(e)} matches no address",
+                                "a pool reads a list as addresses: an entry "
+                                "covers its whole prefix, and with ge or le "
+                                "an address counts as a /32, which this "
+                                "entry's window leaves out. Where BGP or a "
+                                "route-map uses the list, FRR's route rule "
+                                "holds as before"))
+                spans[side] = (permit, deny, cover)
+            if "inside" in spans:
+                permit, deny, _ = spans["inside"]
+                p.list_inside = spans_as_prefixes(permit)
+                p.untranslated = spans_as_prefixes(deny)
+                if not permit:
+                    out.append((f"{n}: prefix-list-inside {p.inside_list} "
+                                "translates nothing",
+                                "no address's first matching entry is a "
+                                "permit; a source matching a deny leaves "
+                                "untranslated, and one matching nothing is "
+                                "not this pool's"))
+            if "outside" in spans:
+                permit, deny, cover = spans["outside"]
+                p.list_outside = spans_as_prefixes(permit)
+                taken = []
+                for a, b in deny:
+                    for c, d in cover:
+                        if a <= d and c <= b:
+                            taken.append((max(a, c), min(b, d)))
+                p.outside_excluded = spans_as_prefixes(taken)
+                if not permit:
+                    out.append((f"{n}: prefix-list-outside "
+                                f"{p.outside_list} leaves no public address",
+                                "its denies take out every address its "
+                                "permits give, and a pool translates to at "
+                                "least one; remove a deny or add a permit"))
+            for what, count in (
+                    ("its inside and outside",
+                     len(p.eff_inside) + len(p.eff_outside)),
+                    ("what its lists leave out",
+                     len(p.untranslated) + len(p.outside_excluded))):
+                if count > POOL_MESSAGE_PREFIXES:
+                    out.append((f"{n}: {what} take {count} prefixes",
+                                f"the dataplane takes at most "
+                                f"{POOL_MESSAGE_PREFIXES} in one message; "
+                                "align the list's entries on fewer, larger "
+                                "prefixes"))
+        # An untranslated source another pool translates (#589). The
+        # dataplane would translate it - a pool's inside is asked first, and
+        # the untranslated sets only when no pool claims a source - so the
+        # deny would say one thing and the box do another. Pools bound to two
+        # different VRFs serve two tenants and may share addresses.
+        for name in sorted(self.pools):
+            p = self.pools[name]
+            if not p.untranslated:
+                continue
+            mine = [ipaddress.IPv4Network(x) for x in p.untranslated]
+            for other in sorted(self.pools):
+                q = self.pools[other]
+                if other == name or q.is_nat64 or (
+                        p.vrf != "" and q.vrf != "" and p.vrf != q.vrf):
+                    continue
+                hit = next((f"{a}" for a in mine for b in q.eff_inside
+                            if ":" not in b
+                            and a.overlaps(ipaddress.IPv4Network(b))), None)
+                if hit:
+                    out.append((f"pool '{name}': prefix-list-inside "
+                                f"{p.inside_list} denies {hit}",
+                                f"a deny leaves a source untranslated, and "
+                                f"pool '{other}' translates it; a source "
+                                "is one pool's or untranslated, not both"))
+        return out
+
     # ------------------------------------------------------------ delta
 
     def delta_to(self, other: "Config") -> dict:
@@ -4945,6 +5532,18 @@ class Config:
                 bypass_set.append((pool, False))
             if sorted(have_d) != sorted(pool.bypass_dst):
                 bypass_set.append((pool, True))
+
+        # A pool's prefix-lists (#589): the two names and what the lists
+        # leave out, replaced whole like a bypass list. In place - none of
+        # them is the mapping, which is list_inside and list_outside and
+        # rebuilds the pool through lines(in_place=False) above. A pool being
+        # created or recreated arrives with none, so anything is a change.
+        lists_set = {}
+        for name, pool in other.pools.items():
+            have = (Pool(name).lists_api_args() if name in recreated
+                    else self.pools[name].lists_api_args())
+            if have != pool.lists_api_args():
+                lists_set[name] = pool
 
         limits_set = {}
         for name, pool in other.pools.items():
@@ -5122,6 +5721,7 @@ class Config:
             "limits_set": limits_set,
             "settings_set": settings_set,
             "bypass_set": bypass_set,
+            "lists_set": lists_set,
             "if_add": if_add,
             "if_remove": if_del,
             "mac_set": mac_set,
@@ -5159,6 +5759,8 @@ class Config:
                                 != with_pref64([], other)),
             "route_desc_changed": (self.static_descriptions
                                    != other.static_descriptions),
+            "list_desc_changed": (self.list_descriptions
+                                  != other.list_descriptions),
         }
 
 # ------------------------------------------------------------------ probes

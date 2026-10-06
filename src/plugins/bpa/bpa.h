@@ -422,6 +422,14 @@ clib_error_t *bpa_pool_settings_set (u8 *name, bpa_filter_t filter,
  * Replaces one of a pool's bypass lists, entire. An empty list removes the
  * bypass; see the definition for why it is not per prefix.
  */
+/*
+ * Replaces a pool's prefix-list names, its untranslated sources and its
+ * excluded public addresses, entire (#589): the first `n_untranslated` of
+ * the ranges are the sources, the rest the excluded addresses.
+ */
+clib_error_t *bpa_pool_lists_set (u8 *name, const char *inside_list,
+				  const char *outside_list, const u32 *bases,
+				  const u32 *counts, u32 n_untranslated, u32 n);
 clib_error_t *bpa_bypass_set (u8 *name, int is_dst, const u32 *bases,
 			      const u32 *counts, u32 n);
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
@@ -506,6 +514,32 @@ bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
   pool_foreach (p, bm->pools)
     {
       if (bpa_pool_claims_inside (p, addr, fib, sub_idx))
+	{
+	  *pool_index = p - bm->pools;
+	  return 0;
+	}
+    }
+  return -1;
+}
+
+/*
+ * Which pool, if any, lets `addr` leave untranslated because its inside
+ * prefix-list denies it (#589). Asked only once bpa_pool_by_inside() has
+ * found no pool: a source a pool translates is that pool's, and the VTY
+ * refuses a deny another pool's inside covers, so the order never decides
+ * anything a configuration said otherwise.
+ */
+/* not a unit: it walks VPP's pool of pools; the rule for one pool is
+ * bpa_pool_passes_untranslated() in bpa_pool.h, held by test/test_bpa_pool.c
+ * (#589) */
+static_always_inline int
+bpa_pool_by_untranslated (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index)
+{
+  bpa_pool_t *p;
+
+  pool_foreach (p, bm->pools)
+    {
+      if (bpa_pool_passes_untranslated (p, addr, fib))
 	{
 	  *pool_index = p - bm->pools;
 	  return 0;

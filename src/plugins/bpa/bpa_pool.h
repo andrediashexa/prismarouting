@@ -508,6 +508,32 @@ typedef struct
   bpa_addr_set_t bypass_dst;
 
   /*
+   * A pool whose sides are prefix-lists (#589). The lists themselves are
+   * the VTY's - they are FRR's `ip prefix-list` - and arrive here resolved:
+   * `inside` and `outside` above are already the effective sets, permits
+   * less denies, so the formula maps over exactly those and nothing else.
+   *
+   * `untranslated` is what the inside list DENIES: sources that leave with
+   * their own address. NOT part of `inside`, and that is the point of a set
+   * of its own: a bypass source sits inside the pool's inside and so holds
+   * a subscriber index of the formula, which for a deny would be a mapping
+   * computed over addresses the operator excluded. It is consulted only for
+   * a source no pool claims (bpa_pool_by_untranslated()).
+   *
+   * `outside_excluded` is what the outside list's denies took out of its
+   * permits. The dataplane never translates to it - it is not in `outside`
+   * - and keeps it so the trail and `show bpa config` can say which
+   * addresses a deterministic mapping was computed without.
+   *
+   * The names are kept for the same readback, NUL-terminated: "" is a side
+   * given by its prefixes.
+   */
+  bpa_addr_set_t untranslated;
+  bpa_addr_set_t outside_excluded;
+  char inside_list[64];
+  char outside_list[64];
+
+  /*
    * The VRF this pool serves, as a FIB index. ~0 means every VRF, which is
    * what every configuration written before this existed means.
    *
@@ -1089,6 +1115,27 @@ bpa_is_bypassed (const bpa_pool_t *p, u32 src, u32 dst)
 
   return bpa_set_index_of (&p->bypass_src, src, &idx) == 0
 	 || bpa_set_index_of (&p->bypass_dst, dst, &idx) == 0;
+}
+
+/*
+ * Does this pool let `addr`, from a packet in VRF `fib`, leave untranslated
+ * because its inside prefix-list denies it (#589)? The VRF and the drain are
+ * bpa_pool_claims_inside()'s rules, for its reasons: a pool bound to a VRF
+ * speaks for that VRF's sources only, and a pool being deleted speaks for
+ * nobody new. A NAT64 pool has no IPv4 source to speak for.
+ */
+static_always_inline int
+bpa_pool_passes_untranslated (const bpa_pool_t *p, u32 addr, u32 fib)
+{
+  u32 idx;
+
+  if (PREDICT_TRUE (p->untranslated.count == 0))
+    return 0;
+  if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
+    return 0;
+  if (p->deleted || p->is_nat64)
+    return 0;
+  return bpa_set_index_of (&p->untranslated, addr, &idx) == 0;
 }
 
 /* ------------------------------------------------------------------ */

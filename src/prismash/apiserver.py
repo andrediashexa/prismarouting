@@ -514,8 +514,18 @@ def pools_of(sh):
                     "mode": "bpa" if p.mode == "dynamic" else p.mode,
                     "policy": p.policy,
                     "block_size": int(p.block_size or 0),
-                    "prefixes_inside": list(p.inside),
-                    "prefixes_outside": list(p.outside),
+                    # What the dataplane translates and translates to: a
+                    # prefix-list's effective sets, when a side names one
+                    # (#589), with the list and what it leaves out beside.
+                    "prefixes_inside": list(getattr(p, "eff_inside",
+                                                    p.inside)),
+                    "prefixes_outside": list(getattr(p, "eff_outside",
+                                                     p.outside)),
+                    "prefix_list_inside": getattr(p, "inside_list", ""),
+                    "prefix_list_outside": getattr(p, "outside_list", ""),
+                    "untranslated": list(getattr(p, "untranslated", [])),
+                    "outside_excluded": list(getattr(p, "outside_excluded",
+                                                     [])),
                     "capacity": int(d.get("capacity", 0) or 0),
                     "guaranteed": int(d.get("guaranteed", 0) or 0),
                     # #572: the level the pool is written under.
@@ -2832,6 +2842,8 @@ POOL_SCALARS = ("name", "block_size", "port_first", "port_last", "policy",
                 "mode", "max_blocks", "initial_allocation", "block_stride",
                 "reserve", "utilisation_alarm", "max_sessions",
                 "max_session_rate", "tcp_mss", "filter")
+#: A CGNAT pool's prefix-lists (#589), which a NAT64 pool has no field for.
+POOL_LIST_NAMES = ("prefix_list_inside", "prefix_list_outside")
 POOL_LISTS = ("prefix_inside", "prefix_outside", "bypass_source",
               "bypass_destination")
 #: Nat64PoolConfig's (#572): a pool's, less the bypass, plus its own two.
@@ -2850,7 +2862,8 @@ def pool_pb(pb, d, nat64=False):
     """A typedcfg pool dict as a PoolConfig - or, `nat64`, a Nat64PoolConfig
     (#572); an unset VRF stays unset."""
     kw = {k: d[k] for k in (NAT64_SCALARS + NAT64_LISTS if nat64
-                            else POOL_SCALARS + POOL_LISTS)}
+                            else POOL_SCALARS + POOL_LIST_NAMES
+                            + POOL_LISTS)}
     kw["timeouts"] = dict(d["timeouts"])
     kw["algs"] = dict(d["algs"])
     kw["forwards"] = [pb.PortForwardConfig(**f) for f in d["forwards"]]
@@ -2908,7 +2921,8 @@ def interface_dict(m):
 def pool_dict(m, nat64=False):
     """A PoolConfig - or, `nat64`, a Nat64PoolConfig (#572) - as typedcfg's
     dict; an unset VRF is None."""
-    d = {k: getattr(m, k) for k in (NAT64_SCALARS if nat64 else POOL_SCALARS)}
+    d = {k: getattr(m, k) for k in (NAT64_SCALARS if nat64
+                                    else POOL_SCALARS + POOL_LIST_NAMES)}
     d.update({k: list(getattr(m, k))
               for k in (NAT64_LISTS if nat64 else POOL_LISTS)})
     d["timeouts"] = dict(m.timeouts)
