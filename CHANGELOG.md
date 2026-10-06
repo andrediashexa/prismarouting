@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.17 - a box comes up whatever snmpd says
+
+### Fixed
+
 * **A box with `snmp listen-address` on one of its interfaces did not come
   up.** ([#591](https://github.com/andrediashexa/hexarouting/issues/591))
   The boot's load applies the host settings before the interfaces, so snmpd
