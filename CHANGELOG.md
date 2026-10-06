@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.151.14 - show log: what happened on the box, and why each restart
+
+### Added
+
 * **`show log`: what happened on the box, in its own words, phase 1.**
   ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
   One record of events, newest last, kept across reboots on the log volume
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   `dataplane_start_cause` and `control_plane_start_cause`. The plan for
   what follows - link, SFP, BGP and BFD, CGNAT exhaustion, logins, `system
   logging`, `monitor log`, traps - is in docs/logging-events.md.
-
-### Fixed
 
 ## 0.151.13 - replace pattern and rename, as in Junos
 
