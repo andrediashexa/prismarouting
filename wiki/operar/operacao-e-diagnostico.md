@@ -498,6 +498,7 @@ flowchart TD
 
 Erro de CRC é quadro que chegou corrompido. Numa porta óptica, quase sempre é a camada física: fibra suja, dobrada ou danificada, conector mal encaixado, ou um módulo no fim da vida — deste lado ou do outro. Foi assim que este diagnóstico nasceu: uma porta do X520 contando 0,58% dos quadros com erro de CRC, e ninguém conseguia ler a potência óptica do lado da caixa para comparar com a do switch.
 
+
 1. `show interface` mostra a nota quando a taxa passa de 0,01% desde que os contadores começaram.
 2. `show interface <nome> transceiver` dá a potência de RX **deste** lado, e a de TX. No switch do outro lado, `display transceiver interface <porta> verbose` (Huawei) ou `show interfaces diagnostics optics <porta>` (Junos) dá as dele.
 3. Compare: a RX de um lado deve ser a TX do outro menos a perda do enlace (fibra e conectores, alguns dB num enlace curto). RX muito abaixo da TX do outro lado é perda no caminho — limpe e reencaixe os conectores, troque o cordão. RX normal dos dois lados com CRC continuando aponta para um dos módulos.

@@ -269,7 +269,7 @@ prisma> show interface ens18 transceiver
 
 **Quando a leitura não acontece.** `the card's driver cannot read a module` é um driver sem acesso ao módulo (virtio, por exemplo). `no module answered` é gaiola vazia — ou um módulo que não responde. Um dataplane que não é o build para o qual a caixa foi feita diz `unavailable` e não tenta.
 
-**No `show interface`**, duas notas aparecem embaixo da lista quando valem — notas, não erros: a porta encaminha, e a nota diz onde olhar.
+**No** `**show interface**`, duas notas aparecem embaixo da lista quando valem — notas, não erros: a porta encaminha, e a nota diz onde olhar.
 
 ```
   ens18: rx power -19.00 dBm, below its low warning (-18.01 dBm)
