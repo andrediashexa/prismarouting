@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A commit from the VTY wrote snmpd.conf and never restarted snmpd.**
+  ([#587](https://github.com/andrediashexa/hexarouting/issues/587)) The VTY
+  runs in the management container, which has no `/run/systemd/system`, so it
+  concluded that no systemd managed the box and printed "systemd is not
+  managing this system, so snmpd was not restarted" (10.40.200.166). Every
+  SNMP change committed from the VTY reached the file and not the daemon.
+  The VTY now asks the host, through its door, whether systemd runs it.
+* **No more "bpa, and nothing exports its block events" at every commit.**
+  ([#586](https://github.com/andrediashexa/hexarouting/issues/586)) The
+  warning #444 added was printed at every commit and every load of a box
+  with a bpa pool and no exporter, and the operator found it noise. Whether
+  the box exports is still said by `show cgnat logging` and the selftest.
+
 ## 0.151.9 - SNMP answers IPv6, and the API's address can change while it runs
 
 ### Fixed

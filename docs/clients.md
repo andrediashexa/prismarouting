@@ -27,6 +27,17 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.10 - snmpd restarts after a VTY commit; no BPA export warning
+
+* **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **SetConfig's diagnostics lose a warning** (#586): a bpa pool with no
+  exporter no longer yields `warning: bpa, and nothing exports its block
+  events ...` at commit. A client that displayed it has nothing to change.
+* **SNMP settings applied from the VTY now take effect** (#587): before, the
+  file was written and snmpd kept the old one, with a note "systemd is not
+  managing this system".
+* **Lab box:** .166 is on 0.151.10.
+
 ## 0.151.9 - SNMP over IPv6, and a running API's address can change
 
 * **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).

@@ -7804,59 +7804,6 @@ def nat64_ha_findings(pools, vrrp):
             if getattr(p, "is_nat64", False)]
 
 
-def dynamic_export_findings(pools, globals_):
-    """
-    Pools whose blocks only an export can account for, on a box that
-    exports none of their block events (#444).
-
-    In dynamic mode the block a subscriber holds is chosen when it asks, and
-    the exported record is the only thing that can later say who held a
-    public port: no formula answers it. Measured on 0.124.0, a dynamic pool
-    with no exporter passed `commit check` with nothing said about it, and
-    `show cgnat logging` read `state disabled`, `exporter none` - so a box
-    could carry subscribers for months unable to answer a court order, and
-    learn it on the day the order arrived.
-
-    Any transport counts: UDP only when it is enabled AND has a collector
-    (enable alone is refused elsewhere, logging_enable_without_collector),
-    TCP or syslog when a collector is named. A warning, never a refusal, for
-    the reason pool_announce_findings() gives for its own: a lab, or a pool
-    staged before its collector exists, is a correct configuration, and a
-    refusal would be wrong on it.
-
-    Returns [(severity, statement, why)], the shape say_finding() prints.
-    """
-    # And a deterministic pool with a `reserve`: its reserve blocks are the
-    # ones the formula does NOT produce, and docs/logging.md says each MUST
-    # be exported exactly like a dynamic block - so the same silence costs
-    # the same answer for those subscribers.
-    owed = sorted((n, getattr(p, "mode", None) == "dynamic")
-                  for n, p in (pools or {}).items()
-                  if getattr(p, "mode", None) == "dynamic"
-                  or getattr(p, "block_reserve", 0))
-    if not owed:
-        return []
-    words = [g.split() for g in globals_ or ()]
-    udp = (any(w[:3] == ["cgnat", "logging", "enable"] for w in words)
-           and any(w[:3] == ["cgnat", "logging", "udp"] and len(w) > 3
-                   and w[3] != "disable" for w in words))
-    other = any(w[:2] == ["cgnat", "logging"] and len(w) > 3
-                and w[2] in ("tcp", "syslog") and w[3] != "disable"
-                for w in words)
-    if udp or other:
-        return []
-    return [("warning", f"nat / cgnat / pool {name}",
-             ("bpa, and nothing exports its block events. " if dyn else
-              "a reserve, and nothing exports the blocks it hands out. ")
-             + "The exported record is the only evidence of which subscriber "
-             "held a public port" + ("" if dyn else " in a reserve block, which "
-                                     "the formula does not produce")
-             + ": without it that question has no answer. Export with "
-             "'logging udp <collector> src <source>' and 'logging enable' "
-             "under 'nat' / 'cgnat', or 'logging tcp <collector>' there")
-            for name, dyn in owed]
-
-
 def session_local_address(environ=None):
     """
     The address on THIS box that the session applying the change arrived on.
@@ -12624,13 +12571,11 @@ class Shell:
                 print(f"{sev}: {subject}: {why}")
                 for line in advice:
                     print("    " + line)
-            # And a pool whose blocks only an export accounts for, on a box
-            # that exports nothing (#444). Warned and never refused, for the
-            # announce warning's reason; through say_finding, so the sentence
-            # is wrapped at the console and the pool is named on its own row.
-            for sev, stmt, why in dynamic_export_findings(target.pools,
-                                                         target.globals):
-                self.say_finding(sev, stmt, why)
+            # NOT a pool that nothing exports (#586). 0.124.x warned at every
+            # commit and every boot that a bpa pool had no collector (#444);
+            # the operator of 10.40.200.166 read it as noise on every commit
+            # and asked for it gone. Whether the box exports is still said
+            # where it is asked: `show cgnat logging` and the selftest.
             # A NAT64 pool in a VRRP pair, whose IPv6 side no virtual address
             # carries (#485). Warned, for the reason the function gives.
             for sev, stmt, why in nat64_ha_findings(target.pools,

@@ -1009,6 +1009,48 @@ with _tf.TemporaryDirectory() as _d:
     check(_here._conf() == ("absent", None),
           "and on the host a missing file is an answer of its own: off")
 
+print("--- SnmpDaemon.apply from the container restarts the host's snmpd (#587)")
+with _tf.TemporaryDirectory() as _d:
+    _ran = []
+
+    def _host(argv, stdin=None, timeout=30):
+        # not a unit: the host's door, where systemd runs and snmpd comes up
+        _ran.append(list(argv))
+        return 0, ""
+    _host.door = _d                                 # a path that exists
+    os.makedirs(_d + "/ctr/etc/snmp")               # no /run/systemd here
+    check(system.SnmpDaemon(runner=_host, root=_d + "/ctr")._systemd_manages()
+          and ["test", "-d", "/run/systemd/system"] in _ran,
+          f"SnmpDaemon._systemd_manages asks the host through its door: {_ran}")
+
+    def _bare(argv, stdin=None, timeout=30):
+        # the snmp lab's door: it answers, and no systemd runs behind it
+        _ran.append(list(argv))
+        return (1, "") if argv[0] == "test" else (0, "")
+    _bare.door = _d
+    del _ran[:]
+    _ok, _why = system.SnmpDaemon(runner=_bare, root=_d + "/ctr").apply(
+        {"enabled": "yes"}, ["c0mm"], {})
+    check(_ok and "not managing" in _why
+          and ["systemctl", "restart", "snmpd"] not in _ran,
+          f"a door with no systemd behind it is not one: {_ran} {_why!r}")
+    del _ran[:]
+    _ok, _why = system.SnmpDaemon(runner=_host, root=_d + "/ctr").apply(
+        {"enabled": "yes"}, ["c0mm"], {})
+    check(_ok and "not managing" not in _why
+          and ["systemctl", "restart", "snmpd"] in _ran,
+          f"the container has no systemd but the host does: restarted {_ran} {_why!r}")
+
+    def _nobody(argv, stdin=None, timeout=30):
+        _ran.append(list(argv))
+        return 0, ""
+    del _ran[:]
+    _ok, _why = system.SnmpDaemon(runner=_nobody, root=_d + "/ctr").apply(
+        {"enabled": "yes"}, ["c0mm"], {})
+    check(_ok and "not managing" in _why
+          and ["systemctl", "restart", "snmpd"] not in _ran,
+          f"and with no systemd and no door, it is still only written: {_why!r}")
+
 print("--- the management API's settings (#532)")
 check(system.validate_api({"enabled": "yes", "port": "50051",
                            "listen-address": "10.40.200.166"}) is None

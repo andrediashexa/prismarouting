@@ -1627,6 +1627,29 @@ class SnmpDaemon:
         door = getattr(self._run, "door", None)
         return door is not None and os.path.exists(door)
 
+    def _systemd_manages(self):
+        """
+        Is snmpd under a systemd, here or on the host the door reaches?
+
+        Not this process's /run alone (#587). The VTY runs in the management
+        container, which has no /run/systemd/system, and its systemctl goes
+        through the host's door to the host's systemd. Asked of the container
+        alone, every commit from the VTY on 10.40.200.166 wrote snmpd.conf
+        and said "systemd is not managing this system, so snmpd was not
+        restarted". The file changed and the daemon kept serving the old one.
+
+        And not "a door answers" either. The snmp lab runs a door in a
+        container that has no systemd, and taking the door for a systemd
+        restarted snmpd through a systemctl that could not, then put the old
+        file back. So the host is asked, through the door.
+        """
+        if os.path.isdir(self.root + "/run/systemd/system"):
+            return True
+        if not self._host_answers():
+            return False
+        rc, _ = self._run(["test", "-d", "/run/systemd/system"])
+        return rc == 0
+
     def read(self):
         """
         (settings, communities, users, trap_hosts) as the file on disk
@@ -1683,7 +1706,7 @@ class SnmpDaemon:
         # back with enabled=no, the next commit inherited it, and applying that
         # candidate deleted the configuration the previous commit had just
         # written.
-        if os.path.isdir(self.root + "/run/systemd/system"):
+        if self._systemd_manages():
             rc, _ = self._run(["systemctl", "is-active", "--quiet", "snmpd"])
             if rc not in (0, 127):
                 settings["enabled"] = "no"
@@ -1771,7 +1794,7 @@ class SnmpDaemon:
         # perfectly good configuration is rolled back on any system where
         # systemctl exists but has no init to talk to - the daemon "did not
         # come up" for a reason that has nothing to do with the file.
-        if not os.path.isdir(self.root + "/run/systemd/system"):
+        if not self._systemd_manages():
             return True, ("written, but systemd is not managing this system, "
                           "so snmpd was not restarted")
 
