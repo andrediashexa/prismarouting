@@ -196,6 +196,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   mtu          MTU, on both the dataplane interface and its TAP
   no           remove a statement from this interface
   ping         send echo requests and say what came back
+  replace      a regular expression substituted across this level
   show         display information
   shutdown     take the interface administratively down
   top          go to the top of the configuration
@@ -213,15 +214,18 @@ three were valid there. Offering the level above invites somebody to type
 list it offers today is a different one: every statement in it is valid inside
 an interface, because the interface became a first-class object.
 
-Five of those rows are not statements at all. `top`, `up`, `ping`, `traceroute`
-and `mtr` are **words every configuration level owns**, and they are offered
-wherever they work - which is every level, blocks included
-([#400](https://github.com/andrediashexa/hexarouting/issues/400)). `top` and
+Six of those rows are not statements at all. `top`, `up`, `ping`, `traceroute`,
+`mtr` and `replace` are **words every configuration level owns**, and they are
+offered wherever they work - which is every level, blocks included
+([#400](https://github.com/andrediashexa/hexarouting/issues/400),
+[#585](https://github.com/andrediashexa/hexarouting/issues/585)). `top` and
 `up` are left out at the top of configuration mode, where there is nothing
 above to go to and the box refuses them: a `?` that offers a word the next
-keystroke refuses teaches the operator that the list is a guess.
+keystroke refuses teaches the operator that the list is a guess. `rename` is
+offered by the same rule only where something can be renamed from: the top,
+`nat`, `cgnat`, `nat64` and `router bgp`.
 
-An FRR block offers `exit` and `show`, those five words, and nothing else. This
+An FRR block offers `exit` and `show`, those six words, and nothing else. This
 VTY does not model FRR's statements, and offering some of them would be **a
 guess presented as a grammar**.
 
@@ -876,6 +880,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   mtu          MTU, on both the dataplane interface and its TAP
   no           remove a statement from this interface
   ping         send echo requests and say what came back
+  replace      a regular expression substituted across this level
   show         display information
   shutdown     take the interface administratively down
   top          go to the top of the configuration
@@ -2726,6 +2731,8 @@ stateDiagram-v2
 | `commit confirmed <min>` | Apply, and roll back automatically unless confirmed - from the box, not from this session |
 | `rollback <0-19>` | Load a committed revision into the candidate |
 | `show rollback` | List revisions with timestamp and comment |
+| `replace pattern <regex> with <replacement> [upto <n>] [\| compare]` | Substitute across the candidate, or across the level it is typed at (#585) |
+| `rename <path> <name> to <new-name>` | Rename one thing and every reference to it, in the candidate (#585) |
 
 Requirements:
 
@@ -2751,6 +2758,117 @@ Requirements:
   pool between the two halves of the change.
 * `rollback 0` returns the candidate to the running configuration, discarding
   uncommitted edits - the same meaning JunOS gives it.
+
+### `replace pattern` and `rename`: many lines as one edit (#585)
+
+Junos's two words for the change that touches many lines - a /30 that
+moves, a VLAN renumbered, a pool or a list renamed - which otherwise means
+deleting and retyping every line that mentions it.
+
+```
+prisma# [edit] replace pattern "200\.150\.0\.16/30" with 200.150.0.20/30 | compare
+--- candidate
++++ after replace
+@@ -31,3 +31,3 @@
+ ip prefix-list CGN-IN seq 10 permit 100.64.0.0/22 le 32
+-ip prefix-list CGN-OUT seq 10 permit 200.150.0.16/30
++ip prefix-list CGN-OUT seq 10 permit 200.150.0.20/30
+ !
+1 substitution(s) in 1 statement(s)
+it passes the checks; nothing staged ('| compare' is a dry run)
+prisma# [edit] rename ip prefix-list CGN-IN to CGN-INSIDE
+renamed in 4 place(s)
+staged in the candidate; 'show configuration compare' reviews it
+```
+
+**Both work on the text, not on the model.** The candidate is what `show
+configuration` prints - `Config.text()`, the file `save` writes - and the
+edited text is read back by `Config.parse`, the door a saved file and
+`rollback <n>` come in by (`src/prismash/cfgedit.py` computes the edit,
+`Shell.stage_edit` checks and stages it). So one edit covers every statement
+the box has, FRR's half included, and nothing keeps a second copy of what a
+field means. The candidate is REPLACED, as `rollback <n>` replaces it, and
+nothing reaches the box: `show configuration compare`, `commit check`,
+`commit confirmed` and `rollback 0` work on the result as on typed lines.
+
+**The result is checked as typed lines are, and staged whole or not at
+all.** In order, the first refusal naming its line and why:
+
+1. The file door holds every line - nothing refused, nothing dropped - and
+   the result reads back as written. A replace that turns `pool cgnat` into
+   `pool other` beside an existing `other` merges two pools in the model;
+   the read-back refuses it instead of staging one pool.
+2. Every statement the edit changed is replayed through the PROMPT's own
+   handler at its level, on a copy of the session (`Shell.typed_refusal`).
+   The file door alone is not the prompt's: it takes `block-size 7`, which a
+   running box may hold (`config.DOORS_DIFFER`, #357), and it hands routing
+   statements to FRR unread where the prompt asks FRR first (#431).
+3. The commit check, `apply(check_only=True)`, on copies. A candidate already
+   refused before the edit - a daemon not answering, a pool half typed - is
+   refused by `commit` for that; the edit is refused only for an `error:`
+   row the candidate before it did not get, read through the same edit, so
+   a refusal naming a renamed pool is the same refusal under its new name.
+
+A candidate that does not read back as itself - a static route FRR holds
+with a hop the prompt would refuse - is not edited at all, naming the line:
+the edit works on that text and staging it would lose the line in silence.
+
+**Decisions the issue left open, taken the conservative way:**
+
+* A pattern never crosses a statement. It is matched against each statement
+  on its own, without its indentation, so `^` is the start of a statement; a
+  match of an empty string and a replacement that puts a line break into a
+  statement are refused. The regex is Python's, `\1` in the replacement.
+* A level covers the statements inside it and never its own header:
+  `replace` inside `pool A` cannot rename pool A. `replace` may change a
+  header below the level - a pool's name at `nat / cgnat` - and then the
+  checks above decide; a reference it leaves behind fails the commit check.
+* `rename` takes, first: `nat cgnat pool`, `nat nat64 pool` (one namespace
+  across both, as the dataplane's), `ip prefix-list` and `ipv6 prefix-list`
+  (two namespaces, as FRR's), `route-map`, `router bgp <AS> peer-group`
+  (per instance), and `interface` for what the configuration creates - a
+  sub-interface keeping its parent, a loopback, a bundle, never a port, and
+  not a parent whose sub-interfaces are named after it. Paths are relative
+  to the level, as in Junos: `rename pool A to B` inside `nat / cgnat`,
+  `rename peer-group PG to X` inside `router bgp`. Not yet: policy-options
+  names (the compiler's PO- maps are derived from them), VRFs, users.
+* What `rename` follows is read by position (`cfgedit.name_positions`): a
+  pool's `prefix-list-inside`/`-outside`, `match ip|ipv6 ... prefix-list`,
+  BGP's `neighbor ... prefix-list|route-map|peer-group|update-source`, every
+  `neighbor <peer-group> ...` of the instance, OSPF's `area ... filter-list
+  prefix`, `route-map` after any statement's keyword and `call`, a static
+  route's interface, `passive-interface`, `interface ...` in BFD and FRR's
+  stanza, a VRRP `track` and a bundle `member`. Descriptions are text and are
+  not renamed. A routing statement holding the old name anywhere else is a
+  reference the VTY cannot follow, and the rename is refused quoting it - a
+  false refusal (an access-list called like the prefix-list, say) is the
+  safe side of that line. The box's own half is written by this VTY, so it
+  is read whole and never refuses.
+* A name already taken is refused: any pool's for a pool, any neighbour or
+  peer-group of the instance for a peer-group, and for an interface any the
+  candidate names or the dataplane has.
+* A pool renamed is REBUILT in the dataplane under its new name: the mapping
+  is the same, and every session on it ends, as for any change that rebuilds
+  a pool. The commit sees one pool removed and an identical one added, and
+  the dataplane's own check refused every such pair - it validates the new
+  pool against the pools it RUNS, the old one among them, and answered
+  "public address ... is already in pool 'lab'" (measured in
+  lab/replace-rename.sh), while the apply removes before it adds. The check
+  now asks nothing of a pool that is a removed one in every line but its name
+  (`cfgedit.renamed_pool`): the dataplane validated that definition when it
+  built it, and runs it.
+
+**The API** changes nothing: ConfigService.Edit feeds lines through the same
+Shell, so both words work there as typed, and SetConfig already takes a whole
+candidate. Neither is a statement of the configuration, so GetSchema does not
+list them and docs/api-coverage.md marks them n/a.
+
+Measured: `test/test_cfgedit.py` (every refusal above, the count, the dry
+run, the level a pool's replace covers, `?`), and `lab/replace-rename.sh`
+against a running VPP and FRR - a dry run, a replace inside a pool reaching
+the dataplane's block size, a prefix-list, a peer-group, a route-map and a
+pool renamed and committed and read back from FRR and the dataplane, and the
+refusals - red with the feature off.
 
 ### `commit confirmed`, and where its deadline lives
 

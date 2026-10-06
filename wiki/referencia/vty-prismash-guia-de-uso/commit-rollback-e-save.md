@@ -449,6 +449,8 @@ commit check                  valida sem tocar no equipamento
 
 Quem seria re-mapeado sai do `commit check` e, com os mesmos números, da recusa do `commit` comum que pede `commit remap`.
 
+Uma troca em muitas linhas pode ser vista antes de entrar na candidata: `replace pattern <regex> with <substituto> | compare` mostra a diferença e diz se o resultado passaria, sem guardar nada. `replace pattern` e `rename` mudam só a candidata, então tudo o que está nesta página — `show configuration compare`, `commit check`, `commit confirmed`, `rollback 0` — vale para o resultado como vale para linhas digitadas. As duas estão em [VTY prismash — guia de uso](/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh).
+
 ## Sair sem aplicar
 
 `exit` no topo do modo de configuração volta ao modo operacional e **descarta** a candidata. Se ela tinha alguma coisa que não foi aplicada, a caixa avisa na saída — e o que foi descartado não volta:

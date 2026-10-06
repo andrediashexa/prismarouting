@@ -26,6 +26,7 @@ word the rules do not know is UNCLASSIFIED, which is the failure.
 """
 import os
 import sys
+import types
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "src", "prismash"))
@@ -189,6 +190,16 @@ CONFIG_RULES = [
     (["commit"], "typed", "ConfigService.Commit",
      "refusals carry Diagnostics.reason (0.149.18)"),
     (["rollback"], "typed", "ConfigService.Rollback", ""),
+    # #585: an edit OF the candidate, the session's like `top`, and not a
+    # statement in it. Edit takes the line as the prompt does, at the level
+    # `path` names; SetConfig takes a whole candidate, which is what a client
+    # computing the same edit sends.
+    (["replace"], "n/a", "-",
+     "an edit of the candidate, not a statement: ConfigService.Edit takes "
+     "the line, SetConfig the whole result (#585)"),
+    (["rename"], "n/a", "-",
+     "an edit of the candidate, not a statement: ConfigService.Edit takes "
+     "the line, SetConfig the whole result (#585)"),
 ]
 
 #: What a typed rpc reads back of a configuration level, though the level
@@ -490,6 +501,17 @@ def rows():
                 continue
             cls, api, note = classify_config(level, words)
             out.append((level, words, hint, cls, api, note, role))
+    # `replace` and `rename` (#585): words of every level, in a tree of their
+    # own that no level's grammar carries - listed once, from the top, as
+    # the Shell offers them there.
+    top = types.SimpleNamespace(edit_scope=lambda: [],
+                                RENAME_TO=P.Shell.RENAME_TO)
+    paths = []
+    walk(P.Shell.edit_tree(top), [], paths)
+    role = next(r for lvl, _e, _p, _g, r in CONFIG_LEVELS if lvl == "config")
+    for words, hint in paths:
+        cls, api, note = classify_config("config", words)
+        out.append(("config", words, hint, cls, api, note, role))
     return out
 
 

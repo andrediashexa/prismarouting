@@ -23,7 +23,7 @@
 |---|---|
 | typed | 764 |
 | text | 1 |
-| n/a | 45 |
+| n/a | 53 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -268,6 +268,14 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `commit comment <text>` | typed | ConfigService.Commit (comment) |  |
 | `rollback <0-19>` | typed | ConfigService.Rollback |  |
 | `exit` | n/a | - | the session's |
+| `replace pattern <regex> with <replacement> [upto <n>] [\| compare]` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename nat cgnat pool <pool> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename nat nat64 pool <pool> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename ip prefix-list <prefix-list> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename ipv6 prefix-list <prefix-list> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename route-map <route-map> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename router bgp <AS> peer-group <peer-group> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
+| `rename interface <interface> to <new-name>` | n/a | - | an edit of the candidate, not a statement: ConfigService.Edit takes the line, SetConfig the whole result (#585) |
 
 ## Configuration: nat
 

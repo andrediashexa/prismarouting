@@ -850,8 +850,10 @@ from prismash import INTERFACE_BLOCK                              # noqa: E402
 # of them - which is the whole of that issue. Taken from the product's own two
 # sets rather than written out here, so a probe added later is not a failure of
 # this check.
-from prismash import LEVEL_WORDS, PROBE_TOOLS                     # noqa: E402
-LEVEL = {"show"} | set(LEVEL_WORDS) | set(PROBE_TOOLS)
+# `replace` and `rename` (#585) are the third set: offered at every level that
+# takes them, which is every level for `replace`.
+from prismash import LEVEL_WORDS, PROBE_TOOLS, EDIT_WORDS         # noqa: E402
+LEVEL = {"show"} | set(LEVEL_WORDS) | set(PROBE_TOOLS) | set(EDIT_WORDS)
 check(set(opts) <= set(INTERFACE_BLOCK) | LEVEL,
       f"an interface offers only its own statements: "
       f"{sorted(set(opts) - set(INTERFACE_BLOCK) - LEVEL)}")
@@ -907,7 +909,8 @@ sh.feed("exit")
 # it is claimed, this line fails again and asks for a new one.
 sh.feed("router rip")
 opts, _, _ = sh._options("", False)
-check(set(opts) == {"exit"} | LEVEL,
+# Less `rename`, which is offered only where something is renamed from (#585).
+check(set(opts) == {"exit"} | (LEVEL - {"rename"}),
       f"an unmodelled FRR block offers the way out and the level's own "
       f"words: {sorted(opts)}")
 print(f"  router rip -> {sorted(opts)}")

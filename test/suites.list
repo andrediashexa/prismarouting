@@ -52,6 +52,7 @@ python3 test/test_prismash_complete.py
 python3 test/test_cgnat_on_interface.py
 python3 test/test_prismash_config.py
 python3 test/test_cgnat_prefix_lists.py
+python3 test/test_cfgedit.py
 python3 test/test_both_doors.py
 python3 test/test_a_readback_survives.py
 python3 test/test_ssh_settings.py
