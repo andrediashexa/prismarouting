@@ -547,6 +547,22 @@ check(argv[:4] == ["docker", "exec", "-u", "1234:1234"]
       and argv[4:8] == ["--group-add", "998", "--group-add", "999"]
       and argv[-4:] == [doors.MGMT_CONTAINER, "prismash", "-c", "show version"],
       f"the VTY runs as the caller, with the caller's host groups: {argv}")
+# #588: where the login came from, for the record of events - only an
+# address, since it lands in the container's environment. Mutation shown
+# red: the `_address` check dropped (the second case is then passed on).
+argv, why = doors.session_argv({"session": {"command": "show version",
+                                            "from": "192.0.2.7"}}, 1234,
+                               pw=pwd_like(1234, 1234, "/home/ops", "ops"),
+                               groups=[1234])
+check("PRISMA_SESSION_FROM=192.0.2.7" in argv
+      and argv[-4:] == [doors.MGMT_CONTAINER, "prismash", "-c", "show version"],
+      f"a session's address is handed to the VTY: {argv}")
+argv, why = doors.session_argv({"session": {"command": "show version",
+                                            "from": "1.2.3.4 -e X=1"}}, 1234,
+                               pw=pwd_like(1234, 1234, "/home/ops", "ops"),
+                               groups=[1234])
+check(not any("PRISMA_SESSION_FROM" in a or "X=1" in a for a in argv),
+      f"and anything that is not an address is not: {argv}")
 _asked = []
 
 
@@ -755,6 +771,8 @@ check(_a[:3] == ("systemd-run", "--collect", "--unit=prisma-routing-api-upgrade"
       and _a[3:5] == ("/bin/sh", "-c")
       and f"exec >{doors.api_run_log('upgrade')} 2>&1;" in _a[-1]
       and "/usr/bin/prismash -c 'system upgrade 0.149.25';" in _a[-1]
+      # #588: the host's VTY does not record again what the API recorded.
+      and "PRISMA_ASKED_RECORDED=1 /usr/bin/prismash" in _a[-1]
       and _a[-1].endswith('echo "prisma-api-exit $?"'),
       f"an upgrade: a transient unit, its output in a file the API reads, an exit line: {_a}")
 check(doors.verb_of(list(_a)) == "start 'system upgrade' for the API"

@@ -1508,6 +1508,60 @@ service OperationalService {
   // between two readings is seen as its `session_down_count` moving, which
   // the event carries. Cancelling the call stops it.
   rpc WatchBfd(WatchBfdRequest) returns (stream BfdEvent);
+  // #588: `show log` - the box's record of what happened on it, oldest
+  // first and newest last, with the same filters and the screen in `text`.
+  // INVALID_ARGUMENT, with the VTY's words, for a `since` that is not a time
+  // or a severity or source the box does not have. Any account.
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+}
+
+// ------------------------------------------- the box's record of events (#588)
+
+message ListEventsRequest {
+  // The newest `last` events that pass the other filters. 0 with no `since`
+  // is the VTY's default, the last 50; 0 with a `since` is every one since.
+  uint32 last = 1;
+  // As `show log since`: relative ("30m", "1h", "2d", "1w") or an ISO date
+  // or time ("2026-10-05", "2026-10-05T14:00", with "Z" or an offset; none
+  // is the box's own zone). "" is no bound.
+  string since = 2;
+  // "error", "warning", "notice" or "info": that severity and every one
+  // more severe. "" is all.
+  string severity = 3;
+  // "vty", "api", "host", "dataplane" or "routing". "" is all.
+  string source = 4;
+}
+
+// One event of the box's record. Not `Event`, which is ConfigService's
+// stream of configuration changes (#533).
+message BoxEvent {
+  google.protobuf.Timestamp time = 1;
+  // "error", "warning", "notice" or "info".
+  string severity = 2;
+  // "vty", "api", "host", "dataplane" or "routing".
+  string source = 3;
+  // One sentence, in the box's words.
+  string text = 4;
+  // The account that did it, as the host's kernel reported it; "" for the
+  // box itself (a boot, a start, a confirm window that expired).
+  string account = 5;
+  // Where from: "ssh <address>", "the API", "the box"; "" when not known.
+  string origin = 6;
+  // What it is: "commit", "rollback", "confirm", "confirm-expired",
+  // "asked" (a restart, upgrade, reboot or shutdown asked for), "start",
+  // "boot", "upgraded". New kinds may be added; a client shows `text`.
+  string kind = 7;
+  // For a "start": "dataplane" or "routing", and its `cause` - as
+  // SystemInfo.dataplane_start_cause. For an "asked": the cause a start it
+  // brings about will carry.
+  string component = 8;
+  string cause = 9;
+}
+
+message ListEventsResponse {
+  repeated BoxEvent events = 1;
+  // `show log`'s screen for the same filters, verbatim.
+  string text = 2;
 }
 
 // ------------------------------------------------- the CGNAT's reads (#558)
@@ -2340,6 +2394,15 @@ message SystemInfo {
   bool unsupported_sfp_booted = 22;
   bool unsupported_sfp_booted_known = 23;
   string hardware_text = 24;
+  // Why the dataplane and the routing daemons last started (#588, 0.151.14),
+  // as the box's record of events says - never inferred: "boot", "operator"
+  // (`system dataplane restart`), "upgrade", or "unexpected" (nothing on the
+  // box asked for it). "" when the box has not recorded that start: a
+  // release before 0.151.14 started it, or the host's apply has not run
+  // since. With dataplane_restarted, a client says WHY the dataplane is
+  // younger than the box instead of guessing "by itself".
+  string dataplane_start_cause = 25;
+  string control_plane_start_cause = 26;
 }
 
 // One dataplane worker's load, from the dataplane's statistics segment.

@@ -243,8 +243,22 @@ echo "    platform: vpp $HAVE_VPP, frr $HAVE_FRR"
 # costs (#291) is said by the one file that knows - and is not repeated here,
 # where a second copy would fall out of step with the first.
 echo
+# The release this box ran, read before install.sh replaces the stamp, for
+# the record of events below (#588).
+# `|| true`: this file runs under `set -e`, and a box with no stamp (or a
+# DESTDIR one, test/test_upgrade_artifact.sh) made awk's failure the upgrade's.
+WAS=$(awk 'NR == 1 { print $1 }' "$DESTDIR/usr/share/prisma-routing/VERSION" 2>/dev/null || true)
 env DESTDIR="$DESTDIR" PRISMA_VERSION_STAMP="$STAMP" \
     sh "$ART/appliance/install.sh" || exit $?
+
+# THE BOX'S RECORD OF EVENTS (#588): that it was upgraded, from what to what,
+# written by the release just installed - its events.py, which the release
+# before may not have had. Best effort: an upgrade is never failed because
+# its record could not be written.
+python3 "$DESTDIR/usr/lib/prisma-routing/events.py" \
+    ${DESTDIR:+--root "$DESTDIR"} record host=upgraded notice \
+    "upgraded from ${WAS:-a release that did not say} to ${STAMP%% *}" \
+    >/dev/null 2>&1 || true
 
 # THE VTY, RIGHT AFTER (#529): asked from here, by the release being
 # installed - see appliance/schedule-vty-refresh for why not by the VTY.

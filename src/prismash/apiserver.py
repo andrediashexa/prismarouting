@@ -952,6 +952,9 @@ def uptime_fields(facts, ts):
             out[field] = ts(facts[key])
     out["last_boot_reason"] = facts.get("boot_reason") or "not recorded"
     out["dataplane_restarted"] = bool(facts.get("dataplane_restarted"))
+    # Why each started, as the box recorded it (#588); "" when it has not.
+    out["dataplane_start_cause"] = facts.get("dataplane_cause") or ""
+    out["control_plane_start_cause"] = facts.get("control_plane_cause") or ""
     return out
 
 
@@ -996,6 +999,8 @@ READERS = {
     "hardware": lambda sh, a: facts_screen(
         sh, sh.hardware_facts, lambda f: sh.show_hardware([], f)),
     "routing_logging": lambda sh, a: screen(sh, "show logging"),
+    # #588: the box's record of events, as `show log` selects them.
+    "events": lambda sh, a: events_read(sh, a or {}),
     # #559 phase 2: bfdd's sessions, `show bfd peers` (or `peer <a>`) drawn
     # from the reading the fields carry; `a` is the peer, "" for every one.
     "bfd": lambda sh, a: facts_screen(
@@ -1650,10 +1655,55 @@ def hostrun(sh, kind, version=""):
     if argv is None:
         return {"ok": False, "output": "usage: system upgrade [<version>], "
                                        "as in 0.149.25"}
+    # Before the host is asked, as the account (#588): the host's VTY runs
+    # it as root, and a start later is matched to this request.
+    sh.record_restart_asked(kind, version)
     rc, out = sh.sys._run(list(argv))
     if rc != 0:
         return {"ok": False, "output": f"error: the host would not start it\n{out}"}
     return {"ok": True, "output": out}
+
+
+def events_filters(req, now=None):
+    """
+    ListEvents' request as `show log`'s filters (#588): (filters, None), or
+    (None, why) - the VTY's own words - for a value it refuses. Read through
+    the same parser, so the API and the prompt cannot disagree about what
+    `since 2h` means.
+    """
+    import events
+    words = []
+    if req.get("last"):
+        words += ["last", str(req["last"])]
+    for k in ("since", "severity", "source"):
+        if req.get(k):
+            words += [k, str(req[k])]
+    return events.parse_show_args(words, now)
+
+
+def events_read(sh, req):
+    """
+    The events ListEvents answers, and `show log`'s screen of them: {"ok",
+    "events", "text", "why"}. Read by the account's own Shell, so what the
+    host's door gives it is what that account's `show log` shows.
+    """
+    import events
+    f, why = events_filters(req)
+    if why:
+        return {"ok": False, "events": [], "text": "", "why": why}
+    got = events.fetch(f)
+    when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+    text = "".join(events.format_event(e, when) + "\n" for e in got)
+    return {"ok": True, "events": got, "text": text, "why": ""}
+
+
+def event_pb_fields(ev):
+    """One event as ListEvents' Event's fields (#588)."""
+    return {"seconds": ev.get("t", 0), "severity": ev.get("severity", ""),
+            "source": ev.get("source", ""), "text": ev.get("text", ""),
+            "account": ev.get("who", ""), "origin": ev.get("from", ""),
+            "kind": ev.get("kind", ""), "component": ev.get("component", ""),
+            "cause": ev.get("cause", "")}
 
 
 def segment_readable(path=None):
@@ -1741,7 +1791,10 @@ def become(account):
         os.initgroups(account, pw.pw_gid)
         os.setgid(pw.pw_gid)
         os.setuid(pw.pw_uid)
-    os.environ.update({"HOME": pw.pw_dir, "USER": account, "LOGNAME": account})
+    # PRISMA_EVENT_SOURCE: what this account does through the API is the
+    # API's in the box's record of events, not the VTY's (#588).
+    os.environ.update({"HOME": pw.pw_dir, "USER": account, "LOGNAME": account,
+                       "PRISMA_EVENT_SOURCE": "api"})
 
 
 # not a unit: the body of a forked worker process - it becomes the account,
@@ -3802,6 +3855,24 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             nics = f.pop("nics")
             return pb.Hardware(text=got["text"],
                                nics=[pb.HardwareNic(**n) for n in nics], **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's eleventh phase;
+        # events_filters(), events_read() and event_pb_fields() are what it
+        # does, and are tested.
+        def ListEvents(self, req, context):
+            got = self._ask(context, "events", {
+                "last": req.last, "since": req.since,
+                "severity": req.severity, "source": req.source})
+            if not got["ok"]:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, got["why"])
+            out = pb.ListEventsResponse(text=got["text"])
+            for ev in got["events"]:
+                f = event_pb_fields(ev)
+                t = f.pop("seconds")
+                e = out.events.add(**f)
+                e.time.seconds = int(t)
+                e.time.nanos = int((t - int(t)) * 1e9)
+            return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
         def GetRoutingLogging(self, req, context):

@@ -293,11 +293,58 @@ _f = A.uptime_fields({"boot": 100, "dataplane": 700, "control_plane": None, "vty
                       "dataplane_restarted": True}, lambda e: ("ts", e))
 check(_f == {"boot_time": ("ts", 100), "dataplane_started": ("ts", 700),
              "vty_started": ("ts", 90), "release_installed_at": ("ts", 50),
-             "last_boot_reason": "system reboot by root", "dataplane_restarted": True},
+             "last_boot_reason": "system reboot by root", "dataplane_restarted": True,
+             "dataplane_start_cause": "", "control_plane_start_cause": ""},
       f"a Timestamp for each clock read, none for one that was not: {_f}")
 check(A.uptime_fields({}, lambda e: e) == {"last_boot_reason": "not recorded",
-                                           "dataplane_restarted": False},
+                                           "dataplane_restarted": False,
+                                           "dataplane_start_cause": "",
+                                           "control_plane_start_cause": ""},
       "nothing read: not recorded, not restarted")
+# #588: why each started, as the record says - the Uptime card's answer to
+# "restarted by itself". Mutation shown red: the cause left out.
+_f = A.uptime_fields({"dataplane_cause": "upgrade",
+                      "control_plane_cause": "operator"}, lambda e: e)
+check(_f["dataplane_start_cause"] == "upgrade"
+      and _f["control_plane_start_cause"] == "operator",
+      f"uptime_fields: each start's recorded cause: {_f}")
+
+print("=== ListEvents: show log's filters and screen (#588) ===")
+import events as _EVM  # noqa: E402
+_f, _why = A.events_filters({"last": 0, "since": "", "severity": "", "source": ""})
+check(_f == {"last": _EVM.SHOW_LAST} and _why is None,
+      "events_filters: nothing given is show log's default, the last 50")
+_f, _why = A.events_filters({"last": 5, "since": "1h", "severity": "warning",
+                             "source": "dataplane"}, now=10000)
+check(_f == {"last": 5, "since": 6400, "severity": "warning",
+             "source": "dataplane"}, f"events_filters: each one, as the VTY reads it: {_f}")
+_f, _why = A.events_filters({"since": "soon"})
+check(_f is None and "is not a time" in _why,
+      f"events_filters: the VTY's own refusal: {_why}")
+_evd = tempfile.mkdtemp()
+_saved_ev = (_EVM.EVENTS_PATH, _EVM.DOOR)
+_EVM.EVENTS_PATH = os.path.join(_evd, "events.log")
+_EVM.DOOR = os.path.join(_evd, "no.sock")
+try:
+    _EVM.append_event(_EVM.make_event("api", "notice", "configuration committed",
+                                      who="web", origin="the API", now=time.time(),
+                                      kind="commit"))
+    _r = A.events_read(None, {"source": "api"})
+    check(_r["ok"] and len(_r["events"]) == 1
+          and " ".join(_r["text"].split()).endswith(
+              "configuration committed (by web, from the API)"),
+          f"events_read: the events and show log's screen of them: {_r}")
+    _r = A.events_read(None, {"severity": "loud"})
+    check(not _r["ok"] and "severity is one of" in _r["why"],
+          f"events_read: a refusal, with why: {_r['why']}")
+finally:
+    _EVM.EVENTS_PATH, _EVM.DOOR = _saved_ev
+check(A.event_pb_fields({"t": 5.5, "severity": "warning", "source": "dataplane",
+                         "text": "x", "kind": "start", "component": "dataplane",
+                         "cause": "unexpected"})
+      == {"seconds": 5.5, "severity": "warning", "source": "dataplane", "text": "x",
+          "account": "", "origin": "", "kind": "start", "component": "dataplane",
+          "cause": "unexpected"}, "event_pb_fields: an Event's fields, who as account")
 
 print("=== handle: what a worker answers ===")
 check(A.handle(sh, "candidate", None) is sh.cfg.text() or A.handle(sh, "candidate", None) == "hostname x\n",
@@ -1514,6 +1561,11 @@ class _HostSys:
 class _HostShell:
     def __init__(self, allowed=True, rc=0, out=""):
         self.allowed, self.sys = allowed, _HostSys(rc, out)
+        self.recorded = []
+
+    def record_restart_asked(self, kind, version=""):
+        # #588: what it asks is recorded before the host is asked.
+        self.recorded.append((kind, version, len(self.sys.asked)))
 
     def require(self, cap, what):
         if not self.allowed:
@@ -1526,10 +1578,14 @@ _r = A.hostrun(_h, "upgrade", "0.149.25")
 check(_r["ok"] and _h.sys.asked and _h.sys.asked[0][0] == "systemd-run"
       and "system upgrade 0.149.25" in _h.sys.asked[0][-1],
       f"hostrun: the door that starts the upgrade, detached: {_h.sys.asked}")
+check(_h.recorded == [("upgrade", "0.149.25", 0)],
+      f"hostrun: the request recorded first, before the host is asked (#588): "
+      f"{_h.recorded}")
 _h = _HostShell(allowed=False)
 _r = A.hostrun(_h, "dataplane")
-check(not _r["ok"] and not _h.sys.asked and "permission denied" in _r["output"],
-      "hostrun: the VTY's role first, nothing asked of the host")
+check(not _r["ok"] and not _h.sys.asked and "permission denied" in _r["output"]
+      and _h.recorded == [],
+      "hostrun: the VTY's role first, nothing asked of the host or recorded")
 _h = _HostShell(rc=126, out="the host's door: start 'system upgrade' for the API: only root may")
 _r = A.hostrun(_h, "upgrade", "0.149.25")
 check(not _r["ok"] and A.action_reason(_r["output"]) == "permission",

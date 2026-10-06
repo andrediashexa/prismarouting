@@ -55,6 +55,19 @@ def ask(session):
         s.close()
 
 
+def client_address(environ=None):
+    """
+    The address this login came from, as sshd's SSH_CONNECTION says it, or
+    "" (#588). Handed to the door with the session, so the VTY in the
+    management plane - where sshd's environment does not reach - can say in
+    the box's record of events where a commit or a restart was asked from.
+    The door checks it is an address before it passes it on.
+    """
+    env = os.environ if environ is None else environ
+    w = (env.get("SSH_CONNECTION") or "").split()
+    return w[0] if len(w) == 4 else ""
+
+
 def main(argv):
     if len(argv) == 2 and argv[0] == "--attach":
         session = {"attach": argv[1]}
@@ -64,6 +77,8 @@ def main(argv):
         print('usage: prisma-vty-session --attach <socket> | -c "<command>"',
               file=sys.stderr)
         return 2
+    if client_address():
+        session["from"] = client_address()
     got = ask(session)
     # 125: no management plane running; 126: a door refused (a socket outside
     # /run/user, most often). Both are "run it here".

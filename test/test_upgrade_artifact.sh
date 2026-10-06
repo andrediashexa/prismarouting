@@ -323,6 +323,19 @@ there: '$GOT'" ;;
 esac
 
 echo
+echo "=== the upgrade is in the box's record of events (#588) ==="
+# Written by the release just installed, under the box's own root. Shown red
+# twice: the record's line in appliance/upgrade replaced by `true`, and the
+# WAS line before it without `|| true` - the upgrade then died under set -e
+# on this box, which has no stamp.
+EV=$(cat "$BOX/var/log/prisma-routing/events.log" 2>/dev/null)
+case $EV in
+  *'"kind":"upgraded"'*"upgraded from "*" to ${STAMP%% *}"*)
+    ok "the record says the box was upgraded to ${STAMP%% *}" ;;
+  *) bad "no upgrade in the box's record of events: '$EV'" ;;
+esac
+
+echo
 echo "=== a box on another platform is refused, and nothing is written ==="
 # WHY THIS REFUSAL EXISTS. The artifact carries product files and nothing else.
 # `grep -nE "^[[:space:]]*(apt|apt-get|dpkg)\b" appliance/install.sh` returns

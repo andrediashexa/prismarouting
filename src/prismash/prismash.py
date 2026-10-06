@@ -78,6 +78,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
 import doors
+import events
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     hostname_error, HOSTNAME_DEFAULT,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -1545,6 +1546,17 @@ def boot_reason(record, btime, window=REBOOT_RECORD_WINDOW):
     return "not recorded", None
 
 
+#: A start's cause in `show system uptime`'s words (#588), events.CAUSES.
+START_CAUSE_WORDS = {
+    "boot": "the boot",
+    "operator": "system dataplane restart",
+    "upgrade": "an upgrade",
+    "reboot": "system reboot",
+    "shutdown": "system shutdown",
+    "unexpected": "nothing recorded: unexpected ('show log')",
+}
+
+
 def uptime_rows(now, facts, when):
     """
     `show system uptime`'s rows from `facts` (epoch seconds per clock; None
@@ -1572,6 +1584,11 @@ def uptime_rows(now, facts, when):
         if started is not None and boot is not None \
                 and started - boot > RESTARTED_AFTER:
             out.append(f"{pad}restarted after the boot")
+        # And why, when the record of events says (#588); nothing when it
+        # does not, rather than a guess.
+        cause = facts.get(f"{key}_cause")
+        if started is not None and cause in START_CAUSE_WORDS:
+            out.append(f"{pad}started by: {START_CAUSE_WORDS[cause]}")
     if facts.get("vty") is not None:
         out.append(row("vty", facts.get("vty")))
     rel = facts.get("release") or VERSION_UNKNOWN
@@ -2185,7 +2202,11 @@ SHOW = {
                      None),
         "uptime": ("since when the box, the dataplane and the routing run",
                    None)}),
-    "logging": ("system log (FRR)", None),
+    "log": ("what happened on this box, newest last: commits, restarts "
+            "and why, upgrades, reboots",
+            "[last <n>] [since <time>] [severity <level>] [source <name>]"),
+    "logging": ("each routing daemon's logging configuration (FRR); "
+                "'show log' is what happened", None),
 }
 
 # Offered inside `router static`. FRR has no such block - its static routes are
@@ -14528,6 +14549,8 @@ class Shell:
                 self.confirm_on_box = False
                 self.state.record(confirm_pending="no", confirm_deadline=0)
                 print("confirmed: the box will not roll this change back")
+                self.record_event("info", "the commit confirmed was "
+                                  "confirmed: it stays", kind="confirm")
             except OSError as e:
                 # Said as a failure, because it is one. The window is still
                 # armed and the box will still revert at its deadline, and an
@@ -14776,6 +14799,10 @@ class Shell:
 
         self.record_applied(vppapi.identity()[0], self.candidate,
                             comment=comment)
+        # The box's record of events (#588): who committed, from where, and
+        # what kind of commit - written here, once the change is applied, on
+        # every path below: a commit FRR partly refused is still in effect.
+        self.record_commit(self.from_rollback, confirm_min, comment)
         if self.from_rollback:
             self.state.bump("rollbacks")
             self.from_rollback = False
@@ -15024,14 +15051,15 @@ class Shell:
                         "session open, and use 'rollback 1' there if this "
                         "one stops answering")
 
-    def revert_confirm(self, pending, why):
+    def revert_confirm(self, pending, why, source=None):
         """
         Put back the configuration a "commit confirmed" was measured against.
 
         Returns True when the box is back on it. The caller says what to do
         about False, because the two callers are in different situations: an
         operator is reading one of them and a unit firing every few seconds is
-        the other.
+        the other. `source` is who says so in the record of events (#588):
+        the host for the unit, the session's own otherwise.
         """
         target = Config.parse(pending["config"])
         if target.unknown:
@@ -15080,6 +15108,14 @@ class Shell:
                             confirm_deadline=0,
                             comment="commit confirmed expired")
         self.state.bump("confirm_reverts")
+        minutes = pending.get("minutes")
+        self.record_event(
+            "warning", (f"a commit confirmed {minutes} was" if minutes
+                        else "a commit confirmed was")
+            + " not confirmed in time: the configuration before it was put "
+              "back", kind="confirm-expired", source=source,
+            who="" if source == "host" else None,
+            origin="the box" if source == "host" else None)
         try:
             self.confirm.clear()
         except OSError as e:
@@ -15159,6 +15195,103 @@ class Shell:
             fields["saved_differs"] = "unknown"
         self.state.applied(by, **fields)
 
+    def record_event(self, severity, text, kind="", source=None, who=None,
+                     origin=None, **extra):
+        """
+        One event in the box's record (#588), said by this session: its
+        source the VTY or the API, its account and where it came from unless
+        given. Best effort and silent - events.record() says why.
+        """
+        ev = events.make_event(
+            source or events.event_source(), severity, text,
+            who=vppapi.identity()[0] if who is None else who,
+            origin=events.session_origin() if origin is None else origin,
+            kind=kind, **extra)
+        return events.record(ev)
+
+    def record_asked(self, cause, affects, text):
+        """
+        A request that restarts something, recorded BEFORE it is carried out
+        (#588), so the start it causes can be matched to it: `cause` as a
+        start will say it, `affects` the components it restarts. Not twice:
+        the host's VTY that runs a request the container's VTY or the API
+        asked for finds it recorded, by the account that asked - the door
+        that starts it there says so (doors.api_run_argv). A match by time
+        was the first cut, and lab/api-grpc.sh's phase 5 showed it wrong -
+        root's reboot a minute after opsman's is a request of its own.
+        """
+        if os.environ.get("PRISMA_ASKED_RECORDED"):
+            return False
+        return self.record_event("notice", text, kind="asked", cause=cause,
+                                 affects=affects)
+
+    def record_restart_asked(self, kind, version=""):
+        """
+        `system dataplane restart` (kind "dataplane") or `system upgrade
+        <version>` (kind "upgrade") asked for, as record_asked() takes it.
+        A dataplane restart restarts the routing container with it - the
+        whole stack goes down (prisma-hot-card) - and an upgrade names both
+        for whatever its own run restarts.
+        """
+        if kind == "upgrade":
+            return self.record_asked("upgrade", "dataplane routing",
+                                     f"system upgrade to {version} asked")
+        return self.record_asked("operator", "dataplane routing",
+                                 "system dataplane restart asked")
+
+    def record_commit(self, rollback, confirm_min, comment):
+        """
+        The commit just applied, in the box's record of events (#588): a
+        rollback to revision `rollback` when it is one, the confirm window
+        when there is one, and the comment.
+        """
+        text = (f"rollback to revision {rollback} committed" if rollback
+                else "configuration committed")
+        if confirm_min:
+            text += (f", to be confirmed within {confirm_min} minute(s) or "
+                     f"rolled back")
+        if comment:
+            text += f": {comment}"
+        return self.record_event("notice", text,
+                                 kind="rollback" if rollback else "commit")
+
+    def observe_starts(self):
+        """
+        Record the boot and any start of the dataplane or the routing daemons
+        this box has not recorded yet, each with its cause (#588). Run by the
+        host's apply - `--load` at boot and after a restart, `--reapply` after
+        Docker restarted a container - which is root's and on the host, the
+        one place that both reads the clocks and keeps events.state.
+        """
+        facts = self.uptime_facts()
+        state = events.read_state()
+        asked = events.fetch({"kind": "asked"})
+        new, seen = events.observe_starts(facts, asked, state)
+        for ev in new:
+            events.record(ev)
+        if seen != state:
+            events.write_state(seen)
+        return new
+
+    def show_log(self, args):
+        """
+        `show log [last <n>] [since <time>] [severity <level>] [source
+        <name>]` (#588): what happened on this box, newest last. Every
+        account may read it, as every account may `show version`.
+        """
+        f, why = events.parse_show_args(args)
+        if why:
+            self.err_prose("show log: not a filter it takes", why)
+            return
+        got = events.fetch(f)
+        if not got:
+            print("no event recorded" + (" matches" if len(f) > 1 or
+                                          "last" not in f else ""))
+            return
+        when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+        for ev in got:
+            print(events.format_event(ev, when))
+
     def do_rollback(self, args):
         try:
             n = int(args[0]) if args else 0
@@ -15181,7 +15314,9 @@ class Shell:
             self.err(f"revision {n} does not exist")
             return
         self.candidate = Config.parse(text)
-        self.from_rollback = True
+        # The revision, not True (#588): the commit that applies it says in
+        # the record of events which one it went back to.
+        self.from_rollback = n
         print(f"load complete (revision {n})")
         print("use 'show configuration compare' to review, 'commit' to apply")
 
@@ -15549,6 +15684,7 @@ class Shell:
             print_prose("it comes back by itself, claiming its dataplane card "
                         "at boot; nothing needs typing at its console")
             self.record_reboot("reboot")
+            self.record_asked("reboot", "", "system reboot asked")
             rc, said = self.ask_systemd("reboot")
             if rc != 0:
                 self.err_prose("the box could not be restarted", *said)
@@ -15561,6 +15697,7 @@ class Shell:
             print_prose("it stays off until something powers it on again, and "
                         "then comes back claiming its card by itself")
             self.record_reboot("shutdown")
+            self.record_asked("shutdown", "", "system shutdown asked")
             rc, said = self.ask_systemd("poweroff")
             if rc != 0:
                 self.err_prose("the box could not be shut down", *said)
@@ -15611,6 +15748,9 @@ class Shell:
                      "restart")
             return True
         log = doors.api_run_log(kind)
+        # Before the host is asked, as the account that asks (#588): the
+        # host's VTY that runs it is root's, and finds this already said.
+        self.record_restart_asked(kind, version)
         started = time.time()
         rc, out = self.sys._run(list(argv))
         if rc != 0:
@@ -15644,6 +15784,7 @@ class Shell:
         """
         if not self.require(CAP_OPERATOR, "system dataplane restart"):
             return
+        self.record_restart_asked("dataplane")
         hot = sorted(hot_cards())
         print("restarting the dataplane")
         print_prose("forwarding stops until it is back, and every subscriber's "
@@ -15774,6 +15915,7 @@ class Shell:
                            f"'{want}', and it runs {mine}; going back is the "
                            f"hand-run path, with its own costs")
             return
+        self.record_restart_asked("upgrade", want)
         self.run_upgrade(want)
 
     @sigint_ignored
@@ -18833,15 +18975,22 @@ class Shell:
             record = ""
         reason, _at = boot_reason(record, boot)
         dp = now - up if up is not None else None
+        cp = file_mtime(FRR_STARTED_FILE)
+        # Why each started, as the record of events says (#588): "" for a
+        # start the host's apply has not recorded - never inferred here.
+        starts = events.fetch({"kind": "start"})
         return {"boot": boot,
                 "dataplane": dp,
                 "dataplane_restarted": (dp is not None and boot is not None
                                         and dp - boot > RESTARTED_AFTER),
-                "control_plane": file_mtime(FRR_STARTED_FILE),
+                "control_plane": cp,
                 "vty": vty,
                 "release": prisma_routing_version(),
                 "release_installed": file_mtime(VERSION_PATH),
-                "boot_reason": reason}
+                "boot_reason": reason,
+                "dataplane_cause": events.start_cause(starts, "dataplane", dp),
+                "control_plane_cause": events.start_cause(starts, "routing",
+                                                          cp)}
 
     def show_system_uptime(self):
         """`show system uptime` (#534): each clock, since when and for how long."""
@@ -19924,6 +20073,11 @@ class Shell:
             return
         if line == "show system uptime":
             self.show_system_uptime()
+            return
+        # The box's own record (#588), and not FRR's `show logging`, which
+        # stays what it was: each routing daemon's logging configuration.
+        if line.split()[:2] == ["show", "log"]:
+            self.show_log(line.split()[2:])
             return
         if line == "show snmp mib":
             self.show_snmp_mib()
@@ -21189,7 +21343,7 @@ class Shell:
             said.append(f"It is bound to {driver}, which DPDK can use, so the "
                         f"binding is not the problem.")
             # NAMED AS A COMMAND THAT EXISTS (#308). This said "'show log'",
-            # and this VTY has no `show log`: the tree offers `show logging`,
+            # and this VTY had no `show log` then: the tree offered `show logging`,
             # which is FRR's system log and says nothing about a NIC the
             # dataplane refused. It was the only occurrence of that spelling
             # in the product, and it printed on the one screen an operator
@@ -21199,6 +21353,8 @@ class Shell:
             #
             # appliance/selftest reaches the same state and says "The VPP
             # journal says why", naming journalctl elsewhere. One account.
+            # `show log` exists since #588 and records what the box did, not
+            # why DPDK refused a device: the journal is still where that is.
             said.append("'journalctl -u vpp.service' says why the dataplane "
                         "refused it.")
             return said
@@ -25390,7 +25546,7 @@ class Shell:
                 pending,
                 f"commit confirmed {minutes}: nobody confirmed it within "
                 f"{minutes} minute(s), so this box has put the previous "
-                "configuration back"):
+                "configuration back", source="host"):
             return 0
         n = self.confirm.count_attempt(pending)
         if n < CONFIRM_ATTEMPTS:
@@ -25580,6 +25736,9 @@ def main():
 
     if args and args[0] == "--load":
         sh.load(args[1] if len(args) > 1 else CONFIG_PATH)
+        # The boot's apply, and the one after every restart of the stack: a
+        # start it has not recorded is recorded now, with its cause (#588).
+        sh.observe_starts()
         return 1 if sh.failed else 0
 
     # Not typed either: watch-the-dataplane runs it when the dataplane or
@@ -25592,6 +25751,8 @@ def main():
 
     if args and args[0] == "--reapply":
         path = sh.reapply()
+        # A container Docker started again: the start, and why (#588).
+        sh.observe_starts()
         if path is None:
             print("reapply: no configuration to put back")
             return 0

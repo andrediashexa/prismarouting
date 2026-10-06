@@ -473,6 +473,64 @@ check("user bob" in b.running and "'confirmed' comes first" not in said,
       f"a quoted comment holding the word was refused: {said!r}")
 
 
+print("\n=== the record of events: who committed, rolled back, confirmed (#588) ===")
+# Mutations shown red, each on its own: record_commit() not called from
+# _do_commit (no commit event); revert_confirm() not recording the expiry;
+# the rollback's revision not carried (from_rollback = True) - the text
+# then says "rollback to revision True".
+import events  # noqa: E402
+_ed = tempfile.mkdtemp()
+_saved_ev = (events.EVENTS_PATH, events.DOOR)
+events.EVENTS_PATH = os.path.join(_ed, "events.log")
+events.DOOR = os.path.join(_ed, "no-door.sock")
+os.environ["SSH_CONNECTION"] = "192.0.2.7 50000 192.0.2.1 22"
+try:
+    b = box()
+    b.commit(AFTER, ["comment", "bob", "joins"])
+    _e = events.read_events(events.EVENTS_PATH)
+    check(len(_e) == 1 and _e[0]["kind"] == "commit"
+          # An account changed, so the box arms its own window (#212).
+          and _e[0]["text"] == "configuration committed, to be confirmed "
+          "within 10 minute(s) or rolled back: bob joins"
+          and _e[0]["source"] == "vty" and _e[0]["from"] == "ssh 192.0.2.7"
+          and _e[0]["who"] == vppapi.identity()[0],
+          f"a commit is an event, with who and from where: {_e}")
+    b = box()
+    b.commit(AFTER, ["confirmed", "5"])
+    b.commit(AFTER)
+    _e = events.read_events(events.EVENTS_PATH)
+    check([e["kind"] for e in _e[-2:]] == ["commit", "confirm"]
+          and "to be confirmed within 5 minute(s)" in _e[-2]["text"]
+          and "confirmed: it stays" in _e[-1]["text"],
+          f"commit confirmed, and its confirmation: {[e['text'] for e in _e[-2:]]}")
+    b = box()
+    b.commit(AFTER, ["confirmed", "1"])
+    b.rewind(61)
+    rc, _ = b.expire()
+    _e = events.read_events(events.EVENTS_PATH)
+    check(rc == 0 and _e[-1]["kind"] == "confirm-expired"
+          and _e[-1]["source"] == "host" and _e[-1]["severity"] == "warning"
+          and _e[-1]["from"] == "the box"
+          and "commit confirmed 1 was not confirmed" in _e[-1]["text"],
+          f"an expiry the unit reverted is the host's warning: {_e[-1]}")
+    sh = b.shell()
+    sh.rb = type("R", (), {"push": lambda s, text, comment="": None,
+                           "load": lambda s, n: AFTER})()
+    with contextlib.redirect_stdout(io.StringIO()):
+        sh.do_rollback(["2"])
+        sh.do_commit([])
+    _e = events.read_events(events.EVENTS_PATH)
+    check(_e[-1]["kind"] == "rollback"
+          and _e[-1]["text"].startswith("rollback to revision 2 committed"),
+          f"a rollback committed names its revision: {_e[-1]}")
+    check(sh.record_commit(0, 0, "") and
+          events.read_events(events.EVENTS_PATH)[-1]["text"]
+          == "configuration committed",
+          "record_commit: a plain commit says only that")
+finally:
+    events.EVENTS_PATH, events.DOOR = _saved_ev
+    os.environ.pop("SSH_CONNECTION", None)
+
 if fail:
     print(f"{fail} FAILURES")
     sys.exit(1)
