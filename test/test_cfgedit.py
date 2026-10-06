@@ -462,8 +462,11 @@ check(sh.candidate.list_descriptions.get(prismash.list_entry_key(
     "ip prefix-list CGN-IN seq 5 deny 100.64.1.0/24")) == "management range",
       f"under its new key: {sh.candidate.list_descriptions!r}")
 said(sh, "nat", "cgnat")
-check(said(sh, "rename pool cgnat to cgnat-a").count("renamed in 1") == 1,
-      "a pool, from its level")
+_out = said(sh, "rename pool cgnat to cgnat-a")
+check(_out.count("renamed in 1") == 1, "a pool, from its level")
+# Mutation shown red: the note taken out of Shell.do_rename.
+check("every session it carries ends" in " ".join(_out.split()),
+      f"and it says the commit ends the pool's sessions: {_out!r}")
 check(set(sh.candidate.pools) == {"cgnat-a", "other"}, "the pool's name")
 said(sh, "top", "router bgp 65000", "address-family ipv4 unicast")
 out = said(sh, "rename peer-group PG to UPSTREAM")

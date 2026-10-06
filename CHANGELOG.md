@@ -109,7 +109,8 @@ version has a chance of seeing it.
   and SetConfig already takes a whole candidate (docs/clients.md).
 
   A pool renamed is rebuilt in the dataplane under its new name - the same
-  mapping, its sessions ended, as any change that rebuilds a pool. The
+  mapping, its sessions ended, as any change that rebuilds a pool, and
+  `rename` says so in a note when it stages it. The
   commit check used to refuse every such commit, typed or renamed: the
   dataplane validates the new pool against the pools it runs, the old one
   among them, and answered "public address ... is already in pool 'lab'"

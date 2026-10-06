@@ -18129,10 +18129,18 @@ class Shell:
                            "the reference out")
             return
         word = re.compile(r"(?<![\w.-])" + re.escape(old) + r"(?![\w.-])")
-        self.stage_edit("\n".join(after) + "\n",
-                        f"renamed in {count} place(s)",
-                        "rename", renamed=(kind, old, new),
-                        same=lambda row: word.sub(new, row))
+        staged = self.stage_edit("\n".join(after) + "\n",
+                                 f"renamed in {count} place(s)",
+                                 "rename", renamed=(kind, old, new),
+                                 same=lambda row: word.sub(new, row))
+        # A pool's name is how the dataplane holds it, so the commit removes
+        # the pool and builds it again under the new one: the mapping is the
+        # same and every session it carries ends. A rename reads as cosmetic,
+        # which is why it is said here and not left to be found (#585).
+        if staged and kind == "pool":
+            print_prose(f"note: at commit pool {old} is rebuilt as {new}: "
+                        "the same mapping, and every session it carries "
+                        "ends")
 
     def edit_refusal(self, before, target, text):
         """
