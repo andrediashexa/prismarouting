@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.151.12 - a CGNAT pool's sides as prefix-lists
+
+### Added
+
 * **A CGNAT pool's sides can be prefix-lists.**
   ([#589](https://github.com/andrediashexa/hexarouting/issues/589)) Under
   `nat` > `cgnat` > `pool <name>`, `prefix-list-inside <list>` and
