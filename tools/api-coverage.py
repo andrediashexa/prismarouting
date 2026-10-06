@@ -99,6 +99,10 @@ OPERATIONAL_RULES = [
      "unsupported_sfp_configured/booted (#574)"),
     (["show", "system", "cpu"], "typed", "OperationalService.GetSystem",
      "worker_load per worker; per-core figures are text (phase 7)"),
+    # #590: each port's module and its optical levels.
+    (["show", "interface", "transceiver"], "typed",
+     "OperationalService.ListTransceivers",
+     "and `show interface <name> transceiver` by its names (#590)"),
     (["show", "interface", "utilization"], "typed",
      "TelemetryService.Subscribe / GetHistory", "rates from the counter stream"),
     (["show", "interface"], "typed", "OperationalService.ListInterfaces", ""),

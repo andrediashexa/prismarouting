@@ -457,9 +457,26 @@ _served = {}
 for _o, _t, _v in agent.oid_table():
     if _o.startswith("1.3.6.1.4.1.99999."):
         _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
+# prTransceiver (#590) is the `--transceivers` process's, not this one's: its
+# rows are what xcvr_rows() builds for the fixture modules, every column of
+# both tables among them (an SFP past its warning, a QSFP's four lanes).
+sys.path.insert(0, os.path.join(HERE, "..", "test"))
+import transceiver_fixtures as _XF  # noqa: E402
+_XT = agent.transceiver_module()
+_xm = [_XT.decode(_XT.parse_dump(_XF.dump(n, "dpdk", t, d))[n])
+       for n, t, d in (("a", "sff-8472", _XF.sfp_low_rx()),
+                       ("b", "sff-8636", _XF.qsfp28()))]
+for _o, _t, _v in agent.xcvr_rows("1.3.6.1.4.1.99999.1", _xm, {"a": 1, "b": 2},
+                                  _XT.mw_to_dbm):
+    _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
+_SYN["Integer32"] = "integer"
 _objs = {}
 for _o, _t in _served.items():
-    _k = ".".join(_o.split(".")[:-1])
+    # The longest prefix that is an object: a lane's row has two index
+    # components (ifIndex.lane), every other table one.
+    _parts = _o.split(".")
+    _k = next((".".join(_parts[:n]) for n in range(len(_parts) - 1, 0, -1)
+               if ".".join(_parts[:n]) in _want), ".".join(_parts[:-1]))
     check(_k in _want, f"{_o} is served and PRISMA-ROUTING-MIB has no object "
                        f"at {_k}")
     if _k in _want:
@@ -1201,6 +1218,127 @@ finally:
 order = [r[0] for r in sorted(agent.bfd_rows(sessions),
                               key=lambda r: [int(x) for x in r[0].split(".")])]
 check(len(order) == len(set(order)), "no OID served twice")
+
+
+print("\n=== prTransceiver: the ports' modules (#590) ===")
+sys.path.insert(0, os.path.join(HERE, "..", "test"))
+import transceiver_fixtures as XF  # noqa: E402
+XT = agent.transceiver_module()
+check(XT.__name__ == "transceiver" and hasattr(XT, "decode"),
+      "#590: the agent decodes with the VTY's own module, found from here")
+_xdump = (XF.dump("enp1s0", "dpdk", "sff-8472", XF.sfp_low_rx(),
+                  XF.SFF8472_READ, "port 0 device 0000:01:00.0 age 0.0")
+          + XF.dump("hu0", "dpdk", "sff-8636", XF.qsfp28())
+          + "interface enp2s0 unread no-module the card answered -5 "
+            "(Input/output error) on DPDK port 1\n"
+          + "interface host-eth5 unread not-dpdk not a DPDK port\n"
+          + "interface tap4096 unread not-dpdk not a DPDK port\n")
+_eth5 = "\n".join(XT.dump_lines("eth5", "linux", "sff-8472",
+                                list(XF.sfp_external())))
+_asked = []
+
+
+def _xask(argv):
+    _asked.append(argv[-1])
+    if argv[-1] == "eth5":
+        return 0, _eth5
+    return 0, f"interface {argv[-1]} unread no-device -19\n"
+
+
+reads = agent.xcvr_readings(XT, _xdump, ["eno1", "enp1s0"], set(), _xask)
+check([r["name"] for r in reads] == ["enp1s0", "enp2s0", "host-eth5", "hu0"],
+      f"#590: the DPDK ports, an af_packet port through its Linux card, not "
+      f"the TAP; a Linux card the host does not have left out: "
+      f"{[r['name'] for r in reads]}")
+check(_asked == ["eth5", "eno1"],
+      f"#590: the door asked for the Linux cards, not for a DPDK port: {_asked}")
+check(agent.xcvr_readings(XT, None, [], set(), _xask) == [],
+      "#590: a dataplane that did not answer serves none of its ports")
+check([r["name"] for r in agent.xcvr_readings(
+          XT, "interface enp9s0 unread not-dpdk x\n", [], {"enp9s0"},
+          lambda a: (0, _eth5.replace("eth5", "enp9s0")))] == ["enp9s0"],
+      "#590: a hot card is read from Linux under its own name")
+mods = [XT.decode(r) for r in reads]
+idx = {"enp1s0": 1, "enp2s0": 2, "host-eth5": 3, "hu0": 4}
+rows = agent.xcvr_rows("1.3.6.1.4.1.67033.1", mods, idx, XT.mw_to_dbm)
+got = {o: v for o, _t, v in rows}
+typ = {o: t for o, t, _v in rows}
+X = "1.3.6.1.4.1.67033.1.20"
+check(got.get(f"{X}.1.1.2.1") == "enp1s0" and got.get(f"{X}.1.1.3.1") == 1
+      and got.get(f"{X}.1.1.5.1") == "RSMPP8510GL-03D"
+      and got.get(f"{X}.1.1.6.1") == "FP23H150378"
+      and got.get(f"{X}.1.1.7.1") == 1310 and got.get(f"{X}.1.1.19.1") == "dpdk",
+      "#590: prXcvrTable: name, status ddm, part, serial, wavelength, source")
+check(got.get(f"{X}.1.1.8.1") == 3650 and got.get(f"{X}.1.1.9.1") == 7500
+      and got.get(f"{X}.1.1.12.1") == -500 and typ[f"{X}.1.1.8.1"] == "integer",
+      "#590: temperature in hundredths of a degree, its thresholds beside it, "
+      "a negative one signed")
+check(got.get(f"{X}.1.1.13.1") == 3300 and got.get(f"{X}.1.1.17.1") == 3000,
+      "#590: voltage in millivolts")
+check(got.get(f"{X}.1.1.18.1") == 2,
+      "#590: prXcvrState is warning: the RX power is past its low warning")
+check(got.get(f"{X}.2.1.2.1.1") == "enp1s0"
+      and got.get(f"{X}.2.1.3.1.1") == -1900
+      and got.get(f"{X}.2.1.6.1.1") == -1801
+      and got.get(f"{X}.2.1.8.1.1") == 3,
+      "#590: the lane's RX power, hundredths of a dBm, its low warning, "
+      "and its level lowWarning")
+check(got.get(f"{X}.2.1.9.1.1") == -210 and got.get(f"{X}.2.1.14.1.1") == 1
+      and got.get(f"{X}.2.1.15.1.1") == 7500 and got.get(f"{X}.2.1.20.1.1") == 1,
+      "#590: TX power -2.10 dBm normal, bias 7500 uA normal")
+check(got.get(f"{X}.1.1.3.2") == 4 and f"{X}.1.1.8.2" not in got
+      and not any(o.startswith(f"{X}.2.1.") and o.endswith(".2.1") for o in got),
+      "#590: an empty cage: absent, no levels, no lane")
+check(got.get(f"{X}.1.1.18.3") == 1
+      and got.get(f"{X}.2.1.2.4.4") == "hu0 lane 4"
+      and got.get(f"{X}.2.1.8.4.4") == 3 and got.get(f"{X}.2.1.8.4.1") == 1,
+      "#590: a QSFP's four lanes, lane 4 low, named by lane")
+check(got.get(f"{X}.1.1.4.3") == "FINISAR CORP.",
+      "#590: the af_packet port's module, by its dataplane name")
+check(len(rows) == len({o for o, _t, _v in rows}), "#590: no OID twice")
+check(agent.xcvr_rows("b", mods, {}, XT.mw_to_dbm) == [],
+      "#590: a port with no ifIndex has no row")
+dark = XT.decode(XT.parse_dump(XF.dump("d", "dpdk", "sff-8472",
+                                       XF.sfp_dark()))["d"])
+drow = {o: v for o, _t, v in agent.xcvr_rows("b", [dark], {"d": 7},
+                                             XT.mw_to_dbm)}
+check(drow.get("b.20.2.1.3.7.1") == agent.NO_LIGHT == -4000
+      and drow.get("b.20.2.1.8.7.1") == 5 and drow.get("b.20.1.1.18.7") == 3,
+      "#590: no light is -40.00 dBm, low alarm, and the module in alarm")
+nt = XT.decode(XT.parse_dump(XF.dump("n", "dpdk", "sff-8472",
+                                     XF.sfp_no_thresholds()))["n"])
+nrow = {o: v for o, _t, v in agent.xcvr_rows("b", [nt], {"n": 8}, XT.mw_to_dbm)}
+check(nrow.get("b.20.1.1.8.8") == 3650 and "b.20.1.1.9.8" not in nrow
+      and nrow.get("b.20.1.1.18.8") == 4 and nrow.get("b.20.2.1.8.8.1") == 6,
+      "#590: no thresholds are absent, not 0, and the state is unknown")
+check(agent.xcvr_state(mods[0]) == 2 and agent.xcvr_state(dark) == 3
+      and agent.xcvr_state(nt) == 4 and agent.xcvr_state(mods[3]) == 2,
+      "#590: prXcvrState: the worst level")
+check(agent._centi_dbm(1.0, XT.mw_to_dbm) == 0
+      and agent._centi_dbm(0.0, XT.mw_to_dbm) == -4000
+      and agent._centi_dbm(0.00001, XT.mw_to_dbm) == -4000
+      and agent._centi_dbm(None, XT.mw_to_dbm) is None,
+      "#590: hundredths of a dBm, floored at no light")
+_tc = agent.Transceivers()
+check(_tc.rows == [] and _tc.at == 0.0,
+      "#590: a new cache holds nothing, so the first poll reads")
+_hot = os.path.join(BOX, "hot-cards")
+w(_hot, "enp9s0 0000:09:00.0\n\nenp8s0\n")
+check(agent.hot_card_names(_hot) == {"enp9s0", "enp8s0"},
+      "#590: the hot cards' names")
+check(agent.hot_card_names(os.path.join(BOX, "none")) == set(),
+      "#590: none recorded, none")
+check(agent.linux_dump(("x",), ask=lambda a: (0, "dump")) == "dump"
+      and agent.linux_dump(("x",), ask=lambda a: (1, "no")) == "",
+      "#590: the door's answer, or nothing when it failed")
+_echo = os.path.join(BOX, "echo-dump")
+w(_echo, "#!/bin/sh\necho interface $3 source linux\n")
+os.chmod(_echo, 0o755)
+check(agent.linux_dump((_echo, "p", "read", "eno1"), ask=lambda a: None)
+      == "interface eno1 source linux\n"
+      and agent.linux_dump((_echo, "p", "read", "eno1"),
+                           ask=lambda a: (126, "refused")) != "",
+      "#590: with no door, or an older one, the reader is run here")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

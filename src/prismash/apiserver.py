@@ -55,6 +55,7 @@ import cgnatshow  # noqa: E402 - the CGNAT's screens, typed (#558, phase 6)
 import logstate  # noqa: E402 - the CGNAT log export's state (#555)
 import opshow  # noqa: E402 - the rest of the screens, typed (#558, phase 7)
 import typedcfg  # noqa: E402 - typed configuration (#558, phase 2)
+import transceiver  # noqa: E402 - a module's EEPROM, decoded (#590)
 
 #: Where the server listens inside the management container: the backplane
 #: address the host forwards the management address to (#448's bp0).
@@ -1007,6 +1008,11 @@ READERS = {
         sh, sh.bfd_facts,
         lambda f: sh.show_bfd(["peer", a] if a else ["peers"], f)),
     "snmp_file": lambda sh, a: snmp_file_read(sh, a),
+    # #590: each port's module, `show interface [<name>] transceiver` drawn
+    # from the reading the fields carry; `a` is the names, [] for all.
+    "transceivers": lambda sh, a: facts_screen(
+        sh, lambda: sh.transceiver_facts(a or []),
+        lambda f: sh.show_transceivers(a or [], f)),
 }
 
 
@@ -3855,6 +3861,18 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             nics = f.pop("nics")
             return pb.Hardware(text=got["text"],
                                nics=[pb.HardwareNic(**n) for n in nics], **f)
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh and
+        # lab/transceiver.sh; transceiver.transceiver_fields() is what it
+        # converts, and is tested.
+        def ListTransceivers(self, req, context):
+            got = self._ask(context, "transceivers", list(req.names))
+            f = got["facts"]
+            return pb.Transceivers(
+                dataplane_answered=f["dataplane"], missing=f["missing"],
+                text=got["text"],
+                transceivers=[pb.Transceiver(**transceiver.transceiver_fields(m))
+                              for m in f["modules"]])
 
         # not a unit: an rpc, driven by lab/api-grpc.sh's eleventh phase;
         # events_filters(), events_read() and event_pb_fields() are what it

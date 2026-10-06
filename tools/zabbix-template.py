@@ -132,6 +132,13 @@ VALUEMAPS = {
                                               (3, "notForwarding"), (4, "failed")],
     "PRISMA-ROUTING-MIB::prAuditState": [(1, "intact"), (2, "empty"), (3, "broken"),
                                          (4, "truncated"), (5, "incomplete")],
+    "PRISMA-ROUTING-MIB::prXcvrStatus": [(1, "ddm"), (2, "noDdm"), (3, "copper"),
+                                         (4, "absent"), (5, "unreadable")],
+    "PRISMA-ROUTING-MIB::prXcvrState": [(1, "normal"), (2, "warning"), (3, "alarm"),
+                                        (4, "unknown")],
+    "PRISMA-ROUTING-MIB::prXcvrLaneLevel": [(1, "normal"), (2, "highWarning"),
+                                            (3, "lowWarning"), (4, "highAlarm"),
+                                            (5, "lowAlarm"), (6, "unknown")],
     "UCD-SNMP-MIB::UCDErrorFlag": [(0, "noError"), (1, "error")],
     "Zabbix::SNMP availability": [(0, "not available"), (1, "available"), (2, "unknown")],
 }
@@ -151,6 +158,10 @@ MACROS = [
     ("{$PRISMA.FIB.MIN}", "100", "FIB size below which a sudden drop is not reported (a lab or a box with a handful of routes)."),
     ("{$PRISMA.FIB.DROP.PCT}", "50", "The FIB falling below this percent of its maximum over the last hour raises an average."),
     ("{$MEMORY.UTIL.MAX}", "90", "Control-plane memory utilisation, percent, above which an average is raised."),
+    ("{$PRISMA.XCVR.CONTROL}", "1", "1 raises a port's transceiver alarms; set {$PRISMA.XCVR.CONTROL:\"<port>\"} (a QSFP lane: \"<port> lane <n>\") to 0 for one whose module may be dark or absent."),
+    ("{$PRISMA.XCVR.TEMP.MAX}", "70", "A module's temperature, degrees C, above which a warning is raised - beside the module's own high warning, whichever is crossed first."),
+    ("{$PRISMA.XCVR.RX.MIN}", "-40", "RX power, dBm, below which a warning is raised - beside the module's own low warning. -40 is no light: raise it on a port to watch a level the module's thresholds do not."),
+    ("{$PRISMA.XCVR.RX.MAX}", "10", "RX power, dBm, above which a warning is raised - beside the module's own high warning."),
     ("{$BGP4V2.INDEX.MATCHES}", "^[0-9]+\\.2\\.", "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."),
 ]
 
@@ -544,6 +555,75 @@ def build():
                                tags=[("scope", "availability")],
                                deps=[("Prisma Routing: bundle {#BUNDLE} has no member carrying traffic",
                                       f"last({ref(bk('active'))})=0 and last({ref(bk('members'))})>0")])]))
+
+    # ------------------------------------------------ transceivers (#590)
+    xk = lambda s: f"prisma.xcvr.{s}[{{#SNMPINDEX}}]"
+    xc = '{$PRISMA.XCVR.CONTROL:"{#XCVRNAME}"}=1'
+    rules.append(rule("Transceiver discovery", f"discovery[{{#XCVRNAME}},{P}.20.1.1.2]",
+                      "prisma.xcvr.discovery", [
+                          item("Transceiver {#XCVRNAME}: status", f"{P}.20.1.1.3.{{#SNMPINDEX}}", xk("status"),
+                               delay="5m", vmap="PRISMA-ROUTING-MIB::prXcvrStatus",
+                               tags=[("component", "optics"), ("interface", "{#XCVRNAME}")]),
+                          item("Transceiver {#XCVRNAME}: serial number", f"{P}.20.1.1.6.{{#SNMPINDEX}}", xk("serial"),
+                               "CHAR", "1h", pre=[HEART], desc="A new value is a module swapped in the cage.",
+                               tags=[("component", "optics"), ("interface", "{#XCVRNAME}")]),
+                          item("Transceiver {#XCVRNAME}: temperature", f"{P}.20.1.1.8.{{#SNMPINDEX}}", xk("temp"),
+                               "FLOAT", units="°C", pre=[("MULTIPLIER", ["0.01"])],
+                               tags=[("component", "optics"), ("interface", "{#XCVRNAME}")]),
+                          item("Transceiver {#XCVRNAME}: temperature high warning", f"{P}.20.1.1.10.{{#SNMPINDEX}}",
+                               xk("temp.hwarn"), "FLOAT", "1h", "°C", pre=[("MULTIPLIER", ["0.01"])],
+                               desc="The module's own threshold; absent when it carries none.",
+                               tags=[("component", "optics"), ("interface", "{#XCVRNAME}")]),
+                          item("Transceiver {#XCVRNAME}: threshold state", f"{P}.20.1.1.18.{{#SNMPINDEX}}", xk("state"),
+                               vmap="PRISMA-ROUTING-MIB::prXcvrState",
+                               desc="The worst level any reading of the module stands at against its own thresholds.",
+                               tags=[("component", "optics"), ("interface", "{#XCVRNAME}")]),
+                      ], desc="PRISMA-ROUTING-MIB's prXcvrTable (#590): a row per port with a cage, under its IF-MIB ifIndex.",
+                      tprotos=[
+                          trig(f"{xc} and (last({ref(xk('temp'))})>{{$PRISMA.XCVR.TEMP.MAX:\"{{#XCVRNAME}}\"}}"
+                               f" or last({ref(xk('temp'))})>last({ref(xk('temp.hwarn'))}))",
+                               "Prisma Routing: transceiver {#XCVRNAME} temperature is high",
+                               "WARNING", "Above {$PRISMA.XCVR.TEMP.MAX:\"{#XCVRNAME}\"} C or the module's own high warning: airflow, or a module failing.",
+                               tags=[("scope", "performance")]),
+                          trig(f"{xc} and last({ref(xk('state'))})=3",
+                               "Prisma Routing: transceiver {#XCVRNAME} has a reading past its alarm threshold",
+                               "HIGH", "A temperature, voltage, bias, TX or RX power past the module's own alarm level: 'show interface {#XCVRNAME} transceiver' says which.",
+                               tags=[("scope", "availability")]),
+                      ]))
+    lx = lambda s: f"prisma.xcvr.lane.{s}[{{#SNMPINDEX}}]"
+    lc = '{$PRISMA.XCVR.CONTROL:"{#XCVRLANE}"}=1'
+    rules.append(rule("Transceiver lane discovery", f"discovery[{{#XCVRLANE}},{P}.20.2.1.2]",
+                      "prisma.xcvr.lane.discovery", [
+                          item("Transceiver {#XCVRLANE}: RX power", f"{P}.20.2.1.3.{{#SNMPINDEX}}", lx("rx"),
+                               "FLOAT", units="dBm", pre=[("MULTIPLIER", ["0.01"])],
+                               desc="-40 dBm is no light: the receiver reads 0 mW.",
+                               tags=[("component", "optics"), ("interface", "{#XCVRLANE}")]),
+                          item("Transceiver {#XCVRLANE}: RX power level", f"{P}.20.2.1.8.{{#SNMPINDEX}}", lx("rx.level"),
+                               vmap="PRISMA-ROUTING-MIB::prXcvrLaneLevel",
+                               tags=[("component", "optics"), ("interface", "{#XCVRLANE}")]),
+                          item("Transceiver {#XCVRLANE}: RX power low warning", f"{P}.20.2.1.6.{{#SNMPINDEX}}",
+                               lx("rx.lwarn"), "FLOAT", "1h", "dBm", pre=[("MULTIPLIER", ["0.01"])],
+                               desc="The module's own threshold; absent when it carries none.",
+                               tags=[("component", "optics"), ("interface", "{#XCVRLANE}")]),
+                          item("Transceiver {#XCVRLANE}: TX power", f"{P}.20.2.1.9.{{#SNMPINDEX}}", lx("tx"),
+                               "FLOAT", units="dBm", pre=[("MULTIPLIER", ["0.01"])],
+                               tags=[("component", "optics"), ("interface", "{#XCVRLANE}")]),
+                          item("Transceiver {#XCVRLANE}: laser bias", f"{P}.20.2.1.15.{{#SNMPINDEX}}", lx("bias"),
+                               "FLOAT", units="A", pre=[("MULTIPLIER", ["0.000001"])],
+                               tags=[("component", "optics"), ("interface", "{#XCVRLANE}")]),
+                      ], desc="PRISMA-ROUTING-MIB's prXcvrLaneTable (#590): a row per optical lane, ifIndex.lane - one for an SFP, four for a QSFP.",
+                      tprotos=[
+                          trig(f"{lc} and (last({ref(lx('rx.level'))})=3 or last({ref(lx('rx.level'))})=5"
+                               f" or last({ref(lx('rx'))})<{{$PRISMA.XCVR.RX.MIN:\"{{#XCVRLANE}}\"}})",
+                               "Prisma Routing: transceiver {#XCVRLANE} RX power is low",
+                               "WARNING", "Below the module's own low warning (or {$PRISMA.XCVR.RX.MIN:\"{#XCVRLANE}\"} dBm): a dirty or damaged fibre or connector, a long span, or the far end's laser. Compare with the far end's TX power.",
+                               tags=[("scope", "performance")]),
+                          trig(f"{lc} and (last({ref(lx('rx.level'))})=2 or last({ref(lx('rx.level'))})=4"
+                               f" or last({ref(lx('rx'))})>{{$PRISMA.XCVR.RX.MAX:\"{{#XCVRLANE}}\"}})",
+                               "Prisma Routing: transceiver {#XCVRLANE} RX power is high",
+                               "WARNING", "Above the module's own high warning (or {$PRISMA.XCVR.RX.MAX:\"{#XCVRLANE}\"} dBm): a short span with no attenuator overdrives the receiver.",
+                               tags=[("scope", "performance")]),
+                      ]))
 
     # ------------------------------------------------ the IETF/IEEE tables
     rules.append(rule("NATV2 instance discovery", "discovery[{#NATV2ALIAS},1.3.6.1.2.1.234.2.1.1.2]",

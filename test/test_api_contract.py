@@ -108,7 +108,9 @@ want = {
                            "GetHardware", "GetRoutingLogging", "GetSnmpFile",
                            "Ping", "Traceroute", "Mtr", "ListBfdSessions", "WatchBfd",
                            # #588: show log.
-                           "ListEvents"],
+                           "ListEvents",
+                           # #590: show interface transceiver.
+                           "ListTransceivers"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

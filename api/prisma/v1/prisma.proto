@@ -1513,6 +1513,15 @@ service OperationalService {
   // INVALID_ARGUMENT, with the VTY's words, for a `since` that is not a time
   // or a severity or source the box does not have. Any account.
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  // #590: `show interface transceiver` - each port's module, its identity
+  // and, when it implements diagnostics (DDM), its temperature, voltage,
+  // laser bias, TX and RX power, each beside the module's own alarm and
+  // warning thresholds and where it stands against them. `names` narrows it
+  // to those interfaces (or cards Linux owns), as `show interface <name>
+  // transceiver` does; a name that is neither is in `missing`. A read asks
+  // the module over I2C: poll it in minutes, not seconds (the dataplane
+  // answers a second ask within 2 s from its last read). Any account.
+  rpc ListTransceivers(ListTransceiversRequest) returns (Transceivers);
 }
 
 // ------------------------------------------- the box's record of events (#588)
@@ -1562,6 +1571,123 @@ message ListEventsResponse {
   repeated BoxEvent events = 1;
   // `show log`'s screen for the same filters, verbatim.
   string text = 2;
+}
+
+// ------------------------------------------------ transceivers (#590)
+
+message ListTransceiversRequest {
+  // Only these interfaces or Linux cards; empty is every port the dataplane
+  // drives through DPDK and every card Linux owns.
+  repeated string names = 1;
+}
+
+// One measured quantity of a module: its value, the module's four
+// thresholds for it, and where the value stands. Units are the field's
+// name's: TransceiverLane.rx_power_mw is milliwatts, with dBm beside it.
+message TransceiverLevel {
+  enum Level {
+    LEVEL_UNSPECIFIED = 0;
+    // Inside every threshold.
+    LEVEL_NORMAL = 1;
+    LEVEL_HIGH_WARNING = 2;
+    LEVEL_LOW_WARNING = 3;
+    LEVEL_HIGH_ALARM = 4;
+    LEVEL_LOW_ALARM = 5;
+    // No value, or no thresholds to compare it with.
+    LEVEL_UNKNOWN = 6;
+  }
+  // False when the module gave no value (QSFP+ modules that do not measure
+  // TX power); `value` is then 0 and means nothing.
+  bool known = 1;
+  double value = 2;
+  // False when the module carries no thresholds for it (all zero, or a
+  // flat-memory QSFP with no page 03h); the four below are then 0.
+  bool thresholds_known = 3;
+  double high_alarm = 4;
+  double low_alarm = 5;
+  double high_warning = 6;
+  double low_warning = 7;
+  Level level = 8;
+  // Power only: the value and thresholds in dBm. `no_light` is a power of
+  // 0 mW, which has no dBm (`dbm` is then 0); a threshold of 0 mW likewise.
+  bool no_light = 9;
+  double dbm = 10;
+  double high_alarm_dbm = 11;
+  double low_alarm_dbm = 12;
+  double high_warning_dbm = 13;
+  double low_warning_dbm = 14;
+}
+
+// One optical lane: an SFP has one, a QSFP four.
+message TransceiverLane {
+  uint32 lane = 1;
+  TransceiverLevel bias_ma = 2;
+  TransceiverLevel tx_power_mw = 3;
+  TransceiverLevel rx_power_mw = 4;
+}
+
+message Transceiver {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    // A module with diagnostics: the levels below are its readings.
+    STATUS_DDM = 1;
+    // A module without diagnostics (or whose diagnostics page the driver
+    // cannot reach): identity only. `why` says which.
+    STATUS_NO_DDM = 2;
+    // A copper cable or RJ45 module: identity only, no optical levels.
+    STATUS_COPPER = 3;
+    // No module answered: an empty cage, or a blank EEPROM.
+    STATUS_ABSENT = 4;
+    // Nothing could be read: a driver with no module access, a dataplane
+    // that is not the build the reader was made for, a virtual interface.
+    STATUS_UNREADABLE = 5;
+  }
+  // The dataplane's name for the port, or the Linux card's.
+  string name = 1;
+  // "dpdk" (the dataplane, through DPDK), "linux" (the host, as ethtool -m
+  // reads), or "stand-in" (a lab's bytes, never on a box).
+  string source = 2;
+  // The DPDK device (a PCI address) or the Linux card it was read from.
+  string device = 3;
+  // The memory map the module follows: "sff-8472", "sff-8079", "sff-8636"
+  // or "sff-8436".
+  string map = 4;
+  Status status = 5;
+  // Why there are no levels, in the box's words; "" for STATUS_DDM.
+  string why = 6;
+  // SFF-8024's names: "SFP/SFP+/SFP28", "QSFP28"; "LC", "copper pigtail".
+  string identifier = 7;
+  string connector = 8;
+  string vendor = 9;
+  // The vendor's IEEE OUI, "00:90:65"; "" when the module gives none.
+  string oui = 10;
+  string part_number = 11;
+  string revision = 12;
+  string serial_number = 13;
+  // The module's date code as a date, "2023-08-15".
+  string date_code = 14;
+  // 0 for a copper module or one that does not say.
+  uint32 wavelength_nm = 15;
+  bool copper = 16;
+  // "internal" or "external" (SFF-8472's calibration; this server applies
+  // the external constants); "" without diagnostics.
+  string calibration = 17;
+  // True when the module reports average RX power, false for OMA.
+  bool rx_power_average = 18;
+  TransceiverLevel temperature_c = 19;
+  TransceiverLevel voltage_v = 20;
+  repeated TransceiverLane lanes = 21;
+}
+
+message Transceivers {
+  // False when the dataplane did not answer: its ports are not below, and
+  // the cards Linux owns still are.
+  bool dataplane_answered = 1;
+  repeated Transceiver transceivers = 2;
+  // Names asked for that are neither a port nor a card of this box.
+  repeated string missing = 3;
+  // `show interface transceiver` (or `<name> transceiver`), verbatim.
+  string text = 4;
 }
 
 // ------------------------------------------------- the CGNAT's reads (#558)

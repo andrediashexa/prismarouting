@@ -2729,6 +2729,361 @@
             ]
           },
           {
+            "uuid": "fb10171fd6784d9a8ea468d50f40ff06",
+            "name": "Transceiver discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#XCVRNAME},1.3.6.1.4.1.{$PRISMA.PEN}.1.20.1.1.2]",
+            "key": "prisma.xcvr.discovery",
+            "delay": "1h",
+            "description": "PRISMA-ROUTING-MIB's prXcvrTable (#590): a row per port with a cage, under its IF-MIB ifIndex.",
+            "item_prototypes": [
+              {
+                "uuid": "6a488c10f5694b6f86953db9b8008325",
+                "name": "Transceiver {#XCVRNAME}: status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.1.1.3.{#SNMPINDEX}",
+                "key": "prisma.xcvr.status[{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prXcvrStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "658675f823bd4bee9eb61d599f588ca5",
+                "name": "Transceiver {#XCVRNAME}: serial number",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.1.1.6.{#SNMPINDEX}",
+                "key": "prisma.xcvr.serial[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "trends": "0",
+                "value_type": "CHAR",
+                "description": "A new value is a module swapped in the cage.",
+                "preprocessing": [
+                  {
+                    "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                    "parameters": [
+                      "1d"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "90843967e6614b3a84849bfa40ada9fe",
+                "name": "Transceiver {#XCVRNAME}: temperature",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.1.1.8.{#SNMPINDEX}",
+                "key": "prisma.xcvr.temp[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "°C",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "0.01"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "800241b0a6a74f45b4c0e6ef981bc8d9",
+                "name": "Transceiver {#XCVRNAME}: temperature high warning",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.1.1.10.{#SNMPINDEX}",
+                "key": "prisma.xcvr.temp.hwarn[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "°C",
+                "description": "The module's own threshold; absent when it carries none.",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "0.01"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRNAME}"
+                  }
+                ]
+              },
+              {
+                "uuid": "8aa11ab66f534a129cf3135e267baefd",
+                "name": "Transceiver {#XCVRNAME}: threshold state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.1.1.18.{#SNMPINDEX}",
+                "key": "prisma.xcvr.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "description": "The worst level any reading of the module stands at against its own thresholds.",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prXcvrState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRNAME}"
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "8ee9c7beb1134b2489968101e2a67ebe",
+                "expression": "{$PRISMA.XCVR.CONTROL:\"{#XCVRNAME}\"}=1 and (last(/Prisma Routing by SNMP/prisma.xcvr.temp[{#SNMPINDEX}])>{$PRISMA.XCVR.TEMP.MAX:\"{#XCVRNAME}\"} or last(/Prisma Routing by SNMP/prisma.xcvr.temp[{#SNMPINDEX}])>last(/Prisma Routing by SNMP/prisma.xcvr.temp.hwarn[{#SNMPINDEX}]))",
+                "name": "Prisma Routing: transceiver {#XCVRNAME} temperature is high",
+                "priority": "WARNING",
+                "description": "Above {$PRISMA.XCVR.TEMP.MAX:\"{#XCVRNAME}\"} C or the module's own high warning: airflow, or a module failing.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "performance"
+                  }
+                ]
+              },
+              {
+                "uuid": "e3de8825874349c990d44d6f7f239b78",
+                "expression": "{$PRISMA.XCVR.CONTROL:\"{#XCVRNAME}\"}=1 and last(/Prisma Routing by SNMP/prisma.xcvr.state[{#SNMPINDEX}])=3",
+                "name": "Prisma Routing: transceiver {#XCVRNAME} has a reading past its alarm threshold",
+                "priority": "HIGH",
+                "description": "A temperature, voltage, bias, TX or RX power past the module's own alarm level: 'show interface {#XCVRNAME} transceiver' says which.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "3dc9215a5b7c40b2b728f44a78c01049",
+            "name": "Transceiver lane discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#XCVRLANE},1.3.6.1.4.1.{$PRISMA.PEN}.1.20.2.1.2]",
+            "key": "prisma.xcvr.lane.discovery",
+            "delay": "1h",
+            "description": "PRISMA-ROUTING-MIB's prXcvrLaneTable (#590): a row per optical lane, ifIndex.lane - one for an SFP, four for a QSFP.",
+            "item_prototypes": [
+              {
+                "uuid": "a31c53ae44414b7f8ef0eb43db453033",
+                "name": "Transceiver {#XCVRLANE}: RX power",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.2.1.3.{#SNMPINDEX}",
+                "key": "prisma.xcvr.lane.rx[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "dBm",
+                "description": "-40 dBm is no light: the receiver reads 0 mW.",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "0.01"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRLANE}"
+                  }
+                ]
+              },
+              {
+                "uuid": "64efb826ea7a4eb8b1bd3e151bcf8761",
+                "name": "Transceiver {#XCVRLANE}: RX power level",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.2.1.8.{#SNMPINDEX}",
+                "key": "prisma.xcvr.lane.rx.level[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prXcvrLaneLevel"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRLANE}"
+                  }
+                ]
+              },
+              {
+                "uuid": "4aaf3c2e2a07439daac00ff0b0e107c5",
+                "name": "Transceiver {#XCVRLANE}: RX power low warning",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.2.1.6.{#SNMPINDEX}",
+                "key": "prisma.xcvr.lane.rx.lwarn[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "dBm",
+                "description": "The module's own threshold; absent when it carries none.",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "0.01"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRLANE}"
+                  }
+                ]
+              },
+              {
+                "uuid": "9ed2e79a072948419a6fbdb4ebd62219",
+                "name": "Transceiver {#XCVRLANE}: TX power",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.2.1.9.{#SNMPINDEX}",
+                "key": "prisma.xcvr.lane.tx[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "dBm",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "0.01"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRLANE}"
+                  }
+                ]
+              },
+              {
+                "uuid": "74d410dc947c4be0ac6d289b629b2f48",
+                "name": "Transceiver {#XCVRLANE}: laser bias",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.20.2.1.15.{#SNMPINDEX}",
+                "key": "prisma.xcvr.lane.bias[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "A",
+                "preprocessing": [
+                  {
+                    "type": "MULTIPLIER",
+                    "parameters": [
+                      "0.000001"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "optics"
+                  },
+                  {
+                    "tag": "interface",
+                    "value": "{#XCVRLANE}"
+                  }
+                ]
+              }
+            ],
+            "trigger_prototypes": [
+              {
+                "uuid": "9a06c7570b6f4c3aad4cf07a9664298a",
+                "expression": "{$PRISMA.XCVR.CONTROL:\"{#XCVRLANE}\"}=1 and (last(/Prisma Routing by SNMP/prisma.xcvr.lane.rx.level[{#SNMPINDEX}])=3 or last(/Prisma Routing by SNMP/prisma.xcvr.lane.rx.level[{#SNMPINDEX}])=5 or last(/Prisma Routing by SNMP/prisma.xcvr.lane.rx[{#SNMPINDEX}])<{$PRISMA.XCVR.RX.MIN:\"{#XCVRLANE}\"})",
+                "name": "Prisma Routing: transceiver {#XCVRLANE} RX power is low",
+                "priority": "WARNING",
+                "description": "Below the module's own low warning (or {$PRISMA.XCVR.RX.MIN:\"{#XCVRLANE}\"} dBm): a dirty or damaged fibre or connector, a long span, or the far end's laser. Compare with the far end's TX power.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "performance"
+                  }
+                ]
+              },
+              {
+                "uuid": "4061824daae946de886b9dc7fecf8a96",
+                "expression": "{$PRISMA.XCVR.CONTROL:\"{#XCVRLANE}\"}=1 and (last(/Prisma Routing by SNMP/prisma.xcvr.lane.rx.level[{#SNMPINDEX}])=2 or last(/Prisma Routing by SNMP/prisma.xcvr.lane.rx.level[{#SNMPINDEX}])=4 or last(/Prisma Routing by SNMP/prisma.xcvr.lane.rx[{#SNMPINDEX}])>{$PRISMA.XCVR.RX.MAX:\"{#XCVRLANE}\"})",
+                "name": "Prisma Routing: transceiver {#XCVRLANE} RX power is high",
+                "priority": "WARNING",
+                "description": "Above the module's own high warning (or {$PRISMA.XCVR.RX.MAX:\"{#XCVRLANE}\"} dBm): a short span with no attenuator overdrives the receiver.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "performance"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "uuid": "53cac0b5fb7d45d58a0e2f82dc4c7b66",
             "name": "NATV2 instance discovery",
             "type": "SNMP_AGENT",
@@ -3405,6 +3760,26 @@
             "description": "Control-plane memory utilisation, percent, above which an average is raised."
           },
           {
+            "macro": "{$PRISMA.XCVR.CONTROL}",
+            "value": "1",
+            "description": "1 raises a port's transceiver alarms; set {$PRISMA.XCVR.CONTROL:\"<port>\"} (a QSFP lane: \"<port> lane <n>\") to 0 for one whose module may be dark or absent."
+          },
+          {
+            "macro": "{$PRISMA.XCVR.TEMP.MAX}",
+            "value": "70",
+            "description": "A module's temperature, degrees C, above which a warning is raised - beside the module's own high warning, whichever is crossed first."
+          },
+          {
+            "macro": "{$PRISMA.XCVR.RX.MIN}",
+            "value": "-40",
+            "description": "RX power, dBm, below which a warning is raised - beside the module's own low warning. -40 is no light: raise it on a port to watch a level the module's thresholds do not."
+          },
+          {
+            "macro": "{$PRISMA.XCVR.RX.MAX}",
+            "value": "10",
+            "description": "RX power, dBm, above which a warning is raised - beside the module's own high warning."
+          },
+          {
             "macro": "{$BGP4V2.INDEX.MATCHES}",
             "value": "^[0-9]+\\.2\\.",
             "description": "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."
@@ -3742,6 +4117,84 @@
               {
                 "value": "5",
                 "newvalue": "incomplete"
+              }
+            ]
+          },
+          {
+            "uuid": "7b7795506c9a4cc6a110202be1c42b03",
+            "name": "PRISMA-ROUTING-MIB::prXcvrStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "ddm"
+              },
+              {
+                "value": "2",
+                "newvalue": "noDdm"
+              },
+              {
+                "value": "3",
+                "newvalue": "copper"
+              },
+              {
+                "value": "4",
+                "newvalue": "absent"
+              },
+              {
+                "value": "5",
+                "newvalue": "unreadable"
+              }
+            ]
+          },
+          {
+            "uuid": "36e84e3f863d4df79cb465d5d82a9d29",
+            "name": "PRISMA-ROUTING-MIB::prXcvrState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "normal"
+              },
+              {
+                "value": "2",
+                "newvalue": "warning"
+              },
+              {
+                "value": "3",
+                "newvalue": "alarm"
+              },
+              {
+                "value": "4",
+                "newvalue": "unknown"
+              }
+            ]
+          },
+          {
+            "uuid": "d13501cc30414968a3505013924a52a4",
+            "name": "PRISMA-ROUTING-MIB::prXcvrLaneLevel",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "normal"
+              },
+              {
+                "value": "2",
+                "newvalue": "highWarning"
+              },
+              {
+                "value": "3",
+                "newvalue": "lowWarning"
+              },
+              {
+                "value": "4",
+                "newvalue": "highAlarm"
+              },
+              {
+                "value": "5",
+                "newvalue": "lowAlarm"
+              },
+              {
+                "value": "6",
+                "newvalue": "unknown"
               }
             ]
           },

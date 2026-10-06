@@ -77,9 +77,11 @@ def _enterprise():
                 # under net-snmp's number - measured in lab/snmp.sh, a getnext
                 # from .1.3.6.1.4.1 answered .1.3.6.1.4.1.2021.1.1.0. The
                 # NAT-MIB registration is under .1.3.6.1.2.1 and never matches.
+                # The arc after .1.3.6.1.4.1, not the last one (#590): the
+                # transceivers' registration is .1.3.6.1.4.1.<pen>.1.20.
                 if len(w) > 1 and w[0] == "pass_persist" \
                         and w[1].startswith(".1.3.6.1.4.1."):
-                    return w[1].rsplit(".", 1)[-1]
+                    return w[1].split(".")[7]
     except OSError:
         pass
     return ""
@@ -1853,6 +1855,236 @@ class Bfd:
 BFD = Bfd()
 
 
+# --- the transceivers, PRISMA-ROUTING-MIB's prTransceiver (#590) -----------
+#
+# A port's module and its optical levels: what `show interface transceiver`
+# prints, decoded by the VTY's own src/prismash/transceiver.py (installed
+# beside this agent), so the two cannot disagree about a module.
+#
+# NOT ENTITY-SENSOR-MIB. RFC 3433's entPhySensorTable is the standard home of
+# a sensor, and it was the first choice; it does not fit three things this
+# needs. Its rows are indexed by ENTITY-MIB's entPhysicalIndex, so serving it
+# means serving an entPhysicalTable - a chassis, its ports, each module, each
+# sensor - that this agent does not have and an NMS would then trust. Its
+# units have watts and no dBm, the unit an optical level is read in and the
+# one the switch at the other end prints. And it has no thresholds: the
+# module's own alarm and warning levels, which are what says whether -14 dBm
+# is fine, would have to go elsewhere anyway. So the levels are here, beside
+# their thresholds, under the port's IF-MIB ifIndex.
+#
+# ITS OWN PROCESS (`--transceivers`, registered on the subtree), as BFD is:
+# a module is read over I2C, which on an ixgbe card is a fraction of a
+# millisecond a byte, and the rest of the enterprise subtree should not wait
+# for it. Cached XCVR_CACHE_SECONDS, and the dataplane keeps the identity and
+# thresholds a minute itself - a walk every minute reads 24 bytes a port.
+XCVR = "20"
+XCVR_CACHE_SECONDS = float(os.environ.get("PRISMA_SNMP_XCVR_CACHE", "30"))
+HOT_CARDS_FILE = os.environ.get("PRISMA_HOT_CARDS", "/run/prisma-routing/hot-cards")
+#: prXcvrState, prXcvrLane*Level and prXcvrStatus, as the MIB numbers them.
+XCVR_LEVEL = {"normal": 1, "high-warning": 2, "low-warning": 3,
+              "high-alarm": 4, "low-alarm": 5, "": 6}
+XCVR_STATUS = {"ddm": 1, "no-ddm": 2, "copper": 3, "absent": 4,
+               "unreadable": 5}
+#: A power of 0 mW - no light - in hundredths of a dBm: -40.00, below any
+#: receiver's sensitivity, as the MIB's DESCRIPTION says.
+NO_LIGHT = -4000
+
+
+def transceiver_module():
+    """
+    src/prismash/transceiver.py: beside this file where install.sh puts both
+    (/usr/lib/prisma-routing), or in the repository's tree for a lab and the
+    suites. Imported on first use, by the `--transceivers` process only.
+    """
+    here = os.path.dirname(os.path.realpath(__file__))
+    for d in (here, os.path.join(here, "..", "src", "prismash")):
+        if os.path.exists(os.path.join(d, "transceiver.py")) and d not in sys.path:
+            sys.path.insert(0, d)
+    import transceiver
+    return transceiver
+
+
+def xcvr_state(m):
+    """
+    prXcvrState for the decoded module `m`: the worst level among its
+    temperature, voltage and every lane's bias, TX and RX power - alarm (3),
+    warning (2), normal (1) - or unknown (4) when nothing had a threshold
+    to stand against.
+    """
+    levels = []
+    for q in (m.get("temperature"), m.get("voltage")):
+        levels.append((q or {}).get("level") or "")
+    for ln in m.get("lanes") or []:
+        levels += [(ln[k] or {}).get("level") or ""
+                   for k in ("bias", "tx_power", "rx_power")]
+    if any(lv.endswith("alarm") for lv in levels):
+        return 3
+    if any(lv.endswith("warning") for lv in levels):
+        return 2
+    return 1 if "normal" in levels else 4
+
+
+def _centi_dbm(mw, dbm):
+    """A power in mW as hundredths of a dBm; NO_LIGHT for 0 mW."""
+    d = dbm(mw)
+    if d is None:
+        return None
+    return NO_LIGHT if d == float("-inf") else max(int(round(d * 100)), NO_LIGHT)
+
+
+def xcvr_rows(base, modules, indexes, dbm):
+    """
+    prXcvrTable and prXcvrLaneTable's rows under `base` for the decoded
+    `modules`, each row under its port's ifIndex (`indexes`, {name:
+    ifIndex}). A value the module did not give, and the thresholds of a
+    quantity that has none, are left out rather than served as 0: a 0 in an
+    NMS is a reading. `dbm` is transceiver.mw_to_dbm.
+    """
+    out = []
+    t = f"{base}.{XCVR}.1.1"
+    lt = f"{base}.{XCVR}.2.1"
+    order = ("high_alarm", "high_warning", "low_warning", "low_alarm")
+
+    # not a unit: a closure of xcvr_rows, measured through it by
+    # appliance/test_snmp_agent.py
+    def level_rows(prefix, col, idx, q, scale, typ):
+        v = (q or {}).get("value")
+        if v is None:
+            return []
+        rows = [(f"{prefix}.{col}.{idx}", typ, scale(v))]
+        th = q.get("thresholds")
+        if th:
+            rows += [(f"{prefix}.{col + 1 + i}.{idx}", typ, scale(th[k]))
+                     for i, k in enumerate(order)]
+        return rows
+
+    for m in modules:
+        i = indexes.get(m["name"])
+        if not i:
+            continue
+        out += [(f"{t}.2.{i}", "string", m["name"]),
+                (f"{t}.3.{i}", "integer", XCVR_STATUS.get(m["status"], 5)),
+                (f"{t}.4.{i}", "string", m.get("vendor") or ""),
+                (f"{t}.5.{i}", "string", m.get("part") or ""),
+                (f"{t}.6.{i}", "string", m.get("serial") or ""),
+                (f"{t}.7.{i}", "gauge", m.get("wavelength_nm") or 0),
+                (f"{t}.19.{i}", "string", m.get("source") or "")]
+        if m["status"] != "ddm":
+            continue
+        out += level_rows(t, 8, i, m["temperature"],
+                          lambda v: int(round(v * 100)), "integer")
+        out += level_rows(t, 13, i, m["voltage"],
+                          lambda v: int(round(v * 1000)), "gauge")
+        out.append((f"{t}.18.{i}", "integer", xcvr_state(m)))
+        many = len(m["lanes"]) > 1
+        for ln in m["lanes"]:
+            li = f"{i}.{ln['lane']}"
+            out.append((f"{lt}.2.{li}", "string",
+                        f"{m['name']} lane {ln['lane']}" if many else m["name"]))
+            for col, key in ((3, "rx_power"), (9, "tx_power")):
+                q = ln[key]
+                if q.get("value") is None:
+                    continue
+                out.append((f"{lt}.{col}.{li}", "integer",
+                            _centi_dbm(q["value"], dbm)))
+                if q.get("thresholds"):
+                    out += [(f"{lt}.{col + 1 + n}.{li}", "integer",
+                             _centi_dbm(q["thresholds"][k], dbm))
+                            for n, k in enumerate(order)]
+                out.append((f"{lt}.{col + 5}.{li}", "integer",
+                            XCVR_LEVEL.get(q.get("level") or "", 6)))
+            out += level_rows(lt, 15, li, ln["bias"],
+                              lambda v: int(round(v * 1000)), "gauge")
+            if ln["bias"].get("value") is not None:
+                out.append((f"{lt}.20.{li}", "integer",
+                            XCVR_LEVEL.get(ln["bias"].get("level") or "", 6)))
+    return out
+
+
+def hot_card_names(path=None):
+    """The cards on AF_XDP since the dataplane started (#453): their Linux
+    name is the dataplane's."""
+    return {line.split()[0] for line in _read(path or HOT_CARDS_FILE).splitlines()
+            if line.split()}
+
+
+def linux_dump(argv, ask=door_ask):
+    """
+    The dump transceiver.py's `read` prints for `argv` - through the host's
+    door, or run here when no door answers (a box with no doors daemon, a
+    lab), as vtysh_json() does. "" when neither could.
+    """
+    got = ask(argv)
+    if got is not None and got[0] != DOOR_REFUSED:
+        return got[1] if got[0] == 0 else ""
+    try:
+        p = subprocess.run(list(argv), capture_output=True, text=True,
+                           timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return p.stdout if p.returncode == 0 else ""
+
+
+def xcvr_readings(T, dump_text, linux, hot, ask=door_ask):
+    """
+    The readings to serve, as transceiver.parse_dump() gives them: every
+    port of the dataplane's dump that is a DPDK port; a hot card's or an
+    af_packet port's module read from Linux under the dataplane's name; and
+    each card Linux owns (`linux`, names) read through the door. A dataplane
+    that did not answer (`dump_text` None) contributes nothing - no stale
+    numbers - and the Linux cards still do.
+    """
+    out = []
+    dp = T.parse_dump(dump_text) if dump_text else {}
+    for n in sorted(dp):
+        r = dp[n]
+        if r["unread"] == "not-dpdk":
+            dev = n if n in hot else (n[5:] if n.startswith("host-") else None)
+            if not dev:
+                continue
+            got = T.parse_dump(linux_dump(T.read_argv(dev), ask)).get(dev)
+            if not got:
+                continue
+            r = dict(got, name=n)
+        out.append(r)
+    for dev in linux:
+        if dev in dp:
+            continue
+        got = T.parse_dump(linux_dump(T.read_argv(dev), ask)).get(dev)
+        if got and got["unread"] != "no-device":
+            out.append(got)
+    return out
+
+
+class Transceivers:
+    """The transceiver rows, read at most every XCVR_CACHE_SECONDS."""
+
+    def __init__(self):
+        self.at = 0.0
+        self.rows = []
+
+    # not a unit: runs vppctl and the doors against a live box; what it
+    # builds is xcvr_readings() and xcvr_rows(), each held by
+    # appliance/test_snmp_agent.py, and lab/transceiver.sh walks the result.
+    def refresh(self):
+        if self.rows and time.time() - self.at < XCVR_CACHE_SECONDS:
+            return self.rows
+        T = transceiver_module()
+        alive = vppctl("show version")
+        dump_text = vppctl("show bpa transceiver") if alive else None
+        linux = [c["name"] for c in linux_cards()]
+        mods = [T.decode(r) for r in xcvr_readings(T, dump_text, linux,
+                                                   hot_card_names())]
+        base = f"1.3.6.1.4.1.{ENTERPRISE}.1" if ENTERPRISE.isdigit() else None
+        indexes = if_indexes([m["name"] for m in mods]) if base else {}
+        self.rows = xcvr_rows(base, mods, indexes, T.mw_to_dbm) if base else []
+        self.at = time.time()
+        return self.rows
+
+
+TRANSCEIVERS = Transceivers()
+
+
 def oid_table():
     """Every OID this agent serves, in lexicographic order."""
     if "--interfaces" in sys.argv[1:]:
@@ -1860,6 +2092,9 @@ def oid_table():
                       key=lambda r: [int(x) for x in r[0].split(".")])
     if "--bfd" in sys.argv[1:]:
         return sorted(BFD.refresh(),
+                      key=lambda r: [int(x) for x in r[0].split(".")])
+    if "--transceivers" in sys.argv[1:]:
+        return sorted(TRANSCEIVERS.refresh(),
                       key=lambda r: [int(x) for x in r[0].split(".")])
     d = VALUES.refresh()
     out = []
