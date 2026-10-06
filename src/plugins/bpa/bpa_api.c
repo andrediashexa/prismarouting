@@ -391,6 +391,62 @@ done:
   REPLY_MACRO (VL_API_BPA_BYPASS_SET_REPLY);
 }
 
+/* not a unit: a binary API message handler, for the reason the one above
+ * gives. What the VTY sends through it is driven on a box by
+ * lab/cgnat-prefix-list.sh (#589). */
+static void
+vl_api_bpa_pool_lists_set_t_handler (vl_api_bpa_pool_lists_set_t *mp)
+{
+  vl_api_bpa_pool_lists_set_reply_t *rmp;
+  u32 *bases = 0, *counts = 0;
+  char il[64], ol[64];
+  clib_error_t *e = 0;
+  u8 *name;
+  int rv = 0, i;
+
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
+  name = format (0, "%s", mp->name);
+  /* Bounded copies: the field is 64 bytes and a client may fill it. */
+  clib_memcpy (il, mp->inside_list, sizeof (il));
+  clib_memcpy (ol, mp->outside_list, sizeof (ol));
+  il[sizeof (il) - 1] = 0;
+  ol[sizeof (ol) - 1] = 0;
+
+  for (i = 0; i < mp->n_prefixes; i++)
+    {
+      ip_prefix_t p;
+      u32 count, base;
+
+      ip_prefix_decode2 (&mp->prefixes[i], &p);
+      if (ip_prefix_version (&p) != AF_IP4
+	  || bpa_prefix_range (clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32),
+			       ip_prefix_len (&p), &base, &count))
+	{
+	  rv = VNET_API_ERROR_INVALID_VALUE;
+	  goto done;
+	}
+      vec_add1 (counts, count);
+      vec_add1 (bases, base);
+    }
+
+  e = bpa_pool_lists_set (name, il, ol, bases, counts, mp->n_untranslated,
+			  vec_len (bases));
+
+done:
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      if (!rv)
+	rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+  vec_free (bases);
+  vec_free (counts);
+  vec_free (name);
+  bpa_actor_clear ();
+  REPLY_MACRO (VL_API_BPA_POOL_LISTS_SET_REPLY);
+}
+
 /* not a unit: a binary API message handler. VPP's API machinery dispatches it
  * from a message on the shared-memory segment and its reply goes back the
  * same way through REPLY_MACRO - neither exists outside a running VPP.

@@ -2718,6 +2718,54 @@ main (void)
 	    "keeps its public addresses and takes nobody new\n");
   }
 
+  /* #589: a source an inside prefix-list denies leaves untranslated, and it
+   * is NOT in the inside the formula maps over. */
+  printf ("\n=== an inside list's deny: untranslated, and not mapped "
+	  "(#589) ===\n");
+  {
+    bpa_pool_t p;
+    /* 100.64.0.0/22 less 100.64.1.0/24: two ranges translated, one not */
+    u32 ib[2] = { 0x64400000u, 0x64400200u }, ic[2] = { 256, 512 };
+    u32 ub = 0x64400100u, uc = 256, sub = 0;
+
+    memset (&p, 0, sizeof (p));
+    p.fib_index = ~0u;
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400105u, ~0u) == 0,
+	   "a pool with no untranslated set let a source past");
+    CHECK (bpa_addr_set_build (&p.inside, ib, ic, 2) == 0
+	   && bpa_addr_set_build (&p.untranslated, &ub, &uc, 1) == 0,
+	   "the sets did not build");
+    CHECK (p.inside.count == 768,
+	   "the inside holds %u addresses, not the 768 the permits less the "
+	   "deny leave: the formula would map over a denied source",
+	   p.inside.count);
+    CHECK (!bpa_pool_claims_inside (&p, 0x64400105u, ~0u, &sub),
+	   "a denied source was claimed as a subscriber");
+    CHECK (bpa_pool_claims_inside (&p, 0x64400205u, ~0u, &sub) && sub == 261,
+	   "the address past the gap is not subscriber 261 (got %u): the "
+	   "dense index must skip the denied range", sub);
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400105u, 3) == 1,
+	   "a denied source was not let past untranslated");
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400005u, 3) == 0,
+	   "a permitted source was let past untranslated");
+    CHECK (bpa_pool_passes_untranslated (&p, 0x0a000001u, 3) == 0,
+	   "a source no entry matched was let past: it is not this pool's");
+    p.fib_index = 2;
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400105u, 3) == 0,
+	   "a pool bound to VRF 2 let VRF 3's source past");
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400105u, 2) == 1,
+	   "a pool bound to VRF 2 did not let its own VRF's source past");
+    p.deleted = 1;
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400105u, 2) == 0,
+	   "a draining pool spoke for a new source");
+    p.deleted = 0;
+    p.is_nat64 = 1;
+    CHECK (bpa_pool_passes_untranslated (&p, 0x64400105u, 2) == 0,
+	   "a NAT64 pool let an IPv4 source past");
+    printf ("  a denied source leaves untranslated in its pool's VRF, and "
+	    "the mapping skips it\n");
+  }
+
   /* #472: a forward clause's ranges, and which pool an address belongs to
    * for a command that has no packet (#74). */
   printf ("\n=== a forward's ports; the pool an idle or live address is "

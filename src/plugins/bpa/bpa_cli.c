@@ -3590,6 +3590,22 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, "%U", format_bpa_range_as_prefixes,
 		    p->bypass_dst.ranges[i].base,
 		    p->bypass_dst.ranges[i].count, 1, "bypass destination");
+      /* A side given by a prefix-list (#589): its name, which the VTY reads
+       * back as the pool's statement, and what the lists left out, which
+       * it reads back as facts - the inside and outside above are already
+       * the effective sets the lists resolved to. */
+      if (p->inside_list[0])
+	s = format (s, " prefix-list-inside %s\n", p->inside_list);
+      if (p->outside_list[0])
+	s = format (s, " prefix-list-outside %s\n", p->outside_list);
+      for (i = 0; i < p->untranslated.n_ranges; i++)
+	s = format (s, "%U", format_bpa_range_as_prefixes,
+		    p->untranslated.ranges[i].base,
+		    p->untranslated.ranges[i].count, 1, "untranslated");
+      for (i = 0; i < p->outside_excluded.n_ranges; i++)
+	s = format (s, "%U", format_bpa_range_as_prefixes,
+		    p->outside_excluded.ranges[i].base,
+		    p->outside_excluded.ranges[i].count, 1, "outside-excluded");
       if (p->vrf_id != ~0u)
 	s = format (s, " vrf %u\n", p->vrf_id);
       if (p->out_vrf_id != ~0u)

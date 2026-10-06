@@ -145,6 +145,9 @@ WRITE_MESSAGES = frozenset({
     "bpa_nat64_forward_add_del",
     "bpa_pool_settings_set",
     "bpa_bypass_set",
+    # A pool's prefix-lists (#589): the names, and what they leave
+    # untranslated or out of the public space.
+    "bpa_pool_lists_set",
     "bpa_limits_set",
     "bpa_forward_add_del",
     # Attaching or detaching CGNAT on an interface is a change with
@@ -958,7 +961,7 @@ VTY_MESSAGES = frozenset({
     "bpa_identity_radius_set", "bpa_identity_source_set",
     "bpa_interface_add_del_feature", "bpa_limits_set", "bpa_logging_set",
     "bpa_logging_syslog_set", "bpa_nat64_forward_add_del",
-    "bpa_nat64_pool_add", "bpa_pool_add_del",
+    "bpa_nat64_pool_add", "bpa_pool_add_del", "bpa_pool_lists_set",
     "bpa_pool_settings_set", "cli_inband", "create_loopback_instance", "create_subif",
     "create_vlan_subif", "delete_loopback", "delete_subif", "ip_table_add_del",
     "ip_table_dump", "ipfix_exporter_dump", "lcp_itf_pair_add_del",

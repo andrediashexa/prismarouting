@@ -963,7 +963,7 @@ expect "and every pool that makes it is a dynamic one" \
 # above asserts what the dataplane's own console printed; this asserts what
 # the product printed on the path prismash uses, and they are different code.
 expect_said "the prompt refuses it too, before anything is applied" \
-  "error: block-stride applies to dynamic pools only, not to pool vtystride" \
+  "error: block-stride applies to bpa pools only, not to pool vtystride" \
   "$VTY_STRIDE_SAY"
 # The two statements whole and on their own rows. Either one resolves it and
 # which to change is the operator's decision, so the box shows both rather
@@ -973,7 +973,7 @@ expect_in "and shows the two statements that disagree, mode first" \
 expect_in "and the stride under it, as typed" \
   "    block-stride $STRIDE" "$VTY_STRIDE_SAY"
 expect_said "and says what to do about it" \
-  "drop the block-stride, or put the pool in dynamic mode" "$VTY_STRIDE_SAY"
+  "drop the block-stride, or put the pool in mode bpa" "$VTY_STRIDE_SAY"
 # ONCE, not twice. The dataplane refuses this pool as well, and the commit
 # check asks it about every pool it is about to build - so a commit that went
 # on to ask would print a second verdict and a second paragraph for one fault,

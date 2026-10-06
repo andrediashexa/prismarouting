@@ -14,7 +14,12 @@
 #ifndef __included_bpa_errors_h__
 #define __included_bpa_errors_h__
 
-/* _ (symbol, is_a_drop, description) */
+/* _ (symbol, is_a_drop, description)
+ *
+ * `show errors` cuts a description at 35 columns, measured on UNTRANSLATED
+ * (#589): "packets from a source a pool's inside prefix-list denies" came out
+ * as "packets from a source a pool's insi", which names nothing. A new
+ * one says what it is within the 35. */
 #define foreach_bpa_in2out_error \
   _ (TRANSLATED, 0, "packets translated") \
   _ (SESSION_NEW, 0, "sessions created") \
@@ -23,6 +28,7 @@
   _ (NO_POOL, 1, "no pool for source address") \
   _ (BYPASS_SRC, 0, "packets from a bypassed source, left untranslated") \
   _ (BYPASS_DST, 0, "packets to a bypassed destination, left untranslated") \
+  _ (UNTRANSLATED, 0, "prefix-list deny, left untranslated") \
   _ (TO_US, 0, "packets to this box itself, left untranslated") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OVER_CAPACITY, 1, "subscriber beyond pool capacity") \

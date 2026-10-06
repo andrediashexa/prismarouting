@@ -215,7 +215,9 @@ TYPED_CONFIG = {
              "policy", "timeout", "max-blocks", "initial-allocation",
              "block-stride", "reserve", "bypass", "utilisation-alarm",
              "max-sessions", "max-session-rate", "tcp-mss", "forward",
-             "filter", "alg", "vrf", "outside-vrf", "mode"),
+             "filter", "alg", "vrf", "outside-vrf", "mode",
+             # #589: PoolConfig.prefix_list_inside / prefix_list_outside.
+             "prefix-list-inside", "prefix-list-outside"),
     # #572: a NAT64 pool's, as Nat64PoolConfig - the pool's less the bypass,
     # plus its own two.
     "nat64 pool": ("prefix-inside", "prefix-outside", "block-size", "ports",
@@ -233,7 +235,11 @@ REFUSED_AT_LEVEL = {
                                   "typed under nat64 > pool",
              "nat64-prefix": "NAT64's: refused under cgnat since #572, typed "
                              "under nat64 > pool"},
-    "nat64 pool": {"bypass": "refused on a NAT64 pool for good (#485)"},
+    "nat64 pool": {"bypass": "refused on a NAT64 pool for good (#485)",
+                   "prefix-list-inside": "a CGNAT pool's: a NAT64 pool takes "
+                                         "no prefix-list (#589)",
+                   "prefix-list-outside": "a CGNAT pool's: a NAT64 pool "
+                                          "takes no prefix-list (#589)"},
 }
 TYPED_CONFIG_API = "ConfigService.GetConfig / SetConfig / DeleteConfig"
 

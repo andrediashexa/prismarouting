@@ -363,9 +363,15 @@ if ghost:
 # The argument for the current eleven is cap_needed()'s own docstring:
 # everything outside CGNAT is routing, the accounts that may log in, and the
 # SSH and SNMP daemons, none of which a CGNAT operator was given.
+#
+# lists_set joined for #589: a pool's `prefix-list-inside` /
+# `prefix-list-outside` and what they leave untranslated or out of the public
+# space are the pool's, like its bypass lists. The lists themselves are
+# routing (`ip prefix-list`, routing_changed), and stay an administrator's.
 CGNAT_GRANTED = {
     "pool_add", "pool_remove", "pool_replace", "settings_set", "limits_set",
-    "bypass_set", "fwd_add", "fwd_del", "if_add", "if_remove", "globals",
+    "bypass_set", "lists_set", "fwd_add", "fwd_del", "if_add", "if_remove",
+    "globals",
 }
 widened = sorted(set(prismash.DELTA_CGNAT) - CGNAT_GRANTED)
 narrowed = sorted(CGNAT_GRANTED - set(prismash.DELTA_CGNAT))

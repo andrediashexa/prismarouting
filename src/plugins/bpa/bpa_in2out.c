@@ -167,6 +167,32 @@ bpa_bypass_packet (bpa_main_t *bm, bpa_per_thread_t *pt, u32 pool_index,
   return 1;
 }
 
+/*
+ * Lets a packet no pool claims past untranslated when some pool's inside
+ * prefix-list denies its source (#589), and says so - the bypass's shape:
+ * 1 is "hand it to the next feature", with no session, port or record.
+ *
+ * Where NO_POOL was, and only there: the source is in no pool's inside, so
+ * the formula never gave it an index, and the alternative was the drop.
+ */
+/* not a unit: it walks bpa_main's pools and counts on the worker's own
+ * counters. The rule is bpa_pool_passes_untranslated() in bpa_pool.h, which
+ * test/test_bpa_pool.c drives; lab/cgnat-prefix-list.sh sends a denied
+ * source through a box and reads it arrive with its own address. */
+static_always_inline int
+bpa_untranslated_packet (bpa_main_t *bm, bpa_per_thread_t *pt, u32 src,
+			 u32 fib, u32 *n)
+{
+  u32 pool_index;
+
+  if (bpa_pool_by_untranslated (bm, src, fib, &pool_index))
+    return 0;
+  (*n)++;
+  if (PREDICT_TRUE (pool_index < vec_len (pt->n_bypassed)))
+    pt->n_bypassed[pool_index]++;
+  return 1;
+}
+
 VLIB_NODE_FN (bpa_in2out_node)
 (vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
 {
@@ -179,6 +205,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
   u32 n_bypass_src = 0, n_bypass_dst = 0, n_to_us = 0;
+  u32 n_untranslated = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_seq_adj = 0;
   u32 n_rtsp = 0, n_sip = 0;
@@ -277,6 +304,18 @@ VLIB_NODE_FN (bpa_in2out_node)
 	      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 	      goto trace;
 	    }
+	  /* Or a source no pool translates and an inside list denies: its
+	   * PPTP control channel left untranslated too (#589). */
+	  if (PREDICT_FALSE (
+		bpa_pool_by_inside (bm, src_host, fib_index, &pool_index,
+				    &sub_idx)
+		&& bpa_untranslated_packet (bm, pt, src_host, fib_index,
+					    &n_untranslated)))
+	    {
+	      bypassed = 1;
+	      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
+	      goto trace;
+	    }
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_GRE_NO_CALL];
 	  goto trace;
 	}
@@ -301,6 +340,16 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    bpa_pool_by_inside (bm, src_host, fib_index, &pool_index,
 				&sub_idx)))
 	{
+	  /* A source an inside prefix-list denies is in no pool's inside -
+	   * the mapping is computed over the permits alone - and leaves
+	   * with its own address rather than being dropped (#589). */
+	  if (bpa_untranslated_packet (bm, pt, src_host, fib_index,
+				       &n_untranslated))
+	    {
+	      bypassed = 1;
+	      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
+	      goto trace;
+	    }
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_POOL];
 	  goto trace;
 	}
@@ -919,6 +968,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_BYPASS_SRC, n_bypass_src);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_BYPASS_DST, n_bypass_dst);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_UNTRANSLATED, n_untranslated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_TO_US, n_to_us);
   vlib_node_increment_counter (vm, node->node_index,

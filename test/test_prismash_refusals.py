@@ -729,6 +729,13 @@ _bypass = pool("subs")
 _bypass.bypass_src = ["100.64.1.0/24"]
 _limits = pool("subs")
 _limits.max_sessions = 2000
+# A pool given by a prefix-list (#589): what the list leaves out is sent on
+# its own message, after the pool.
+_lists = pool("subs")
+_lists.inside, _lists.inside_list = [], "IN"
+_lists_cfg = cfg(_lists)
+_lists_cfg.routing = ["ip prefix-list IN seq 5 deny 100.64.1.0/24",
+                      "ip prefix-list IN seq 10 permit 100.64.0.0/22 le 32"]
 _fwd_gone = pool("subs")
 _fwd_had = pool("subs")
 _fwd_had.forwards = [("tcp", 8080, "100.64.0.5", 80)]
@@ -745,6 +752,9 @@ _writes = [
     ("a bypass list", "bpa_bypass_set", vppapi.REFUSED,
      cfg(pool("subs")), cfg(_bypass),
      f"error: pool 'subs': bypass source: {REASON}"),
+    ("a pool's prefix-lists", "bpa_pool_lists_set", vppapi.REFUSED,
+     cfg(pool("subs")), _lists_cfg,
+     "error: the dataplane refused the prefix-lists of pool subs"),
     ("the per-subscriber bounds", "bpa_limits_set", vppapi.REFUSED,
      cfg(pool("subs")), cfg(_limits),
      f"error: pool 'subs': limits: {REASON}"),

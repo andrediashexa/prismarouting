@@ -101,6 +101,9 @@ def pool_typed(pool):
         "name": pool.name,
         "prefix_inside": list(pool.inside),
         "prefix_outside": list(pool.outside),
+        # The prefix-list a side is given by instead (#589); "" when typed.
+        "prefix_list_inside": getattr(pool, "inside_list", ""),
+        "prefix_list_outside": getattr(pool, "outside_list", ""),
         "block_size": _int(pool.block_size),
         "port_first": _int(lo),
         "port_last": _int(hi),
@@ -144,7 +147,9 @@ def nat64_pool_typed(pool):
     for it would be a field nothing can ever set.
     """
     d = pool_typed(pool)
-    for k in ("bypass_source", "bypass_destination"):
+    # Nor the prefix-lists a NAT64 pool never takes (#589).
+    for k in ("bypass_source", "bypass_destination", "prefix_list_inside",
+              "prefix_list_outside"):
         d.pop(k)
     return d
 
@@ -1517,7 +1522,10 @@ def frr_lists_typed(cfg):
                 continue
             seq, action, rest = _list_entry(w, 3)
             e = {"sequence": seq, "action": action,
-                 "prefix": rest[0] if rest else "", "ge": 0, "le": 0}
+                 "prefix": rest[0] if rest else "", "ge": 0, "le": 0,
+                 # The box's own, FRR keeping none on an entry (#589).
+                 "description": getattr(cfg, "list_descriptions", {}).get(
+                     f"{w[0]} {w[2]} {seq}", "")}
             for k in ("ge", "le"):
                 if k in rest and rest.index(k) + 1 < len(rest):
                     e[k] = _int(rest[rest.index(k) + 1])
@@ -1825,7 +1833,8 @@ INTERFACE_FIELDS = ("linux_name", "mac_address", "router_advertisements",
                     "mtu", "urpf", "cgnat_role")
 
 #: Pool fields a typed edit may set, in the order their lines go.
-POOL_FIELDS = ("prefix_inside", "prefix_outside", "block_size", "ports",
+POOL_FIELDS = ("prefix_inside", "prefix_outside", "prefix_list_inside",
+               "prefix_list_outside", "block_size", "ports",
                "policy", "mode", "reserve", "vrf", "outside_vrf", "timeouts",
                "max_blocks", "initial_allocation", "block_stride",
                "bypass_source", "bypass_destination", "utilisation_alarm",
@@ -1834,7 +1843,9 @@ POOL_FIELDS = ("prefix_inside", "prefix_outside", "block_size", "ports",
 #: A NAT64 pool's (#572): a CGNAT pool's, less the bypass it never takes,
 #: and with the two statements that make it NAT64.
 NAT64_POOL_FIELDS = tuple(f for f in POOL_FIELDS
-                          if f not in ("bypass_source", "bypass_destination")
+                          if f not in ("bypass_source", "bypass_destination",
+                                       "prefix_list_inside",
+                                       "prefix_list_outside")
                           ) + ("subscriber_length", "nat64_prefix")
 
 LOGGING_FIELDS = ("collectors", "enabled")
@@ -1970,6 +1981,9 @@ def pool_lines(current, desired, fields=(), known=POOL_FIELDS):
         elif f in ("vrf", "outside_vrf"):
             word = f.replace("_", "-")
             out.append(f"no {word}" if want is None else f"{word} {int(want)}")
+        elif f in ("prefix_list_inside", "prefix_list_outside"):
+            word = f.replace("_", "-")
+            out.append(f"{word} {want}" if want else f"no {word}")
         elif f in ("block_size", "policy", "mode", "filter"):
             out.append(f"{f.replace('_', '-')} {want}")
         elif f == "max_blocks":

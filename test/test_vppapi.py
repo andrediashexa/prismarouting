@@ -240,6 +240,7 @@ print("\n=== every message that changes something is on the list ===")
 # added to the plugin and forgotten here writes an unattributed entry, and
 # nothing anywhere says it should have had a name.
 mutating = {"bpa_pool_add_del", "bpa_pool_settings_set", "bpa_bypass_set",
+            "bpa_pool_lists_set",
             "bpa_limits_set", "bpa_forward_add_del",
             "bpa_interface_add_del_feature", "bpa_nat64_pool_add",
             "bpa_nat64_forward_add_del"}

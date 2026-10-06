@@ -898,8 +898,11 @@ expect_not_in "and not the block's own statements" "BGP_STMT: address-family" "$
 expect_in "a declared peer group completes as a value" \
   "BGP_PG: TRANSITO" "$COMP"
 # The address family is a different block with a different vocabulary.
+# By word, not as one run of text: the list is sorted, and a statement that
+# sorts before `exit` (aggregate-address, since #558) broke the run while the
+# block still offered both.
 expect_in "an address family offers its own statements" \
-  "BGP_AF: exit exit-address-family" "$COMP"
+  " exit-address-family" "$(printf '%s\n' "$COMP" | sed -n 's/^ *BGP_AF:/ /p')"
 expect_in "and 'activate' is offered there and not above" \
   "BGP_AF_STMT: activate" "$COMP"
 expect_in "while 'remote-as' is not, because it does not belong there" \

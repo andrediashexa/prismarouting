@@ -228,9 +228,15 @@ check(T._list_entry("ip prefix-list X seq 5 permit 10.0.0.0/8".split(), 3)
       "_list_entry: with and without a sequence")
 fl = T.frr_lists_typed(cfg)
 check(fl["prefix_lists"][0] == {"family": "ipv4", "name": "PL1", "entries": [
-        {"sequence": 5, "action": "permit", "prefix": "10.0.0.0/8", "ge": 0, "le": 24}]}
+        {"sequence": 5, "action": "permit", "prefix": "10.0.0.0/8", "ge": 0, "le": 24,
+         "description": ""}]}
       and fl["prefix_lists"][1]["family"] == "ipv6",
       "FRR prefix-lists: family, entries, ge/le")
+# #589: an entry's own description, which the box keeps and FRR does not.
+cfg.list_descriptions = {"ip PL1 5": "the aggregate"}
+check(T.frr_lists_typed(cfg)["prefix_lists"][0]["entries"][0]["description"]
+      == "the aggregate", "an entry carries the box's description (#589)")
+cfg.list_descriptions = {}
 check({(b["kind"], b["style"], b["name"]) for b in fl["bgp_lists"]}
       == {("community", "standard", "CL1"), ("as-path", "", "AP1")},
       "community lists and AS-path access-lists")

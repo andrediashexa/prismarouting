@@ -21,9 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 760 |
+| typed | 764 |
 | text | 1 |
-| n/a | 41 |
+| n/a | 45 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -138,7 +138,7 @@ reachable in the phase their note names.
 | `show cgnat top [<n>]` | typed | OperationalService.ListTop | every account |  |
 | `show cgnat drops` | typed | OperationalService.GetDrops | every account |  |
 | `show cgnat memory` | typed | OperationalService.GetCgnatMemory | every account | heap and session figures in bytes and counts |
-| `show cgnat pool` | typed | OperationalService.ListPools | every account |  |
+| `show cgnat pool [<pool>]` | typed | OperationalService.ListPools | every account |  |
 | `show cgnat session` | typed | OperationalService.GetSessionsSummary | every account |  |
 | `show cgnat blocks` | typed | OperationalService.ListBlocks | every account |  |
 | `show cgnat logging` | typed | OperationalService.GetLogging | every account |  |
@@ -216,9 +216,9 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `no snmp trap-host <address>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `no dns server <address>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no hostname` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
-| `ip prefix-list <prefix-list> [seq <1-4294967295>] permit\|deny <A.B.C.D/M> [ge <0-32>] [le <0-32>] \| <prefix-list> description <text>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
+| `ip prefix-list <prefix-list> [seq <1-4294967295>] permit\|deny <A.B.C.D/M> [ge <0-32>] [le <0-32>] [description <text>] \| <prefix-list> description <text> \| <prefix-list> insert seq <1-4294967295> before\|after seq <1-4294967295> \| <prefix-list> resequence` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `ip protocol <protocol> route-map <route-map>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area routing_attachments: read as fields since 0.149.24; written as lines - written as lines, read as fields |
-| `ipv6 prefix-list <prefix-list> [seq <1-4294967295>] permit\|deny <X:X::X:X/M> [ge <0-128>] [le <0-128>] \| <prefix-list> description <text>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
+| `ipv6 prefix-list <prefix-list> [seq <1-4294967295>] permit\|deny <X:X::X:X/M> [ge <0-128>] [le <0-128>] [description <text>] \| <prefix-list> description <text> \| <prefix-list> insert seq <1-4294967295> before\|after seq <1-4294967295> \| <prefix-list> resequence` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `ipv6 protocol <protocol> route-map <route-map>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area routing_attachments: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `fib-policy bgp <policy>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area routing_attachments: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `fib-policy ospf <policy>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area routing_attachments: read as fields since 0.149.24; written as lines - written as lines, read as fields |
@@ -314,6 +314,8 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 |---|---|---|---|
 | `prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `prefix-list-inside <prefix-list>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `prefix-list-outside <prefix-list>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `subscriber-length <32-128>` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
 | `nat64-prefix <X:X::X:X/M>` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
 | `block-size <64-32768>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -353,6 +355,8 @@ Entered with `nat > cgnat > pool <name>`; `EditRequest.path` = `["nat","cgnat","
 | `mode bpa` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `exit` | n/a | - | the session's |
 | `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no prefix-list-inside` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no prefix-list-outside` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no subscriber-length` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
 | `no nat64-prefix` | n/a | - | NAT64's: refused under cgnat since #572, typed under nat64 > pool |
 | `no prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -404,6 +408,8 @@ Entered with `nat > nat64 > pool <name>`; `EditRequest.path` = `["nat","nat64","
 |---|---|---|---|
 | `prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `prefix-list-inside <prefix-list>` | n/a | - | a CGNAT pool's: a NAT64 pool takes no prefix-list (#589) |
+| `prefix-list-outside <prefix-list>` | n/a | - | a CGNAT pool's: a NAT64 pool takes no prefix-list (#589) |
 | `subscriber-length <32-128>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `nat64-prefix <X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `block-size <64-32768>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -443,6 +449,8 @@ Entered with `nat > nat64 > pool <name>`; `EditRequest.path` = `["nat","nat64","
 | `mode bpa` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `exit` | n/a | - | the session's |
 | `no prefix-inside <A.B.C.D/M\|X:X::X:X/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
+| `no prefix-list-inside` | n/a | - | a CGNAT pool's: a NAT64 pool takes no prefix-list (#589) |
+| `no prefix-list-outside` | n/a | - | a CGNAT pool's: a NAT64 pool takes no prefix-list (#589) |
 | `no subscriber-length` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no nat64-prefix` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no prefix-outside <A.B.C.D/M>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
