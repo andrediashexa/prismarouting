@@ -332,7 +332,7 @@ staged in the candidate; 'show configuration compare' reviews it
 A expressão é a do Python, com `\1` no substituto. Um padrão com espaço, ou com uma `|` que não é o pipe, vai entre aspas. Três decisões, tomadas pelo lado conservador:
 
 * **Um padrão nunca atravessa uma declaração.** Cada declaração é comparada sozinha, sem o recuo que a posiciona — `^` é o começo da declaração. Um padrão que casa com o vazio (`a*`) e um substituto que quebra a declaração em duas são recusados.
-* **`!` não entra no padrão:** nesta VTY ele começa um comentário.
+* `**!**` **não entra no padrão:** nesta VTY ele começa um comentário.
 * **O nível não renomeia a si mesmo.** Dentro de `pool lab`, o `replace` não muda o nome `lab`; quem renomeia é o `rename`, que segue as referências.
 
 ### `rename`
