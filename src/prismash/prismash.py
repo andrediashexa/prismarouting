@@ -22463,7 +22463,8 @@ class Shell:
         for name in f["missing"]:
             print(f"  no interface matches {name}")
         blocks = [transceiver.screen(m) for m in f["modules"]]
-        if not blocks and not f["missing"] and f["dataplane"]:
+        if not blocks and not f["missing"] and f["dataplane"] \
+                and not f.get("old_plugin"):
             print("  no port of this box has a module to read")
         if blocks:
             print("\n\n".join("\n".join(b) for b in blocks))

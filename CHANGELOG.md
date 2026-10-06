@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **And no "no port of this box has a module to read" under that note.**
+  ([#590](https://github.com/andrediashexa/hexarouting/issues/590)) On
+  10.40.200.166 on 0.151.16 the older-plugin note was followed by it, which
+  said the opposite: the box's ports have modules, the plugin cannot read
+  them yet.
+
 ## 0.151.16 - an older dataplane plugin, said as one
 
 ### Fixed
