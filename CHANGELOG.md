@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show interface transceiver` said the dataplane was not answering
+  when its plugin was only older.** ([#590](https://github.com/andrediashexa/hexarouting/issues/590))
+  An upgrade changes the VTY at once and the dataplane's images at its next
+  restart; in between, the old plugin answers "unknown input". On
+  10.40.200.166 after the upgrade to 0.151.15 the screen said "the dataplane
+  is not answering" and, reading the X520's port as a Linux card, "the
+  card's driver cannot read a module". It now says the plugin is older and
+  that `system dataplane restart` loads the new one; a card Linux holds is
+  still read.
+
 ## 0.151.15 - an SFP's light, read without stopping the dataplane
 
 ### Added

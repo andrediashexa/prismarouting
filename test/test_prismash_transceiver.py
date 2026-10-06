@@ -180,6 +180,35 @@ sh.dp.run = lambda cmd: (0, "") if cmd.startswith("show bpa") else (1, "")
 check("no port of this box has a module to read" in say(
     sh, "show interface transceiver"), "a box with no port to read says so")
 
+print("\n=== a dataplane whose plugin predates #590 ===")
+# Measured on 10.40.200.166 after the upgrade to 0.151.15: the VTY is new at
+# once, the dataplane's images at its next restart, and the old plugin
+# answers "unknown input". Mutations shown red: plugin_predates() always
+# False (the box said "the dataplane is not answering" and "the card's
+# driver cannot read a module" of an X520 that can); the Linux fallback kept
+# for a dataplane port.
+check(prismash.transceiver.plugin_predates(
+          "show bpa: unknown input `transceiver'")
+      and not prismash.transceiver.plugin_predates(ETH5)
+      and not prismash.transceiver.plugin_predates(""),
+      "plugin_predates: VPP's refusal of the word, and nothing else")
+for _rc in (0, 1):
+    sh, _, doors = shell(linux={"eno1": ENO1}, nics=["eno1"])
+    sh.dp.run = (lambda rc: lambda cmd: (
+        (rc, "show bpa: unknown input `transceiver'")
+        if cmd.startswith("show bpa") else (0, "")))(_rc)
+    out = say(sh, "show interface enp1s0 transceiver")
+    check("plugin older than this VTY" in " ".join(out.split())
+          and "system dataplane restart" in out
+          and "not answering" not in out and "driver cannot" not in out
+          and not doors,
+          f"an older plugin is said as one, and its port not read as "
+          f"Linux's (rc {_rc}): {out!r}")
+    f = sh.transceiver_facts()
+    check(f["old_plugin"] and f["dataplane"]
+          and [m["name"] for m in f["modules"]] == ["eno1"],
+          f"and a card Linux holds is still read (rc {_rc}): {f}")
+
 print("\n=== show interface: the notes under the table ===")
 sh, asked, doors = shell(rx_low=True)
 tab = say(sh, "show interface")

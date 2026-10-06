@@ -27,6 +27,17 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.16 - an older dataplane plugin, said as one
+
+* **Contract:** unchanged (`prisma.proto` sha256 `4e80a06cf449690c7347efa451ae2e43791b7920c5b4aef2e4ae8648a350133e`).
+* **ListTransceivers between an upgrade and the dataplane's restart** (#590):
+  `dataplane_answered` is true and no dataplane port is listed - the plugin
+  the dataplane runs predates 0.151.15 and cannot read modules; a card Linux
+  holds is still listed. `system dataplane restart` (or the next reboot)
+  loads the new plugin.
+* **Lab box:** .166 is on 0.151.15 (VTY; dataplane images 0.151.4 until its
+  next restart).
+
 ## 0.151.15 - a port's transceiver: its optical levels
 
 * **Contract:** additive (`prisma.proto` sha256 `4e80a06cf449690c7347efa451ae2e43791b7920c5b4aef2e4ae8648a350133e`).

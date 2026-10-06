@@ -118,6 +118,14 @@ def _digits(word):
     return bool(re.fullmatch(r"[0-9]+", word or ""))
 
 
+def plugin_predates(text):
+    """
+    Whether `show bpa transceiver`'s answer is a dataplane plugin older than
+    #590 refusing the word: VPP's "unknown input `transceiver'".
+    """
+    return "unknown input" in (text or "") and "transceiver" in (text or "")
+
+
 def parse_dump(text):
     """
     `show bpa transceiver`'s text (or this file's `read`'s) as

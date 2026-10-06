@@ -22393,7 +22393,15 @@ class Shell:
         transceiver` prints and ListTransceivers carries.
         """
         rc, out = self.dp.run("show bpa transceiver")
-        dp = transceiver.parse_dump(out) if rc == 0 else {}
+        # A dataplane that answers, with a plugin older than this VTY: an
+        # upgrade changes the VTY at once and the dataplane's images at its
+        # next restart, so between the two it answers "unknown input". Said
+        # as what it is, and its ports are not read as Linux's - measured on
+        # 10.40.200.166 after the upgrade to 0.151.15, which said "the
+        # dataplane is not answering" and "the card's driver cannot read a
+        # module" of an X520 that can.
+        old = transceiver.plugin_predates(out)
+        dp = transceiver.parse_dump(out) if rc == 0 and not old else {}
         hot = hot_cards()
         # not a unit: a closure of transceiver_facts over `hot`, measured
         # through it by test/test_prismash_transceiver.py
@@ -22411,6 +22419,8 @@ class Shell:
                         r = self.linux_transceiver(linux_name(hit), hit)
                     readings.append(r)
                     continue
+                if old and want not in {c["name"] for c in self.host_nics()}:
+                    continue            # a dataplane port: not readable yet
                 r = self.linux_transceiver(want)
                 if r["unread"] == "no-device":
                     missing.append(want)
@@ -22428,7 +22438,7 @@ class Shell:
             for nic in self.host_nics():
                 if nic["name"] not in seen:
                     readings.append(self.linux_transceiver(nic["name"]))
-        return {"dataplane": rc == 0,
+        return {"dataplane": rc == 0 or old, "old_plugin": old,
                 "modules": [transceiver.decode(r) for r in readings],
                 "missing": missing}
 
@@ -22441,7 +22451,12 @@ class Shell:
         taken (the API's), so the screen is drawn from it.
         """
         f = self.transceiver_facts(args) if facts is None else facts
-        if not f["dataplane"]:
+        if f.get("old_plugin"):
+            print_prose("note: the dataplane runs a plugin older than this "
+                        "VTY, which cannot read its ports' modules; "
+                        "'system dataplane restart' loads the one this "
+                        "release carries")
+        elif not f["dataplane"]:
             self.err("the dataplane is not answering")
             print_prose("so the modules of its ports cannot be read; a card "
                         "Linux holds still can")
