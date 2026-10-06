@@ -27,6 +27,13 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.11 - make test reaches no mirror
+
+* **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
+* **Nothing changes for a client** (#583): a fix to this repository's own
+  test suite and release gate.
+* **Lab box:** .166 is on 0.151.10.
+
 ## 0.151.10 - snmpd restarts after a VTY commit; no BPA export warning
 
 * **Contract:** unchanged (`prisma.proto` sha256 `708fcb4d476ace72a6b6035153637239a5bd279a492843e500ea9a02471c96c6`).
