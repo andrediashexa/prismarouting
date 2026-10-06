@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.10 - snmpd restarts after a VTY commit; no BPA export warning
+
+### Fixed
+
 * **A commit from the VTY wrote snmpd.conf and never restarted snmpd.**
   ([#587](https://github.com/andrediashexa/hexarouting/issues/587)) The VTY
   runs in the management container, which has no `/run/systemd/system`, so it
