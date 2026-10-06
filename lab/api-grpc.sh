@@ -1,7 +1,8 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 208
+# OFF-RED-AT-LEAST: 216
 # (195, and #588's thirteen ListEvents and GetSystem checks: measured
-# 2026-10-06, 208 red in the off run, each of the thirteen among them.)
+# 2026-10-06, 208 red in the off run, each of the thirteen among them; and
+# #590's eight ListTransceivers checks: 216, measured the same day.)
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -634,7 +635,11 @@ echo "=========== #590: ListTransceivers ==========="
 install -D -m 0644 src/prismash/transceiver.py /usr/lib/prisma-routing/transceiver.py
 vppctl bpa transceiver stand-in pg0 type sff-8472 hex "$(python3 -c "import sys; \
 sys.path.insert(0, 'test'); import transceiver_fixtures as F; print(F.sfp_low_rx().hex())")"
-T12=$(python3 lab/api_phase12_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
+# netview, in no group here, gets what the VTY gives it (phase 6's rule).
+runuser -u netview -- $HX -c "show interface pg0 transceiver" > /tmp/xcvr-netview 2>&1
+sed 's/^/  vty as netview: /' /tmp/xcvr-netview | head -3
+T12=$(python3 lab/api_phase12_check.py /tmp/apistubs $C 127.0.0.1:50556 \
+  /tmp/xcvr-netview 2>&1)
 printf '%s\n' "$T12" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
@@ -893,7 +898,7 @@ expect "  its temperature, voltage, bias and TX power beside their thresholds" t
 expect "  its text is the VTY's show interface pg0 transceiver" t12 xcvr-text-is-vty
 expect "  every port asked: pg0, and no TAP" t12 xcvr-all
 expect "  a name that is neither a port nor a card is missing" t12 xcvr-missing
-expect "  a read-only account reads it too" t12 xcvr-any-account
+expect "  an account with no role gets the screen the VTY gives it" t12 xcvr-any-account
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

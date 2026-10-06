@@ -5,7 +5,8 @@ transceiver_fixtures.py with its receiver at -19 dBm, past its -18.01 low
 warning), and the API reads it as the VTY's `show interface pg0 transceiver`
 does - the same decode, the same reading, its text the screen's.
 
-Arguments: <stubs dir> <certs dir> <host:port>. One RESULT line per check.
+Arguments: <stubs dir> <certs dir> <host:port> <the VTY's screen as
+netview>. One RESULT line per check.
 """
 import sys
 
@@ -88,10 +89,17 @@ def missing():
 
 
 def any_account():
+    # An account with no role gets what the VTY gives it (phase 6's rule):
+    # netview is in no group here, so its VTY cannot open the dataplane's
+    # socket and says so - and the API, through netview's own worker, says
+    # the same. On a box every account is in vpp (REACH_GROUPS) and reads it.
+    vty = open(sys.argv[4]).read()
     r = op_ro.ListTransceivers(pb.ListTransceiversRequest(names=["pg0"]), timeout=60)
-    result("xcvr-any-account", len(r.transceivers) == 1
-           and r.transceivers[0].status == pb.Transceiver.STATUS_DDM,
-           f"{len(r.transceivers)}")
+    result("xcvr-any-account", r.text.strip() == vty.strip() and (
+        (r.dataplane_answered and len(r.transceivers) == 1)
+        or (not r.dataplane_answered and "not answering" in vty)),
+        f"answered {r.dataplane_answered}, {len(r.transceivers)} read; "
+        f"VTY: {vty.strip()[:80]!r}")
 
 
 for name, fn in (("xcvr-one", one), ("xcvr-all", every),
