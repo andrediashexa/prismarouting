@@ -27,6 +27,19 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.17 - a box comes up whatever snmpd says
+
+* **Contract:** unchanged (`prisma.proto` sha256 `4e80a06cf449690c7347efa451ae2e43791b7920c5b4aef2e4ae8648a350133e`).
+* **Nothing changes through the API** (#591): a box whose `snmp
+  listen-address` names one of its interfaces came up with no address at
+  all; it now comes up, with SNMP applied once the interfaces are. A
+  SetConfig of an SNMP setting snmpd refuses is still refused whole.
+* **Also** (#590): between an upgrade and the dataplane's restart,
+  `show interface transceiver` no longer adds "no port of this box has a
+  module to read" under the older-plugin note.
+* **Lab box:** .166 is on 0.151.16, dataplane restarted: transceiver
+  readings live (its enp1s0 receives -15.06 dBm, a low alarm).
+
 ## 0.151.16 - an older dataplane plugin, said as one
 
 * **Contract:** unchanged (`prisma.proto` sha256 `4e80a06cf449690c7347efa451ae2e43791b7920c5b4aef2e4ae8648a350133e`).

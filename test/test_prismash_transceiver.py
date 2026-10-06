@@ -198,9 +198,13 @@ for _rc in (0, 1):
         (rc, "show bpa: unknown input `transceiver'")
         if cmd.startswith("show bpa") else (0, "")))(_rc)
     out = say(sh, "show interface enp1s0 transceiver")
+    one_door = list(doors)
+    out += say(sh, "show interface transceiver")
+    doors = one_door
     check("plugin older than this VTY" in " ".join(out.split())
           and "system dataplane restart" in out
           and "not answering" not in out and "driver cannot" not in out
+          and "no port of this box" not in out
           and not doors,
           f"an older plugin is said as one, and its port not read as "
           f"Linux's (rc {_rc}): {out!r}")
