@@ -454,7 +454,10 @@ flowchart TD
 | "o pool vai encher?" | `show cgnat top` |
 | "quantas sessões, por thread?" | `show cgnat session` |
 | "o coletor está recebendo?" | `show cgnat logging` |
-| "quem mudou o quê, e quando?" | `show cgnat history` |
+| "o que aconteceu na caixa?" | `show log` |
+| "quem fez commit, e de onde?" | `show log source vty` (ou `source api`) |
+| "por que o dataplane reiniciou?" | `show log source dataplane`, e a linha `started by:` de `show system uptime` |
+| "quem mudou o pool, e quando?" | `show cgnat history` |
 | "o que estou prestes a aplicar?" | `show configuration compare` |
 | "que versão é essa máquina?" | `show version` |
 | "quais daemons de roteamento estão de pé?" | `show version` |
@@ -484,6 +487,7 @@ flowchart TD
 | Tudo caiu ao mesmo tempo, sem alarme | mudança de mapeamento aplicada com `commit remap` |
 | `show bgp` (ou `ospf`, ou `isis`) não responde | `show version` nomeia os daemons parados; um parado recebe configuração e não chega a lugar nenhum |
 | A caixa subiu, roteia e não encaminha; `show interface` sem as placas | o dataplane desistiu de subir: leia `/var/log/prisma-routing/why-the-dataplane-stopped` |
+| `show system uptime` diz `restarted after the boot` | `show log source dataplane` diz a causa: um `system dataplane restart` (de quem), uma atualização, ou `unexpected` — ninguém pediu, e `why-the-dataplane-stopped` costuma ter o motivo |
 | Sessões novas recusadas com a caixa de pé | `show cgnat memory`: a memória do CGNAT encheu, e a caixa recusa em vez de cair. `memory` em `nat` > `cgnat` dá mais, a partir do próximo boot |
 | Assinante não alcança a própria caixa (gateway, DNS, SSH) | versões anteriores à 0.136.1 traduziam o tráfego para os endereços da caixa; atualize |
 

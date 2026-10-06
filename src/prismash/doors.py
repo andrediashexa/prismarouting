@@ -46,6 +46,7 @@ from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR,
                     OPERATOR_GROUPADD, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
                     hostname_error, is_number)
+import events
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
                     VRF_RESERVED_PREFIX, probe_host_ok, probe_source_ok,
                     vrf_device_error)
@@ -148,8 +149,12 @@ def api_run_argv(kind, version=""):
         stmt = f"{stmt} {version}".strip()
     elif version:
         return None
+    # PRISMA_ASKED_RECORDED (#588): whoever opened this door - the API, or a
+    # prisma-operator member's VTY in the container - recorded the request
+    # in the box's record of events, as the account that asked; the host's
+    # VTY, root's, running it here must not record it again as root's.
     return detached(f"prisma-routing-api-{kind}", api_run_log(kind),
-                    f"/usr/bin/prismash -c '{stmt}'")
+                    f"PRISMA_ASKED_RECORDED=1 /usr/bin/prismash -c '{stmt}'")
 
 
 def detached(unit, log, body):
@@ -679,6 +684,8 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
             return answer_file(r, uid, allowed_uids, files)
         if isinstance(r, dict) and "session" in r:
             return answer_session(r, uid, execute)
+        if isinstance(r, dict) and ("event" in r or "events" in r):
+            return answer_event(r, uid, allowed_uids, is_operator)
         argv, stdin = r["argv"], r.get("stdin")
         timeout = r.get("timeout", 30)
     except (ValueError, KeyError, TypeError):
@@ -704,6 +711,104 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
         timeout = 30
     rc, out = execute(argv, stdin, min(timeout, MAX_TIMEOUT))
     return {"rc": rc, "out": out}
+
+
+#: What a read of the events may filter on, and the type each takes (#588).
+EVENT_FILTERS = {"last": int, "since": (int, float), "severity": str,
+                 "source": str, "kind": str, "component": str}
+
+
+def account_name(uid):
+    """The host's name for `uid`, or "uid <n>" when it has none."""
+    try:
+        import pwd
+        return pwd.getpwuid(uid).pw_name
+    except (KeyError, ImportError):
+        return f"uid {uid}"
+
+
+#: Events an account that is not root may write a minute (#588). The record
+#: rotates at a fixed size, so an account writing without end - read-only
+#: ones included, since every account may write - would push the box's own
+#: history out of it: an "unexpected" restart among it. A person's commits
+#: come nowhere near this.
+ACCOUNT_EVENTS_PER_MINUTE = 30
+_account_writes = {}
+
+
+def account_rate_ok(uid, now, writes=None, limit=None):
+    """
+    Whether `uid` may write one more event at `now`, and count it if so: at
+    most ACCOUNT_EVENTS_PER_MINUTE in any 60 s (#588).
+    """
+    writes = _account_writes if writes is None else writes
+    limit = ACCOUNT_EVENTS_PER_MINUTE if limit is None else limit
+    recent = [t for t in writes.get(uid, ()) if now - t < 60]
+    if len(recent) >= limit:
+        writes[uid] = recent
+        return False
+    writes[uid] = recent + [now]
+    return True
+
+
+def answer_event(r, uid, allowed_uids=(0,), is_operator=account_is_operator,
+                 path=None, name_of=account_name, now=None):
+    """
+    answer(), for the box's record of events (#588): {"events": filters}
+    reads them, {"event": {...}} writes one.
+
+    ANY ACCOUNT MAY DO BOTH, and that is the reason this is a door and not
+    the management container's mount of /var/log/prisma-routing: the VTY in
+    there runs as the account that logged in, the directory is root's 0750
+    (it holds the CGNAT trail), and every account's commit is an event. What
+    an account may write is narrower than root's (events.event_error): its
+    own actions only, stamped with its name as the KERNEL reports it
+    (SO_PEERCRED) and with the time the door received it - whatever the
+    request said. A restart's "asked", which a later start takes as its
+    cause, is written for an account only when it may restart things at
+    all: prisma-operator, as the restart's own door decides (#563).
+    """
+    if "events" in r:
+        f = r["events"]
+        if not isinstance(f, dict) or any(
+                k not in EVENT_FILTERS or not isinstance(v, EVENT_FILTERS[k])
+                or isinstance(v, bool) for k, v in f.items()):
+            return {"rc": 126, "out": "the host's door: not a reading of "
+                                      "the events"}
+        got = events.select_events(events.read_events(path), **f)
+        return {"rc": 0, "out": json.dumps(got)}
+    ev = r["event"]
+    root = uid in allowed_uids
+    if isinstance(ev, dict) and not root:
+        ev = dict(ev, who=name_of(uid),
+                  t=round(time.time() if now is None else now, 3))
+    why = events.event_error(ev, privileged=root)
+    if why is None and not root and ev.get("kind") == "asked" \
+            and ev.get("affects") and not is_operator(uid):
+        why = "only root and prisma-operator's members ask for a restart"
+    if why is None and not root and not account_rate_ok(
+            uid, time.time() if now is None else now):
+        why = (f"more than {ACCOUNT_EVENTS_PER_MINUTE} a minute from one "
+               "account")
+    if why:
+        return {"rc": 126, "out": f"the host's door: an event: {why}"}
+    if not events.append_event(ev, path):
+        return {"rc": 1, "out": "the events could not be written"}
+    return {"rc": 0, "out": ""}
+
+
+def journaled(request):
+    """
+    Whether a request is said in the journal (say()). Not the events' own
+    (#588): a write is in the record it writes, and the reads are every
+    `show log`, every GetSystem a web page polls - which is how "door: uid
+    1000: hostname -> 0" came to fill the journal every 2 s.
+    """
+    try:
+        r = json.loads(request)
+    except ValueError:
+        return True
+    return not (isinstance(r, dict) and ("event" in r or "events" in r))
 
 
 def say(request, uid, reply):
@@ -818,7 +923,14 @@ def session_argv(req, uid, pw=None, groups=None):
     for g in sorted(set(groups) - {pw.pw_gid}):
         argv += ["--group-add", str(g)]
     argv += ["-e", f"HOME={pw.pw_dir}", "-e", f"USER={pw.pw_name}",
-             "-e", f"LOGNAME={pw.pw_name}", MGMT_CONTAINER] + vty
+             "-e", f"LOGNAME={pw.pw_name}"]
+    # Where the login came from (#588), for the box's record of events: the
+    # caller's word, so only when it is an address and nothing else - it
+    # lands in an environment variable, and an event's "from".
+    frm = s.get("from")
+    if isinstance(frm, str) and _address(frm):
+        argv += ["-e", f"PRISMA_SESSION_FROM={frm}"]
+    argv += [MGMT_CONTAINER] + vty
     return argv, ""
 
 
@@ -1053,7 +1165,8 @@ def handle(conn, allowed_uids=(0,), execute=run_locally):
                 return
             reply = answer(request, uid, allowed_uids, execute)
             conn.sendall(json.dumps(reply).encode() + b"\n")
-            say(request, uid, reply)
+            if journaled(request):
+                say(request, uid, reply)
         except (OSError, ValueError):
             pass
 

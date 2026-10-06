@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show log`: what happened on the box, in its own words, phase 1.**
+  ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
+  One record of events, newest last, kept across reboots on the log volume
+  (`/var/log/prisma-routing/events.log`, bounded at two files of 256 KiB):
+  commits, rollbacks, `commit confirmed` confirmed and expired, each with
+  the account and where the session came from (`ssh <address>`, `the API`);
+  `system upgrade`, `system reboot`, `system shutdown` and `system dataplane
+  restart` asked, by whom; the upgrade done, from what to what; each boot;
+  and every start of the dataplane and of the routing daemons **with its
+  cause** - the boot, an operator's restart, an upgrade, or `unexpected`
+  when nothing on the box asked for it. The cause is recorded before the
+  restart and matched to the start the host's apply sees afterwards; `show
+  system uptime` says it as `started by:`. `show log [last <n>] [since
+  <time>] [severity <level>] [source <name>]`, `since` taking `30m`, `2d`
+  or an ISO date, with the box's `| match`. Written by the code that acts,
+  never scraped from the journal, so the door calls and timer skips that
+  fill it never reach `show log`; from the management container through
+  the host's door, which stamps the account the kernel names. FRR's `show
+  logging` is unchanged - each routing daemon's logging configuration.
+  The API reads the record with `OperationalService.ListEvents` (the same
+  filters, and the screen), and `GetSystem` carries
+  `dataplane_start_cause` and `control_plane_start_cause`. The plan for
+  what follows - link, SFP, BGP and BFD, CGNAT exhaustion, logins, `system
+  logging`, `monitor log`, traps - is in docs/logging-events.md.
+
 ### Fixed
 
 ## 0.151.13 - replace pattern and rename, as in Junos

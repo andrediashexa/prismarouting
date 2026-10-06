@@ -121,6 +121,15 @@ said = os.read(r, 1000).decode()
 check(said.strip() == "HERE -c show version",
       f"here(): the process becomes prismash, with the same arguments: {said!r}")
 check(mod.main(["bad"]) == 2, "main(): a usage error is 2")
+# #588: the login's address, handed to the session door.
+def came_from(session_client, env):
+    return session_client.client_address(env)
+
+
+check(came_from(mod, {"SSH_CONNECTION": "192.0.2.7 50000 10.0.0.1 22"})
+      == "192.0.2.7" and came_from(mod, {}) == ""
+      and came_from(mod, {"SSH_CONNECTION": "garbage"}) == "",
+      "client_address(): sshd's client, or nothing")
 
 
 print("\n=== the broker runs a statement on the host only when it is one of three ===")

@@ -58,6 +58,14 @@ for m in re.finditer(r"\bmessage (\w+) \{", body):
     messages[m.group(1)] = re.findall(r"^\s*(?:optional |repeated )?[\w.]+ (\w+) = (\d+);",
                                       flat, re.M)
 check(len(messages) > 40, f"{len(messages)} messages read")
+# A name defined twice is a contract protoc refuses, and only protoc - which
+# this machine has not got - would say so: #588 added a second `Event` and
+# the first sign was lab/api-grpc.sh with no stubs at all.
+# At column 0: a nested `enum Kind` is scoped to its message, and several
+# messages have one.
+_names = re.findall(r"^(?:message|enum) (\w+) \{", body, re.M)
+_twice = sorted({n for n in _names if _names.count(n) > 1})
+check(not _twice, f"no message or enum is defined twice: {_twice}")
 for name, fields in messages.items():
     nums = [int(n) for _, n in fields]
     check(len(nums) == len(set(nums)), f"{name}: no field number used twice {nums}")
@@ -98,7 +106,9 @@ want = {
                            # probes streamed.
                            "ListOspfInterfaces", "ListIsisInterfaces",
                            "GetHardware", "GetRoutingLogging", "GetSnmpFile",
-                           "Ping", "Traceroute", "Mtr", "ListBfdSessions", "WatchBfd"],
+                           "Ping", "Traceroute", "Mtr", "ListBfdSessions", "WatchBfd",
+                           # #588: show log.
+                           "ListEvents"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

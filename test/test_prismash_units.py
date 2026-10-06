@@ -49,6 +49,10 @@ os.environ["PRISMA_VERSION_FILE"] = os.path.join(_root, "VERSION-stamp")
 os.environ["PRISMA_LIVE_SQUASHFS"] = os.path.join(_root, "filesystem.squashfs")
 os.environ["PRISMA_INSTALLER"] = os.path.join(_root, "prisma-routing-install")
 os.environ["PRISMA_SSH_HOST_KEY_ORIGIN"] = os.path.join(_root, "no-origin")
+# The box's record of events (#588): this suite's own, and no door to it.
+os.environ["PRISMA_EVENTS"] = os.path.join(_root, "events.log")
+os.environ["PRISMA_EVENTS_STATE"] = os.path.join(_root, "events.state")
+os.environ["PRISMA_DOORS"] = os.path.join(_root, "no-doors.sock")
 with open(os.environ["PRISMA_VERSION_FILE"], "w") as _f:
     _f.write("0.99.7\n")
 
@@ -9431,6 +9435,110 @@ _r = prismash.hint_progress(prismash.PREFIX_LIST_LINE,
                             ["PL-U", "insert", "seq", "10"])
 check(_r is not None and set(_r[0]) == {"before", "after"},
       f"and only the one that fits once a form is chosen: {_r}")
+
+print("\n=== show log: the box's record of events (#588) ===")
+# Mutations shown red: show_or_pass() without the `show log` branch (it went
+# to FRR, which has no such screen); record_asked() not consulting
+# PRISMA_ASKED_RECORDED (the host's run of a request recorded it twice);
+# uptime_rows() without the cause row.
+import events  # noqa: E402
+_EV = os.environ["PRISMA_EVENTS"]
+for _p in (_EV, _EV + ".1", os.environ["PRISMA_EVENTS_STATE"]):
+    if os.path.exists(_p):
+        os.remove(_p)
+check(events.EVENTS_PATH == _EV, "this suite's record, not the box's")
+_sh = shell(dp=_ClockDp(60.0))
+_t0 = time.time()
+check(_sh.record_event("notice", "configuration committed", kind="commit",
+                       origin="ssh 192.0.2.7"),
+      "record_event: written")
+_e = events.read_events(_EV)
+check(_e[-1]["source"] == "vty" and _e[-1]["who"] == vppapi.identity()[0]
+      and _e[-1]["from"] == "ssh 192.0.2.7",
+      f"record_event: the VTY's, this account's, from where it was said: {_e[-1]}")
+os.environ["PRISMA_ASKED_RECORDED"] = "1"
+try:
+    check(not _sh.record_restart_asked("dataplane"),
+          "record_restart_asked: not by the host's VTY the door started - "
+          "whoever opened the door recorded it")
+finally:
+    del os.environ["PRISMA_ASKED_RECORDED"]
+check(_sh.record_asked("shutdown", "", "a request named directly")
+      and events.read_events(_EV)[-1]["text"] == "a request named directly",
+      "record_asked: written, with the cause and what it affects")
+_d = events.read_events(_EV)
+os.remove(_EV)
+events.append_event(_d[0])
+check(_sh.record_restart_asked("dataplane")
+      and _sh.record_restart_asked("upgrade", "0.151.14"),
+      "record_restart_asked: a restart, and an upgrade")
+_a = [e for e in events.read_events(_EV) if e.get("kind") == "asked"]
+check([(e["cause"], e["affects"], e["text"]) for e in _a]
+      == [("operator", "dataplane routing", "system dataplane restart asked"),
+          ("upgrade", "dataplane routing", "system upgrade to 0.151.14 asked")],
+      f"record_asked: what a later start is matched to: {_a}")
+_, _out = driven(_sh.show_log, [])
+# An event is a row starting with its time; a long one folds under it.
+_evrows = [r for r in _out.splitlines() if r[:1].isdigit()]
+check(len(_evrows) == 3 and "configuration committed" in _evrows[0]
+      and "system upgrade to 0.151.14 asked" in _evrows[-1],
+      f"show_log: every event, newest last: {_out!r}")
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _sh.show_log(["source", "vty", "last", "1"])
+check("0.151.14" in _buf.getvalue(), "show_log: the filters, combined")
+_, _out = driven(_sh.feed, "show log last 1")
+check(len([r for r in _out.splitlines() if r[:1].isdigit()]) == 1
+      and "0.151.14" in _out,
+      f"show log last 1, through the VTY's own dispatch: {_out!r}")
+_, _out = driven(_sh.feed, "show log source host")
+check(_out.strip() == "no event recorded matches",
+      f"show log: a filter nothing passes says so: {_out!r}")
+_, _out = driven(_sh.feed, "show log since 2026-13-01")
+check(_sh.failed and "error: show log: not a filter it takes" in _out
+      and "is not a time" in _out,
+      f"show log: a since that is not a time is refused: {_out!r}")
+_sh.failed = 0
+_, _out = driven(_sh.feed, "show log | match upgrade")
+check(_out.splitlines() == [r for r in driven(_sh.show_log, [])[1].splitlines()
+                     if "upgrade" in r],
+      f"show log | match: the box's pipe, on whole events: {_out!r}")
+# A start the host's apply sees, after the restart asked above.
+_saved = (prismash.PROC_STAT, prismash.FRR_STARTED_FILE, prismash.REBOOT_RECORD)
+prismash.PROC_STAT, prismash.FRR_STARTED_FILE = _stat, _pid
+prismash.REBOOT_RECORD = os.path.join(_ud, "none")
+try:
+    events.write_state({"boot": 1790836414, "dataplane": 1790836420,
+                        "routing": 1790836426})
+    # Started just now: after the restart was asked, as a restart does.
+    _sh.dp = _ClockDp(0.2)
+    _new = _sh.observe_starts()
+    check([(e["component"], e["cause"]) for e in _new] == [("dataplane", "operator")],
+          f"observe_starts: the dataplane started after the restart was asked: "
+          f"{[e['text'] for e in _new]}")
+    check(_sh.observe_starts() == [], "observe_starts: and only once")
+    _fx = _sh.uptime_facts()
+    check(_fx["dataplane_cause"] == "operator" and _fx["control_plane_cause"] == "",
+          f"uptime_facts: the cause the record gives each start: "
+          f"{_fx['dataplane_cause']!r} {_fx['control_plane_cause']!r}")
+    _r = prismash.uptime_rows(time.time(), _fx, _when)
+    check("started by: system dataplane restart" in [x.strip() for x in _r],
+          f"show system uptime says why the dataplane started: {_r}")
+finally:
+    prismash.PROC_STAT, prismash.FRR_STARTED_FILE, prismash.REBOOT_RECORD = _saved
+_wide = {"boot": 1, "dataplane": 9999, "control_plane": 9999,
+         "dataplane_cause": "unexpected", "control_plane_cause": "unexpected"}
+check(max(len(x) for x in prismash.uptime_rows(10 ** 9, _wide, _when)) <= 79
+      and all(c in prismash.START_CAUSE_WORDS for c in events.CAUSES),
+      "every cause has words, inside 79 columns")
+_run = RecRunner()
+_sh2 = shell()
+_sh2.sys = system.System(runner=_run)
+driven(lambda: _sh2.do_system(["shutdown"]))
+_e = events.read_events(_EV)
+check(_e[-1]["kind"] == "asked" and _e[-1]["cause"] == "shutdown"
+      and _e[-1]["text"] == "system shutdown asked",
+      f"system shutdown is recorded before systemd is asked: {_e[-1]}")
+ok("show log reads the record; the asking, the start and its cause are in it")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

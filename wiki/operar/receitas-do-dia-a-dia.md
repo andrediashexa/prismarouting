@@ -253,7 +253,7 @@ show running-config | include mode bpa      só as linhas com esse texto
 show running-config | exclude description       tudo, menos as linhas com esse texto
 show running-config | include timeout | count   quantas linhas casam
 show cgnat top | first 10                       as dez primeiras linhas
-show logging | last 40                          o fim do log
+show log | last 40                              os 40 eventos mais novos
 ```
 
 | Filtro | O que faz |

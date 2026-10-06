@@ -1,5 +1,7 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 195
+# OFF-RED-AT-LEAST: 208
+# (195, and #588's thirteen ListEvents and GetSystem checks: measured
+# 2026-10-06, 208 red in the off run, each of the thirteen among them.)
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -35,6 +37,11 @@ cd /src
 use_binary_api
 export PRISMA_ROLLBACK=/tmp/rollback PRISMA_CONFIG=/tmp/prisma-routing.conf
 rm -rf /tmp/rollback
+# The box's record of events (#588), where a box keeps it, empty: phase 11
+# reads back what the phases before it did through the API.
+mkdir -p /var/log/prisma-routing
+rm -f /var/log/prisma-routing/events.log /var/log/prisma-routing/events.log.1 \
+      /var/log/prisma-routing/events.state
 
 # Two workers, so GetSystem has a worker load to say (#533).
 SC=$(startup_conf test workers)
@@ -592,6 +599,33 @@ rm -f /run/prisma-routing/config-pending.json
 T10=$(python3 lab/api_phase10_check.py /tmp/apistubs $C 127.0.0.1:50556 \
   /run/prisma-routing/config-pending.json 2>&1)
 printf '%s\n' "$T10" | sed 's/^/  /'
+# #588: the record of events through the API. The host's apply records a
+# start it sees; here it is asked to look once (observe_starts, what --load
+# and --reapply run) with a reading on record that is not this dataplane's -
+# the state a box is in when its dataplane started again and nothing asked,
+# so GetSystem has a cause to carry.
+echo "=========== #588: ListEvents, and why the dataplane started ==========="
+python3 - <<'PY'
+import sys, json
+sys.path.insert(0, "src/prismash")
+import events, prismash
+json.dump({"boot": prismash.read_btime(), "dataplane": 1.0},
+          open(events.STATE_PATH, "w"))
+print("  observed:", [e["text"] for e in prismash.Shell().observe_starts()])
+PY
+# Through the real doors daemon, as a box reads it: the record is root's
+# 0640 and netview's worker reads it through the door, as on a box.
+rm -f /run/prisma-routing/doors.sock
+python3 -c "import sys; sys.path.insert(0, 'src/prismash'); import doors; doors.serve()" \
+  > /tmp/doors11.log 2>&1 &
+DOORS11=$!
+n=0; until [ -S /run/prisma-routing/doors.sock ] || [ $n -ge 20 ]; do sleep 0.25; n=$((n+1)); done
+T11=$(python3 lab/api_phase11_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
+printf '%s\n' "$T11" | sed 's/^/  /'
+kill $DOORS11 2>/dev/null; wait $DOORS11 2>/dev/null
+rm -f /run/prisma-routing/doors.sock
+echo "  the doors daemon journaled, in phase 11: $(grep -c 'door:' /tmp/doors11.log) line(s), none an event's"
+grep 'door:' /tmp/doors11.log | cut -c1-100 | sort | uniq -c | sed 's/^/    /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -827,6 +861,20 @@ expect "#575: nothing pending reads so, and prisma.v1.Configuration is SERVING" 
 expect "  GetPendingConfiguration reads the boot's record: the card, what it left out" t10 pending-read
 expect "  and the health service is NOT_SERVING while it stands" t10 pending-health
 expect "  Clear's configuration_pending gives it up through the VTY, SERVING again" t10 pending-clear
+t11() { printf '%s\n' "$T11" | grep -q "^RESULT $1 ok"; }
+expect "#588: ListEvents: the API's commits, from the API, by the account" t11 events-api-commit
+expect "  phase 5's reboot, asked through the doors, stamped opsman by the kernel" t11 events-asked-reboot-by-opsman
+expect "  its dataplane restart, root's, recorded before the host was asked" t11 events-asked-restart-by-root
+expect "  and its upgrade, with the version" t11 events-asked-upgrade
+expect "  netview's reboot once it may, not the one it was refused" t11 events-refused-not-recorded
+expect "  last and source: two, the API's, newest last" t11 events-last-source
+expect "  severity warning: nothing below it" t11 events-severity
+expect "  since a date after everything: nothing" t11 events-since
+expect "  its text is the VTY's show log for the same filters" t11 events-text-is-vty
+expect "  a since that is no time: INVALID_ARGUMENT, in the VTY's words" t11 events-since-refused
+expect "  a source the box has not got: INVALID_ARGUMENT" t11 events-source-refused
+expect "  a read-only account reads the same record, through the door" t11 events-any-account
+expect "  GetSystem: why the dataplane last started, as recorded - unexpected" t11 system-start-cause
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

@@ -91,7 +91,8 @@ OPERATIONAL_RULES = [
     # The reads with a typed rpc. Everything else under `show` is text.
     (["show", "version"], "typed", "OperationalService.GetVersion", ""),
     (["show", "system", "uptime"], "typed", "OperationalService.GetSystem",
-     "boot, dataplane, control-plane and VTY start times"),
+     "boot, dataplane, control-plane and VTY start times, and why each "
+     "started (#588)"),
     (["show", "system", "memory"], "typed", "OperationalService.GetSystem",
      "memory_total/used/hugepages bytes"),
     (["show", "system", "hardware"], "typed", "OperationalService.GetSystem",
@@ -156,6 +157,9 @@ OPERATIONAL_RULES = [
     (["show", "hardware"], "typed", "OperationalService.GetHardware", ""),
     (["show", "logging"], "typed", "OperationalService.GetRoutingLogging",
      "FRR's logging per daemon"),
+    # #588: the box's own record of events, its filters and its screen.
+    (["show", "log"], "typed", "OperationalService.ListEvents",
+     "the same filters; the restart causes are also in GetSystem (#588)"),
     (["show", "snmp", "mib"], "typed", "OperationalService.GetSnmpFile (KIND_MIB)",
      "the file, with the enterprise number in it"),
     (["show", "snmp", "zabbix-template"], "typed",
