@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.151.15 - an SFP's light, read without stopping the dataplane
+
+### Added
+
 * **A port's transceiver: its identity and optical levels, on a card the
   dataplane owns.**
   ([#590](https://github.com/andrediashexa/hexarouting/issues/590))
@@ -117,8 +123,6 @@ version has a chance of seeing it.
   modules and lanes: RX and TX power, temperature, bias, and triggers on RX
   power past the module's warnings, temperature, and any reading past an
   alarm, with macros to override and silence them per port.
-
-### Fixed
 
 ## 0.151.14 - show log: what happened on the box, and why each restart
 
