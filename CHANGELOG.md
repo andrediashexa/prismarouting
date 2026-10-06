@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.11 - make test reaches no mirror
+
+### Fixed
+
 * **`make test` waited on a Debian mirror.**
   ([#583](https://github.com/andrediashexa/hexarouting/issues/583))
   test_release_gate.sh drove the gate's kernel check, and
