@@ -21,7 +21,13 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 have=$KERNEL_DEB_VERSION
 want=${KERNEL_CANDIDATE:-}
 if [ -z "$want" ]; then
-  want=$(sg docker -c "docker run --rm debian:bookworm sh -c 'apt-get update -qq >/dev/null 2>&1; apt-cache policy linux-image-amd64'" 2>/dev/null \
+  # Bounded INSIDE the container (#583): apt-get update has no timeout of
+  # its own, and a slow mirror held make test 20-30 minutes twice on
+  # 2026-10-05. A timeout outside does not reach it - sg is setuid and the
+  # container outlives its client - so the update itself is cut, its lists
+  # stay empty, the candidate reads "(none)", and that is exit 2 below:
+  # said, never a pass.
+  want=$(sg docker -c "docker run --rm debian:bookworm sh -c 'timeout ${KERNEL_ASK_TIMEOUT:-150} apt-get update -qq >/dev/null 2>&1; apt-cache policy linux-image-amd64'" 2>/dev/null \
          | sed -n 's/^ *Candidate: *//p')
 fi
 case "$want" in

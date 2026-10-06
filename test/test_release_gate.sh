@@ -31,6 +31,14 @@ fail=0
 ok()  { echo "  [ ok ] $*"; }
 bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 
+# NO MIRROR (#583). Every medium case reaches the gate's kernel check, and
+# tools/kernel-current.sh asks Debian's archive through `docker run ...
+# apt-get update` with no timeout: twice on 2026-10-05 `make test` waited
+# 20-30 minutes on a slow mirror. Its seam answers instead, with the version
+# kernel.env carries, so the check passes as current and nothing is asked.
+. "$REPO/appliance/kernel.env"
+export KERNEL_CANDIDATE="$KERNEL_DEB_VERSION"
+
 # THE NEWEST MINOR TAG, not the newest tag (#410). Every case below breaks one
 # thing in a tree and requires the refusal the MEDIUM path makes, and since the
 # gate learned the two paths a patch tag takes the other one - where a note
@@ -111,6 +119,15 @@ case "$*" in
 esac
 GHSTUB
 chmod +x "$GHBIN/gh"
+# And docker, which no case may reach (#583): every call is written down,
+# and the file is read at the end. A gate case that runs a container
+# reaches a registry or a mirror, and make test is offline.
+cat > "$GHBIN/docker" <<DOCKERSTUB
+#!/bin/sh
+echo "\$*" >> "$WORK/docker-calls"
+exit 1
+DOCKERSTUB
+chmod +x "$GHBIN/docker"
 
 n=0
 run_gate() {  # <case tag>; -> $OUT and $RC
@@ -931,6 +948,11 @@ grep -q 'GATE_2M=${GATE_2M:-1}' "$GATE" \
 grep -q "BOOT_NO_1G=1 BOOT_IOMMU=0" "$REPO/docs/build-timing.md" \
   && ok "and what it costs is in docs/build-timing.md with the others" \
   || bad "docs/build-timing.md does not carry the second install's cost, so the 59 minutes has an unexplained 23 in it"
+
+# THE SUITE REACHED NO NETWORK (#583): no case ran a container.
+[ ! -s "$WORK/docker-calls" ] \
+  && ok "no gate case ran docker: nothing here waits on a mirror" \
+  || bad "a gate case ran docker, which reaches the network: $(head -3 "$WORK/docker-calls" | tr '\n' ';')"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

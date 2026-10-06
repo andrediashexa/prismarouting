@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`make test` waited on a Debian mirror.**
+  ([#583](https://github.com/andrediashexa/hexarouting/issues/583))
+  test_release_gate.sh drove the gate's kernel check, and
+  tools/kernel-current.sh ran `apt-get update` in a container with no
+  timeout: twice on 2026-10-05 the suite hung 20-30 minutes on a slow mirror.
+  The suite now answers through the script's KERNEL_CANDIDATE seam and fails
+  if any case runs docker, and the real ask bounds `apt-get update` inside
+  the container (KERNEL_ASK_TIMEOUT, 150 s), past which it says it could not
+  ask rather than waiting.
+
 ## 0.151.10 - snmpd restarts after a VTY commit; no BPA export warning
 
 ### Fixed
