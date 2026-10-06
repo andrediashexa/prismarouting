@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.151.16 - an older dataplane plugin, said as one
+
+### Fixed
+
 * **`show interface transceiver` said the dataplane was not answering
   when its plugin was only older.** ([#590](https://github.com/andrediashexa/hexarouting/issues/590))
   An upgrade changes the VTY at once and the dataplane's images at its next
