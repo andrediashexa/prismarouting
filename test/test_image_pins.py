@@ -104,6 +104,40 @@ for what, df in (("Dockerfile.vpp", vpp_df), ("Dockerfile.frr", frr_df)):
                 f"to every customer")
     ok(f"{what} installs nothing that builds")
 
+print("\n=== the transceiver read's offsets are the pinned VPP's (#590) ===")
+# src/plugins/bpa/bpa_dpdk_syms.h holds where five DPDK functions sit inside
+# dpdk_plugin.so, read by tools/dpdk-symbols.sh from vpp-dbg for ONE build.
+# The plugin refuses a different build at run time (bpa_transceiver.c compares
+# the build-id), so a pin moved without re-running the tool is not a crash on
+# a box - it is every transceiver read saying "unavailable". This is where
+# that is caught instead: the header names the VPP it was read from, and it
+# must be the one every image and the medium install.
+syms = read("src", "plugins", "bpa", "bpa_dpdk_syms.h")
+m = re.search(r'BPA_DPDK_SYMS_VPP_VERSION "([^"]+)"', syms)
+pins = {"appliance/build-iso.sh": iso_pin("VPP_VERSION"),
+        "build/Dockerfile.dev": arg_pin("Dockerfile.dev", "VPP_VERSION"),
+        "build/Dockerfile.vpp": arg_pin("Dockerfile.vpp", "VPP_VERSION")}
+if not m:
+    bad("bpa_dpdk_syms.h names no VPP version")
+else:
+    for where, pin in pins.items():
+        if pin != m.group(1):
+            bad(f"bpa_dpdk_syms.h was read from VPP {m.group(1)} and {where} "
+                f"pins {pin}: run tools/dpdk-symbols.sh")
+    ok(f"bpa_dpdk_syms.h is VPP {m.group(1)}'s, the pin of all three")
+if not re.search(r'BPA_DPDK_SYMS_BUILD_ID "[0-9a-f]{40}"', syms):
+    bad("bpa_dpdk_syms.h carries no 40-digit build-id to compare")
+symtool = read("tools", "dpdk-symbols.sh")
+want = re.search(r'^SYMS="([^"]+)"', symtool, re.M).group(1).split()
+src = read("src", "plugins", "bpa", "bpa_transceiver.c")
+for sym in want:
+    d = "BPA_DPDK_OFF_" + sym.upper()
+    if not re.search(rf"^#define {d} 0x[0-9a-f]+$", syms, re.M):
+        bad(f"bpa_dpdk_syms.h has no offset for {sym}")
+    if d not in src:
+        bad(f"bpa_transceiver.c does not call {sym} through {d}")
+ok(f"the {len(want)} functions the tool reads are the ones the plugin calls")
+
 print("\n=== the plugin is copied in, never compiled there ===")
 # A plugin compiled against one VPP and loaded by another does not load, and
 # that is the entire reason this product pins a VPP version. Building it
