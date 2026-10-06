@@ -1,5 +1,9 @@
 # Prisma Routing - BPA Log Export via IPFIX
 
+> This page is the CGNAT's log export - who held which public address and
+> port. What happened on the box itself - commits, restarts and their cause,
+> upgrades - is `show log`, in [logging-events.md](logging-events.md) (#588).
+
 ## TL;DR
 
 Log **block allocations**, not flows. RFC 8158 defines `natEvent` 16 (port

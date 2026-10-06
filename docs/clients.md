@@ -27,6 +27,45 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.14 - show log: what happened on the box
+
+* **Contract:** additive (`prisma.proto` sha256 `4a495aa2af8217b138a20a364611114576addf3db0cb0f3b272e9b74adb25834`).
+  One rpc, three messages and two fields (#588, phase 1).
+* **`OperationalService.ListEvents(ListEventsRequest) returns
+  (ListEventsResponse)`**: `show log` - the box's record of what happened on
+  it, oldest first and newest last. The request takes `show log`'s filters:
+  `last` (0 with no `since` is the VTY's default, the last 50; 0 with a
+  `since` is every one since), `since` (`"30m"`, `"1h"`, `"2d"`, `"1w"`, or
+  an ISO date or time; no zone is the box's), `severity` (`error`,
+  `warning`, `notice`, `info`: that level and above) and `source` (`vty`,
+  `api`, `host`, `dataplane`, `routing`); `""` is no filter. Each `BoxEvent`
+  (not `Event`, which stays ConfigService's change stream):
+  `time`, `severity`, `source`, `text` (one sentence, show it as is),
+  `account` (the account, as the host's kernel reported it; `""` for the box
+  itself), `origin` (`ssh <address>`, `the API`, `the box`, or `""`), `kind`
+  (`commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`,
+  `boot`, `upgraded` - more may come; unknown kinds are shown by `text`),
+  and for a start `component` (`dataplane` or `routing`) and `cause`. `text`
+  in the response is `show log`'s screen for the same filters.
+  INVALID_ARGUMENT, in the VTY's words, for a `since` that is not a time or
+  a severity or source the box has not got. Any account.
+* **`SystemInfo.dataplane_start_cause` (25) / `control_plane_start_cause`
+  (26)**: why each last started, as the box recorded it - `boot`,
+  `operator` (`system dataplane restart`, from the VTY or RestartDataplane),
+  `upgrade`, or `unexpected` (nothing on the box asked for it); `""` when
+  the box has not recorded that start (a start under a release before
+  0.151.14, or the host's apply has not run since). **The Uptime card can
+  stop guessing:** with `dataplane_restarted` true, say "restarted by
+  itself" only for `unexpected`, and the cause otherwise; `""` is "not
+  recorded", not "by itself".
+* **What the API's own actions add to it:** a commit, rollback or Confirm
+  through ConfigService is an event of source `api`, origin `the API`, the
+  certificate's account; RestartDataplane, Upgrade, Reboot and Shutdown are
+  recorded as asked, by that account, before the box acts. A refused call
+  records nothing.
+* **Nothing else changes:** `GetRoutingLogging` and `show logging` are still
+  FRR's per-daemon logging configuration.
+
 ## 0.151.13 - replace pattern and rename in configuration mode
 
 * **Contract:** unchanged (`prisma.proto` sha256 `98c0792a12131f8918bdc7a0c87a96e6e0e446da03f1f3f44bd4e3442bc9ba69`).

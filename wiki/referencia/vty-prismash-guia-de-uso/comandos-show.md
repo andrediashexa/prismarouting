@@ -549,7 +549,7 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show lacp` | os bundles LACP: cada membro e se ele está no bundle |
 | `show system cpu` | quais núcleos fazem o quê: o configurado e o que está em vigor |
 | `show system memory` | a RAM por papel: o configurado e o que está em vigor |
-| `show system uptime` | desde quando a caixa, o dataplane (VPP) e o roteamento (FRR) estão no ar, o motivo do último boot quando foi registrado (`system reboot by <conta>`; senão `not recorded`) e quando a versão foi instalada. Um dataplane mais novo que a caixa aparece como `restarted after the boot`: ele reiniciou sozinho |
+| `show system uptime` | desde quando a caixa, o dataplane (VPP) e o roteamento (FRR) estão no ar, o motivo do último boot quando foi registrado (`system reboot by <conta>`; senão `not recorded`) e quando a versão foi instalada. Um dataplane mais novo que a caixa aparece como `restarted after the boot`, e desde a 0.151.14 a linha `started by:` diz **por quê**, como a caixa registrou: o boot, um `system dataplane restart`, uma atualização, ou `nothing recorded: unexpected` quando nada na caixa pediu |
 | `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é**, **quais daemons de roteamento estão rodando** e uma linha `uptime` com o tempo da caixa e do dataplane |
 | `show route [verbose] [<prefixo>]` | a tabela que encaminha (acima) |
 | `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
@@ -560,9 +560,42 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show policy [<política>]` | as políticas de roteamento, os terms de cada uma e onde estão aplicadas |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show ip interface` | interfaces como o FRR as enxerga |
-| `show logging` | log do sistema (FRR) |
+| `show log [last <n>] [since <tempo>] [severity <nível>] [source <origem>]` | **o que aconteceu na caixa**, o mais novo por último: commits, rollbacks, `commit confirmed` vencido, atualização, reboot e reinício pedidos (por quem e de onde), e cada partida do dataplane e do roteamento com a causa. Veja abaixo |
+| `show logging` | a configuração de log de cada daemon de roteamento, como o FRR a informa — não o que aconteceu; isso é `show log` |
 
 O que não é respondido pela própria caixa é repassado ao `vtysh` do FRR, então a sintaxe completa do FRR vale depois da primeira palavra.
+
+## O que aconteceu na caixa: `show log`
+
+Um registro só, da caixa inteira, escrito por quem age — a VTY, a API, o host — e nunca copiado do journal. Por isso as linhas de rotina que enchem o journal (`door: uid 1000: hostname -> 0` a cada 2 s, o timer do `commit confirmed` que não tem nada a fazer) não aparecem aqui. Fica em `/var/log/prisma-routing/events.log`, no volume de registros: sobrevive a reboot e a atualização, e tem tamanho limitado (dois arquivos de 256 KiB, o mais antigo sai).
+
+```
+prisma> show log
+prisma> show log last 20
+prisma> show log since 2h
+prisma> show log since 2026-10-05
+prisma> show log severity warning
+prisma> show log source dataplane
+prisma> show log since 1d source vty | match rollback
+```
+
+Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing`. Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
+
+O que ele registra hoje:
+
+| Evento | Exemplo |
+|--------|---------|
+| commit, com comentário e janela de confirmação | `configuration committed: first pool (by ana, from ssh 192.0.2.7)` |
+| rollback aplicado | `rollback to revision 1 committed (by ana, from ssh 192.0.2.7)` |
+| `commit confirmed` confirmado ou vencido | `a commit confirmed 1 was not confirmed in time: the configuration before it was put back (from the box)` |
+| reinício, atualização, reboot e desligamento pedidos | `system dataplane restart asked (by ana, from ssh 192.0.2.7)` |
+| atualização concluída | `upgraded from 0.151.13 to 0.151.14 (from the box)` |
+| o boot | `the box booted; the reason recorded: system reboot by ana` |
+| cada partida do dataplane e do roteamento, **com a causa** | `the dataplane started again: system dataplane restart asked by ana from ssh 192.0.2.7` |
+
+**A causa de um reinício é registrada antes do reinício.** Quem pede (`system dataplane restart`, `system upgrade`, `system reboot`, pela VTY ou pela API) escreve o pedido primeiro; quando a caixa vê o dataplane ou o roteamento de pé de novo, ela procura o pedido mais recente antes daquela partida. Sem pedido, e longe do boot, a partida sai como `unexpected`, em nível `warning`: **ninguém pediu**, e é isso que vale investigar (`/var/log/prisma-routing/why-the-dataplane-stopped` costuma dizer o resto). Uma caixa que acabou de chegar à 0.151.14 não sabe a causa das partidas anteriores a ela, e não inventa.
+
+O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento. O que vem a seguir — enlace e SFP, sessões BGP e BFD com o motivo, esgotamento de pool, logins, `system logging` em termos da caixa, um `monitor log` — está planejado e ainda não existe.
 
 ## Filtrando a saída com `|`
 
@@ -571,7 +604,7 @@ Qualquer `show` aceita filtros depois de uma barra vertical, e eles podem ser en
 ```
 show running-config | section interface
 show running-config | include timeout | count
-show logging | exclude bgpd | last 20
+show log | exclude vty | last 20
 ```
 
 | Filtro | O que faz |
