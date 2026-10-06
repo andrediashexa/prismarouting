@@ -4926,11 +4926,18 @@ def hint_progress(hint, typed):
         else:
             cur += part
     alts.append(cur)
-    for alt_text in alts:
-        res = _hint_follow(_hint_elements(alt_text), typed)
-        if res is not None:
-            return res
-    return None
+    # Every alternative the words still fit, not the first (#589): after a
+    # prefix-list's name the entry, `description`, `insert` and `resequence`
+    # are all open, and the first alternative fitting hid the other three.
+    fits = [r for r in (_hint_follow(_hint_elements(a), typed) for a in alts)
+            if r is not None]
+    if len(fits) <= 1:
+        return fits[0] if fits else None
+    opts = {}
+    for o, _, _ in fits:
+        opts.update(o)
+    value_hint = next((h for _, h, _ in fits if h), None)
+    return opts, value_hint, any(c for _, _, c in fits)
 
 
 def _hint_follow(elements, typed):
@@ -23784,7 +23791,14 @@ class Shell:
         unusable when the dataplane is down is a VTY that cannot be used to fix
         it.
         """
-        name = self.DYNAMIC.get(hint)
+        # Or the hint's leading placeholder. #558 phase 4 made the hints of
+        # the lists written at the top of the routing half FRR's whole line,
+        # "<prefix-list> [seq ...] permit|deny ...", on the promise that they
+        # start with the placeholder completion reads them by - and nothing
+        # read them that way, so a prefix-list stopped completing by name
+        # (lab/vty.sh, measured on 0.151.10).
+        name = self.DYNAMIC.get(hint) or self.DYNAMIC.get(
+            (hint or "").split(" ", 1)[0])
         if not name:
             return {}
         try:

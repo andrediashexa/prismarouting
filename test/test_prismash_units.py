@@ -9405,5 +9405,28 @@ finally:
     prismash.LIST_DESC_PATH = _saved_ld
 ok("written whole, read back filtered by what FRR holds")
 
+print("\n=== a prefix-list completes by name, and every form after it (#589) ===")
+# Mutations shown red, one at a time: dynamic_options() without the leading-
+# placeholder fallback (no name offered: lab/vty.sh's PL-LAB, red on
+# 0.151.10); hint_progress() back to the first alternative that fits (only
+# the entry's words after the name).
+import io as _pio, contextlib as _pcl
+_sh = at()
+with _pcl.redirect_stdout(_pio.StringIO()):
+    _sh.feed("ip prefix-list PL-U seq 10 permit 10.9.0.0/16")
+check(sorted(_sh.dynamic_options(prismash.PREFIX_LIST_LINE, "")) == ["PL-U"],
+      "Shell.dynamic_options reads a whole-line hint by its leading "
+      "placeholder")
+_o, _, _ = _sh._options("ip prefix-list ", False)
+check(sorted(_o) == ["PL-U"], f"the name completes after ip prefix-list: {_o}")
+_r = prismash.hint_progress(prismash.PREFIX_LIST_LINE, ["PL-U"])
+check(_r is not None and {"seq", "permit", "deny", "description", "insert",
+                          "resequence"} <= set(_r[0]),
+      f"hint_progress offers every form the words still fit: {_r}")
+_r = prismash.hint_progress(prismash.PREFIX_LIST_LINE,
+                            ["PL-U", "insert", "seq", "10"])
+check(_r is not None and set(_r[0]) == {"before", "after"},
+      f"and only the one that fits once a form is chosen: {_r}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

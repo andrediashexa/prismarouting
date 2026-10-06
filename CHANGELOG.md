@@ -119,6 +119,13 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A prefix-list stopped completing by name.** #558 phase 4 made the hint
+  of `ip prefix-list` FRR's whole line, and completion looked a hint up
+  whole, so `ip prefix-list <Tab>` offered nothing (lab/vty.sh, red on
+  0.151.10). It now reads such a hint by its leading placeholder. And after
+  the name every form that still fits is offered - the entry, `description`,
+  `insert` and `resequence` (#589) - not the first alternative alone.
+
 ## 0.151.11 - make test reaches no mirror
 
 ### Fixed
