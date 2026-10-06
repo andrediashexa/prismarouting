@@ -9509,7 +9509,16 @@ prismash.REBOOT_RECORD = os.path.join(_ud, "none")
 try:
     events.write_state({"boot": 1790836414, "dataplane": 1790836420,
                         "routing": 1790836426})
-    # Started just now: after the restart was asked, as a restart does.
+    # Started just now: after the restart was asked, as a restart does. The
+    # upgrade asked above is taken out first: written with the real clock
+    # after the restart's, it fell before this start whenever the suite ran
+    # slowly (make test under load, 3 runs in 6) and, the newer of the two,
+    # was taken for the start's cause - which is the rule, and not this case.
+    _evs = events.read_events(_EV)
+    os.remove(_EV)
+    for _e in _evs:
+        if not (_e.get("cause") == "upgrade" and _e.get("kind") == "asked"):
+            events.append_event(_e)
     _sh.dp = _ClockDp(0.2)
     _new = _sh.observe_starts()
     check([(e["component"], e["cause"]) for e in _new] == [("dataplane", "operator")],
