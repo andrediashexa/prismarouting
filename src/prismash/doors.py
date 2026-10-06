@@ -727,6 +727,30 @@ def account_name(uid):
         return f"uid {uid}"
 
 
+#: Events an account that is not root may write a minute (#588). The record
+#: rotates at a fixed size, so an account writing without end - read-only
+#: ones included, since every account may write - would push the box's own
+#: history out of it: an "unexpected" restart among it. A person's commits
+#: come nowhere near this.
+ACCOUNT_EVENTS_PER_MINUTE = 30
+_account_writes = {}
+
+
+def account_rate_ok(uid, now, writes=None, limit=None):
+    """
+    Whether `uid` may write one more event at `now`, and count it if so: at
+    most ACCOUNT_EVENTS_PER_MINUTE in any 60 s (#588).
+    """
+    writes = _account_writes if writes is None else writes
+    limit = ACCOUNT_EVENTS_PER_MINUTE if limit is None else limit
+    recent = [t for t in writes.get(uid, ()) if now - t < 60]
+    if len(recent) >= limit:
+        writes[uid] = recent
+        return False
+    writes[uid] = recent + [now]
+    return True
+
+
 def answer_event(r, uid, allowed_uids=(0,), is_operator=account_is_operator,
                  path=None, name_of=account_name, now=None):
     """
@@ -762,6 +786,10 @@ def answer_event(r, uid, allowed_uids=(0,), is_operator=account_is_operator,
     if why is None and not root and ev.get("kind") == "asked" \
             and ev.get("affects") and not is_operator(uid):
         why = "only root and prisma-operator's members ask for a restart"
+    if why is None and not root and not account_rate_ok(
+            uid, time.time() if now is None else now):
+        why = (f"more than {ACCOUNT_EVENTS_PER_MINUTE} a minute from one "
+               "account")
     if why:
         return {"rc": 126, "out": f"the host's door: an event: {why}"}
     if not events.append_event(ev, path):

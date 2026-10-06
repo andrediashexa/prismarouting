@@ -320,6 +320,26 @@ for bad in ({"events": {"rm": 1}}, {"events": {"last": "x"}},
 check(doors.answer_event({"event": ev}, 0,
                          path=os.path.join(work, "no", "x"))["rc"] == 1,
       "answer_event: a record it cannot write is said")
+# Mutation shown red: account_rate_ok() always True (a read-only account
+# writes without end, and the rotation pushes the box's history out).
+_w = {}
+check(all(doors.account_rate_ok(7, 100.0 + i, _w, limit=3) for i in range(3))
+      and not doors.account_rate_ok(7, 103.0, _w, limit=3)
+      and doors.account_rate_ok(8, 103.0, _w, limit=3)
+      and doors.account_rate_ok(7, 161.0, _w, limit=3),
+      "account_rate_ok: at most the limit in any 60 s, per account")
+doors._account_writes.clear()
+_rl = os.path.join(work, "rate.log")
+_rc = [doors.answer_event({"event": dict(ev)}, 1000, path=_rl,
+                          is_operator=lambda u: False,
+                          name_of=lambda u: "carol", now=NOW)["rc"]
+       for _ in range(doors.ACCOUNT_EVENTS_PER_MINUTE + 1)]
+_r = doors.answer_event({"event": dict(ev)}, 0, path=_rl, now=NOW)
+check(_rc[:-1] == [0] * doors.ACCOUNT_EVENTS_PER_MINUTE and _rc[-1] == 126
+      and _r["rc"] == 0,
+      f"answer_event: an account past its rate is refused, root is not: "
+      f"{_rc[-3:]} {_r}")
+doors._account_writes.clear()
 check(doors.account_name(os.getuid()) and doors.account_name(4294967) == "uid 4294967",
       "account_name: the host's name, or the uid")
 check(not doors.journaled(json.dumps({"event": ev}))

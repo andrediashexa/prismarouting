@@ -71,7 +71,10 @@ it. So the door takes two requests (`doors.answer_event()`):
   a request - from the VTY or the API; a start, a boot or an upgrade done is
   root's. A request that restarts something (an "asked" naming components) is
   written for an account only if it may restart things: prisma-operator, as
-  the restart's own door decides (#563).
+  the restart's own door decides (#563). And at most 30 a minute from one
+  account (`ACCOUNT_EVENTS_PER_MINUTE`): the record rotates at a fixed size,
+  so an account writing without end - a read-only one may write too - would
+  push the box's own history out of it. Root's writes are not counted.
 
 With no daemon listening - the host's own VTY, a lab - the write is local, as
 every door falls back.
