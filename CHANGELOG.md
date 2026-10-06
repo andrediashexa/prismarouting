@@ -77,6 +77,47 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A port's transceiver: its identity and optical levels, on a card the
+  dataplane owns.**
+  ([#590](https://github.com/andrediashexa/hexarouting/issues/590))
+  `show interface transceiver` and `show interface <name> transceiver` print
+  each module's vendor, part, serial, date code, type and wavelength, and -
+  for a module with diagnostics (DDM) - its temperature, supply voltage,
+  laser bias, TX and RX power, in mW and dBm, each beside the module's own
+  high and low alarm and warning thresholds and whether it is past one. A
+  module without DDM, a copper cable, an empty cage and a driver that cannot
+  read a module each say so. SFF-8472 SFPs (internal or external
+  calibration) and SFF-8636/8436 QSFPs, per lane.
+
+  Found on 10.40.200.166, an X520 port counting 0.58% CRC errors whose RX
+  power nobody could read: VPP's `show hardware-interfaces detail` reads the
+  whole EEPROM and prints only the identity, and the only other way was to
+  hand the card back to Linux. The dataplane now reads it through DPDK's own
+  module EEPROM call, on the main thread, off the worker barrier - the
+  workers keep forwarding - and only the 24 bytes of readings on a poll
+  once the identity and thresholds are known. VPP exports none of DPDK, so
+  the plugin calls it at offsets read from fd.io's debug symbols for the
+  pinned build (`tools/dpdk-symbols.sh`), after checking that the running
+  dpdk_plugin.so is that build; any other build says "unavailable" and calls
+  nothing. A card Linux owns (an AF_XDP hot card, an af_packet port, the
+  management card) is read on the host, through a door, with the ioctl
+  `ethtool -m` sends.
+
+  `show interface` notes a module whose RX power is past its warning
+  thresholds, and a port whose CRC errors are more than 0.01% of the frames
+  it received since the counters started (and at least ten): notes, not
+  errors - the port forwards, and the note says where to look.
+
+  The API has `OperationalService.ListTransceivers` (additive; the fields
+  and the screen's text). SNMP serves `prTransceiver` in PRISMA-ROUTING-MIB:
+  a module table and a lane table under the port's IF-MIB ifIndex, levels
+  in hundredths of a degree, millivolts, microamperes and hundredths of a
+  dBm, with the thresholds beside them (not ENTITY-SENSOR-MIB, which has no
+  dBm and no thresholds: docs/snmp-mib.md). The Zabbix template discovers
+  modules and lanes: RX and TX power, temperature, bias, and triggers on RX
+  power past the module's warnings, temperature, and any reading past an
+  alarm, with macros to override and silence them per port.
+
 ### Fixed
 
 ## 0.151.14 - show log: what happened on the box, and why each restart
