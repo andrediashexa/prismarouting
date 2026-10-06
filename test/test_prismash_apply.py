@@ -2334,6 +2334,50 @@ check(_ok and not any(a[0] == system.SET_HOSTNAME for a in _asked)
       f"{_asked} {_snmp}")
 print("  a commit of `hostname` renames the host and rewrites sysName")
 
+print("\n=== an SNMP snmpd does not come up with does not stop the boot (#591) ===")
+# Measured on 10.40.200.166: `snmp listen-address` names the management
+# address, which exists only once the load has configured the interfaces;
+# snmpd, applied before them, could not bind, and the whole load stopped -
+# the box came up with no address, retrying every 8 s. Mutations shown red:
+# the snmp failure fatal again at boot (the apply returns False); retry_snmp
+# not trying again.
+_tries = []
+
+
+def _snmp_apply(self, *a, **k):
+    _tries.append(k.get("hostname"))
+    return (len(_tries) > 1, "" if len(_tries) > 1 else
+            "snmpd did not come up with that configuration, so the previous "
+            "one was put back")
+
+
+_sh = shell_with(FakeApi(), "")
+_sh.snmp = type("N", (), {"apply": _snmp_apply,
+                          "stale": lambda self, *a, **k: False,
+                          "read": lambda self: ({}, [], {}, [])})()
+_sh.agentx_follows_snmp = lambda on: None
+_sh.booting = True
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _ok = _sh.apply(parse_nested("snmp enabled yes\nsnmp community c\n"))
+check(_ok and _sh.snmp_pending and "warning: snmp: snmpd did not come up"
+      in _buf.getvalue(),
+      f"at boot the failure is a warning and the rest is applied: {_ok} "
+      f"{_buf.getvalue()!r}")
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _r = _sh.retry_snmp()
+check(_r is True and len(_tries) == 2 and _sh.snmp_pending is None
+      and "applied once the interfaces were up" in _buf.getvalue(),
+      f"Shell.retry_snmp: tried again after the interfaces: {_r} {_tries}")
+check(_sh.retry_snmp() is None, "Shell.retry_snmp: and nothing when nothing waits")
+_tries.clear()
+_sh2 = shell_with(FakeApi(), "")
+_sh2.snmp = _sh.snmp
+with contextlib.redirect_stdout(io.StringIO()):
+    _ok = _sh2.apply(parse_nested("snmp enabled yes\nsnmp community c\n"))
+check(not _ok and not _sh2.snmp_pending,
+      "while a commit typed by an operator still refuses it whole")
+
 
 print("=== a check reads each dump once; an apply reads fresh (#520) ===")
 

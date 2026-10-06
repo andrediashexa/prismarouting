@@ -9155,6 +9155,12 @@ class Shell:
         # The box's name the prompt shows, read on first use (#526).
         self._prompt_name = None
         self.snmp = SnmpDaemon(runner=doors.runner(), files=doors.DoorFiles())
+        # The boot's apply (--load) and the stack's (--reapply) set this
+        # (#591): there, an SNMP setting snmpd does not come up with is a
+        # warning and the rest of the configuration goes on - and the SNMP
+        # apply waits in `snmp_pending` to be tried once more after it.
+        self.booting = False
+        self.snmp_pending = None
         # The management API's settings (#532).
         self.apisvc = ApiService(runner=doors.runner())
         self.dp = Vpp()
@@ -13157,7 +13163,22 @@ class Shell:
                                       target.snmp_users,
                                       target.snmp_trap_hosts,
                                       hostname=name)
-            if not ok:
+            if not ok and self.booting:
+                # NOT A REASON FOR THE BOX NOT TO COME UP (#591). snmpd is
+                # applied before the interfaces, so a listen-address on one
+                # of them (#582) does not exist yet at boot: snmpd could not
+                # bind, this returned False, and the whole load stopped
+                # before the interfaces - whose addresses snmpd waited for.
+                # 10.40.200.166 came up with no address at all, the load
+                # retrying every 8 s. The rest goes on; SNMP is tried again
+                # once the interfaces are there (Shell.retry_snmp).
+                print(f"warning: snmp: {msg}")
+                print_prose("the rest of the configuration is applied, and "
+                            "SNMP is tried again after the interfaces")
+                self.snmp_pending = (target.snmp, target.snmp_communities,
+                                     target.snmp_users,
+                                     target.snmp_trap_hosts, name)
+            elif not ok:
                 self.err(f"snmp: {msg}")
                 return False
             if msg:
@@ -13783,6 +13804,26 @@ class Shell:
                 "session_memory_mb": 0}
         args.update(kw)
         return self.api_call("bpa_global_set", args)
+
+    def retry_snmp(self):
+        """
+        The SNMP apply the boot's load set aside (#591), once more now that
+        the interfaces - and the addresses snmpd listens on - are there.
+        Said either way; a failure here is still a warning, the box being up.
+        """
+        if not self.snmp_pending:
+            return None
+        settings, communities, users, traps, name = self.snmp_pending
+        self.snmp_pending = None
+        ok, msg = self.snmp.apply(settings, communities, users, traps,
+                                  hostname=name)
+        if ok:
+            print("snmp: applied once the interfaces were up"
+                  + (f" ({msg})" if msg else ""))
+            self.agentx_follows_snmp(settings.get("enabled") == "yes")
+        else:
+            print(f"warning: snmp: {msg}")
+        return ok
 
     def agentx_follows_snmp(self, enabled):
         """
@@ -25890,7 +25931,9 @@ def main():
     sh = Shell()
 
     if args and args[0] == "--load":
+        sh.booting = True
         sh.load(args[1] if len(args) > 1 else CONFIG_PATH)
+        sh.retry_snmp()
         # The boot's apply, and the one after every restart of the stack: a
         # start it has not recorded is recorded now, with its cause (#588).
         sh.observe_starts()
@@ -25905,7 +25948,9 @@ def main():
         return sh.apply_pending()
 
     if args and args[0] == "--reapply":
+        sh.booting = True
         path = sh.reapply()
+        sh.retry_snmp()
         # A container Docker started again: the start, and why (#588).
         sh.observe_starts()
         if path is None:

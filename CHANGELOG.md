@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box with `snmp listen-address` on one of its interfaces did not come
+  up.** ([#591](https://github.com/andrediashexa/hexarouting/issues/591))
+  The boot's load applies the host settings before the interfaces, so snmpd
+  was restarted on an address the box did not have yet, could not bind, and
+  its failure stopped the whole load - before the interfaces whose addresses
+  it waited for. On 10.40.200.166 the box came up with no address at all,
+  retrying every 8 s, reached only through the hypervisor's console; a
+  `system dataplane restart`, which runs the same load, went dark the same
+  way. At boot and on reapply an SNMP failure is now a warning, the rest of
+  the configuration is applied, and SNMP is tried again once the interfaces
+  are up. A commit typed by an operator still refuses it whole.
+
 * **And no "no port of this box has a module to read" under that note.**
   ([#590](https://github.com/andrediashexa/hexarouting/issues/590)) On
   10.40.200.166 on 0.151.16 the older-plugin note was followed by it, which
