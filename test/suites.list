@@ -12,6 +12,7 @@
 .build/test_bpa
 .build/test_bpa_static
 .build/test_bpa_top
+.build/test_bpa_xcvr
 .build/test_bpa_rate
 .build/test_bpa_keys
 .build/test_bpa_nat64
@@ -80,6 +81,8 @@ python3 test/test_prismash_perms.py
 python3 test/test_prismash_confirm.py
 python3 test/test_prismash_igp.py
 python3 test/test_prismash_bfd.py
+python3 test/test_transceiver.py
+python3 test/test_prismash_transceiver.py
 python3 test/test_prismash_bgp.py
 python3 test/test_prismash_policy.py
 sh test/test_prismash_login.sh
