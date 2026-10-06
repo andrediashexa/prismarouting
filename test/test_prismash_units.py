@@ -7647,11 +7647,15 @@ ok("one place, so no level can be the one that forgot")
 print("\n=== Shell.level_words: what ? offers for them ===")
 # Mutation shown red: `top` and `up` offered at depth 0, where the next
 # keystroke refuses them.
-check(set(at().level_words()) == set(prismash.PROBE_TOOLS),
+# `replace` and `rename` (#585) are offered at the top and inside `router
+# bgp`, the two places each is taken.
+check(set(at().level_words()) == set(prismash.PROBE_TOOLS)
+      | set(prismash.EDIT_WORDS),
       f"at the top, the probes and not the two that would be refused: "
       f"{sorted(at().level_words())!r}")
 words = at(ctx=["router bgp 65000"]).level_words()
-check(set(words) == set(prismash.PROBE_TOOLS) | {"top", "up"},
+check(set(words) == set(prismash.PROBE_TOOLS) | {"top", "up"}
+      | set(prismash.EDIT_WORDS),
       f"inside a block, all of them: {sorted(words)!r}")
 check(words["ping"] == prismash.TREE["operational"]["ping"][0],
       f"a probe described in the tree's own words: {words['ping']!r}")

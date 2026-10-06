@@ -331,7 +331,7 @@ OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c
            utilisation:off vrf:off vrrp:off ha-failover:off
            syslog-reconnect:off syslog-spill-resync:off identity-empty:off snmp-traps:off
            hostname:off monitor-interface:off log-container:off
-           monitor-cgnat-logging:off cgnat-prefix-list:off"
+           monitor-cgnat-logging:off cgnat-prefix-list:off replace-rename:off"
 
 # What a lab is given for its off run, or nothing when it has none.
 #

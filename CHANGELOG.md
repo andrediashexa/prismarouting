@@ -77,6 +77,46 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`replace pattern` and `rename` in configuration mode, Junos-style.**
+  ([#585](https://github.com/andrediashexa/hexarouting/issues/585))
+  `replace pattern <regex> with <replacement> [upto <n>]` substitutes a
+  regular expression across the candidate at the top, or across the
+  statements of the level it is typed at - `nat / cgnat`, one pool,
+  `router bgp 65000`, an interface - and says how many substitutions it
+  made; `upto <n>` takes the first n matches, and `| compare` at the end is
+  a dry run that prints the difference and the verdict and stages nothing.
+  `rename <path> <name> to <new-name>` renames a CGNAT or NAT64 pool, an
+  IPv4 or IPv6 prefix-list, a route-map, a BGP peer-group or a
+  sub-interface, loopback or bundle where it is declared and wherever the
+  configuration names it: a pool's `prefix-list-inside`/`-outside`, a
+  route-map's `match`, BGP's `prefix-list`/`route-map`/`peer-group`, a
+  static route's interface, `passive-interface`, FRR's interface stanza. A
+  name already taken is refused, and so is a routing statement naming the
+  old name in a place the VTY cannot read, quoted, rather than left
+  dangling.
+
+  Both change the candidate only - nothing reaches the box before `commit`,
+  so `show configuration compare`, `commit check`, `commit confirmed` and
+  `rollback` work on the result as on typed lines. The result is checked as
+  typed lines are: read back by the door a saved file comes in by, each
+  changed statement replayed through the prompt's own handler at its level
+  (FRR's parser included), then the commit check - refused only for what the
+  edit itself causes. A refusal names the first failing line and why and
+  leaves the candidate as it was. A pattern never crosses a statement: it is
+  matched against each one on its own, and a match of nothing or a
+  replacement that breaks a statement in two is refused. Through the API
+  nothing changes: ConfigService.Edit takes either line as the prompt does,
+  and SetConfig already takes a whole candidate (docs/clients.md).
+
+  A pool renamed is rebuilt in the dataplane under its new name - the same
+  mapping, its sessions ended, as any change that rebuilds a pool. The
+  commit check used to refuse every such commit, typed or renamed: the
+  dataplane validates the new pool against the pools it runs, the old one
+  among them, and answered "public address ... is already in pool 'lab'"
+  while the apply removes the old pool before adding the new. A pool that
+  is a removed one in every line but its name is no longer sent back to the
+  dataplane's check (measured in lab/replace-rename.sh).
+
 ### Fixed
 
 ## 0.151.12 - a CGNAT pool's sides as prefix-lists

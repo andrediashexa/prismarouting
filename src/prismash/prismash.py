@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import difflib
 import hashlib
 import io
 import ipaddress
@@ -94,6 +95,11 @@ import logmon
 import logstate
 import vppapi
 import policy as policy_mod
+from cfgedit import (EDIT_WORDS, REPLACE_HINT, RENAME_FORMS, edit_tokens,
+                     replace_request, statement_paths, substitute,
+                     rename_target, declared_names, neighbour_names,
+                     rename_lines, interface_rename_error, substituted_row,
+                     renamed_pool)
 
 readline = None
 
@@ -4888,7 +4894,10 @@ def _hint_elements(text):
 
 def _token_takes(tok, word):
     """Does hint token `tok` accept `word`? A placeholder takes any word, a
-    keyword (or `a|b` alternation of keywords) only itself."""
+    keyword (or `a|b` alternation of keywords) only itself, and a `|` on its
+    own is the pipe: `replace`'s `[| compare]` (#585)."""
+    if tok == "|":
+        return word == "|"
     if tok.startswith("<") or tok == "...":
         return True
     return word in tok.split("|")
@@ -4896,6 +4905,8 @@ def _token_takes(tok, word):
 
 def _token_offer(tok):
     """What a token offers: keywords to complete, or a placeholder hint."""
+    if tok == "|":
+        return {"|": ""}, None
     if tok.startswith("<") or tok == "...":
         return {}, tok
     return {k: "" for k in tok.split("|") if k}, None
@@ -12749,6 +12760,16 @@ class Shell:
                 # and inventing one that creates-then-deletes would rebuild
                 # exactly that outage risk. What changed is that a check which
                 # cannot run is no longer silently a pass.
+                # A POOL RENAMED (#585) is the pool this commit removes,
+                # under another name. The dataplane checks a pool against the
+                # pools it RUNS, the removed one among them, so it refused
+                # every rename as two pools sharing a public address -
+                # measured in lab/replace-rename.sh - while the apply removes
+                # first and would have taken it. The definition is the one the
+                # dataplane already validated and runs; nothing is asked of it
+                # again.
+                if renamed_pool(pool, running, d["pool_remove"]):
+                    continue
                 rc, out = self.dp.run(pool.device_command() + " check")
                 if rc:
                     print(out)
@@ -16390,6 +16411,11 @@ class Shell:
         return ""
 
     def do_config(self, line):
+        # Ahead of the rewrites (#585): under `nat` or `policy-options` they
+        # would make the line a statement of that level, and inside `router
+        # static` refuse it as one.
+        if line.split()[:1] and line.split()[0] in EDIT_WORDS:
+            return self.owns_word(line.split())
         line = self.hierarchy_rewrite(line)
         if not line:
             return True
@@ -17728,6 +17754,15 @@ class Shell:
         if w[0] == "commit" and self.mode in BLOCK_MODES:
             self.commit_from_block(w[1:])
             return True
+        # `replace pattern` and `rename` (#585), at every level: what they
+        # cover is the level they are typed at.
+        if w[0] in EDIT_WORDS and self.mode != "operational" \
+                and self.candidate is not None:
+            if w[0] == "replace":
+                self.do_replace(" ".join(w))
+            else:
+                self.do_rename(" ".join(w))
+            return True
         return False
 
     def block_store(self):
@@ -17790,6 +17825,10 @@ class Shell:
         words = dict(LEVEL_WORDS) if self.config_depth() else {}
         for tool in PROBE_TOOLS:
             words[tool] = TREE["operational"][tool][0]
+        # `replace` at every level and `rename` where something can be
+        # renamed from (#585): offered where it is taken, nowhere else.
+        for word, (what, _) in self.edit_tree().items():
+            words[word] = what
         return words
 
     def config_depth(self):
@@ -17894,6 +17933,448 @@ class Shell:
             return
         for _ in range(levels):
             self.leave_one_level()
+
+    # ------------------------------------------- replace pattern / rename
+
+    #: The end of every `rename` hint (#585): the name, then this.
+    RENAME_TO = " to <new-name>"
+
+    def edit_scope(self):
+        """
+        The level being edited, as the block headers cfgedit.statement_paths()
+        gives a statement inside it (#585): [] at the top, `nat / cgnat`'s two,
+        a pool's three, an FRR block's own.
+        """
+        if self.mode == "pool" and self.pool is not None:
+            return [NAT_HIERARCHY, getattr(self.pool, "level", CGNAT_LEVEL),
+                    f"pool {self.pool.name}"]
+        if self.mode == "user" and self.user is not None:
+            return [f"user {self.user.name}"]
+        if self.mode == "snmp-user" and self.snmp_user is not None:
+            return [f"snmp-user {self.snmp_user.name}"]
+        if self.frr_ctx:
+            return [h.strip() for h in self.frr_ctx]
+        return list(self.nat_ctx)
+
+    def edit_tree(self):
+        """
+        What `?` walks after `replace` and `rename` here (#585). `rename`
+        only where something can be renamed from, so a level that renames
+        nothing is not offered the word.
+        """
+        tree = {"replace": ("a regular expression substituted across this "
+                            "level", {
+                                "pattern": ("matched per statement; Python "
+                                            "regex, \\1 in the replacement",
+                                            REPLACE_HINT)})}
+        level = " ".join(self.edit_scope()).split()
+        pool = {"pool": ("a pool; the dataplane rebuilds it under the new "
+                         "name", ARG_POOL + self.RENAME_TO)}
+        nat = {CGNAT_LEVEL: ("a CGNAT pool", pool),
+               NAT64_LEVEL: ("a NAT64 pool", pool)}
+        named = None
+        if not level:
+            named = {
+                NAT_HIERARCHY: ("a pool", nat),
+                "ip": ("an IPv4 list", {"prefix-list": (
+                    "a prefix-list, and every use of it",
+                    ARG_PREFIX_LIST + self.RENAME_TO)}),
+                "ipv6": ("an IPv6 list", {"prefix-list": (
+                    "a prefix-list, and every use of it",
+                    ARG_PREFIX_LIST + self.RENAME_TO)}),
+                "route-map": ("a route-map, and every use of it",
+                              ARG_ROUTE_MAP + self.RENAME_TO),
+                "router": ("a BGP peer-group", {"bgp": (
+                    "a peer-group, and every neighbour in it",
+                    "<AS> peer-group " + ARG_PEER_GROUP + self.RENAME_TO)}),
+                "interface": ("a sub-interface, a loopback or a bundle",
+                              ARG_INTERFACE + self.RENAME_TO)}
+        elif level == [NAT_HIERARCHY]:
+            named = nat
+        elif level in ([NAT_HIERARCHY, CGNAT_LEVEL],
+                       [NAT_HIERARCHY, NAT64_LEVEL]):
+            named = pool
+        elif rename_target(level + ["peer-group"]):
+            named = {"peer-group": ("a peer-group, and every neighbour in it",
+                                    ARG_PEER_GROUP + self.RENAME_TO)}
+        if named:
+            tree["rename"] = ("rename one thing and every reference to it",
+                              named)
+        return tree
+
+    def do_replace(self, line):
+        """
+        `replace pattern <regex> with <replacement> [upto <n>] [| compare]`
+        (#585): Junos's substitution, over the statements of the level it is
+        typed at, staged only when the whole result passes what a typed line
+        and a commit check pass - see stage_edit(). `| compare` shows the
+        result and stages nothing.
+        """
+        tokens = edit_tokens(line)
+        req = replace_request(tokens[1:]) if tokens else \
+            "a quote is left open"
+        if isinstance(req, str):
+            self.err_prose("replace: not a whole statement; nothing staged",
+                           req)
+            return
+        pattern, repl, upto, compare = req
+        try:
+            rx = re.compile(pattern)
+        except re.error as e:
+            self.err_prose("replace: not a regular expression; nothing staged",
+                           f"{pattern}: {e}")
+            return
+        before = self.candidate.text()
+        lines = before.splitlines()
+        try:
+            after, count, changed = substitute(
+                lines, statement_paths(lines), self.edit_scope(), rx, repl,
+                upto)
+        except ValueError as e:
+            why, stmt = e.args[0]
+            if why == "empty":
+                self.err_prose("replace: the pattern matches an empty string; "
+                               "nothing staged", stmt)
+            else:
+                self.err_prose("replace: the replacement breaks a statement "
+                               "in two; nothing staged", stmt)
+            return
+        except (re.error, IndexError) as e:
+            # The replacement's own grammar: `\3` with two groups.
+            self.err_prose("replace: the replacement cannot be used; nothing "
+                           "staged", f"{repl}: {e}")
+            return
+        if not changed:
+            print(f"replace: {count} match(es), and no statement changes; "
+                  "nothing staged")
+            return
+        self.stage_edit("\n".join(after) + "\n",
+                        f"{count} substitution(s) in {changed} statement(s)",
+                        "replace", compare,
+                        same=lambda row: substituted_row(rx, repl, row))
+
+    def rename_level(self):
+        """The words leading to the level `rename` is typed at (#585)."""
+        return " ".join(self.edit_scope()).split()
+
+    def do_rename(self, line):
+        """
+        `rename <path> <name> to <new-name>` (#585): one name, where it is
+        declared and wherever the configuration names it, as one edit checked
+        and staged like a `replace` (stage_edit). What it renames, and what it
+        refuses, is cfgedit's; the names the BOX holds beside the candidate -
+        an interface the dataplane has - are asked here.
+        """
+        tokens = edit_tokens(line) or []
+        words = [w for w, _ in tokens[1:]]
+        if len(words) < 3 or words[-2] != "to" or any(q for _, q in tokens):
+            self.err_prose("rename: not a whole statement; nothing renamed",
+                           "rename <path> <name> to <new-name>")
+            return
+        old, new = words[-3], words[-1]
+        target = rename_target(self.rename_level() + words[:-3])
+        if target is None:
+            self.err_prose("rename: not a name this VTY renames; nothing "
+                           "renamed", "it renames, from the top: "
+                           + ", ".join(RENAME_FORMS))
+            return
+        kind, where = target
+        if old == new:
+            print("rename: the same name; nothing renamed")
+            return
+        cand = self.candidate
+        before = cand.text()
+        lines = before.splitlines()
+        paths = statement_paths(lines)
+        what = kind.split()[0] if kind != "pool" else f"{where} pool"
+        if kind == "pool":
+            held = cand.pools.get(old)
+            known = {old} if held is not None and held.level == where else ()
+            taken = set(cand.pools)
+        else:
+            known = declared_names(lines, paths, kind, where)
+            taken = set(known)
+        if kind == "peer-group":
+            taken |= neighbour_names(lines, paths, where)
+        if kind == "interface":
+            taken |= cand.interface_names() | self.dataplane_names()
+        if old not in known:
+            # The name in the prose: it is the operator's, of no widest.
+            self.err_prose("rename: no such name here; nothing renamed",
+                           f"the candidate declares no {what} '{old}'")
+            return
+        if new in taken:
+            self.err_prose("rename: that name is taken; nothing renamed",
+                           f"'{new}' is already a {what} here, or a name it "
+                           "would collide with")
+            return
+        if kind == "interface":
+            why = interface_rename_error(old, new, cand.interface_names())
+            if why:
+                self.err_prose(f"rename: {why[0]}", why[1])
+                return
+        if kind == "route-map" and (compiled_object(f"route-map {old}")
+                                    or compiled_object(f"route-map {new}")):
+            self.err_prose("rename: the PO- names belong to policy-options; "
+                           "nothing renamed",
+                           "rename the policy-statement, not what it "
+                           "compiles to")
+            return
+        after, count, unfollowed = rename_lines(lines, paths, kind, where,
+                                                old, new)
+        if unfollowed:
+            self.err_prose("rename: a reference this VTY cannot follow; "
+                           "nothing renamed", unfollowed,
+                           "change that statement by hand first, or take "
+                           "the reference out")
+            return
+        word = re.compile(r"(?<![\w.-])" + re.escape(old) + r"(?![\w.-])")
+        self.stage_edit("\n".join(after) + "\n",
+                        f"renamed in {count} place(s)",
+                        "rename", renamed=(kind, old, new),
+                        same=lambda row: word.sub(new, row))
+
+    def edit_refusal(self, before, target, text):
+        """
+        Why `target` - `text` read back - may not replace the candidate whose
+        text is `before`, as the rows of a refusal, or None (#585).
+
+        Three questions, the first two about the text and the third about
+        each line the edit changed:
+
+          * does the door a saved file comes in by, Config.parse, hold every
+            line - nothing refused, nothing dropped;
+          * does the result read back as itself, so nothing the edit merged
+            (two pools under one name) is staged as something else;
+          * does each changed statement pass the PROMPT's door at its level,
+            replayed by typed_refusal() - the file door alone is not that:
+            it takes `block-size 7`, which a running box may hold and the
+            prompt refuses (config.DOORS_DIFFER, #357), and it hands routing
+            statements to FRR unread where the prompt asks FRR first (#431).
+        """
+        if target.unknown or target.dropped:
+            lineno, line, why = (target.unknown or target.dropped)[0]
+            return (f"line {lineno} of the result is refused; nothing "
+                    "staged", line, f"({why})")
+        new = text.splitlines()
+        back = target.text().splitlines()
+        if back != new:
+            at = next((i for i, (x, y) in enumerate(zip(new, back)) if x != y),
+                      min(len(new), len(back)))
+            said = new[at].strip() if at < len(new) else "(the end)"
+            reads = back[at].strip() if at < len(back) else "(the end)"
+            return (f"line {at + 1} of the result reads back otherwise; "
+                    "nothing staged", said, f"reads back as: {reads}")
+        paths = statement_paths(new)
+        cut = new.index(ROUTING_HEADER) if ROUTING_HEADER in new else len(new)
+        sm = difflib.SequenceMatcher(None, before.splitlines(), new,
+                                     autojunk=False)
+        unchecked = False
+        for op, _, _, j1, j2 in sm.get_opcodes():
+            if op not in ("replace", "insert"):
+                continue
+            for j in range(j1, j2):
+                if paths[j] is None:
+                    continue
+                said = self.typed_refusal(target, j >= cut, paths[j],
+                                          new[j].strip())
+                if said is None:
+                    continue
+                if said is True:
+                    unchecked = True
+                    continue
+                return (f"line {j + 1} of the result is refused; nothing "
+                        "staged", new[j].strip(), *said)
+        if unchecked:
+            print_prose("note: routing lines staged WITHOUT FRR's check, "
+                        "because FRR could not be asked; 'commit check' "
+                        "asks it again")
+        return None
+
+    def typed_refusal(self, target, routing, path, stmt):
+        """
+        What the prompt answers `stmt`, typed at the level `path` names in
+        `target` (#585): None when it takes it, True when it took it without
+        FRR's check, or the rows of its refusal with their `error: ` taken
+        off. Asked of a copy of this session standing at that level, with a
+        copy of `target` as its candidate, so nothing the replay stages or
+        enters is this session's.
+        """
+        sh = copy.copy(self)
+        sh.candidate = copy.deepcopy(target)
+        sh.mode, sh.pool, sh.user, sh.snmp_user = "config", None, None, None
+        sh.frr_ctx, sh.nat_ctx = [], []
+        sh.failed, sh.batch_refused = 0, []
+        sh.static_pending = sh.list_pending = None
+        handler = sh.do_config
+        if routing:
+            sh.frr_ctx = list(path)
+        elif path and path[0].startswith(("user ", "snmp-user ")):
+            kind, name = path[0].split(None, 1)
+            sh.mode = kind
+            store = sh.candidate.users if kind == "user" \
+                else sh.candidate.snmp_users
+            setattr(sh, "user" if kind == "user" else "snmp_user",
+                    store.get(name))
+            handler = sh.do_user if kind == "user" else sh.do_snmp_user
+        elif len(path) == 3 and path[0] == NAT_HIERARCHY:
+            sh.mode, sh.nat_ctx = "pool", path[:2]
+            sh.pool = sh.candidate.pools.get(path[2].split(None, 1)[1])
+            handler = sh.do_pool
+        elif path and path[0].startswith("interface "):
+            sh.frr_ctx = list(path)
+        else:
+            sh.nat_ctx = list(path)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            handler(stmt)
+        rows = out.getvalue().splitlines()
+        if sh.failed:
+            return [r[len("error: "):] if r.startswith("error: ") else
+                    r.strip() for r in rows if r.strip()]
+        if any("staged WITHOUT being checked" in r for r in rows):
+            return True
+        return None
+
+    def edit_check(self, old, target, same=None):
+        """
+        The commit check's rows for `target` when the edit is what makes it
+        fail, or [] (#585). The check is apply(check_only=True), the one
+        `commit` runs, on copies - it writes defaults into what it is given
+        (pair_cards, resolve_pool_lists).
+
+        Refused only for what THIS change causes, the posture of the lockout
+        checks: a candidate already refused before the edit - a daemon not
+        answering, a pool half typed - is refused by `commit` for that, and
+        an edit elsewhere is not the place to say it. So each `error:` row of
+        the result is looked for among the rows the candidate before it got,
+        read through `same` - the edit applied to them - because a refusal
+        naming a renamed pool is the same refusal under its new name.
+        """
+        ok, rows = self.quiet_check(target)
+        if ok:
+            return []
+        was_ok, was = self.quiet_check(old)
+        if was_ok:
+            return rows
+        was = {(same or (lambda r: r))(r) for r in was}
+        if any(r.startswith("error:") and r not in was for r in rows):
+            return rows
+        return []
+
+    def quiet_check(self, cfg):
+        """
+        The commit check on a copy of `cfg`, as (passed, its rows), leaving
+        this session as it was: its count of refusals, and the three gates a
+        check refills (#585) - `commit` runs its own.
+        """
+        out = io.StringIO()
+        failed = self.failed
+        gates = (self.remap, self.cutoff, self.diverge)
+        with contextlib.redirect_stdout(out):
+            ok = self.apply(copy.deepcopy(cfg), check_only=True)
+        self.failed = failed
+        self.remap, self.cutoff, self.diverge = gates
+        return ok, out.getvalue().splitlines()
+
+    def stage_edit(self, text, said, verb, compare=False, renamed=None,
+                   same=None):
+        """
+        `text` - the candidate's own text with a `replace` or a `rename`
+        applied - staged as the candidate whole, or refused whole (#585).
+
+        Nothing reaches the box: the candidate is replaced, as `rollback <n>`
+        replaces it, and `show configuration compare`, `commit check`,
+        `commit confirmed` and `rollback` work on it as they do on typed
+        lines. A refusal names the first line that fails and why, and leaves
+        the candidate as it was. `compare` is the dry run: the difference and
+        the verdict, and nothing staged. `same` is the edit applied to one row
+        of text, for edit_check().
+        """
+        old = self.candidate
+        before = old.text()
+        back = Config.parse(before)
+        if back.unknown or back.text() != before:
+            # A line `show configuration` prints and its own reader refuses -
+            # a static route FRR holds with a hop the prompt would not take,
+            # say. The edit works on that text, so staging its result would
+            # drop the line in silence; the edit is refused instead, naming
+            # it, and the line is the operator's to fix or take out first.
+            a, b = before.splitlines(), back.text().splitlines()
+            at = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y),
+                      min(len(a), len(b)))
+            line = (back.unknown[0][1] if back.unknown
+                    else a[at].strip() if at < len(a) else "(the end)")
+            self.err_prose("the candidate does not read back as itself; "
+                           "nothing staged", line,
+                           "the edit works on 'show configuration', and this "
+                           "line of it would be lost; change it or take it "
+                           "out first")
+            return False
+        target = Config.parse(text)
+        if compare:
+            diff = difflib.unified_diff(
+                before.splitlines(), text.splitlines(), "candidate",
+                f"after {verb}", n=1, lineterm="")
+            print("\n".join(compare_redact(list(diff))))
+        why = self.edit_refusal(before, target, text)
+        rows = [] if why else self.edit_check(old, target, same)
+        if rows:
+            why = ("the result fails the commit check; nothing staged",)
+        if why:
+            self.err_prose(*why)
+            # The check's own rows, folded to the console again: they were
+            # captured whole, and a row its site wraps is one row here.
+            for r in rows:
+                print_prose(r.strip(), indent=r[:len(r) - len(r.lstrip())])
+            return False
+        print(said)
+        if compare:
+            print("it passes the checks; nothing staged ('| compare' is a dry "
+                  "run)")
+            return True
+        # What the box READ and never writes as text, kept: VPP's own router
+        # advertisements, whether SNMP could be read, the pairs it made itself.
+        for attr in ("ra_dataplane", "snmp_unread", "soft_pairs"):
+            if hasattr(old, attr):
+                setattr(target, attr, copy.deepcopy(getattr(old, attr)))
+        if renamed and renamed[0] == "interface":
+            _, a, b = renamed
+            for attr in ("ra_dataplane", "soft_pairs"):
+                held = getattr(target, attr, None)
+                if isinstance(held, set) and a in held:
+                    held.discard(a)
+                    held.add(b)
+        self.candidate = target
+        self.rebind_block()
+        print("staged in the candidate; 'show configuration compare' "
+              "reviews it")
+        return True
+
+    def rebind_block(self):
+        """
+        The pool, account or SNMP user being edited, found again by name in a
+        candidate an edit replaced (#585): a `replace` typed inside a pool
+        made a new Pool, and the statements typed next must go to it. One the
+        candidate no longer holds puts the operator back at the level above,
+        said, as commit_from_block() does.
+        """
+        store, name = self.block_store()
+        if name is None:
+            return
+        held = store.get(name) if store is not None else None
+        if held is None:
+            self.err(f"the candidate after this edit no longer holds {name}")
+            print("    back at the level above")
+            self.mode = "config"
+            self.pool = self.user = self.snmp_user = None
+            return
+        if self.mode == "pool":
+            self.pool = held
+        elif self.mode == "user":
+            self.user = held
+        else:
+            self.snmp_user = held
 
     def do_snmp_user(self, line):
         w = line.split()
@@ -23954,7 +24435,10 @@ class Shell:
             mine = self.no_options(words[1:], prefix)
             if mine:
                 opts = {**opts, **mine}
-        if not words or "|" in line:
+        # A `|` is a filter after `show`, and inside an FRR statement it is a
+        # regex's; after `replace` it is the dry run's, `| compare` (#585),
+        # which the hint below follows.
+        if not words or ("|" in line and words[0] not in EDIT_WORDS):
             return opts, hint, prefix
         # Past the first word of an argument whose hint carries optional
         # words, the hint is grammar to follow, not a picture to repeat: the
@@ -23994,6 +24478,9 @@ class Shell:
         if self.mode != "operational" and words[:1] \
                 and words[0] in PROBE_TOOLS:
             return TREE["operational"], words, False
+        if self.mode != "operational" and words[:1] \
+                and words[0] in EDIT_WORDS:
+            return self.edit_tree(), words, False
         if self.frr_ctx:
             return self.block_grammar(words), words, False
         return TREE.get(self.grammar_mode()), words, words[:1] == ["show"]
@@ -24075,6 +24562,11 @@ class Shell:
             # copy is what would go out of date the next time a probe grows an
             # option.
             node, hint = walk_from(TREE["operational"], words)
+        elif (self.mode != "operational" and words[:1]
+                and words[0] in EDIT_WORDS):
+            # `replace` and `rename` (#585), the same at every level: a tree
+            # of their own, so no level's grammar has to carry them.
+            node, hint = walk_from(self.edit_tree(), words)
         elif self.frr_ctx:
             grammar = self.block_grammar(words)
             if grammar is not None:

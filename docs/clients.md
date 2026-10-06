@@ -27,6 +27,28 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.151.13 - replace pattern and rename in configuration mode
+
+* **Contract:** unchanged (`prisma.proto` sha256 `98c0792a12131f8918bdc7a0c87a96e6e0e446da03f1f3f44bd4e3442bc9ba69`).
+  No rpc was added (#585).
+* **Two new lines Edit takes** (#585), at any `EditRequest.path`, as the
+  prompt takes them: `replace pattern <regex> with <replacement> [upto <n>]
+  [| compare]` and `rename <path> <name> to <new-name>`. Each edits the
+  candidate as a whole - at the level `path` names - and is refused whole,
+  with the first failing line and why in the Diagnostics, leaving the
+  candidate as it was; `| compare` returns the difference in `output` and
+  stages nothing. SetConfig needs nothing new: it already takes a whole
+  candidate, which is what a client computing the same edit sends.
+* **GetSchema does not list them.** They are edits of the candidate, not
+  statements in it, and docs/api-coverage.md marks them n/a for that reason;
+  a form that offers them builds the line itself.
+* **What the box refuses in them**, as Diagnostics on Edit: a regex Python
+  cannot compile, a match of an empty string, a replacement that breaks a
+  statement in two, a result the prompt or FRR refuses at its line, a result
+  the commit check refuses for what the edit caused, a name already taken,
+  and - for `rename` - a routing statement naming the old name where the VTY
+  cannot tell what it is.
+
 ## 0.151.12 - a CGNAT pool's sides can be prefix-lists
 
 * **Contract:** additive (`prisma.proto` sha256 `98c0792a12131f8918bdc7a0c87a96e6e0e446da03f1f3f44bd4e3442bc9ba69`).

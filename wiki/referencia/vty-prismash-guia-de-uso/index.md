@@ -282,6 +282,8 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 | `show ...` | exibe informação |
 | `ping` / `traceroute` / `mtr <host>` | as mesmas sondas do modo operacional, em qualquer nível |
 | `top` / `up [<n>]` | anda na hierarquia sem sair do modo de configuração |
+| `replace pattern <regex> with <substituto> [upto <n>] [\| compare]` | troca uma expressão regular em toda a candidata, ou só no nível em que você está; veja abaixo |
+| `rename <caminho> <nome> to <nome-novo>` | renomeia um pool, uma prefix-list, uma route-map, um peer-group ou uma interface criada pela configuração, e tudo o que aponta para ele |
 | `exit`  | sai do nível atual; no topo, sai do modo de configuração |
 
 
@@ -291,6 +293,106 @@ Nada do que você digita chega a um shell: a caixa monta a lista de argumentos e
 A forma de uma linha só do CGNAT (`nat cgnat pool ...`, `cgnat ...`) é recusada, digitada ou lida de um arquivo salvo: depois de atualizar, rode `save` antes de reiniciar. `dataplane interface` no topo é recusado no prompt, dizendo para onde foi; um arquivo salvo com ele ainda é lido, e o próximo `save` o reescreve. `interface <nome> inside` dentro de `cgnat` ainda é aceito, com uma nota dizendo que vai aparecer no bloco da interface. `ip route ...` no topo continua indo para o roteamento. Dentro de `router static`, a única forma é `<prefixo> next-hop ...`: a forma `route ...` dentro do bloco foi retirada, e um arquivo salvo que ainda a tenha é recusado inteiro.
 
 :::
+
+## Mudar muitas linhas de uma vez: `replace pattern` e `rename`
+
+As duas palavras do Junos para a mudança que mexe em muitas linhas — um /30 que muda, uma VLAN renumerada, um pool ou uma lista que troca de nome —, que de outro jeito é apagar e redigitar cada linha que a menciona. As duas mudam **só a candidata**: nada chega ao equipamento antes do `commit`, então `show configuration compare`, `commit check`, `commit confirmed` e `rollback` funcionam sobre o resultado como sobre linhas digitadas.
+
+### `replace pattern`
+
+```
+replace pattern <regex> with <substituto> [upto <n>] [| compare]
+```
+
+No topo, vale para a candidata inteira; dentro de um nível — `nat` > `cgnat`, um pool, `router bgp 65000`, uma interface — vale só para as declarações **dentro** dele, nunca para o cabeçalho do próprio nível. `upto <n>` troca só as `n` primeiras ocorrências, na ordem em que `show configuration` as mostra. A caixa diz quantas trocas fez.
+
+`| compare` no fim é o ensaio: mostra a diferença e o veredito e **não guarda nada**:
+
+```
+prisma# [edit] replace pattern "200\.150\.0\.16/30" with 200.150.0.20/30 | compare
+--- candidate
++++ after replace
+@@ -31,3 +31,3 @@
+ ip prefix-list CGN-IN seq 10 permit 100.64.0.0/22 le 32
+-ip prefix-list CGN-OUT seq 10 permit 200.150.0.16/30
++ip prefix-list CGN-OUT seq 10 permit 200.150.0.20/30
+ !
+1 substitution(s) in 1 statement(s)
+it passes the checks; nothing staged ('| compare' is a dry run)
+```
+
+Sem o `| compare`, o resultado vai para a candidata:
+
+```
+prisma# [edit nat / cgnat / pool lab] replace pattern 4096 with 2048
+1 substitution(s) in 1 statement(s)
+staged in the candidate; 'show configuration compare' reviews it
+```
+
+A expressão é a do Python, com `\1` no substituto. Um padrão com espaço, ou com uma `|` que não é o pipe, vai entre aspas. Três decisões, tomadas pelo lado conservador:
+
+* **Um padrão nunca atravessa uma declaração.** Cada declaração é comparada sozinha, sem o recuo que a posiciona — `^` é o começo da declaração. Um padrão que casa com o vazio (`a*`) e um substituto que quebra a declaração em duas são recusados.
+* **`!` não entra no padrão:** nesta VTY ele começa um comentário.
+* **O nível não renomeia a si mesmo.** Dentro de `pool lab`, o `replace` não muda o nome `lab`; quem renomeia é o `rename`, que segue as referências.
+
+### `rename`
+
+```
+rename <caminho> <nome> to <nome-novo>
+```
+
+Renomeia o nome onde ele é declarado **e em todo lugar que aponta para ele**. O caminho é relativo ao nível em que você está, como no Junos: no topo, `rename nat cgnat pool lab to lab-a`; dentro de `nat` > `cgnat`, `rename pool lab to lab-a`.
+
+| No topo | O que segue |
+|---------|-------------|
+| `rename nat cgnat pool <nome> to <novo>` / `rename nat nat64 pool ...` | o pool; um nome só entre `cgnat` e `nat64`, como no dataplane |
+| `rename ip prefix-list <nome> to <novo>` / `rename ipv6 prefix-list ...` | as entradas (com a descrição de cada uma), o `prefix-list-inside`/`-outside` de um pool, o `match ip address prefix-list` de uma route-map, o `neighbor ... prefix-list` do BGP, o `area ... filter-list prefix` do OSPF |
+| `rename route-map <nome> to <novo>` | as entradas e cada `route-map <nome>` que a usa: BGP, `redistribute`, `ip protocol`, `call` |
+| `rename router bgp <AS> peer-group <nome> to <novo>` | a declaração e cada `neighbor` daquela instância que o nomeia; de dentro de `router bgp`, `rename peer-group <nome> to <novo>` |
+| `rename interface <nome> to <novo>` | uma sub-interface (o pai fica o mesmo), um loopback ou um bundle: o bloco, a estrofe do FRR, a rota estática, o `passive-interface`, o `track` do VRRP |
+
+```
+prisma# [edit] rename ip prefix-list CGN-IN to CGN-INSIDE
+renamed in 4 place(s)
+staged in the candidate; 'show configuration compare' reviews it
+```
+
+O que fica de fora, por enquanto: os nomes de `policy-options` (o compilador deriva deles as route-maps `PO-`), VRFs e contas. Uma porta física também — o nome dela é o da placa, não da configuração. Renomear um pool o **recria** no dataplane com o nome novo: o mapeamento é o mesmo, e as sessões em curso nele caem, como em qualquer mudança que recria um pool.
+
+### O que é recusado, e como
+
+O resultado passa pelas mesmas conferências de uma linha digitada: cada declaração alterada é conferida no nível dela pelo próprio prompt (o FRR incluído, para as linhas de roteamento) e depois vem o `commit check`. Se algo é recusado, **nada** fica na candidata, e a recusa diz a primeira linha que falha e por quê:
+
+```
+error: line 34 of the result is refused; nothing staged
+    route-map UPSTREAM-OUT allow 10
+    not a statement FRR accepts here; nothing staged
+    FRR answered: % Unknown command: route-map UPSTREAM-OUT allow 10
+    '?' lists what this level takes
+```
+
+Uma troca que deixa uma referência pendurada — a lista de um pool renomeada à mão com `replace`, por exemplo — é recusada pelo `commit check`, que diz o que ficou pendurado:
+
+```
+error: the result fails the commit check; nothing staged
+error: pool 'lab-a': prefix-list-outside CGN-OUT does not exist
+    the pool's addresses come from an 'ip prefix-list' with at least one
+    permit; write it, or name another
+```
+
+O `commit check` só recusa pelo que **esta** troca causou: se a candidata já não passava antes — um daemon parado, um pool pela metade —, quem diz isso é o `commit`.
+
+O `rename` recusa também um nome que já existe, e uma linha de roteamento que menciona o nome antigo num lugar que a VTY não sabe ler — em vez de renomear o resto e deixar aquela apontando para nada:
+
+```
+error: rename: that name is taken; nothing renamed
+    'CGN-OUT' is already a prefix-list here, or a name it would collide with
+error: rename: a reference this VTY cannot follow; nothing renamed
+    distribute-list prefix CGN-INSIDE out
+    change that statement by hand first, or take the reference out
+```
+
+Pela API nada muda: o `ConfigService.Edit` aceita as duas linhas como o prompt, e o `SetConfig` já recebe a candidata inteira.
 
 ## Blocos com página própria
 
@@ -368,6 +470,7 @@ prisma# [edit interface ens18] ?
   mtu          MTU, on both the dataplane interface and its TAP
   no           remove a statement from this interface
   ping         send echo requests and say what came back
+  replace      a regular expression substituted across this level
   show         display information
   shutdown     take the interface administratively down
   top          go to the top of the configuration
@@ -379,7 +482,7 @@ prisma# [edit interface ens18] ?
   vrrp         stand for a service address together with the peer (RFC 5798), on the dataplane interface where the packets are
 ```
 
-Cinco dessas linhas não são declarações: `top`, `up`, `ping`, `traceroute` e `mtr` são **palavras que todo nível do modo de configuração tem**, e aparecem em todos eles. No topo do modo de configuração, `top` e `up` ficam de fora da lista — não há nível acima, e a caixa recusa as duas ali.
+Seis dessas linhas não são declarações: `top`, `up`, `ping`, `traceroute`, `mtr` e `replace` são **palavras que todo nível do modo de configuração tem**, e aparecem em todos eles. O `rename` aparece só onde há algo a renomear a partir dali — no topo, em `nat`, em `cgnat` e `nat64`, dentro de `router bgp`. No topo do modo de configuração, `top` e `up` ficam de fora da lista — não há nível acima, e a caixa recusa as duas ali.
 
 Numa porta, `member`, `lacp` e `load-balance` não aparecem: são declarações de um bundle `ae<n>`, e é só lá que o `?` as oferece.
 
