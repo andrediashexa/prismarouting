@@ -1637,9 +1637,18 @@ class SnmpDaemon:
         alone, every commit from the VTY on 10.40.200.166 wrote snmpd.conf
         and said "systemd is not managing this system, so snmpd was not
         restarted". The file changed and the daemon kept serving the old one.
+
+        And not "a door answers" either. The snmp lab runs a door in a
+        container that has no systemd, and taking the door for a systemd
+        restarted snmpd through a systemctl that could not, then put the old
+        file back. So the host is asked, through the door.
         """
-        return (os.path.isdir(self.root + "/run/systemd/system")
-                or self._host_answers())
+        if os.path.isdir(self.root + "/run/systemd/system"):
+            return True
+        if not self._host_answers():
+            return False
+        rc, _ = self._run(["test", "-d", "/run/systemd/system"])
+        return rc == 0
 
     def read(self):
         """

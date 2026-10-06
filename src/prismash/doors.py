@@ -187,6 +187,9 @@ FIXED = {
     ("systemctl", "disable", "--now", "snmpd"): "stop snmpd",
     ("systemctl", "enable", "snmpd"): "enable snmpd",
     ("systemctl", "restart", "snmpd"): "restart snmpd",
+    # Whether a systemd runs the host at all (#587): the management
+    # container has no /run/systemd/system of its own to look at.
+    ("test", "-d", "/run/systemd/system"): "ask whether systemd runs the host",
     # `system reboot` and `system shutdown` (Shell.ask_systemd), and the
     # tuner the `system cpu` / `system memory` changes restart. Missed by the
     # first cut, whose suite read system.py only: a box with the daemon would

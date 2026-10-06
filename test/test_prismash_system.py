@@ -1019,6 +1019,22 @@ with _tf.TemporaryDirectory() as _d:
         return 0, ""
     _host.door = _d                                 # a path that exists
     os.makedirs(_d + "/ctr/etc/snmp")               # no /run/systemd here
+    check(system.SnmpDaemon(runner=_host, root=_d + "/ctr")._systemd_manages()
+          and ["test", "-d", "/run/systemd/system"] in _ran,
+          f"SnmpDaemon._systemd_manages asks the host through its door: {_ran}")
+
+    def _bare(argv, stdin=None, timeout=30):
+        # the snmp lab's door: it answers, and no systemd runs behind it
+        _ran.append(list(argv))
+        return (1, "") if argv[0] == "test" else (0, "")
+    _bare.door = _d
+    del _ran[:]
+    _ok, _why = system.SnmpDaemon(runner=_bare, root=_d + "/ctr").apply(
+        {"enabled": "yes"}, ["c0mm"], {})
+    check(_ok and "not managing" in _why
+          and ["systemctl", "restart", "snmpd"] not in _ran,
+          f"a door with no systemd behind it is not one: {_ran} {_why!r}")
+    del _ran[:]
     _ok, _why = system.SnmpDaemon(runner=_host, root=_d + "/ctr").apply(
         {"enabled": "yes"}, ["c0mm"], {})
     check(_ok and "not managing" not in _why
