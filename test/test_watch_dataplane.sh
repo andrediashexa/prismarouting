@@ -51,8 +51,12 @@ run() { # <box>
   PRISMA_ROOT=$1 PRISMA_SYSTEMCTL=$1/bin/systemctl PRISMA_DOCKER=$1/bin/docker \
   PRISMA_GIVEBACK=$1/bin/giveback PRISMA_IFUP=$1/bin/ifup \
   PRISMA_CARD_STAMP=$1/run/prisma-routing/card-given-back \
+  PRISMA_EVENTS_PY=$REPO/src/prismash/events.py PRISMA_EVENTS=$1/events.log \
+  PRISMA_DOORS=$1/no-doors.sock \
   sh "$BIN" 2>&1
 }
+# The box's record of events (#588 phase 2): what this script wrote there.
+recorded() { grep -q "$2" "$1/events.log" 2>/dev/null; }
 gave_back() { [ -e "$1/giveback.calls" ]; }
 
 echo "=== a box still booting vpp.service is not this script's business ==="
@@ -104,6 +108,9 @@ printf '%s\n' "$OUT" | grep -q "exited" \
 [ -e "$B/run/prisma-routing/card-given-back" ] \
   && ok "and a stamp is left, so it fires once and not every 30 seconds" \
   || bad "no stamp was written: the timer would run ifup at an operator's box twice a minute"
+recorded "$B" '"kind":"gave-up".*"severity":"error".*"text":"the dataplane container is .exited. and Docker stopped restarting it: its cards are given back to Linux' \
+  && ok "and the box's record says the dataplane was given up on (#588, #591)" \
+  || bad "no gave-up event in the record: $(cat "$B/events.log" 2>&1)"
 # AND THE SECOND RUN DOES NOTHING. The stamp is the whole of that.
 rm -f "$B/giveback.calls"
 run "$B" >/dev/null 2>&1
@@ -278,6 +285,8 @@ runr() { # <box> [args]
   PRISMA_GIVEBACK=$_b/bin/giveback PRISMA_IFUP=$_b/bin/ifup \
   PRISMA_PRISMASH=$_b/bin/prismash PRISMA_WAIT_FOR_VPP=$_b/bin/waitvpp \
   PRISMA_CARD_STAMP=$_b/run/prisma-routing/card-given-back \
+  PRISMA_EVENTS_PY=$REPO/src/prismash/events.py PRISMA_EVENTS=$_b/events.log \
+  PRISMA_DOORS=$_b/no-doors.sock \
   sh "$BIN" "$@" 2>&1
 }
 reapplied() { grep -c -- "--reapply" "$1/prismash.calls" 2>/dev/null || echo 0; }
@@ -348,6 +357,10 @@ echo "running vppid2 2026-10-01T21:00:00Z" > "$B/state/prisma-routing_vpp_1"
 for i in 1 2 3 4 5; do OUT=$(runr "$B"); done
 [ "$(reapplied "$B")" = 3 ] && ok "a configuration the new dataplane refuses is tried 3 times, not every tick" \
   || bad "a failing re-apply was tried $(reapplied "$B") times in 5 ticks"
+[ "$(grep -c '"kind":"gave-up"' "$B/events.log" 2>/dev/null)" = 1 ] \
+  && recorded "$B" 'could not be put back on the restarted dataplane after 3 attempts' \
+  && ok "and giving up on it is one event in the box's record, not one a tick (#588)" \
+  || bad "the re-apply given up on, in the record: $(cat "$B/events.log" 2>&1)"
 grep -q "vppid1" "$B/run/prisma-routing/dataplane-applied" \
   && ok "and the record still names the configured run: it was not put back" \
   || bad "a failed re-apply moved the record: $(cat "$B/run/prisma-routing/dataplane-applied")"

@@ -123,8 +123,12 @@ HC() {
   PRISMA_SLEEP=: PRISMA_LOAD_WAIT=30 PRISMA_LOAD_RETRY=10 \
   PRISMA_ROOT=$R PRISMA_IP=$T/ip PRISMA_VPPCTL=$T/vppctl PRISMA_TUNE=$T/tune \
   PRISMA_SYSTEMCTL=$T/systemctl PRISMA_UDEVADM=$T/udevadm PRISMA_GIVE_BACK=$T/giveback \
+  PRISMA_EVENTS_PY=$REPO/src/prismash/events.py PRISMA_EVENTS=$S/events.log \
+  PRISMA_DOORS=$S/no-doors.sock \
   sh "$REPO/appliance/prisma-hot-card" "$@"
 }
+# The box's record of events (#588 phase 2): what the restart tool wrote.
+recorded() { grep -q "$1" "$S/events.log" 2>/dev/null; }
 said() { printf '%s\n' "$OUT" | grep -q "$1"; }
 called() { grep -q "$1" "$S/calls"; }
 
@@ -217,6 +221,8 @@ _seq=$(grep -E "^systemctl|^giveback|name eth9$" "$S/calls" | tr '\n' '|')
 [ $RC = 0 ] && [ "$_seq" = "systemctl is-active --quiet prisma-routing-containers.service|systemctl is-active --quiet vpp.service|systemctl stop prisma-routing-containers.service|giveback restart|ip link set dev xdp-eth9 name eth9|systemctl restart prisma-routing-tune.service|systemctl start prisma-routing-containers.service|systemctl is-active --quiet prisma-routing.service|systemctl start prisma-routing.service|systemctl cat prisma-routing-api-proxy.socket|" ] \
   && ok "stopped, every claimed card given back, renamed back, tuned, started, replayed" \
   || bad "the sequence (rc=$RC): $_seq"
+[ ! -s "$S/events.log" ] && ok "and a restart that finished records no failure (#588)" \
+  || bad "a restart that finished wrote: $(cat "$S/events.log")"
 ! called "restart prisma-routing-containers" \
   && ok "and never a restart of the containers unit, which systemd refuses" \
   || bad "a restart of the containers unit was asked"
@@ -228,6 +234,10 @@ OUT=$(HC restart-dataplane); RC=$?
   && [ -s "$R/run/prisma-routing/hot-cards" ] && said "nothing was changed" \
   && ok "a dataplane that would not stop, and still runs, is left exactly as it was" \
   || bad "a failed stop (rc=$RC): $(cat "$S/calls")"
+recorded '"kind":"gave-up".*"severity":"warning".*system dataplane restart gave up: the dataplane could not be stopped' \
+  && ok "and the box's record says the restart gave up (#588)" \
+  || bad "no gave-up event for a restart that could not stop: $(cat "$S/events.log" 2>&1)"
+rm -f "$S/events.log"
 rm -f "$S/nostop" "$S/stillactive"
 
 echo "=== #564: a stop that failed with the dataplane down still ends started ==="
@@ -341,6 +351,10 @@ OUT=$(HC restart-dataplane); RC=$?
 [ $RC = 1 ] && said "did not load onto the restarted dataplane" \
   && ok "the restart unit checks its own result: rc 1 and the reason in its log" \
   || bad "a configuration that did not load (rc=$RC): $OUT"
+recorded '"severity":"error".*"text":"system dataplane restart did not finish: the saved configuration did not load in 30 s"' \
+  && ok "and in the box's record, as the dataplane given up on (#588, #591)" \
+  || bad "no event for a restart that did not finish: $(cat "$S/events.log" 2>&1)"
+rm -f "$S/events.log"
 rm -f "$S/loadneeds"
 
 echo "=== #564: a load that fails while FRR starts, then loads, is a success ==="

@@ -163,7 +163,8 @@ OPERATIONAL_RULES = [
      "FRR's logging per daemon"),
     # #588: the box's own record of events, its filters and its screen.
     (["show", "log"], "typed", "OperationalService.ListEvents",
-     "the same filters; the restart causes are also in GetSystem (#588)"),
+     "the same filters, `kind` too, with each event's subject and reason; "
+     "the restart causes are also in GetSystem (#588)"),
     (["show", "snmp", "mib"], "typed", "OperationalService.GetSnmpFile (KIND_MIB)",
      "the file, with the enterprise number in it"),
     (["show", "snmp", "zabbix-template"], "typed",

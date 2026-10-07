@@ -612,7 +612,7 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show policy [<política>]` | as políticas de roteamento, os terms de cada uma e onde estão aplicadas |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show ip interface` | interfaces como o FRR as enxerga |
-| `show log [last <n>] [since <tempo>] [severity <nível>] [source <origem>]` | **o que aconteceu na caixa**, o mais novo por último: commits, rollbacks, `commit confirmed` vencido, atualização, reboot e reinício pedidos (por quem e de onde), e cada partida do dataplane e do roteamento com a causa. Veja abaixo |
+| `show log [last <n>] [since <tempo>] [severity <nível>] [source <origem>] [kind <tipo>]` | **o que aconteceu na caixa**, o mais novo por último: commits, rollbacks, `commit confirmed` vencido, atualização, reboot e reinício pedidos (por quem e de onde), cada partida do dataplane e do roteamento com a causa, e o que a caixa vê acontecer — enlaces, módulos, sessões BGP e BFD, pool esgotado, coletor de log, logins. Veja abaixo |
 | `show logging` | a configuração de log de cada daemon de roteamento, como o FRR a informa — não o que aconteceu; isso é `show log` |
 
 O que não é respondido pela própria caixa é repassado ao `vtysh` do FRR, então a sintaxe completa do FRR vale depois da primeira palavra.
@@ -629,9 +629,11 @@ prisma> show log since 2026-10-05
 prisma> show log severity warning
 prisma> show log source dataplane
 prisma> show log since 1d source vty | match rollback
+prisma> show log kind bgp
+prisma> show log kind link since 1h
 ```
 
-Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing`. Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
+Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.151.18, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`. Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
 
 O que ele registra hoje:
 
@@ -647,7 +649,24 @@ O que ele registra hoje:
 
 **A causa de um reinício é registrada antes do reinício.** Quem pede (`system dataplane restart`, `system upgrade`, `system reboot`, pela VTY ou pela API) escreve o pedido primeiro; quando a caixa vê o dataplane ou o roteamento de pé de novo, ela procura o pedido mais recente antes daquela partida. Sem pedido, e longe do boot, a partida sai como `unexpected`, em nível `warning`: **ninguém pediu**, e é isso que vale investigar (`/var/log/prisma-routing/why-the-dataplane-stopped` costuma dizer o resto). Uma caixa que acabou de chegar à 0.151.14 não sabe a causa das partidas anteriores a ela, e não inventa.
 
-O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento. O que vem a seguir — enlace e SFP, sessões BGP e BFD com o motivo, esgotamento de pool, logins, `system logging` em termos da caixa, um `monitor log` — está planejado e ainda não existe.
+**O que a caixa vê acontecer (desde a 0.151.18).** Um vigia no host (`prisma-routing-events-watch.service`) lê o estado da própria caixa a cada 10 s e registra o que mudou desde a leitura anterior — nunca uma linha de log:
+
+| Tipo (`kind`) | Exemplo |
+|--------|---------|
+| `link`: enlace de uma porta, dizendo se não foi administrativo e quantas sub-interfaces caíram junto | `interface memif1/0: link down, administratively up: the wire or the far end; its 1 sub-interface(s) with it` |
+| `link`: `shutdown` numa porta ou sub-interface | `sub-interface memif1/0.100 is administratively down: shut down by configuration` |
+| `transceiver`: módulo inserido, removido, trocado; RX ou temperatura além de um limiar, e de volta | `memif1/0: rx power -19.00 dBm, below its low warning (-18.01 dBm)` |
+| `bgp`: sessão Established, ou saindo dela com o motivo do FRR | `BGP session with 10.9.0.2 (AS 65001) left Established: BGP Notification received: Cease/Administrative Shutdown ('maintenance window')` |
+| `bfd`: sessão de pé ou caída, com o diagnóstico do bfdd | `BFD session with 10.9.0.2 (on veth-a) down: control detection time expired` |
+| `pool`: pool CGNAT sem blocos (uma vez, enquanto recusar), e com blocos livres de novo | `CGNAT pool small ran out of blocks: 1 request(s) for a block refused since the last reading, 4 of 4 blocks in use` |
+| `collector`: a exportação de log do CGNAT perdeu ou alcançou o coletor | `the CGNAT log export (syslog) lost its collector 198.51.100.3:601: connecting` |
+| `login`: login (por quem, de onde, na VTY ou num shell), logout, login com senha errada | `failed login as noc (from ssh 127.0.0.1)` |
+| `settings`: as configurações de SNMP e da API aplicadas ou recusadas por um commit | `the SNMP settings were refused: ...` |
+| `gave-up`: o dataplane abandonado, as placas devolvidas ao Linux, ou um `system dataplane restart` que não terminou | `system dataplane restart did not finish: the saved configuration did not load in 180 s` |
+
+Uma porta que fica caindo e voltando não enche o registro: quatro mudanças em 5 minutos saem uma a uma; dali em diante são contadas, e sai uma linha por janela de 5 minutos — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. Uma rajada de senhas erradas do mesmo endereço, igual. No primeiro minuto depois de o dataplane ou o FRR partir, nada disso é comparado: o reinício já é um evento, e as portas voltando são o reinício. Os logins vêm de `/var/log/wtmp` e `/var/log/btmp`, os registros que o sshd e o login(1) já escrevem; o módulo de uma placa que está com o Linux (a de gerência) ainda não é vigiado.
+
+O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento. O que vem a seguir — `system logging` em termos da caixa, um `monitor log`, traps SNMP — está planejado e ainda não existe.
 
 ## Filtrando a saída com `|`
 

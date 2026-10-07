@@ -888,6 +888,9 @@ expect "  since a date after everything: nothing" t11 events-since
 expect "  its text is the VTY's show log for the same filters" t11 events-text-is-vty
 expect "  a since that is no time: INVALID_ARGUMENT, in the VTY's words" t11 events-since-refused
 expect "  a source the box has not got: INVALID_ARGUMENT" t11 events-source-refused
+expect "  kind (#588 phase 2): the commits, and nothing else" t11 events-kind
+expect "  a kind the box has not got: INVALID_ARGUMENT, in the VTY's words" t11 events-kind-refused
+expect "  the API settings a commit applied, with what they are about (subject)" t11 events-settings-subject
 expect "  a read-only account reads the same record, through the door" t11 events-any-account
 expect "  GetSystem: why the dataplane last started, as recorded - unexpected" t11 system-start-cause
 t12() { printf '%s\n' "$T12" | grep -q "^RESULT $1 ok"; }

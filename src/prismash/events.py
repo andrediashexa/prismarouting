@@ -74,12 +74,30 @@ COMPONENTS = ("dataplane", "routing")
 #: Why a component started. `operator` is `system dataplane restart`.
 CAUSES = ("boot", "operator", "upgrade", "reboot", "shutdown", "unexpected")
 #: The kinds an account that is not root may write: what it does at the VTY
-#: or the API. A start, a boot and an upgrade done are the host's.
-ACCOUNT_KINDS = ("commit", "rollback", "confirm", "confirm-expired", "asked")
-KINDS = ACCOUNT_KINDS + ("start", "boot", "upgraded")
+#: or the API. A start, a boot and an upgrade done are the host's. A
+#: "settings" event is the SNMP or the API settings a commit applied or was
+#: refused (#588 phase 2), said by the session whose commit it was.
+ACCOUNT_KINDS = ("commit", "rollback", "confirm", "confirm-expired", "asked",
+                 "settings")
+#: What the box SEES happen rather than what it is told (#588 phase 2), each
+#: written by the host's watcher (eventwatch.py, `prismash --watch-events`)
+#: as root, or by the host's own scripts: a link up or down, a module put in
+#: or taken out or crossing a threshold, a BGP or BFD session, a CGNAT pool
+#: out of blocks, the log exporter's collector lost or back, a login or a
+#: failed one, and the dataplane given up on. Never an account's: no account
+#: can write that a link went down. `show log kind <kind>` selects one.
+WATCH_KINDS = ("link", "transceiver", "bgp", "bfd", "pool", "collector",
+               "login", "gave-up")
+KINDS = ACCOUNT_KINDS + ("start", "boot", "upgraded") + WATCH_KINDS
 #: One sentence, not a screen.
 TEXT_MAX = 300
 WHO_MAX = 64
+#: What an event is about - an interface, a peer, a pool, a module, an
+#: account - and why, when the box knows: FRR's last reset, bfdd's
+#: diagnostic, the threshold crossed (#588 phase 2). The reason is in the
+#: sentence too; these are for a client that filters or groups.
+SUBJECT_MAX = 64
+REASON_MAX = 160
 #: `show log` with no `last` and no `since`.
 SHOW_LAST = 50
 
@@ -158,6 +176,11 @@ def event_error(ev, privileged=True):
     if not isinstance(affects, str) or \
             any(a not in COMPONENTS for a in affects.split()):
         return "affects names components"
+    for k, most in (("subject", SUBJECT_MAX), ("reason", REASON_MAX)):
+        v = ev.get(k, "")
+        if not isinstance(v, str) or len(v) > most \
+                or any(ord(c) < 32 for c in v):
+            return f"{k} is one line of at most {most} characters"
     if not isinstance(ev.get("started", 0), (int, float)):
         return "started is a time"
     if not privileged:
@@ -285,9 +308,9 @@ def parse_show_args(words, now=None):
     i = 0
     while i < len(words):
         key = words[i]
-        if key not in ("last", "since", "severity", "source"):
+        if key not in ("last", "since", "severity", "source", "kind"):
             return None, (f"'{key}': show log takes last <n>, since <time>, "
-                          f"severity <level>, source <name>")
+                          f"severity <level>, source <name>, kind <kind>")
         if key in f:
             return None, f"'{key}' is given twice"
         if i + 1 >= len(words):
@@ -309,6 +332,12 @@ def parse_show_args(words, now=None):
             if val not in SEVERITIES:
                 return None, ("severity is one of " + ", ".join(SEVERITIES))
             f["severity"] = val
+        elif key == "kind":
+            # #588 phase 2: what an event is, beside who said it - `source
+            # routing` is every BGP, BFD and FRR start; `kind bgp` is BGP's.
+            if val not in KINDS:
+                return None, "kind is one of " + ", ".join(KINDS)
+            f["kind"] = val
         else:
             if val not in SOURCES:
                 return None, "source is one of " + ", ".join(SOURCES)

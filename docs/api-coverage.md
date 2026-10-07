@@ -182,7 +182,7 @@ reachable in the phase their note names.
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times, and why each started (#588) |
-| `show log [last <n>] [since <time>] [severity <level>] [source <name>]` | typed | OperationalService.ListEvents | every account | the same filters; the restart causes are also in GetSystem (#588) |
+| `show log [last <n>] [since <time>] [severity <level>] [source <name>] [kind <kind>]` | typed | OperationalService.ListEvents | every account | the same filters, `kind` too, with each event's subject and reason; the restart causes are also in GetSystem (#588) |
 | `show logging` | typed | OperationalService.GetRoutingLogging | every account | FRR's logging per daemon |
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear interface counters [<interface>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |

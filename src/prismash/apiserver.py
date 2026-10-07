@@ -1681,7 +1681,7 @@ def events_filters(req, now=None):
     words = []
     if req.get("last"):
         words += ["last", str(req["last"])]
-    for k in ("since", "severity", "source"):
+    for k in ("since", "severity", "source", "kind"):
         if req.get(k):
             words += [k, str(req[k])]
     return events.parse_show_args(words, now)
@@ -1709,7 +1709,8 @@ def event_pb_fields(ev):
             "source": ev.get("source", ""), "text": ev.get("text", ""),
             "account": ev.get("who", ""), "origin": ev.get("from", ""),
             "kind": ev.get("kind", ""), "component": ev.get("component", ""),
-            "cause": ev.get("cause", "")}
+            "cause": ev.get("cause", ""), "subject": ev.get("subject", ""),
+            "reason": ev.get("reason", "")}
 
 
 def segment_readable(path=None):
@@ -3880,7 +3881,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         def ListEvents(self, req, context):
             got = self._ask(context, "events", {
                 "last": req.last, "since": req.since,
-                "severity": req.severity, "source": req.source})
+                "severity": req.severity, "source": req.source,
+                "kind": req.kind})
             if not got["ok"]:
                 context.abort(grpc.StatusCode.INVALID_ARGUMENT, got["why"])
             out = pb.ListEventsResponse(text=got["text"])

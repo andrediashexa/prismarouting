@@ -1539,6 +1539,9 @@ message ListEventsRequest {
   string severity = 3;
   // "vty", "api", "host", "dataplane" or "routing". "" is all.
   string source = 4;
+  // #588 phase 2: one kind (BoxEvent.kind), as `show log kind`. "" is all.
+  // INVALID_ARGUMENT for a kind the box does not have.
+  string kind = 5;
 }
 
 // One event of the box's record. Not `Event`, which is ConfigService's
@@ -1558,13 +1561,31 @@ message BoxEvent {
   string origin = 6;
   // What it is: "commit", "rollback", "confirm", "confirm-expired",
   // "asked" (a restart, upgrade, reboot or shutdown asked for), "start",
-  // "boot", "upgraded". New kinds may be added; a client shows `text`.
+  // "boot", "upgraded"; since #588 phase 2, what the box saw happen:
+  // "link" (an interface's link or administrative state; source
+  // "dataplane"), "transceiver" (a module in, out, or past a threshold),
+  // "bgp" and "bfd" (a session up or down; source "routing"), "pool" (a
+  // CGNAT pool out of blocks, and with free blocks again), "collector" (the
+  // CGNAT log export lost or reached its collector), "login" (a login,
+  // logout or failed login; source "host"), "settings" (the SNMP or API
+  // settings applied or refused) and "gave-up" (the dataplane given up on,
+  // the card given back to Linux). New kinds may be added; a client shows
+  // `text`.
   string kind = 7;
   // For a "start": "dataplane" or "routing", and its `cause` - as
   // SystemInfo.dataplane_start_cause. For an "asked": the cause a start it
   // brings about will carry.
   string component = 8;
   string cause = 9;
+  // #588 phase 2: what the event is about - an interface, a module's port,
+  // a BGP or BFD peer, a pool, a log stream, an account, "snmp" or "api" -
+  // for a client that groups or filters; "" when it is about the box.
+  string subject = 10;
+  // Why, when the box knows: FRR's last reset of a BGP session, bfdd's
+  // diagnostic, "administrative" or "link" for an interface, the level a
+  // module crossed, how many changes a flapping subject made. Also in
+  // `text`; "" when not known.
+  string reason = 11;
 }
 
 message ListEventsResponse {

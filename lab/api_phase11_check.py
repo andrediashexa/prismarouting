@@ -83,6 +83,20 @@ def filters():
            f"{len(warn)} at warning or above")
     since = every(since="2099-01-01")
     result("events-since", since == [], f"{len(since)} after 2099")
+    # #588 phase 2: `kind`, as `show log kind`.
+    com = every(kind="commit")
+    result("events-kind", bool(com) and all(e.kind == "commit" for e in com),
+           f"{len(com)} commit(s), kinds {sorted({e.kind for e in com})}")
+
+
+def settings():
+    """#588 phase 2: the VTY's `api enabled yes` commit, before phase 1,
+    applied the API's settings - an event of kind "settings" whose subject
+    says which, through BoxEvent.subject."""
+    got = every(kind="settings")
+    result("events-settings-subject", any(
+        e.subject == "api" and e.text.startswith("the API settings were")
+        for e in got), f"{[(e.subject, e.text[:60], e.reason[:40]) for e in got]}")
 
 
 def screen():
@@ -94,7 +108,8 @@ def screen():
 
 def refused():
     for name, req, said in (("events-since-refused", {"since": "tomorrow"}, "is not a time"),
-                            ("events-source-refused", {"source": "frr"}, "source is one of")):
+                            ("events-source-refused", {"source": "frr"}, "source is one of"),
+                            ("events-kind-refused", {"kind": "weather"}, "kind is one of")):
         try:
             op.ListEvents(pb.ListEventsRequest(**req), timeout=30)
             result(name, False, "answered")
@@ -118,6 +133,7 @@ def cause():
 
 for name, fn in (("events-api-commit", commits), ("events-asked", asked),
                  ("events-filters", filters), ("events-text-is-vty", screen),
+                 ("events-settings-subject", settings),
                  ("events-refused", refused), ("events-any-account", any_account),
                  ("system-start-cause", cause)):
     run(name, fn)

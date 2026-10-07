@@ -77,6 +77,35 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show log`, phase 2: what the box sees happen, not only what it is
+  told.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
+  A watcher on the host (`prisma-routing-events-watch.service`, `prismash
+  --watch-events`) reads the box's own state every 10 s and records what
+  changed since the reading before: an interface's link down or up -
+  a port or a sub-interface, administrative (`shutdown`) or the wire, a
+  port's event counting the sub-interfaces it took with it; a module put in,
+  taken out or swapped, and its RX power or temperature past a warning or
+  alarm threshold and back (read from the plugin's `show bpa transceiver`
+  once a minute, as #590's cache allows); a BGP session Established or
+  leaving it with FRR's reason ("BGP Notification received:
+  Cease/Administrative Shutdown ('maintenance')"), and one that went down
+  and back between two readings, by FRR's own counter; a BFD session up or
+  down with bfdd's diagnostic; a CGNAT pool out of blocks, once, and with
+  free blocks again; the CGNAT log export losing or reaching its collector;
+  logins, logouts and failed logins, from where - read from wtmp and btmp,
+  the records sshd and login(1) write, never from a log line. A subject
+  that changes more than 4 times in 5 minutes is held and said once a
+  window ("interface X flapped 37 times in 5 min, not each recorded; it is
+  now link up"), a burst of failed logins from one address the same way.
+  Within a minute of the dataplane's or FRR's start nothing is compared (a
+  restart is an event of its own), and the watcher's state is kept beside
+  the record, so restarting it says nothing again. The SNMP and API settings
+  a commit applies or is refused are recorded too, and the dataplane given
+  up on - by `watch-the-dataplane`, or a `system dataplane restart` that
+  did not finish (#591's dark box). `show log kind <kind>` selects one kind;
+  ListEvents takes `kind` and gives each event's `subject` and `reason`.
+  docs/logging-events.md has the design and what phase 3 leaves.
+
 ### Fixed
 
 ## 0.151.17 - a box comes up whatever snmpd says
