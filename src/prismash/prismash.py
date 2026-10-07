@@ -4260,6 +4260,10 @@ TREE = {
                              "<seconds>"),
                 ARG_INTERFACE: ("only this interface", None),
             }),
+            # The box's record of events as it is written (#588 phase 3).
+            "log": ("the box's events as they are recorded, until Ctrl-C",
+                    "[last <n>] [since <time>] [severity <level>] [source "
+                    "<name>] [kind <kind>] [seconds <n>]"),
             # The block events the CGNAT exports, as they happen (#556): read
             # from the shared segment, a line each, until Ctrl-C.
             "cgnat": ("the CGNAT, live", {
@@ -21017,8 +21021,58 @@ class Shell:
         if args[:2] == ["cgnat", "logging"]:
             self.monitor_cgnat_logging(args[2:])
             return
-        self.err("monitor what? 'monitor interface' or 'monitor cgnat "
-                 "logging'")
+        if args[:1] == ["log"]:
+            self.monitor_log(args[1:])
+            return
+        # One row with "error: " in front: 'monitor ...' three times was
+        # 80 columns once `log` joined them (#588 phase 3).
+        self.err("monitor what? 'interface', 'cgnat logging' or 'log'")
+
+    def monitor_log(self, args, now=None, sleep=None):
+        """
+        `monitor log` (#588 phase 3): the box's record of events as it is
+        written, a line each in `show log`'s words, until Ctrl-C or `seconds
+        <n>`. `show log`'s filters: severity, source and kind select what
+        is followed, and `last` or `since` what is shown first; with
+        neither, it starts now.
+
+        Read through the host's door like `show log`, again every
+        FOLLOW_EVERY, over the last FOLLOW_LOOKBACK: an event's time is when
+        it happened, and a start or a login is appended after it - one is
+        said when it arrives, under its own time (events.follow_new).
+        `now` and `sleep` are the seams the tests drive it through.
+        """
+        f, seconds, why = events.parse_follow_args(args)
+        if why:
+            self.err_prose("monitor log: not a filter it takes", why)
+            return
+        now = now or time.time
+        sleep = sleep or time.sleep
+        when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S",  # noqa: E731
+                                       time.localtime(t))
+        follow = {k: v for k, v in f.items() if k not in ("last", "since")}
+        started = now()
+        # What is there now is "seen" before the first lines are shown, so
+        # an event appended between the two reads is said once, not lost.
+        seen = {}
+        events.follow_new(events.fetch(dict(
+            follow, since=started - events.FOLLOW_LOOKBACK)), seen, started)
+        print("monitor log   Ctrl-C to stop")
+        if "last" in f or "since" in f:
+            for ev in events.fetch(f):
+                seen[events.event_key(ev)] = ev.get("t", 0)
+                print(events.format_event(ev, when))
+        try:
+            while seconds is None or now() - started < seconds:
+                sleep(events.FOLLOW_EVERY)
+                t = now()
+                for ev in events.follow_new(events.fetch(dict(
+                        follow, since=t - events.FOLLOW_LOOKBACK)), seen, t):
+                    print(events.format_event(ev, when))
+                sys.stdout.flush()
+        except KeyboardInterrupt:
+            print()
+        print(f"{time.strftime('%H:%M:%S', time.localtime(now()))} stopped")
 
     def monitor_cgnat_logging(self, args, segment=None, now=None,
                               sleep=None):

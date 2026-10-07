@@ -562,6 +562,34 @@ def read_status(path=None):
 STATUS_FRESH = 60
 
 
+def status_fields(dests, status, now):
+    """
+    GetSystem's LoggingDestinationState fields for each destination
+    configured (#588 phase 3): the destination as the proto names its
+    fields, and the watcher's word on it - `known` False when it has not
+    said within STATUS_FRESH, or said nothing of this one.
+    """
+    fresh = status is not None and 0 <= now - status.get("t", 0) \
+        < STATUS_FRESH
+    by = {host_words(r): r for r in (status or {}).get("destinations", [])
+          if isinstance(r, dict) and "address" in r} if fresh else {}
+    out = []
+    for d in dests:
+        r = by.get(host_words(d))
+        out.append({
+            "destination": {"address": d["address"], "port": d["port"],
+                            "protocol": d["protocol"],
+                            "severity": d["severity"],
+                            "source_address": d["source-address"],
+                            "vrf": d["vrf"]},
+            "known": r is not None,
+            "state": (r or {}).get("state", ""),
+            "error": (r or {}).get("error", ""),
+            "sent": int((r or {}).get("sent", 0)),
+            "last_sent": float((r or {}).get("last_sent", 0) or 0)})
+    return out
+
+
 def status_rows(dests, status, now, when):
     """
     `show system logging`'s rows: each destination configured, and what the
@@ -569,32 +597,25 @@ def status_rows(dests, status, now, when):
     (stopped, or not yet at its pass since the commit). `when` formats an
     epoch.
     """
-    out = []
     if not dests:
         return ["no remote syslog destination: the record stays on the box "
                 "('show log')"]
-    fresh = status is not None and 0 <= now - status.get("t", 0) \
-        < STATUS_FRESH
-    by = {host_words(r): r for r in (status or {}).get("destinations", [])
-          if isinstance(r, dict) and "address" in r}
-    for d in dests:
+    out = []
+    for d, f in zip(dests, status_fields(dests, status, now)):
         out.append(f"{where(d)}  {d['severity']} and above"
                    + (f"  from {d['source-address']}" if d["source-address"]
                       else "")
                    + (f"  vrf {d['vrf']}" if d["vrf"] else ""))
-        r = by.get(host_words(d))
-        if not fresh or r is None:
+        if not f["known"]:
             out.append("  not forwarding yet: the watcher "
                        "(prisma-routing-events-watch) has not said")
             continue
-        state = r.get("state", "")
-        if state == "not reached":
-            out.append(f"  not reached: {r.get('error') or 'no answer'}; "
+        if f["state"] == "not reached":
+            out.append(f"  not reached: {f['error'] or 'no answer'}; "
                        f"tried again every {RETRY} s")
         else:
-            out.append(f"  {state}")
-        last = r.get("last_sent") or 0
-        out.append(f"  sent {r.get('sent', 0)} event(s) since the watcher "
-                   f"started" + (f", the last at {when(last)}" if last
-                                 else ""))
+            out.append(f"  {f['state']}")
+        out.append(f"  sent {f['sent']} event(s) since the watcher "
+                   f"started" + (f", the last at {when(f['last_sent'])}"
+                                 if f["last_sent"] else ""))
     return out

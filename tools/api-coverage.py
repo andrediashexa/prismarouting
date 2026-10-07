@@ -71,6 +71,10 @@ OPERATIONAL_RULES = [
      "the report's hops, at the end of the run"),
     (["monitor", "interface"], "typed", "TelemetryService.Subscribe",
      "interface counters as a stream; GetHistory for the past day"),
+    # #588 phase 3: the box's record as it is written.
+    (["monitor", "log"], "typed", "OperationalService.WatchEvents (a stream)",
+     "a BoxEvent each as it is recorded, ListEvents' filters; `last` or "
+     "`since` what is sent first (#588 phase 3)"),
     (["monitor", "cgnat", "logging"], "typed", "TelemetryService.WatchLogging",
      "the block events as a stream of LogEvent, the same filters; delivered "
      "in 0.149.25"),
@@ -95,6 +99,9 @@ OPERATIONAL_RULES = [
      "started (#588)"),
     (["show", "system", "memory"], "typed", "OperationalService.GetSystem",
      "memory_total/used/hugepages bytes"),
+    (["show", "system", "logging"], "typed", "OperationalService.GetSystem",
+     "logging: each destination and whether it is reached; logging_text "
+     "(#588 phase 3)"),
     (["show", "system", "hardware"], "typed", "OperationalService.GetSystem",
      "unsupported_sfp_configured/booted (#574)"),
     (["show", "system", "cpu"], "typed", "OperationalService.GetSystem",
@@ -350,6 +357,7 @@ TYPED_PHASE4 = {
     "system memory": (("*", "system", False),),
     "system cpu": (("*", "system", False),),
     "system hardware": (("*", "system", False),),
+    "system logging": (("*", "system", False),),
     "system dataplane": (("*", "system", False),),
     "user": (("*", "users", False),),
     "snmp-user": (("*", "snmp_users", False),),

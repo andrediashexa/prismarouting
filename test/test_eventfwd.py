@@ -304,6 +304,16 @@ check(rows[1] == "  not reached: connection reset by peer; tried again "
 check(F.status_rows(fw.dests, F.read_status(), NOW + 900, str)[1] ==
       "  not forwarding yet: the watcher (prisma-routing-events-watch) "
       "has not said", "status_rows: a status gone stale is not believed")
+_sf = F.status_fields(fw.dests, F.read_status(), NOW + 200)
+check(_sf[0]["destination"] == {"address": "192.0.2.50", "port": 601,
+                                "protocol": "tcp", "severity": "info",
+                                "source_address": "", "vrf": ""}
+      and _sf[0]["known"] and _sf[0]["state"] == "not reached"
+      and _sf[0]["sent"] == 3 and _sf[0]["error"] ==
+      "connection reset by peer",
+      f"status_fields: GetSystem's fields, the proto's names: {_sf}")
+check(F.status_fields(fw.dests, F.read_status(), NOW + 900)[0]["known"]
+      is False, "status_fields: a stale status is not known")
 check(F.status_rows([], None, NOW, str) == [
     "no remote syslog destination: the record stays on the box ('show "
     "log')"], "status_rows: none configured")

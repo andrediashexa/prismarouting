@@ -5645,7 +5645,7 @@ check(_sh.monitor_names(_cnt, []) == ["pg0"]
 with spoken() as o:
     _sh.do_monitor(["routes"])
 check(rows_of(o.getvalue())
-      == ["error: monitor what? 'monitor interface' or 'monitor cgnat logging'"],
+      == ["error: monitor what? 'interface', 'cgnat logging' or 'log'"],
       f"a thing it does not monitor: {o.getvalue()!r}")
 for _args, _said in (
         (["interval"], "error: interval needs a number of seconds after it"),
@@ -9645,6 +9645,64 @@ check(_e[-1]["kind"] == "asked" and _e[-1]["cause"] == "shutdown"
       and _e[-1]["text"] == "system shutdown asked",
       f"system shutdown is recorded before systemd is asked: {_e[-1]}")
 ok("show log reads the record; the asking, the start and its cause are in it")
+
+print("\n=== monitor log: the record as it is written (#588 phase 3) ===")
+# Mutation shown red: monitor_log() following only past the newest time it
+# has said (a start written late was never said).
+for _p in (_EV, _EV + ".1"):
+    if os.path.exists(_p):
+        os.remove(_p)
+_T = [1790836414.0]
+events.append_event(events.make_event("vty", "notice", "before it started",
+                                      now=_T[0] - 30, kind="commit"))
+
+
+def _tick(n):
+    _T[0] += 1
+    events.append_event(events.make_event(
+        "dataplane", "warning", f"link {int(_T[0]) % 100}", now=_T[0],
+        kind="link"))
+    if _T[0] == 1790836416.0:
+        events.append_event(events.make_event(
+            "routing", "notice", "a start, written late", now=_T[0] - 200,
+            kind="start"))
+
+
+_sh = shell()
+rv, text = driven(lambda: _sh.monitor_log(["seconds", "3"],
+                                          now=lambda: _T[0], sleep=_tick))
+_rows = [" ".join(r.split()[2:]) for r in text.splitlines()]
+check(_rows == ["Ctrl-C to stop", "warning dataplane link 15",
+                "notice routing a start, written late",
+                "warning dataplane link 16", "warning dataplane link 17", ""]
+      and text.splitlines()[0].startswith("monitor log")
+      and text.splitlines()[-1].endswith(" stopped")
+      and "before it started" not in text,
+      f"monitor_log: from now, each event once as it arrives, a late one "
+      f"under its own time: {text!r}")
+rv, text = driven(lambda: _sh.monitor_log(
+    ["last", "2", "kind", "link", "seconds", "1"], now=lambda: _T[0],
+    sleep=_tick))
+check([r.split()[-1] for r in text.splitlines()[1:4]] == ["16", "17", "18"],
+      f"monitor_log: last <n> shown first, then followed, by kind: {text!r}")
+
+
+def _ctrl_c(n):
+    raise KeyboardInterrupt
+
+
+rv, text = driven(lambda: _sh.monitor_log([], now=lambda: _T[0],
+                                          sleep=_ctrl_c))
+check(text.splitlines()[-1].endswith(" stopped"), "monitor_log: Ctrl-C stops "
+      "it, and says so")
+rv, text = driven(lambda: _sh.monitor_log(["follow", "1"]))
+check("error: monitor log: not a filter it takes" in text,
+      f"monitor_log: a word it does not take: {text!r}")
+rv, text = driven(lambda: _sh.do_monitor(["log", "seconds", "0"]))
+check("seconds takes 1-86400" in text, f"do_monitor: monitor log: {text!r}")
+rv, text = driven(lambda: _sh.do_monitor(["weather"]))
+check("'log'" in text, f"do_monitor: says what there is: {text!r}")
+ok("monitor log follows the record from now, with show log's filters")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
