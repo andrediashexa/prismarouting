@@ -508,13 +508,15 @@ PRISMA-ROUTING-MIB, where it does not:
 | a BGP session leaving Established, and back | `bgpBackwardTransition`, `bgpEstablished` | BGP4-MIB, bgpd over AgentX | #507 |
 | a pool with no block free | `poolExhausted`, with the pool and its utilisation | the product's: `prPoolUtilisation` reaching 100 | 0.152.2 |
 | a module past a threshold, and back | `transceiverStateChange`, with the port and its level | the product's: `prXcvrState` changing (normal, warning, alarm, unknown) | 0.152.2 |
+| a BFD session down, up, or down and back between two readings | `bfdSessDown`, `bfdSessUp`, with `bfdSessDiag` of its index | BFD-STD-MIB, sent by this watcher over AgentX from the same comparison (#559, docs/bfd.md) | 0.152.3 |
 
 Not sent twice: the links and BGP were already notifications, so phase 3
 adds none for them. `poolNearlyFull` (90%) and `portsRefused` stay as they
-were. **Not sent: BFD** - no MIB object holds a BFD session's state (bfdd
-serves no SNMP) - and logins, commits and restarts, which have no object to
-monitor either; `show log`, the syslog destinations and WatchEvents carry
-them. A monitor fires when its test BECOMES true (docs/snmp-mib.md), so a
+were. BFD, which phase 3 could not send (no object of PRISMA-ROUTING-MIB
+held it, and bfdd serves no SNMP), is BFD-STD-MIB's own pair since 0.152.3:
+this watcher hands them to snmpd itself (#559). **Not sent**: logins,
+commits and restarts, which have no object to monitor; `show log`, the
+syslog destinations and WatchEvents carry them. A monitor fires when its test BECOMES true (docs/snmp-mib.md), so a
 pool already out of blocks when snmpd starts is not notified: the record's
 standing event says it.
 

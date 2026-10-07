@@ -54,7 +54,12 @@ for k, v in (("PRISMA_CONFIG", "prisma-routing.conf"),
              ("PRISMA_FRR_STARTED", "no-frr.pid"),
              ("PRISMA_LOGGING_CONF", "logging.conf"),
              ("PRISMA_LOGGING_STATUS", "logging.status"),
-             ("PRISMA_LOGGING_FWD_STATE", "events-forward.state")):
+             ("PRISMA_LOGGING_FWD_STATE", "events-forward.state"),
+             # The BFD notifications the loop sends (#559): this machine's
+             # own snmpd is not the box's (test/test_bfdtraps.py).
+             ("PRISMA_SNMPD_CONF", "snmpd.conf"),
+             ("PRISMA_AGENTX_SOCKET", "agentx.sock"),
+             ("PRISMA_BFD_NOTIFY_STATE", "bfd-notifications")):
     os.environ[k] = os.path.join(_root, v)
 
 import events  # noqa: E402

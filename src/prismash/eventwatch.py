@@ -525,18 +525,21 @@ def bgp_changes(prev, cur, restarted=False):
 
 # --------------------------------------------------------------------- BFD
 
-def bfd_reading(fields):
+def bfd_reading(fields, ids=None):
     """
-    opshow.bfd_fields() as {key: {"up", "down", "diag", "peer", "where"}}:
-    whether the session is up, how many times bfdd counted it going down,
-    and its diagnostic. The key is opshow.bfd_key()'s, not bfdd's id, which
-    bfdd draws afresh when it restarts.
+    opshow.bfd_fields() as {key: {"up", "down", "diag", "peer", "where",
+    "index"}}: whether the session is up, how many times bfdd counted it
+    going down, and its diagnostic. The key is opshow.bfd_key()'s, not
+    bfdd's id, which bfdd draws afresh when it restarts. `ids` is bfdd's
+    id of each session, in the order of fields["sessions"]: the index the
+    agent serves bfdSessTable by, which a BFD notification names (#559).
     """
     import opshow
     out = {}
     if not fields.get("answered"):
         return None
-    for s in fields.get("sessions") or []:
+    ids = list(ids or [])
+    for n, s in enumerate(fields.get("sessions") or []):
         where = s["interface"] or ""
         if s["vrf"] not in ("", "default"):
             where = (where + " " if where else "") + f"vrf {s['vrf']}"
@@ -546,7 +549,8 @@ def bfd_reading(fields):
             "diag": s.get("diagnostic") or "",
             "peer": s["peer"], "where": where,
             # Shut by configuration: down on purpose (#588 phase 3).
-            "admin": s["state"] == "STATE_ADMIN_DOWN"}
+            "admin": s["state"] == "STATE_ADMIN_DOWN",
+            "index": ids[n] if n < len(ids) else None}
     return out
 
 

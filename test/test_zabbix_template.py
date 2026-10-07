@@ -314,5 +314,26 @@ check(shipped.count("@PEN@") == 1
 check(all(r["type"] == "SNMP_AGENT" for r in tpl["discovery_rules"]),
       "every discovery rule is SNMP")
 
+# ------------------------------------------------------------------ BFD
+print("\n=== BFD-STD-MIB's notifications (#559) ===")
+# RFC 7331 section 5: bfdSessUp is { bfdNotifications 1 }, bfdSessDown 2.
+# Mutation shown red: the two OIDs swapped, as docs/bfd.md had them before
+# #559's traps were built.
+_traps = {o["name"]: o for _, o, _ in walk(tpl) if o.get("type") == "SNMP_TRAP"}
+_down = _traps.get("Notification: bfdSessDown", {})
+_up = _traps.get("Notification: bfdSessUp", {})
+_rx = lambda o: re.search(r'snmptrap\["(.*)"\]', o.get("key", "")).group(1)  # noqa: E731
+check(_down and _up
+      and re.search(_rx(_down), ".1.3.6.1.2.1.222.0.2 ")
+      and not re.search(_rx(_down), ".1.3.6.1.2.1.222.0.1 ")
+      and re.search(_rx(_up), ".1.3.6.1.2.1.222.0.1 ")
+      and not re.search(_rx(_up), ".1.3.6.1.2.1.222.0.2 ")
+      and not re.search(_rx(_down), ".1.3.6.1.2.1.222.0.20 "),
+      "bfdSessDown matches .222.0.2 and bfdSessUp .222.0.1, each only its own")
+check([t["name"] for t in _down.get("triggers", [])]
+      == ["Prisma Routing: a BFD session went down (bfdSessDown)"]
+      and _down["key"] in _down["triggers"][0]["expression"],
+      "a bfdSessDown raises a problem, on its own item")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

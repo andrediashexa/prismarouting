@@ -15469,7 +15469,12 @@ class Shell:
             return None if data is None else eventwatch.bgp_reading(data)
         if kind == "bfd":
             import opshow
-            return eventwatch.bfd_reading(opshow.bfd_fields(self.bfd_facts()))
+            # bfdd's ids beside the fields, for the BFD notifications'
+            # index (#559): the API's BfdSession has no id field to carry it.
+            facts = self.bfd_facts()
+            return eventwatch.bfd_reading(
+                opshow.bfd_fields(facts),
+                [s.get("id") for s in facts.get("sessions") or []])
         if kind == "pool":
             import cgnatshow
             rc, out = self.dp.run("show bpa blocks")
@@ -15551,6 +15556,10 @@ class Shell:
             new, nxt = self.watch_tick(state, t0, force=once)
             for ev in new:
                 events.record(ev)
+            # BFD-STD-MIB's notifications (#559), from the same comparison:
+            # before the state is written, which carries what each session
+            # was told.
+            nxt = self.watch_traps(state, nxt, t0)
             # Not for the reading times alone, which move every tick: the
             # state file is written when what was SEEN moved.
             if eventwatch.state_moved(state, nxt):
@@ -15568,6 +15577,51 @@ class Shell:
                 self.watch_forward(fwd)
                 if left <= eventfwd.FORWARD_EVERY:
                     break
+
+    def watch_traps(self, before, after, now, send=None):
+        """
+        bfdSessDown and bfdSessUp for what this tick saw of bfdd (#559),
+        handed to snmpd as an AgentX subagent (bfdtraps.py says why), and
+        the file bfdNotificationsEnable is read from, written every tick:
+        `after` with the record of what each session was told. Nothing is
+        sent while snmpd holds no destination or is not there, and the
+        record is dropped then, so a destination configured later is told
+        what changes from then on, not what changed before it existed. A
+        failure is taken as nothing sent and said once, as
+        watch_read_safe() takes a reading.
+        """
+        import bfdtraps
+        send = send or bfdtraps.agentx_send
+        after = dict(after)
+        try:
+            on, n = bfdtraps.can_send()
+            bfdtraps.write_state(on, now, n)
+            if not on:
+                after.pop("bfd_traps", None)
+                return after
+            told = after.get("bfd_traps")
+            notes, after["bfd_traps"] = bfdtraps.plan(before, after, now)
+            if notes:
+                out = bfdtraps.ranges(notes)
+                took = send(out)
+                if took < len(out):
+                    # Not recorded as told: each session sent to now
+                    # keeps what it was told before (None for a session
+                    # never told), and the next tick tells it its state
+                    # (bfdtraps.plan()'s catching up).
+                    after["bfd_traps"] = {
+                        k: dict(v, told=((told or {}).get(k) or {}).get("told"))
+                        if v["sent"][-1:] == [now] else v
+                        for k, v in after["bfd_traps"].items()}
+                    print(f"watch-events: snmpd took {took} of {len(out)} "
+                          f"BFD notification(s)", file=sys.stderr)
+        except Exception as e:     # noqa: BLE001 - see the docstring
+            said = self.__dict__.setdefault("_watch_said", set())
+            if "bfd-traps" not in said:
+                said.add("bfd-traps")
+                print(f"watch-events: BFD notifications failed: {e!r}",
+                      file=sys.stderr)
+        return after
 
     def watch_forward(self, fwd):
         """

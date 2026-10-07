@@ -1074,7 +1074,40 @@ rows = {oid: (typ, val) for oid, typ, val in agent.bfd_rows(sessions)}
 B, S, P = "1.3.6.1.2.1.222.1", "1.3.6.1.2.1.222.1.2.1", "1.3.6.1.2.1.222.1.3.1"
 up, dn = 1712291648, 99
 check(rows[f"{B}.1.3.0"] == ("integer", 2),
-      "bfdNotificationsEnable reads false: no trap is sent, and it says so")
+      "bfdNotificationsEnable reads false unless told the notifications "
+      "are sent")
+check(dict((o, (t, v)) for o, t, v in agent.bfd_rows(sessions, True))
+      [f"{B}.1.3.0"] == ("integer", 1),
+      "and true(1) when they are (#559)")
+# bfd_notifying(): the host's watcher's file (#559, bfdtraps.py), true only
+# while its pid runs, the file is fresh and snmpd holds a destination.
+# Mutation shown red: the freshness not checked - a watcher whose process
+# is gone and whose file stayed would read true for ever.
+_nd = tempfile.mkdtemp(prefix="bfd-notify-")
+_nf = os.path.join(_nd, agent.BFD_NOTIFY_FILE)
+_alive = lambda p: p == 4242  # noqa: E731
+check(agent.bfd_notifying(_nd, 1000.0, _alive) is False,
+      "bfd_notifying: no file, no watcher: false")
+w(_nf, "sending yes\nat 1000\npid 4242\ndestinations 1\n")
+check(agent.bfd_notifying(_nd, 1010.0, _alive) is True,
+      "bfd_notifying: the watcher sends, fresh, its pid running: true")
+check(agent.bfd_notifying(_nd, 1000.0 + agent.BFD_NOTIFY_FRESH + 1, _alive)
+      is False, "bfd_notifying: a file older than three ticks: false")
+check(agent.bfd_notifying(_nd, 990.0, _alive) is False,
+      "bfd_notifying: a file from the future (a clock set back): false")
+w(_nf, "sending yes\nat 1000\npid 4343\ndestinations 1\n")
+check(agent.bfd_notifying(_nd, 1010.0, _alive) is False,
+      "bfd_notifying: its pid gone (systemctl stop): false at once")
+w(_nf, "sending no\nat 1000\npid 4242\ndestinations 0\n")
+check(agent.bfd_notifying(_nd, 1010.0, _alive) is False,
+      "bfd_notifying: running with no destination: false")
+# Above the kernel's largest pid_max (2^22): no process anywhere has it.
+w(_nf, "sending yes\nat 1000\npid 4194305\ndestinations 1\n")
+check(agent.bfd_notifying(_nd, 1010.0) is False,
+      "bfd_notifying: a pid that runs nowhere, read from /proc")
+w(_nf, f"sending yes\nat 1000\npid {os.getpid()}\ndestinations 1\n")
+check(agent.bfd_notifying(_nd, 1010.0) is True,
+      "bfd_notifying: and this test's own pid, which runs")
 # Mutation shown red: bfdd's milliseconds served as they are - RFC 7331's
 # BfdIntervalTC is microseconds, and an NMS read 300 ms as 300 us.
 check(rows[f"{S}.25.{up}"] == ("gauge", 300000)
