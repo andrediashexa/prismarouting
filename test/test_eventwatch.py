@@ -51,7 +51,10 @@ for k, v in (("PRISMA_CONFIG", "prisma-routing.conf"),
              ("PRISMA_WATCH_STATE", "events-watch.state"),
              ("PRISMA_DOORS", "no-doors.sock"),
              ("PRISMA_WTMP", "wtmp"), ("PRISMA_BTMP", "btmp"),
-             ("PRISMA_FRR_STARTED", "no-frr.pid")):
+             ("PRISMA_FRR_STARTED", "no-frr.pid"),
+             ("PRISMA_LOGGING_CONF", "logging.conf"),
+             ("PRISMA_LOGGING_STATUS", "logging.status"),
+             ("PRISMA_LOGGING_FWD_STATE", "events-forward.state")):
     os.environ[k] = os.path.join(_root, v)
 
 import events  # noqa: E402
@@ -788,17 +791,40 @@ class Stop(Exception):
     pass
 
 
+forwarded = []
+_fwd = prismash.eventfwd.Forwarder.run
+prismash.eventfwd.Forwarder.run = lambda self, now=None: forwarded.append(1)
+
+
 def sleeper(n):
     slept.append(n)
-    raise Stop
+    if len(slept) == 3:
+        raise Stop
 
 
 try:
     sh.watch_events(sleep=sleeper)
 except Stop:
     pass
-check(slept and 1.0 <= slept[0] <= W.TICK,
-      f"watch_events: the loop sleeps the rest of its tick: {slept}")
+prismash.eventfwd.Forwarder.run = _fwd
+check(slept and all(0.5 <= n <= prismash.eventfwd.FORWARD_EVERY
+                    for n in slept) and len(forwarded) == 3,
+      f"watch_events: the loop sleeps its tick in slices, forwarding the "
+      f"record after the tick and each slice (#588 phase 3): {slept} "
+      f"{len(forwarded)}")
+
+
+class Boom:
+    def run(self):
+        raise ValueError("a line nobody expected")
+
+
+_err = io.StringIO()
+with contextlib.redirect_stderr(_err):
+    _f1, _f2 = sh.watch_forward(Boom()), sh.watch_forward(Boom())
+check(_f1 == 0 and _f2 == 0 and _err.getvalue().count("forwarding failed")
+      == 1, f"watch_forward: a pass that raised is no pass, said once: "
+      f"{_err.getvalue()!r}")
 
 print("\n=== settings: applied and refused, by the commit's session ===")
 if os.path.exists(os.environ["PRISMA_EVENTS"]):

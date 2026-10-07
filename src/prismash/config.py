@@ -19,6 +19,7 @@ import unicodedata
 import hashlib
 
 import policy as policy_mod
+import eventfwd
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     dns_error, DNS_MAX, hostname_error,
@@ -182,6 +183,16 @@ def hardware_error(key, value):
                     "the default")
         return None
     return "under 'hardware' there is 'unsupported-sfp'"
+
+
+#: Where the box's record of events goes (#588 phase 3): `system` >
+#: `logging` > `host <address> ...`, remote syslog destinations - not the
+#: CGNAT's connection records, which are `nat` > `cgnat` > `logging`.
+LOGGING_LEVEL = "logging"
+#: What a `system` level other than these is told, at the prompt and in a
+#: file. One row on an 80-column console with "error: " in front of it.
+SYSTEM_LEVELS_SAY = ("under 'system': 'dataplane', 'cpu', 'memory', "
+                     "'hardware' or 'logging'")
 
 
 #: The levels under `system` that are tune.env settings: each one's keys and
@@ -352,12 +363,13 @@ NAT64_LEVEL_SAYS = ("under 'nat64' there are pools; interfaces, logging and "
 
 
 def nest_system(dataplane_if, cpu=None, memory=None,
-                hardware=None) -> list[str]:
+                hardware=None, logging=None) -> list[str]:
     """
     The `system` block a file carries (#457): `dataplane` for the card, and
     `cpu` for the cores by role (#466), each only when it says something -
     and nothing at all when neither does. The one writer of the block: the
-    box saves, shows and reads back one shape.
+    box saves, shows and reads back one shape. `logging` is the remote
+    syslog destinations (#588 phase 3), eventfwd's dicts.
     """
     body = []
     if dataplane_if:
@@ -370,9 +382,55 @@ def nest_system(dataplane_if, cpu=None, memory=None,
             body += [f"  {k} {held[k]}" for k in SYSTEM_SETTINGS[level][0]
                      if k in held]
             body.append("  exit")
+    if logging:
+        body += [f" {LOGGING_LEVEL}"]
+        body += [f"  {eventfwd.host_words(d)}" for d in logging]
+        body.append("  exit")
     if not body:
         return []
     return [SYSTEM_HIERARCHY] + body + [" exit"]
+
+
+def stage_logging(hosts, words):
+    """
+    `logging host <address> [...]` or `no logging host <address>` - the
+    model's words for what is typed under `system` > `logging` (#588 phase
+    3) - applied to `hosts`, the destinations; None, or why not. The file's
+    rule and the prompt's, so a saved file cannot hold what the prompt
+    refuses. A second `host` to an address already there replaces it: one
+    destination per address, as `snmp trap-host` has.
+    """
+    w = list(words)
+    neg = w[:1] == ["no"]
+    if neg:
+        w = w[1:]
+    if w[:2] != [LOGGING_LEVEL, "host"] or len(w) < 3:
+        return ("under 'logging' there is 'host <address> [port <n>] "
+                "[protocol udp|tcp] [severity <level>] [source-address "
+                "<address>] [vrf <name>]'")
+    if neg:
+        try:
+            gone = str(ipaddress.ip_address(w[2]))
+        except ValueError:
+            return f"no host: '{w[2]}' is not an address"
+        if len(w) > 3:
+            return "no host <address>: the address alone"
+        if gone not in [d["address"] for d in hosts]:
+            return f"no host: {gone} is not a destination here"
+        hosts[:] = [d for d in hosts if d["address"] != gone]
+        return None
+    d, why = eventfwd.parse_host(w[2:])
+    if why:
+        return why
+    at = [i for i, x in enumerate(hosts) if x["address"] == d["address"]]
+    if at:
+        hosts[at[0]] = d
+    elif len(hosts) >= eventfwd.HOSTS_MAX:
+        return (f"at most {eventfwd.HOSTS_MAX} destinations; 'no host "
+                f"<address>' takes one away")
+    else:
+        hosts.append(d)
+    return None
 
 
 def denest_system(numbered):
@@ -407,14 +465,13 @@ def denest_system(numbered):
             else:
                 out.append((n, raw))
         elif depth == 1:
-            if s == DATAPLANE_LEVEL or s in SYSTEM_SETTINGS:
+            if s in (DATAPLANE_LEVEL, LOGGING_LEVEL) or s in SYSTEM_SETTINGS:
                 depth = 2
                 level = s
             elif s in ("exit", "quit", "end"):
                 depth = 0
             else:
-                bad.append((n, s, "under 'system' there is 'dataplane', "
-                                  "'cpu', 'memory' and 'hardware'"))
+                bad.append((n, s, SYSTEM_LEVELS_SAY))
         else:
             if s in ("exit", "quit", "end"):
                 depth = 1
@@ -3750,6 +3807,10 @@ class Config:
         # The card drivers' settings (#574), the same kind under `system` >
         # `hardware`: in effect from the next boot, on the kernel command line.
         self.hardware: dict[str, str] = {}
+        # The remote syslog destinations of the box's record of events (#588
+        # phase 3), under `system` > `logging`: eventfwd.parse_host()'s
+        # dicts, in the order they were typed. Read back from logging.conf.
+        self.logging_hosts: list = []
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -3927,7 +3988,7 @@ class Config:
         # carries no `shutdown`: recording an absence would put a line on every
         # box and make the file describe a decision nobody took.
         out += nest_system(self.dataplane_if, self.cpu, self.memory,
-                           self.hardware)
+                           self.hardware, self.logging_hosts)
         out += policy_mod.nest(self.policy)
         if self.hostname:
             out.append(f"hostname {self.hostname}")
@@ -4500,6 +4561,13 @@ class Config:
                 continue
             if s == "no dataplane interface":
                 cfg.dataplane_if = ""
+                continue
+            if s.startswith(f"{LOGGING_LEVEL} ") or \
+                    s.startswith(f"no {LOGGING_LEVEL} "):
+                # `system` > `logging` (#588 phase 3), by the prompt's rule.
+                why = stage_logging(cfg.logging_hosts, s.split())
+                if why:
+                    cfg.unknown.append((lineno, s, why))
                 continue
             _lvl = s.split()[1] if s.startswith("no ") and len(s.split()) > 1 \
                 else s.split()[0]
@@ -5716,6 +5784,8 @@ class Config:
             "cpu_changed": self.cpu != other.cpu,
             "memory_changed": self.memory != other.memory,
             "hardware_changed": self.hardware != other.hardware,
+            # One flag: logging.conf is written whole (#588 phase 3).
+            "logging_changed": self.logging_hosts != other.logging_hosts,
             "cgnat_memory_changed":
                 self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,
