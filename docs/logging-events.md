@@ -336,6 +336,20 @@ once, in the present tense, as a warning (an alarm as an error):
     -14.79 dBm, below its low warning (-13.00 dBm)
 ```
 
+What `lab/show-log-watch.sh` read back, its first pass started with a port
+whose far end never came and a module whose light was already low (the
+lab's container in UTC):
+
+```
+2026-10-07 03:27:00  warning  dataplane  standing at start: interface memif3/0:
+    link down, administratively up: the wire or the far end
+2026-10-07 03:27:00  warning  dataplane  standing at start: memif1/0: rx power
+    -19.00 dBm, below its low warning (-18.01 dBm)
+```
+
+and its second pass - a new process, a restart of the watcher - said
+nothing.
+
 * **"Once a boot" is kept in the state file**: events-watch.state carries the
   boot each kind was read for (`stood`), so a restart of the watcher within
   the same boot - `systemctl restart`, an upgrade - says nothing again, and
@@ -640,7 +654,7 @@ filter the VTY refuses.
 
 ### The mutations, each shown red and put back
 
-Measured on 2026-10-06 by applying each to the tree, running the suite named,
+Measured on 2026-10-06 (phases 1 and 2) and 2026-10-07 (phase 3) by applying each to the tree, running the suite named,
 and restoring the file.
 
 | Mutation | Red in |
@@ -681,3 +695,30 @@ and restoring the file.
 | `prisma-hot-card`'s record of an unfinished restart taken out | test_prisma_hot_card.sh |
 | `appliance/upgrade`'s record line replaced by `true`; and the line before it without `\|\| true` | test_upgrade_artifact.sh: no upgrade in the box's record; the second killed the upgrade itself under `set -e`, which is how it was found |
 | the contract reader without the check for a name defined twice, over a proto with a second `Event` | test_api_contract.py (the shape the first lab run of this phase met: protoc refused the contract, no stubs) |
+| `standing_due()` never true (phase 3) | test_eventwatch.py: 4 checks, nothing standing said, not even after a boot |
+| `standing_due()` not reading `stood` | test_eventwatch.py: 5 checks, what stands said again at every reading and by a restart of the watcher |
+| `standing_due()` without STANDING_SETTLE | test_eventwatch.py: a session said "not Established" while FRR was still starting |
+| `tick()` not leaving out what the same tick's change said | test_eventwatch.py: a link said twice, as a change and as standing |
+| `bgp_standing()` saying a session shut by configuration | test_eventwatch.py |
+| `pool_standing()` without the refusals | test_eventwatch.py: 2 checks, a full pool refusing nobody said out of blocks |
+| `standing_changes()` unbounded | test_eventwatch.py: 25 conditions, 25 events |
+| `watch_starts()` without the boot | test_eventwatch.py |
+| `run()` advancing a destination's position on a failed send | test_eventfwd.py: 4 checks, what waited for a TCP collector never sent |
+| `frame()` sending TCP unframed | test_eventfwd.py |
+| `rfc5424()` not mapping the severity | test_eventfwd.py: 5 checks, every event daemon.info |
+| `read_new()` not reading the rotated file's rest | test_eventfwd.py: 2 checks, the events before a rotation lost |
+| `wanted()` always true | test_eventfwd.py: 3 checks, a notice sent to a warning collector |
+| `parse_host()` taking a name | test_eventfwd.py: 3 checks |
+| a new destination starting at the record's start | test_eventfwd.py: 6 checks, history sent as news |
+| `destinations()` not falling back to the watcher's list | test_eventfwd.py: a read-only account told there is no destination |
+| `stage_logging()` appending a second host to one address | test_prismash_units.py: 3 checks |
+| the commit not writing logging.conf | test_prismash_units.py: 6 checks |
+| `running_config()` not reading logging.conf | test_prismash_units.py: 3 checks, a commit that would take the destinations away |
+| `watch_events()` not forwarding | test_eventwatch.py |
+| `follow_new()` following only past the newest time it said | test_events.py, and test_prismash_units.py's `monitor log`: a start written late never said |
+| `parse_follow_args()` keeping `show log`'s last 50 | test_events.py |
+| `monitor_log()` not taking what is there as seen | test_prismash_units.py: 2 checks, the record's past shown as it was written |
+| `events_watch_plan()` sending a backlog by default | test_apiserver.py: 2 checks |
+| `logging_state()` ignoring the watcher's status | test_apiserver.py |
+| `snmp_monitors()` without `poolExhausted` | test_prismash_system.py: 2 checks |
+| `transceiverStateChange` without `-D` | test_prismash_system.py: it would fire once, at the first warning, and never on the way back |

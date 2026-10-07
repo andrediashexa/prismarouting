@@ -45,8 +45,8 @@ vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
 vppctl set interface ip address pg0 100.64.3.254/22
 # One public address, blocks of 512: 126 blocks, so 114 subscribers is 90%
-# and 126 is every block (#588 phase 3: poolExhausted) - and only the first
-# 126 inside addresses have a block by the formula, which is why the refused
+# and 126 every block (#588 phase 3: poolExhausted) - and only the first 126
+# inside addresses have a block by the formula, which is why the refused
 # subscriber is 100.64.0.120 and not one further out.
 vppctl bpa pool small inside 100.64.0.0/22 outside 200.150.0.16/32 block 512
 vppctl set interface bpa in2out pg0
@@ -108,8 +108,10 @@ while c.recv(65536): pass
 " > /dev/null 2>&1 &
 COLLECTOR=$!
 vppctl bpa logging tcp 127.0.0.1 port 4740 >/dev/null
+# The first 126 inside addresses are 100.64.0.0 to .125: the formula's, and
+# the 126 blocks - the first run sent .1 to .126 and held 125.
 vppctl packet-generator new "name subs limit 126 rate 1000 node ip4-input \
-  interface pg0 size 60-60 data { UDP: 100.64.0.1 - 100.64.0.126 -> 8.8.8.8 \
+  interface pg0 size 60-60 data { UDP: 100.64.0.0 - 100.64.0.125 -> 8.8.8.8 \
   UDP: 40000 -> 53 incrementing 1 }" >/dev/null
 vppctl packet-generator new "name full limit 520 rate 2000 node ip4-input \
   interface pg0 size 60-60 data { UDP: 100.64.0.120 -> 8.8.8.8 \

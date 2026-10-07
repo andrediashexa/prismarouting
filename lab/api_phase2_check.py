@@ -259,8 +259,8 @@ def check_schema():
     srcs = {a.source for m in s.modes for st in m.statements for f in st.forms
             for a in f.arguments if a.source}
     # 32 since #572: `nat64` and `nat64 pool`, NAT64's level and its pool,
-    # beside 0.150.12's three BFD modes.
-    ok = (len(modes) == 33 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
+    # beside 0.150.12's three BFD modes; and #588 phase 3's system logging.
+    ok = (len(modes) == 34 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
           and list(modes["nat64 pool"].path) == ["nat", "nat64", "pool <name>"]
           and modes["nat64 pool"].typed_area == "nat64"
           and arg is not None and arg.kind == "integer" and (arg.min, arg.max) == (64, 32768)

@@ -1,10 +1,12 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 219
+# OFF-RED-AT-LEAST: 227
 # (195, and #588's thirteen ListEvents and GetSystem checks: measured
 # 2026-10-06, 208 red in the off run, each of the thirteen among them; and
 # #590's eight ListTransceivers checks: 216, measured the same day; and
 # #588 phase 2's three - ListEvents' kind, a kind refused, a settings
-# event's subject: 219, measured 2026-10-07.)
+# event's subject: 219, measured 2026-10-07; and #588 phase 3's eight -
+# WatchEvents and system logging through the API: 227, measured the same
+# day.)
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.

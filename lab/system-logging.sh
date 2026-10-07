@@ -28,10 +28,16 @@
 # lab/show-log.sh's does. The configuration is committed and read back
 # as before and the collectors listen: those controls stay green.
 #
-# OFF-RED-AT-LEAST: 13
+# OFF-RED-AT-LEAST: 10
 #
 # A FLOOR, measured on the off run through tools/run-all-labs.sh (#588 phase
-# 3, 2026-10-07). See lab/bypass.sh for why it is a floor and not a target.
+# 3, 2026-10-07): 10 of its 20 checks red. Green in that run and rightly: the
+# four controls; the three that say nothing was sent that should not be (no
+# commit at the warning collector, no frame it could not cut, nothing from
+# before the first pass) and monitor log's "nothing from before it
+# started", each as true of a box that sends nothing; and `kind weather`
+# refused, which the VTY refuses whether or not anything was kept. See lab/bypass.sh for why it is a
+# floor and not a target.
 set -u
 MODE=${1:-on}
 
@@ -103,8 +109,10 @@ echo "  udp: $U0 message(s), tcp: $T0"
 
 echo
 echo "=========== 3. events, at two severities ==========="
-$HX -c configure -c "interface loop1" -c "description lab" -c exit -c commit \
-  2>&1 | sed 's/^/  /'
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool alpha" \
+    -c "prefix-inside 100.64.0.0/22" -c "prefix-outside 198.19.24.0/24" \
+    -c "block-size 512" -c "exit" -c "exit" -c "exit" \
+    -c 'commit comment "first pool"' 2>&1 | tail -1 | sed 's/^/  /'
 say host=gave-up warning "the dataplane was given up on, as a lab says it"
 echo "  $(pass_)"
 sleep 1
@@ -138,8 +146,10 @@ $HX -c "monitor log seconds 6" > /tmp/monitor.out 2>&1 &
 MON=$!
 sleep 2
 say host=gave-up warning "said while monitor log ran"
-$HX -c configure -c "interface loop1" -c "description lab two" -c exit \
-  -c commit 2>&1 | sed 's/^/  /'
+$HX -c "configure" -c "nat" -c "cgnat" -c "pool beta" \
+    -c "prefix-inside 100.64.8.0/22" -c "prefix-outside 198.19.25.0/24" \
+    -c "block-size 512" -c "exit" -c "exit" -c "exit" -c "commit" 2>&1 \
+  | tail -1 | sed 's/^/  /'
 wait "$MON"
 MON1=$(cat /tmp/monitor.out)
 echo "$MON1" | sed 's/^/  /'
