@@ -15381,12 +15381,15 @@ class Shell:
         """
         When the dataplane and the routing daemons last started, as
         uptime_facts() reads them - without the record of events it also
-        reads, which a tick every 10 s has no use for (#588 phase 2).
+        reads, which a tick every 10 s has no use for (#588 phase 2). And
+        the kernel's boot, which what stands is said once for (#588 phase
+        3).
         """
         rc, out = self.dp.run("show clock")
         up = vpp_uptime(out) if rc == 0 else None
         return {"dataplane": time.time() - up if up is not None else None,
-                "routing": file_mtime(FRR_STARTED_FILE)}
+                "routing": file_mtime(FRR_STARTED_FILE),
+                "boot": read_btime()}
 
     def watch_read(self, kind):
         """
