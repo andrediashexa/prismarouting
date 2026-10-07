@@ -27,7 +27,7 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.151.18 - show log, phase 2: what the box sees happen
+## 0.152.0 - show log, phase 2: what the box sees happen
 
 * **Contract:** additive (`prisma.proto` sha256 `eaf45c412fecadb2e7d4abaeeec722f998c5a9cbf3461d217a46447b462ccce5`).
   Three fields (#588, phase 2): `ListEventsRequest.kind` (5),

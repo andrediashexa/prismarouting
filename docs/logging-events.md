@@ -25,7 +25,7 @@ kind <kind>` selects one kind.
 
 FRR's `show logging` is unchanged: each routing daemon's logging
 *configuration*, as before. Phase 1 is delivered in 0.151.14 and phase 2 in
-0.151.18; the issue stays open for phase 3 below.
+0.152.0; the issue stays open for phase 3 below.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
@@ -48,7 +48,7 @@ FRR's `show logging` is unchanged: each routing daemon's logging
 | Phase | What | State |
 |---|---|---|
 | **1** | The record itself, bounded and kept across reboots. Commits, rollbacks, `commit confirmed` confirmed and expired, with the account and where the session came from. Upgrades (asked, and done). Reboots and shutdowns asked from the VTY or the API. Dataplane and routing starts with their cause, the cause recorded before the action. `show log [last <n>] [since <time>] [severity <level>] [source <name>]`, and the box's `| match`. `ListEvents`, and the cause in `GetSystem`. | *delivered in 0.151.14* |
-| **2** | What the box sees happen rather than what it is told: interface and link up/down, administrative or not, ports and sub-interfaces; a module inserted, removed, swapped, and its RX power or temperature past a threshold and back (#590's levels); BGP and BFD sessions up/down with the reason (FRR's last reset, bfdd's diagnostic); a CGNAT pool out of blocks and with blocks again; the log exporter losing or reaching its collector (`logstate`'s readings); logins, failed logins and logouts (wtmp and btmp); SNMP and API settings applied or refused; the dataplane given up on (`watch-the-dataplane`, `prisma-hot-card`). Each from a watcher that compares a reading with the last one, as `observe_starts()` does - never from a log line. Flapping held and counted. `show log kind`; ListEvents' `kind`, `subject`, `reason`. | *delivered in 0.151.18* |
+| **2** | What the box sees happen rather than what it is told: interface and link up/down, administrative or not, ports and sub-interfaces; a module inserted, removed, swapped, and its RX power or temperature past a threshold and back (#590's levels); BGP and BFD sessions up/down with the reason (FRR's last reset, bfdd's diagnostic); a CGNAT pool out of blocks and with blocks again; the log exporter losing or reaching its collector (`logstate`'s readings); logins, failed logins and logouts (wtmp and btmp); SNMP and API settings applied or refused; the dataplane given up on (`watch-the-dataplane`, `prisma-hot-card`). Each from a watcher that compares a reading with the last one, as `observe_starts()` does - never from a log line. Flapping held and counted. `show log kind`; ListEvents' `kind`, `subject`, `reason`. | *delivered in 0.152.0* |
 | **3** | Where the record goes and how it is followed: `system logging` in Prisma's terms (a remote syslog, its level, which sources), replacing FRR's per-daemon `log syslog` as what an operator configures; `monitor log`, a follow mode like `monitor cgnat logging`, and a streaming `WatchEvents` in the API; SNMP notifications for the events PRISMA-ROUTING-MIB has an object for (#507's traps). And what phase 2 left: the modules of cards Linux holds (read through a door today), and a link flap faster than a reading on a port with no counter of its own. | planned |
 
 ## How it is written
@@ -355,9 +355,9 @@ A session from the lab (`lab/show-log.sh` through `tools/run-all-labs.sh`,
 ```
 
 `ListEvents` takes the same five filters (`last` 0 is the default, as at the
-prompt; `kind` since 0.151.18), answers each event as fields - `time`,
+prompt; `kind` since 0.152.0), answers each event as fields - `time`,
 `severity`, `source`, `text`, `account`, `origin`, `kind`, `component`,
-`cause`, and since 0.151.18 `subject` (the interface, peer, pool, stream or
+`cause`, and since 0.152.0 `subject` (the interface, peer, pool, stream or
 account it is about) and `reason` (FRR's reset, bfdd's diagnostic,
 `administrative` or `link`, the level a module crossed, a flapping subject's
 count) - and `show log`'s screen for the same filters in `text`. INVALID_ARGUMENT, in the VTY's words, for a

@@ -633,7 +633,7 @@ prisma> show log kind bgp
 prisma> show log kind link since 1h
 ```
 
-Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.151.18, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`. Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
+Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.152.0, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`. Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
 
 O que ele registra hoje:
 
@@ -649,7 +649,7 @@ O que ele registra hoje:
 
 **A causa de um reinício é registrada antes do reinício.** Quem pede (`system dataplane restart`, `system upgrade`, `system reboot`, pela VTY ou pela API) escreve o pedido primeiro; quando a caixa vê o dataplane ou o roteamento de pé de novo, ela procura o pedido mais recente antes daquela partida. Sem pedido, e longe do boot, a partida sai como `unexpected`, em nível `warning`: **ninguém pediu**, e é isso que vale investigar (`/var/log/prisma-routing/why-the-dataplane-stopped` costuma dizer o resto). Uma caixa que acabou de chegar à 0.151.14 não sabe a causa das partidas anteriores a ela, e não inventa.
 
-**O que a caixa vê acontecer (desde a 0.151.18).** Um vigia no host (`prisma-routing-events-watch.service`) lê o estado da própria caixa a cada 10 s e registra o que mudou desde a leitura anterior — nunca uma linha de log:
+**O que a caixa vê acontecer (desde a 0.152.0).** Um vigia no host (`prisma-routing-events-watch.service`) lê o estado da própria caixa a cada 10 s e registra o que mudou desde a leitura anterior — nunca uma linha de log:
 
 | Tipo (`kind`) | Exemplo |
 |-------------|---------|
