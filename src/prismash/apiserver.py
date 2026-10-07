@@ -977,6 +977,9 @@ READERS = {
     "uptime": lambda sh, a: sh.uptime_facts(),
     # The card drivers' settings `show system hardware` reads (#574).
     "drivers": lambda sh, a: sh.driver_facts(),
+    # The remote syslog destinations and the watcher's word on each (#588
+    # phase 3), as `show system logging` reads them.
+    "logging_state": lambda sh, a: logging_state(),
     # Routing policy (#538): what `show policy`, `show policy <name>` and
     # `test policy` compute, as data, from the same Shell methods.
     "policies": lambda sh, a: sh.policies_data(),
@@ -1002,6 +1005,9 @@ READERS = {
     "routing_logging": lambda sh, a: screen(sh, "show logging"),
     # #588: the box's record of events, as `show log` selects them.
     "events": lambda sh, a: events_read(sh, a or {}),
+    # WatchEvents' reads (#588 phase 3): select_events()' own keywords,
+    # already checked by events_watch_plan(), through the account's door.
+    "events_raw": lambda sh, a: events_raw(a or {}),
     # #559 phase 2: bfdd's sessions, `show bfd peers` (or `peer <a>`) drawn
     # from the reading the fields carry; `a` is the peer, "" for every one.
     "bfd": lambda sh, a: facts_screen(
@@ -1701,6 +1707,58 @@ def events_read(sh, req):
     when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
     text = "".join(events.format_event(e, when) + "\n" for e in got)
     return {"ok": True, "events": got, "text": text, "why": ""}
+
+
+def events_watch_plan(req, now=None):
+    """
+    WatchEvents' request (ListEventsRequest's fields) as `monitor log`
+    reads its words (#588 phase 3): (backlog, follow, None) or (None,
+    None, why). `backlog` is the filters of what is sent first - None when
+    neither `last` nor `since` is given, and the stream starts now; `follow`
+    selects what is sent as it is recorded.
+    """
+    import events
+    words = []
+    if req.get("last"):
+        words += ["last", str(req["last"])]
+    for k in ("since", "severity", "source", "kind"):
+        if req.get(k):
+            words += [k, str(req[k])]
+    f, _seconds, why = events.parse_follow_args(words, now)
+    if why:
+        return None, None, why
+    follow = {k: v for k, v in f.items() if k not in ("last", "since")}
+    return (f if ("last" in f or "since" in f) else None), follow, None
+
+
+def events_raw(filters):
+    """The events select_events() picks with `filters`, through the host's
+    door as `show log` reads them; [] when the filters are not its own."""
+    import events
+    keys = ("last", "since", "severity", "source", "kind")
+    if not isinstance(filters, dict) or any(k not in keys for k in filters):
+        return []
+    return events.fetch(filters)
+
+
+def logging_state(now=None):
+    """GetSystem's `logging` (#588 phase 3): eventfwd.status_fields() of
+    the destinations configured, against the watcher's last status."""
+    import eventfwd
+    status = eventfwd.read_status()
+    return eventfwd.status_fields(eventfwd.destinations(status), status,
+                                  time.time() if now is None else now)
+
+
+def box_event_pb(pb, ev):
+    """One event as a BoxEvent of `pb` (#588 phase 3, WatchEvents): its
+    fields, and its time as a Timestamp to the nanosecond."""
+    f = event_pb_fields(ev)
+    t = f.pop("seconds")
+    out = pb.BoxEvent(**f)
+    out.time.seconds = int(t)
+    out.time.nanos = int(round((t - int(t)) * 1e9))
+    return out
 
 
 def event_pb_fields(ev):
@@ -3566,6 +3624,16 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             mem = self._ask(context, "screen", "show system memory")
             hw = self._ask(context, "screen", "show system hardware")
             drv = self._ask(context, "drivers")
+            lg_text = self._ask(context, "screen", "show system logging")
+            lg = []
+            for f in self._ask(context, "logging_state"):
+                last = f.pop("last_sent")
+                m = pb.LoggingDestinationState(
+                    destination=pb.LoggingDestination(**f.pop("destination")),
+                    **f)
+                if last:
+                    m.last_sent.CopyFrom(ts(last))
+                lg.append(m)
             c = parse_cpu(cpu)
             up = 0
             try:
@@ -3585,6 +3653,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             return pb.SystemInfo(hostname=self._ask(context, "hostname"),
                                  uptime_seconds=up, cpu_text=cpu, memory_text=mem,
                                  hardware_text=hw,
+                                 logging=lg, logging_text=lg_text,
                                  unsupported_sfp_configured=bool(
                                      drv["unsupported_sfp_configured"]),
                                  unsupported_sfp_booted=bool(
@@ -3893,6 +3962,33 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 e.time.seconds = int(t)
                 e.time.nanos = int((t - int(t)) * 1e9)
             return out
+
+        # not a unit: a streaming rpc, driven by lab/api-grpc.sh's phase for
+        # #588 phase 3; events_watch_plan(), events_raw() and
+        # events.follow_new() are what it does, and are tested.
+        def WatchEvents(self, req, context):
+            backlog, follow, why = events_watch_plan({
+                "last": req.last, "since": req.since,
+                "severity": req.severity, "source": req.source,
+                "kind": req.kind})
+            if why:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, why)
+            import events
+            seen, start = {}, time.time()
+            events.follow_new(self._ask(context, "events_raw", dict(
+                follow, since=start - events.FOLLOW_LOOKBACK)), seen, start)
+            for ev in self._ask(context, "events_raw", backlog) \
+                    if backlog else []:
+                seen[events.event_key(ev)] = ev.get("t", 0)
+                yield box_event_pb(pb, ev)
+            while context.is_active():
+                end = time.time() + events.FOLLOW_EVERY
+                while context.is_active() and time.time() < end:
+                    time.sleep(0.2)
+                t = time.time()
+                for ev in events.follow_new(self._ask(context, "events_raw", dict(
+                        follow, since=t - events.FOLLOW_LOOKBACK)), seen, t):
+                    yield box_event_pb(pb, ev)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh's seventh phase.
         def GetRoutingLogging(self, req, context):

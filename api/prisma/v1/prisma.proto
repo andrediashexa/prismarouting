@@ -751,6 +751,33 @@ message SystemConfig {
   // statement - today `unsupported-sfp allow`; absent is ixgbe's default,
   // refuse. In effect from the next boot.
   repeated KeyValue hardware = 10;
+  // system > logging (#588 phase 3): where the box's record of events is
+  // sent, a remote syslog destination each, in the order configured; empty
+  // is none. Set with Edit at the path ["system","logging"] (`host <address>
+  // [port <n>] [protocol udp|tcp] [severity <level>] [source-address <a>]
+  // [vrf <name>]`, `no host <address>`). Not the CGNAT's connection
+  // records, which are `nat` > `cgnat` > `logging` and TypedConfig.logging.
+  repeated LoggingDestination log_destinations = 11;
+}
+
+// One remote syslog destination of the box's record of events (#588 phase
+// 3): RFC 5424, facility daemon, over UDP (one datagram an event) or TCP
+// (RFC 6587 octet counting).
+message LoggingDestination {
+  // The collector, an address (never a name).
+  string address = 1;
+  // As configured, or the protocol's default: 514 udp, 601 tcp.
+  uint32 port = 2;
+  // "udp" or "tcp".
+  string protocol = 3;
+  // The least severe event sent: "error", "warning", "notice" or "info"
+  // (the default, everything).
+  string severity = 4;
+  // The address it is sent from; "" is the route's.
+  string source_address = 5;
+  // The VRF it is sent through, a `vrf <name> table <n>` of the box; "" is
+  // the default table.
+  string vrf = 6;
 }
 
 message UserConfig {
@@ -1513,6 +1540,17 @@ service OperationalService {
   // INVALID_ARGUMENT, with the VTY's words, for a `since` that is not a time
   // or a severity or source the box does not have. Any account.
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  // #588 phase 3: `monitor log` - the box's record as it is written, one
+  // BoxEvent each, until the call is cancelled. The request's severity,
+  // source and kind select what is streamed; `last` and `since` what is
+  // sent first, oldest first (with neither, nothing: the stream starts
+  // now - not ListEvents' last 50). The record is read again every second
+  // over its last 15 minutes, so an event appended after its own time (a
+  // start, which the host's apply writes when it sees it; a login, at
+  // wtmp's time) is sent when it arrives, not in time order: a client
+  // sorts by `time` if it needs to. INVALID_ARGUMENT, in the VTY's words,
+  // for a filter `show log` refuses. Any account.
+  rpc WatchEvents(ListEventsRequest) returns (stream BoxEvent);
   // #590: `show interface transceiver` - each port's module, its identity
   // and, when it implements diagnostics (DDM), its temperature, voltage,
   // laser bias, TX and RX power, each beside the module's own alarm and
@@ -2550,6 +2588,28 @@ message SystemInfo {
   // younger than the box instead of guessing "by itself".
   string dataplane_start_cause = 25;
   string control_plane_start_cause = 26;
+  // `show system logging` (#588 phase 3): each remote syslog destination of
+  // the box's record of events and what the watcher that sends to it last
+  // said; the screen in logging_text.
+  repeated LoggingDestinationState logging = 27;
+  string logging_text = 28;
+}
+
+// One remote syslog destination and how sending to it goes (#588 phase 3).
+message LoggingDestinationState {
+  LoggingDestination destination = 1;
+  // false: the watcher (prisma-routing-events-watch) has not said within a
+  // minute - stopped, or not at its pass since the commit - and the fields
+  // below are not known.
+  bool known = 2;
+  // "ready" (nothing to send yet), "sending", or "not reached" (`error`
+  // says why; tried again every 30 s, and what waited is sent then).
+  string state = 3;
+  string error = 4;
+  // Events sent since the watcher started (it starts at 0 with it).
+  uint64 sent = 5;
+  // When the last was sent; unset for none.
+  google.protobuf.Timestamp last_sent = 6;
 }
 
 // One dataplane worker's load, from the dataplane's statistics segment.

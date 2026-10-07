@@ -348,6 +348,81 @@ def parse_show_args(words, now=None):
     return f, None
 
 
+#: How often a follower - `monitor log`, the API's WatchEvents (#588 phase
+#: 3) - reads the record again, seconds.
+FOLLOW_EVERY = 1.0
+#: How far back each read of a follower looks, seconds. An event's time is
+#: when it HAPPENED, not when it was appended: a start is written by the
+#: host's apply up to minutes after it (observe_starts), a login carries
+#: wtmp's time, a tick's events the reading's. A follower that read only
+#: past the newest time it had seen would miss those; it reads this window
+#: again and says what it has not said (follow_new), the CAUSE_WINDOW a
+#: start's request is looked for in.
+FOLLOW_LOOKBACK = 900
+#: `monitor log seconds <n>`, at most: a day.
+FOLLOW_SECONDS_MAX = 86400
+
+
+def event_key(ev):
+    """An event's identity for a follower: the whole of it, as written."""
+    return json.dumps(ev, sort_keys=True, separators=(",", ":"))
+
+
+def follow_new(got, seen, now):
+    """
+    The events of `got` - a read of the record over the last
+    FOLLOW_LOOKBACK - that the follower has not said, oldest first; `seen`
+    ({event_key: t}) is updated, and forgets what has left the window. An
+    event appended late with an earlier time is said when it is appended,
+    under its own time.
+    """
+    out = []
+    for ev in sorted(got, key=lambda e: e.get("t", 0)):
+        k = event_key(ev)
+        if k in seen:
+            continue
+        seen[k] = ev.get("t", 0)
+        out.append(ev)
+    for k in [k for k, t in seen.items() if t < now - FOLLOW_LOOKBACK - 60]:
+        del seen[k]
+    return out
+
+
+def parse_follow_args(words, now=None):
+    """
+    `monitor log`'s words after `log` (#588 phase 3): `show log`'s filters
+    and `seconds <n>`, as (filters, seconds, None) or (None, None, why).
+    `last` and `since` say what is shown before following; with neither,
+    nothing is - a follow starts now - so `last` is absent from the
+    filters then, where `show log` would put its 50.
+    """
+    seconds, rest, i = None, [], 0
+    while i < len(words):
+        if words[i] not in ("last", "since", "severity", "source", "kind",
+                            "seconds"):
+            return None, None, (f"'{words[i]}': monitor log takes last <n>, "
+                                f"since <time>, severity <level>, source "
+                                f"<name>, kind <kind>, seconds <n>")
+        if words[i] == "seconds":
+            if seconds is not None:
+                return None, None, "'seconds' is given twice"
+            v = words[i + 1] if i + 1 < len(words) else ""
+            if not re.fullmatch(r"[0-9]{1,5}", v) or \
+                    not 1 <= int(v) <= FOLLOW_SECONDS_MAX:
+                return None, None, (f"seconds takes 1-{FOLLOW_SECONDS_MAX}, "
+                                    f"not '{v}'")
+            seconds = int(v)
+        else:
+            rest += words[i:i + 2]
+        i += 2
+    f, why = parse_show_args(rest, now)
+    if why:
+        return None, None, why
+    if "last" not in rest[0::2] and "since" not in rest[0::2]:
+        f.pop("last", None)
+    return f, seconds, None
+
+
 #: The console every row the VTY prints is held to (config.CONSOLE_COLUMNS),
 #: and the indent an event's continuation rows take.
 COLUMNS = 79

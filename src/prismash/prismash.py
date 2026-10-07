@@ -49,7 +49,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     SYSTEM_HIERARCHY, DATAPLANE_LEVEL, POLICY_HIERARCHY, nest_system,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
                     MEMORY_LEVEL, SYSTEM_SETTINGS, HARDWARE_LEVEL,
-                    HARDWARE_KEYS,
+                    HARDWARE_KEYS, LOGGING_LEVEL, SYSTEM_LEVELS_SAY,
+                    stage_logging,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     BFD_BLOCK_WORD, BFD_SUBBLOCK_OPENERS, bfd_uses_profile,
@@ -79,6 +80,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
 import doors
 import events
+import eventfwd
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     hostname_error, HOSTNAME_DEFAULT,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -2209,7 +2211,11 @@ SHOW = {
         "hardware": ("the card drivers' settings: configured, and in effect",
                      None),
         "uptime": ("since when the box, the dataplane and the routing run",
-                   None)}),
+                   None),
+        # #588 phase 3: where the record of events goes, and whether it is
+        # getting there.
+        "logging": ("the remote syslog destinations of the box's events, and "
+                    "whether each is reached", None)}),
     "log": ("what happened on this box, newest last: commits, restarts "
             "and why, upgrades, links, sessions, logins",
             "[last <n>] [since <time>] [severity <level>] [source <name>] "
@@ -3477,7 +3483,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "snmp_changed", "api_changed", "dataplane_if_changed",
                "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
-               "hardware_changed",
+               "hardware_changed", "logging_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -4254,6 +4260,10 @@ TREE = {
                              "<seconds>"),
                 ARG_INTERFACE: ("only this interface", None),
             }),
+            # The box's record of events as it is written (#588 phase 3).
+            "log": ("the box's events as they are recorded, until Ctrl-C",
+                    "[last <n>] [since <time>] [severity <level>] [source "
+                    "<name>] [kind <kind>] [seconds <n>]"),
             # The block events the CGNAT exports, as they happen (#556): read
             # from the shared segment, a line each, until Ctrl-C.
             "cgnat": ("the CGNAT, live", {
@@ -4504,7 +4514,21 @@ TREE["system"] = {
             None),
     "hardware": ("the card drivers' settings: SFP+ modules ixgbe does not "
                  "list", None),
+    "logging": ("where the box's events go: remote syslog destinations",
+                None),
     "exit": ("leave 'system'", None),
+    **_EVERY_LEVEL,
+}
+# WHERE THE RECORD OF EVENTS GOES (#588 phase 3), a level under `system`:
+# remote syslog destinations for what `show log` shows. Not the CGNAT's
+# connection records, which are `nat` > `cgnat` > `logging`.
+TREE["logging"] = {
+    "host": ("send the box's events to a syslog collector",
+             "<address> [port <n>] [protocol udp|tcp] [severity <level>] "
+             "[source-address <address>] [vrf <name>]"),
+    "no": ("stop sending there", {
+        "host": ("a destination", "<address>")}),
+    "exit": ("leave 'logging'", None),
     **_EVERY_LEVEL,
 }
 # THE CORES BY ROLE (#466), a level of its own under `system`. Both settings
@@ -9616,6 +9640,9 @@ class Shell:
                     _held[_k] = _v
             setattr(cfg, _lvl, _held)
         cfg.users = self.sys.read_users()
+        # Read back from the file the watcher forwards by (#588 phase 3),
+        # the reason everything above is read from the box.
+        cfg.logging_hosts = eventfwd.read_conf()
         (cfg.snmp, cfg.snmp_communities, cfg.snmp_users,
          cfg.snmp_trap_hosts) = self.snmp.read()
         cfg.api = self.apisvc.read()
@@ -11777,6 +11804,16 @@ class Shell:
             # A table the box's own VRF holds (#540).
             if not self.vrf_tables_free(target):
                 ok = False
+            # A destination sent through a VRF the box has (#588 phase 3):
+            # the watcher binds to the VRF's device, which must exist.
+            for _d in target.logging_hosts if d.get("logging_changed") \
+                    else ():
+                if _d["vrf"] and _d["vrf"] not in target.vrf_devices:
+                    self.err_prose(f"logging host {_d['address']}: no vrf "
+                                   f"{_d['vrf']}",
+                                   "it is sent through a VRF this "
+                                   "configuration has: 'vrf <name> table <n>'")
+                    ok = False
             # The same refusals `do_config` gives at the prompt, on the paths
             # that never see the prompt: `rollback` to a revision written when
             # the box had a different card in it, and `--load` of a file
@@ -13123,6 +13160,16 @@ class Shell:
             if not ok:
                 self.err(f"hardware: {msg}")
                 return False
+        # Where the record of events goes (#588 phase 3): logging.conf,
+        # which the host's watcher reads again at its next pass - nothing
+        # is restarted, so nothing on the box is interrupted by it.
+        if d.get("logging_changed"):
+            ok, msg = eventfwd.write_conf(target.logging_hosts)
+            self.record_settings("logging", ok, msg)
+            if not ok:
+                self.err(f"logging: {msg}")
+                return False
+            print(f"logging: {msg}")
         if d["cgnat_memory_changed"]:
             ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
             if not ok:
@@ -15381,12 +15428,15 @@ class Shell:
         """
         When the dataplane and the routing daemons last started, as
         uptime_facts() reads them - without the record of events it also
-        reads, which a tick every 10 s has no use for (#588 phase 2).
+        reads, which a tick every 10 s has no use for (#588 phase 2). And
+        the kernel's boot, which what stands is said once for (#588 phase
+        3).
         """
         rc, out = self.dp.run("show clock")
         up = vpp_uptime(out) if rc == 0 else None
         return {"dataplane": time.time() - up if up is not None else None,
-                "routing": file_mtime(FRR_STARTED_FILE)}
+                "routing": file_mtime(FRR_STARTED_FILE),
+                "boot": read_btime()}
 
     def watch_read(self, kind):
         """
@@ -15493,6 +15543,9 @@ class Shell:
         # socket, and vppctl finds the new one by itself.
         self.dp.api = None
         state = eventwatch.read_state()
+        # And the record's remote syslog destinations (#588 phase 3), sent
+        # from here between the ticks: eventfwd.py says why this process.
+        fwd = eventfwd.Forwarder()
         while True:
             t0 = time.time()
             new, nxt = self.watch_tick(state, t0, force=once)
@@ -15503,9 +15556,35 @@ class Shell:
             if eventwatch.state_moved(state, nxt):
                 eventwatch.write_state(nxt)
             state = nxt
+            self.watch_forward(fwd)
             if once:
                 return new
-            sleep(max(1.0, eventwatch.TICK - (time.time() - t0)))
+            # The rest of the tick in slices, forwarding after each: an
+            # operator's commit reaches the collector within FORWARD_EVERY,
+            # not at the next tick.
+            while True:
+                left = eventwatch.TICK - (time.time() - t0)
+                sleep(max(0.5, min(eventfwd.FORWARD_EVERY, left)))
+                self.watch_forward(fwd)
+                if left <= eventfwd.FORWARD_EVERY:
+                    break
+
+    def watch_forward(self, fwd):
+        """
+        One pass of the record's forwarder (#588 phase 3), a failure taken
+        as no pass and said once, as watch_read_safe() takes a reading: a
+        watcher that died on a malformed configuration line would stop
+        recording what the box sees with it.
+        """
+        try:
+            return fwd.run()
+        except Exception as e:     # noqa: BLE001 - see the docstring
+            said = self.__dict__.setdefault("_watch_said", set())
+            if "forward" not in said:
+                said.add("forward")
+                print(f"watch-events: forwarding failed: {e!r}",
+                      file=sys.stderr)
+            return 0
 
     def show_log(self, args):
         """
@@ -16620,12 +16699,11 @@ class Shell:
                 return ""
             return line
         if self.nat_ctx == [SYSTEM_HIERARCHY]:
-            if line.strip() == DATAPLANE_LEVEL \
+            if line.strip() in (DATAPLANE_LEVEL, LOGGING_LEVEL) \
                     or line.strip() in SYSTEM_SETTINGS:
                 self.nat_ctx.append(line.strip())
             else:
-                self.err_prose("under 'system' there is 'dataplane', 'cpu', "
-                               "'memory' and 'hardware'",
+                self.err_prose(SYSTEM_LEVELS_SAY,
                                "each enters its level; 'exit' leaves "
                                "'system'")
             return ""
@@ -17130,6 +17208,14 @@ class Shell:
         # And the memory by role, under `system` > `memory`, the same way:
         # one table, config.SYSTEM_SETTINGS, says what each level takes.
         _lvl = w[1] if w[:1] == ["no"] and len(w) > 1 else w[0]
+        # The remote syslog destinations (#588 phase 3), as system_rewrite
+        # made them of what was typed under `system` > `logging`: checked
+        # here by the rule a saved file is read with.
+        if _lvl == LOGGING_LEVEL:
+            why = stage_logging(self.candidate.logging_hosts, w)
+            if why:
+                self.err_prose("logging: not taken", why)
+            return True
         if _lvl in SYSTEM_SETTINGS:
             keys, error = SYSTEM_SETTINGS[_lvl]
             held = getattr(self.candidate, _lvl)
@@ -20089,6 +20175,21 @@ class Shell:
         return {"unsupported_sfp_configured": configured,
                 "unsupported_sfp_booted": booted}
 
+    def show_system_logging(self, now=None):
+        """
+        `show system logging` (#588 phase 3): each remote syslog destination
+        configured - what is in effect, read off logging.conf - and what the
+        host's watcher, which sends to them, last said about it. The CGNAT's
+        connection records are `show cgnat logging`'s, a different stream.
+        """
+        now = time.time() if now is None else now
+        when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S",  # noqa: E731
+                                       time.localtime(t))
+        status = eventfwd.read_status()
+        for row in eventfwd.status_rows(eventfwd.destinations(status),
+                                        status, now, when):
+            print(row)
+
     def show_system_hardware(self):
         """The card drivers' settings (#574), the show_system_cpu() shape:
         configured beside in effect, the gap between them a reboot."""
@@ -20307,6 +20408,9 @@ class Shell:
         if line == "show system hardware":
             self.show_system_hardware()
             return
+        if line == "show system logging":
+            self.show_system_logging()
+            return
         if line == "show system uptime":
             self.show_system_uptime()
             return
@@ -20455,9 +20559,12 @@ class Shell:
         if self.nat_ctx and self.nat_ctx[0] == SYSTEM_HIERARCHY \
                 and not self.frr_ctx:
             block = nest_system(cfg.dataplane_if, cfg.cpu, cfg.memory,
-                                cfg.hardware)
+                                cfg.hardware, cfg.logging_hosts)
             _lvl = self.nat_ctx[-1]
-            if _lvl == DATAPLANE_LEVEL or _lvl in SYSTEM_SETTINGS:
+            if _lvl == LOGGING_LEVEL:
+                _sub = nest_system(None, logging=cfg.logging_hosts)
+                block = [b[2:] for b in _sub[2:-2]]
+            elif _lvl == DATAPLANE_LEVEL or _lvl in SYSTEM_SETTINGS:
                 # That level's own lines, from the whole block.
                 _sub = (nest_system(cfg.dataplane_if)
                         if _lvl == DATAPLANE_LEVEL
@@ -20915,8 +21022,58 @@ class Shell:
         if args[:2] == ["cgnat", "logging"]:
             self.monitor_cgnat_logging(args[2:])
             return
-        self.err("monitor what? 'monitor interface' or 'monitor cgnat "
-                 "logging'")
+        if args[:1] == ["log"]:
+            self.monitor_log(args[1:])
+            return
+        # One row with "error: " in front: 'monitor ...' three times was
+        # 80 columns once `log` joined them (#588 phase 3).
+        self.err("monitor what? 'interface', 'cgnat logging' or 'log'")
+
+    def monitor_log(self, args, now=None, sleep=None):
+        """
+        `monitor log` (#588 phase 3): the box's record of events as it is
+        written, a line each in `show log`'s words, until Ctrl-C or `seconds
+        <n>`. `show log`'s filters: severity, source and kind select what
+        is followed, and `last` or `since` what is shown first; with
+        neither, it starts now.
+
+        Read through the host's door like `show log`, again every
+        FOLLOW_EVERY, over the last FOLLOW_LOOKBACK: an event's time is when
+        it happened, and a start or a login is appended after it - one is
+        said when it arrives, under its own time (events.follow_new).
+        `now` and `sleep` are the seams the tests drive it through.
+        """
+        f, seconds, why = events.parse_follow_args(args)
+        if why:
+            self.err_prose("monitor log: not a filter it takes", why)
+            return
+        now = now or time.time
+        sleep = sleep or time.sleep
+        when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S",  # noqa: E731
+                                       time.localtime(t))
+        follow = {k: v for k, v in f.items() if k not in ("last", "since")}
+        started = now()
+        # What is there now is "seen" before the first lines are shown, so
+        # an event appended between the two reads is said once, not lost.
+        seen = {}
+        events.follow_new(events.fetch(dict(
+            follow, since=started - events.FOLLOW_LOOKBACK)), seen, started)
+        print("monitor log   Ctrl-C to stop")
+        if "last" in f or "since" in f:
+            for ev in events.fetch(f):
+                seen[events.event_key(ev)] = ev.get("t", 0)
+                print(events.format_event(ev, when))
+        try:
+            while seconds is None or now() - started < seconds:
+                sleep(events.FOLLOW_EVERY)
+                t = now()
+                for ev in events.follow_new(events.fetch(dict(
+                        follow, since=t - events.FOLLOW_LOOKBACK)), seen, t):
+                    print(events.format_event(ev, when))
+                sys.stdout.flush()
+        except KeyboardInterrupt:
+            print()
+        print(logmon.stopped_line(now()))
 
     def monitor_cgnat_logging(self, args, segment=None, now=None,
                               sleep=None):

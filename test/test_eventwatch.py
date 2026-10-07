@@ -51,7 +51,10 @@ for k, v in (("PRISMA_CONFIG", "prisma-routing.conf"),
              ("PRISMA_WATCH_STATE", "events-watch.state"),
              ("PRISMA_DOORS", "no-doors.sock"),
              ("PRISMA_WTMP", "wtmp"), ("PRISMA_BTMP", "btmp"),
-             ("PRISMA_FRR_STARTED", "no-frr.pid")):
+             ("PRISMA_FRR_STARTED", "no-frr.pid"),
+             ("PRISMA_LOGGING_CONF", "logging.conf"),
+             ("PRISMA_LOGGING_STATUS", "logging.status"),
+             ("PRISMA_LOGGING_FWD_STATE", "events-forward.state")):
     os.environ[k] = os.path.join(_root, v)
 
 import events  # noqa: E402
@@ -480,6 +483,136 @@ check(run(s, {"bgp": b_down}, starts={"dataplane": None,
 check(W.tick({}, {"link": up}, {"dataplane": None, "routing": None},
              NOW)[0] == [], "tick: a first reading is a baseline")
 
+print("\n=== standing at start: said once a boot (#588 phase 3) ===")
+# A port up and dark, a module below its RX warning, a session not up, a
+# pool out of blocks, a collector not reached - each said, in the present
+# tense, from one reading; and the healthy ones not.
+st = W.link_standing(down)
+check(texts(st) == ["interface GigabitEthernet0/8/0: link down, "
+                    "administratively up: the wire or the far end; its 2 "
+                    "sub-interface(s) with it"] and st[0]["key"] ==
+      "link:GigabitEthernet0/8/0",
+      f"link_standing: a port administratively up whose link is down, with "
+      f"its sub-interfaces: {texts(st)}")
+shut9 = links("up", IFACES.replace("GigabitEthernet0/9/0              2   "
+                                   "   up", "GigabitEthernet0/9/0           "
+                                   "   2     down"))
+check(W.link_standing(up) == [] and W.link_standing(
+    {k: dict(v, link="down") for k, v in shut9.items()
+     if k == "GigabitEthernet0/9/0"}) == [],
+      "link_standing: a link up, and a port shut by configuration, are not "
+      "said")
+st = W.module_standing(m_low)
+check(texts(st) == ["GigabitEthernet0/8/0: rx power -19.00 dBm, below its "
+                    "low warning (-18.01 dBm)"]
+      and st[0]["severity"] == "warning"
+      and st[0]["reason"] == "rx power low-warning",
+      f"module_standing: rx power standing past its warning: {texts(st)}")
+check(W.module_standing(m_ok) == [] and W.module_standing(m_out) == [],
+      "module_standing: a module within its thresholds, or no module, is "
+      "not said")
+check(W.module_standing(dark)[0]["severity"] == "error",
+      "module_standing: no light is an alarm")
+check(W.level_text("x", {"temp": "high-alarm", "temp_c": "91.0 C",
+                         "temp_bound": "its high alarm (90.0 C)"}, "temp")
+      == ("x: temperature 91.0 C, above its high alarm (90.0 C)", "error"),
+      "level_text: a temperature above its alarm is an error")
+st = W.bgp_standing(b_down)
+check(texts(st) == ["BGP session with 10.0.0.2 (AS 65001) is not "
+                    "Established: Active; FRR's last reset: BGP Notification "
+                    "received: Cease/Administrative Shutdown "
+                    "('maintenance')"],
+      f"bgp_standing: a session not Established, with FRR's state and last "
+      f"reset: {texts(st)}")
+check(W.bgp_standing(b_up) == [] and W.bgp_standing(W.bgp_reading(
+    nbr("Idle", 0, 0, adminShutDown=True))) == [],
+      "bgp_standing: Established, or shut by the box's configuration, is "
+      "not said")
+st = W.bfd_standing(bfd("down", 1, "control detection time expired"))
+check(texts(st) == ["BFD session with 10.0.0.2 (on vppwan0) is down: control "
+                    "detection time expired"],
+      f"bfd_standing: a session down, with bfdd's diagnostic: {texts(st)}")
+check(W.bfd_standing(bfd("up", 0)) == [] and W.bfd_standing(
+    bfd("shutdown", 0)) == [] and W.bfd_standing(None) == [],
+      "bfd_standing: up, or shut by configuration, is not said")
+full = blocks(4, 3)
+st = W.pool_standing(full)
+check(texts(st) == ["CGNAT pool small is out of blocks: 3 request(s) for a "
+                    "block refused since the dataplane started, 4 of 4 "
+                    "blocks in use"] and full["small"]["exhausted"],
+      f"pool_standing: none free and refusing, its verdict set: {texts(st)}")
+check(W.pool_standing(blocks(4, 0)) == [] and W.pool_standing(
+    blocks(3, 9)) == [],
+      "pool_standing: full and refusing nobody, or with a block free, is not "
+      "said")
+st = W.collector_standing(c_lost)
+check(texts(st) == ["the CGNAT log export (syslog) is not reaching its "
+                    "collector 198.51.100.3:601: connecting"],
+      f"collector_standing: a stream not reaching its collector: "
+      f"{texts(st)}")
+check(W.collector_standing(c_ok) == [], "collector_standing: connected is "
+      "not said")
+check(W.standing_due({}, "link", NOW - 9000, None, NOW)
+      and not W.standing_due({"link": round(NOW - 9000)}, "link",
+                             NOW - 9000.4, None, NOW)
+      and W.standing_due({"link": round(NOW - 90000)}, "link", NOW - 9000,
+                         None, NOW),
+      "standing_due: once a boot - a state that carries this boot says "
+      "nothing again, an older boot's does")
+check(not W.standing_due({}, "bgp", NOW - 9000, NOW - 100, NOW)
+      and W.standing_due({}, "bgp", NOW - 9000, NOW - 200, NOW),
+      "standing_due: not before the component has run STANDING_SETTLE")
+many = {f"memif{i}/0": {"admin": "up", "link": "down", "parent": ""}
+        for i in range(W.STANDING_MAX + 5)}
+st = W.standing_changes("link", many)
+check(len(st) == W.STANDING_MAX + 1 and all(
+    t.startswith(W.STANDING) for t in texts(st))
+      and st[-1]["text"] == "standing at start: and 5 more link condition(s) "
+      "like these, not each recorded",
+      f"standing_changes: bounded, and the rest counted: {texts(st)[-1:]}")
+check(W.standing_changes("link", down, {"link:GigabitEthernet0/8/0"}) == [],
+      "standing_changes: a condition this tick's change already said is not "
+      "said twice")
+BOOT = NOW - 86400
+s0, said = {}, []
+for t in (NOW, NOW + 10, NOW + 20):
+    got, s0 = W.tick(s0, {"link": down, "transceiver": m_low},
+                     {"dataplane": None, "routing": None, "boot": BOOT}, t)
+    said.append(texts(got))
+check(said[0] == ["standing at start: interface GigabitEthernet0/8/0: link "
+                  "down, administratively up: the wire or the far end; its "
+                  "2 sub-interface(s) with it",
+                  "standing at start: GigabitEthernet0/8/0: rx power -19.00 "
+                  "dBm, below its low warning (-18.01 dBm)"]
+      and said[1:] == [[], []],
+      f"tick: what stands at the first reading is said once, and not at the "
+      f"next: {said}")
+got, _ = W.tick(s0, {"link": down}, {"dataplane": None, "routing": None,
+                                     "boot": BOOT + 9000}, NOW + 9100)
+check(len(got) == 1 and got[0]["text"].startswith(W.STANDING),
+      f"tick: after a boot it stands again, and is said again: {texts(got)}")
+got, s1 = W.tick({}, {"link": up}, {"dataplane": None, "routing": None,
+                                    "boot": BOOT}, NOW)
+check(got == [] and s1["stood"]["link"] == round(BOOT),
+      "tick: a healthy box announces nothing, and the boot is carried")
+_, s1 = W.tick({}, {"link": up}, {"dataplane": None, "routing": None},
+               NOW)
+del s1["stood"]
+got, _ = W.tick(s1, {"link": down}, {"dataplane": None, "routing": None,
+                                     "boot": BOOT}, NOW + 10)
+check(texts(got) == ["interface GigabitEthernet0/8/0: link down, "
+                     "administratively up: the wire or the far end; its 2 "
+                     "sub-interface(s) with it"],
+      f"tick: a state from 0.152 - no `stood` - and a link that went down "
+      f"meanwhile: said once, as the change: {texts(got)}")
+evs = [W.tick({}, {"link": down}, {"dataplane": None, "routing": None,
+                                   "boot": BOOT}, NOW)[0][0]]
+check(evs[0]["severity"] == "warning" and evs[0]["kind"] == "link"
+      and evs[0]["subject"] == "GigabitEthernet0/8/0"
+      and events.event_error(evs[0]) is None,
+      "tick: a standing event is one the record takes, with its kind and "
+      "subject")
+
 print("\n=== the state: cadence, written when it moved ===")
 check(W.due({}, "transceiver", NOW) and not W.due(
     {"last": {"transceiver": NOW - 30}}, "transceiver", NOW)
@@ -578,6 +711,9 @@ import time as _time  # noqa: E402
 st = sh.watch_starts()
 check(st["routing"] is None and abs(st["dataplane"] - (_time.time() - 120.5))
       < 60, f"watch_starts: the dataplane's start from its clock: {st}")
+check(st.get("boot") == prismash.read_btime(),
+      "watch_starts: and the kernel's boot, what stands is said once for "
+      "(#588 phase 3)")
 sh.watch_starts = lambda: {"dataplane": None, "routing": None}
 sh.frr = frr()
 got, s = sh.watch_tick({}, NOW)
@@ -624,6 +760,30 @@ check(len(second) == 1 and third == [] and len(rec) == 1
       "GigabitEthernet0/8/0",
       f"watch_events: a change recorded once, and not again by the next "
       f"run: {texts(rec)}")
+# What stands when the watcher first runs (#588 phase 3): said by the first
+# pass, kept in the state file, and not again by a restart of the watcher in
+# the same boot - the X520 below its RX warning on 10.40.200.166.
+for f in (os.environ["PRISMA_WATCH_STATE"], os.environ["PRISMA_EVENTS"]):
+    if os.path.exists(f):
+        os.remove(f)
+sh.watch_starts = lambda: {"dataplane": None, "routing": None,
+                           "boot": NOW - 86400}
+sh.dp = Dp(dict(ANSWERS, **{
+    "show hardware-interfaces brief": HW.format(a="down"),
+    "show bpa transceiver": F.dump("GigabitEthernet0/8/0", "dpdk",
+                                   "sff-8472", F.sfp_low_rx(),
+                                   F.SFF8472_READ)}))
+sh.frr = frr()
+first = sh.watch_events(once=True)
+again = sh.watch_events(once=True)
+rec = events.read_events()
+check(sorted(e["kind"] for e in first) == ["link", "transceiver"]
+      and all(e["text"].startswith(W.STANDING) for e in first)
+      and again == [] and len(rec) == 2
+      and W.read_state()["stood"]["link"] == round(NOW - 86400),
+      f"watch_events: what stands is said by the first pass, and not by a "
+      f"restart of the watcher in the same boot: {texts(rec)}")
+sh.watch_starts = lambda: {"dataplane": None, "routing": None}
 slept = []
 
 
@@ -631,17 +791,40 @@ class Stop(Exception):
     pass
 
 
+forwarded = []
+_fwd = prismash.eventfwd.Forwarder.run
+prismash.eventfwd.Forwarder.run = lambda self, now=None: forwarded.append(1)
+
+
 def sleeper(n):
     slept.append(n)
-    raise Stop
+    if len(slept) == 3:
+        raise Stop
 
 
 try:
     sh.watch_events(sleep=sleeper)
 except Stop:
     pass
-check(slept and 1.0 <= slept[0] <= W.TICK,
-      f"watch_events: the loop sleeps the rest of its tick: {slept}")
+prismash.eventfwd.Forwarder.run = _fwd
+check(slept and all(0.5 <= n <= prismash.eventfwd.FORWARD_EVERY
+                    for n in slept) and len(forwarded) == 3,
+      f"watch_events: the loop sleeps its tick in slices, forwarding the "
+      f"record after the tick and each slice (#588 phase 3): {slept} "
+      f"{len(forwarded)}")
+
+
+class Boom:
+    def run(self):
+        raise ValueError("a line nobody expected")
+
+
+_err = io.StringIO()
+with contextlib.redirect_stderr(_err):
+    _f1, _f2 = sh.watch_forward(Boom()), sh.watch_forward(Boom())
+check(_f1 == 0 and _f2 == 0 and _err.getvalue().count("forwarding failed")
+      == 1, f"watch_forward: a pass that raised is no pass, said once: "
+      f"{_err.getvalue()!r}")
 
 print("\n=== settings: applied and refused, by the commit's session ===")
 if os.path.exists(os.environ["PRISMA_EVENTS"]):

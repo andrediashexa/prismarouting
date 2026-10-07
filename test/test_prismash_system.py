@@ -1428,7 +1428,7 @@ check(system._sink("10.0.0.9") == "10.0.0.9"
       and system._unsink("10.0.0.9") == "10.0.0.9",
       "IPv6 goes to snmpd in brackets, and comes back without them")
 _m = system.snmp_monitors("70000")
-check(len(_m) == 11 and all(l.startswith("monitor ") for l in _m)
+check(len(_m) == 13 and all(l.startswith("monitor ") for l in _m)
       and any("vrrpStateChange .1.3.6.1.4.1.70000.1.13.1.1.5 != 0" in l
               and " -D " in l for l in _m)
       and any("dataplaneNotCurrent .1.3.6.1.4.1.70000.1.12.3.0 == 2" in l
@@ -1445,6 +1445,14 @@ check(any("selfTestFailed .1.3.6.1.4.1.70000.1.17.2.0 > 0" in l
       and any("auditTrailDamaged .1.3.6.1.4.1.70000.1.19.1.0 >= 3" in l
               for l in _m),
       f"a failed self-test, a revert, a box between plans, a damaged trail: {_m}")
+# #588 phase 3: a pool with no block free, and a module's level moving,
+# with the row's name and value in the notification.
+check(any("poolExhausted .1.3.6.1.4.1.70000.1.10.1.1.12 >= 100" in l
+          and "-o .1.3.6.1.4.1.70000.1.10.1.1.2 " in l for l in _m)
+      and any("transceiverStateChange .1.3.6.1.4.1.70000.1.20.1.1.18 != 0"
+              in l and " -D " in l and "-o .1.3.6.1.4.1.70000.1.20.1.1.2 "
+              in l for l in _m),
+      f"a pool exhausted, a transceiver past a threshold and back: {_m}")
 _st = {"enabled": "yes", "listen-address": "127.0.0.1", "port": "161",
        "enterprise-number": "70000"}
 _body = system._snmpd_body(_st, ["c1"], {}, agent="/x/agent", release="0.1",

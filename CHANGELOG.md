@@ -77,6 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show log`, phase 3: what stands when the watcher starts, where the
+  record goes, and how it is followed.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
+  The watcher said only what changed, so on 10.40.200.166 the X520's RX
+  power, below its low warning before the watcher ever ran, was never in
+  the record. Now the first reading of each boot also says what already
+  stands, once and in the present tense - "standing at start: enp1s0: rx
+  power -14.79 dBm, below its low warning (-13.00 dBm)" - for a port up and
+  dark, a module past a warning or an alarm, a configured BGP or BFD session
+  not up, a pool out of blocks and refusing, and a CGNAT log stream not
+  reaching its collector; a restart of the watcher in the same boot does not
+  say them again, and nothing healthy is announced.
+
+  `system` > `logging` > `host <address> [port <n>] [protocol udp|tcp]
+  [severity <level>] [source-address <address>] [vrf <name>]` sends the
+  record to up to four remote syslog collectors: RFC 5424, facility daemon,
+  the event's kind as MSGID and its fields as structured data under
+  `event@67033`, over UDP or TCP (RFC 6587 octet counting). The host's
+  watcher sends it from events.log, which is the spool: a TCP collector that
+  was away gets what waited when it is back, none lost and none twice, and a
+  restart or a reboot does not change that. `show system logging` says each
+  destination and whether it is reached. This is not `nat` > `cgnat` >
+  `logging`, the CGNAT's connection records for a court order, which is
+  unchanged and kept apart. `monitor log` follows the record as it is
+  written with `show log`'s filters, until Ctrl-C; the API streams it with
+  `WatchEvents`, sets the destinations with Edit, reads them in GetConfig's
+  `SystemConfig.log_destinations` and their state in GetSystem's `logging`.
+  Two SNMP notifications join #507's: `poolExhausted` (a pool with no block
+  free) and `transceiverStateChange` (a module's level past a threshold and
+  back); links and BGP were already IF-MIB's `linkDown`/`linkUp` and bgpd's
+  `bgpBackwardTransition`, and are not sent twice. Not yet: a BFD
+  notification, which needs a MIB object first.
+
 ### Fixed
 
 ## 0.152.1 - the default MTU is 1500

@@ -1358,6 +1358,13 @@ def system_typed(cfg):
         "cpu": _kv(cfg.cpu),
         "memory": _kv(cfg.memory),
         "hardware": _kv(getattr(cfg, "hardware", {})),
+        # Where the record of events goes (#588 phase 3); not the CGNAT's
+        # connection records, which are the "logging" area.
+        "log_destinations": [
+            {"address": d["address"], "port": d["port"],
+             "protocol": d["protocol"], "severity": d["severity"],
+             "source_address": d["source-address"], "vrf": d["vrf"]}
+            for d in getattr(cfg, "logging_hosts", [])],
     }
 
 
@@ -2159,6 +2166,8 @@ def config_modes(P):
          ["system", "cpu"]),
         ("system hardware", "system > hardware", '["system","hardware"]',
          P.TREE["hardware"], adm, ["system", "hardware"]),
+        ("system logging", "system > logging", '["system","logging"]',
+         P.TREE["logging"], adm, ["system", "logging"]),
         ("system dataplane", "system > dataplane", '["system","dataplane"]',
          P.TREE["dataplane"], adm, ["system", "dataplane"]),
         ("policy-options", "policy-options", '["policy-options"]',
@@ -2244,7 +2253,7 @@ READ_MODES = {"config": "system", "router static": "static",
               "router ospf6": "ospf6", "router isis": "isis",
               "system": "system", "system memory": "system",
               "system cpu": "system", "system dataplane": "system",
-              "system hardware": "system",
+              "system hardware": "system", "system logging": "system",
               "user": "users", "snmp-user": "snmp_users",
               "policy-options": "policy", "prefix-list": "policy",
               "policy-statement": "policy", "term": "policy",

@@ -21,9 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 766 |
+| typed | 771 |
 | text | 1 |
-| n/a | 53 |
+| n/a | 54 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -124,6 +124,7 @@ reachable in the phase their note names.
 | `mtr <host>` | typed | OperationalService.Mtr (a stream) | every account | the report's hops, at the end of the run |
 | `monitor interface interval <seconds>` | typed | TelemetryService.Subscribe | every account | interface counters as a stream; GetHistory for the past day |
 | `monitor interface <interface>` | typed | TelemetryService.Subscribe | every account | interface counters as a stream; GetHistory for the past day |
+| `monitor log [last <n>] [since <time>] [severity <level>] [source <name>] [kind <kind>] [seconds <n>]` | typed | OperationalService.WatchEvents (a stream) | every account | a BoxEvent each as it is recorded, ListEvents' filters; `last` or `since` what is sent first (#588 phase 3) |
 | `monitor cgnat logging raw` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `monitor cgnat logging subscriber <A.B.C.D>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `monitor cgnat logging public <A.B.C.D>[:<port>]` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
@@ -182,6 +183,7 @@ reachable in the phase their note names.
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times, and why each started (#588) |
+| `show system logging` | typed | OperationalService.GetSystem | every account | logging: each destination and whether it is reached; logging_text (#588 phase 3) |
 | `show log [last <n>] [since <time>] [severity <level>] [source <name>] [kind <kind>]` | typed | OperationalService.ListEvents | every account | the same filters, `kind` too, with each event's subject and reason; the restart causes are also in GetSystem (#588) |
 | `show logging` | typed | OperationalService.GetRoutingLogging | every account | FRR's logging per daemon |
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
@@ -504,6 +506,7 @@ Entered with `system`; `EditRequest.path` = `["system"]`; changed by: administra
 | `memory` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `cpu` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `hardware` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `logging` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: system memory
@@ -544,6 +547,16 @@ Entered with `system > hardware`; `EditRequest.path` = `["system","hardware"]`; 
 | `unsupported-sfp allow` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `unsupported-sfp refuse` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `no unsupported-sfp` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `exit` | n/a | - | the session's |
+
+## Configuration: system logging
+
+Entered with `system > logging`; `EditRequest.path` = `["system","logging"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `host <address> [port <n>] [protocol udp\|tcp] [severity <level>] [source-address <address>] [vrf <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `no host <address>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: system dataplane

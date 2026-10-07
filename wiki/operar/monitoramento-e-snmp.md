@@ -331,7 +331,11 @@ Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confi
 | um `commit confirmed` que ninguém confirmou foi revertido | `configReverted` |
 | o tuning espera um reboot | `tuningBetweenPlans` |
 | a trilha de configuração deixou de conferir | `auditTrailDamaged` |
+| um pool fica sem nenhum bloco livre | `poolExhausted`, com o nome do pool (desde a 0.152.2) |
+| o RX, a temperatura, a tensão, o bias ou o TX de um módulo passa de um limiar, ou volta | `transceiverStateChange`, com a porta e o nível (desde a 0.152.2) |
 | disco, memória ou carga passam do limite | os avisos padrão do net-snmp |
+
+Porta caída e sessão BGP caída já eram avisos padrão (`linkDown`/`linkUp` da IF-MIB e `bgpBackwardTransition` do bgpd), e por isso não ganharam um aviso próprio do produto: não chegam duas vezes. Sessão BFD **não** tem aviso — nenhum objeto da MIB guarda o estado dela —, nem login, commit e reinício: esses estão no `show log`, que vai para um syslog com `system` > `logging` e é acompanhado ao vivo com `monitor log`.
 
 Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired` da DISMAN-EVENT-MIB, com o nome no campo `mteHotTrigger`, e ficam sob o mesmo número da MIB. A caixa confere cada condição a cada 30 ou 60 segundos, então o aviso chega até um minuto depois do evento — o tuning e a trilha, a cada cinco minutos.
 

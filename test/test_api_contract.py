@@ -107,8 +107,8 @@ want = {
                            "ListOspfInterfaces", "ListIsisInterfaces",
                            "GetHardware", "GetRoutingLogging", "GetSnmpFile",
                            "Ping", "Traceroute", "Mtr", "ListBfdSessions", "WatchBfd",
-                           # #588: show log.
-                           "ListEvents",
+                           # #588: show log; phase 3, monitor log.
+                           "ListEvents", "WatchEvents",
                            # #590: show interface transceiver.
                            "ListTransceivers"],
     "TelemetryService": ["Subscribe", "GetHistory",

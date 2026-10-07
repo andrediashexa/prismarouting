@@ -37,6 +37,19 @@ still down a minute after the dataplane came back IS said. Counters that a
 restart zeroes (FRR's connections, the pools' refusals) are read as a new
 baseline across one.
 
+WHAT STANDS WHEN IT STARTS IS SAID ONCE (#588 phase 3). Comparing
+readings says only what changes, so a condition already true when the
+watcher starts was never said: on 10.40.200.166 (2026-10-06) the X520's RX
+power stood below its low warning before the watcher first ran, and nothing
+recorded it. So each kind's first reading of a boot is also read for what is
+abnormal in it - a port administratively up whose link is down, a module
+past a warning or an alarm, a configured BGP or BFD session that is not up,
+a pool with no block free that has refused, a log stream whose collector is
+not reached - and each is said once, in the present tense, "standing at
+start: ...". The state file carries the boot it was said for (`stood`), so a
+restart of the watcher within the same boot says nothing again; healthy
+things are never announced.
+
 NOISE IS BOUNDED, BY SUBJECT. A link that flaps would write an event per
 reading; flap_admit() lets FLAP_EVENTS changes of one subject through in
 FLAP_WINDOW and holds the rest, counted, and flap_summaries() says them in
@@ -81,6 +94,17 @@ SETTLE = 60
 #: flapping: the rest of the window is counted, not written.
 FLAP_WINDOW = 300
 FLAP_EVENTS = 4
+#: What is abnormal in a component's first reading is said as standing only
+#: once the component has run this long (#588 phase 3). Longer than SETTLE:
+#: at a boot a BGP session is still connecting a minute after FRR started
+#: (FRR's connect retry is 120 s), and "not established" said then would be
+#: the boot, not news. A component whose start is not known is not held.
+STANDING_SETTLE = 180
+#: Standing conditions said one by one per kind, at most: a box whose 300
+#: unused ports are up and dark says 20 and how many more, not 300.
+STANDING_MAX = 20
+#: The words every standing event starts with.
+STANDING = "standing at start: "
 #: Sessions a logout is matched against, at most: wtmp lines whose logout
 #: never came (a power cut) must not grow the state for ever.
 OPEN_LOGINS_MAX = 256
@@ -383,14 +407,29 @@ def module_changes(prev, cur):
                 text, sev = f"{port}: {name} back within its thresholds " \
                             f"({c[unit]})", "notice"
             else:
-                side = "above" if b.startswith("high") else "below"
-                text = f"{port}: {name} {c[unit]}, {side} " \
-                       f"{c[q + '_bound'] or 'a threshold'}"
-                sev = "error" if b.endswith("alarm") else "warning"
+                text, sev = level_text(port, c, q)
             out.append(dict(base, key=f"transceiver:{port}:{q}",
                             severity=sev, reason=f"{name} {b}", text=text,
                             what=f"the {name} of {port}", state=b))
     return out
+
+
+#: A module's two levels, as a sentence names each and where its value is.
+_LEVELS = {"rx": ("rx power", "rx_dbm"), "temp": ("temperature", "temp_c")}
+
+
+def level_text(port, c, q):
+    """
+    (text, severity) for a module whose `q` ("rx" or "temp") stands past a
+    threshold in the module_reading() row `c`: "<port>: rx power -19.00
+    dBm, below its low warning (-18.01 dBm)"; an alarm is an error. Said by
+    a change and by a standing condition (#588 phase 3) in the same words.
+    """
+    name, unit = _LEVELS[q]
+    side = "above" if c[q].startswith("high") else "below"
+    return (f"{port}: {name} {c[unit]}, {side} "
+            f"{c[q + '_bound'] or 'a threshold'}",
+            "error" if c[q].endswith("alarm") else "warning")
 
 
 # --------------------------------------------------------------------- BGP
@@ -414,7 +453,11 @@ def bgp_reading(data):
                 "up": _n(p.get("connectionsEstablished")),
                 "down": _n(p.get("connectionsDropped")),
                 "as": _n(p.get("remoteAs")),
-                "reason": bgp_reason(p)}
+                "reason": bgp_reason(p),
+                # Shut by the box's own configuration (`neighbor X
+                # shutdown`): not Established on purpose, so not a standing
+                # condition (#588 phase 3).
+                "shut": bool(p.get("adminShutDown"))}
     return out
 
 
@@ -501,7 +544,9 @@ def bfd_reading(fields):
             "up": s["state"] == "STATE_UP",
             "down": int(s.get("session_down_count") or 0),
             "diag": s.get("diagnostic") or "",
-            "peer": s["peer"], "where": where}
+            "peer": s["peer"], "where": where,
+            # Shut by configuration: down on purpose (#588 phase 3).
+            "admin": s["state"] == "STATE_ADMIN_DOWN"}
     return out
 
 
@@ -646,6 +691,175 @@ def collector_changes(prev, cur):
                             state="lost",
                             text=f"{what} lost its collector {c['collector']}"
                             + (f": {c['why']}" if c["why"] else "")))
+    return out
+
+
+# ---------------------------------------------------------------- standing
+
+def link_standing(cur):
+    """
+    The ports of a link_reading() administratively up whose link is down,
+    as standing change dicts (#588 phase 3). A sub-interface's link is its
+    parent's, so the port says it with the sub-interfaces it carries; one
+    shut down by configuration is down on purpose and is not said.
+    """
+    out = []
+    for name in sorted(cur):
+        c = cur[name]
+        if c["parent"] or c["admin"] != "up" or c["link"] != "down":
+            continue
+        subs = sum(1 for s in cur.values()
+                   if s["parent"] == name and s["admin"] == "up")
+        text = f"interface {name}: link down, administratively up: the " \
+               f"wire or the far end"
+        if subs:
+            text += f"; its {subs} sub-interface(s) with it"
+        out.append({"key": "link:" + name, "source": "dataplane",
+                    "kind": "link", "subject": name, "severity": "warning",
+                    "text": text, "reason": "link"})
+    return out
+
+
+def module_standing(cur):
+    """The modules of a module_reading() whose RX power or temperature
+    stands past a warning or an alarm threshold (#588 phase 3)."""
+    out = []
+    for port in sorted(cur):
+        c = cur[port]
+        if not c["present"]:
+            continue
+        for q in ("rx", "temp"):
+            if c[q] in ("", "normal"):
+                continue
+            text, sev = level_text(port, c, q)
+            out.append({"key": f"transceiver:{port}:{q}",
+                        "source": "dataplane", "kind": "transceiver",
+                        "subject": port, "severity": sev, "text": text,
+                        "reason": f"{_LEVELS[q][0]} {c[q]}"})
+    return out
+
+
+def bgp_standing(cur):
+    """
+    The sessions of a bgp_reading() that are not Established, with the
+    state FRR has them in and its last reset (#588 phase 3). One shut by
+    the box's configuration is not: it is down because it was told to be.
+    """
+    out = []
+    for key in sorted(cur):
+        c = cur[key]
+        if c["state"] == "Established" or c.get("shut"):
+            continue
+        text = f"{_bgp_what(key, c)} is not Established: " \
+               f"{c['state'] or 'no state'}"
+        if c["reason"]:
+            text += f"; FRR's last reset: {c['reason']}"
+        out.append({"key": "bgp:" + key, "source": "routing", "kind": "bgp",
+                    "subject": key.split(" ", 1)[1], "severity": "warning",
+                    "text": text, "reason": c["reason"]})
+    return out
+
+
+def bfd_standing(cur):
+    """The sessions of a bfd_reading() that are down, with bfdd's
+    diagnostic; not one shut by configuration (#588 phase 3)."""
+    out = []
+    for key in sorted(cur or {}):
+        c = cur[key]
+        if c["up"] or c.get("admin"):
+            continue
+        what = f"BFD session with {c['peer']}" + \
+            (f" (on {c['where']})" if c["where"] else "")
+        diag = "" if c["diag"] in ("", "ok") else c["diag"]
+        out.append({"key": "bfd:" + key, "source": "routing", "kind": "bfd",
+                    "subject": c["peer"], "severity": "warning",
+                    "text": f"{what} is down" + (f": {diag}" if diag else ""),
+                    "reason": diag})
+    return out
+
+
+def pool_standing(cur):
+    """
+    The pools of a pool_reading() out of blocks: none free, and requests
+    refused since the dataplane started (#588 phase 3). A pool whose every
+    block is held and that has refused nobody is full, not refusing - a
+    deterministic pool is that by design. Sets the pool's `exhausted`, so
+    pool_changes() says when it has blocks again.
+    """
+    out = []
+    for name in sorted(cur):
+        c = cur[name]
+        if c["in_use"] < c["blocks"] or not c["refusals"]:
+            continue
+        c["exhausted"] = True
+        ran = "its reserve is out" if c["reserve"] else "is out of blocks"
+        out.append({"key": "pool:" + name, "source": "dataplane",
+                    "kind": "pool", "subject": name, "severity": "warning",
+                    "reason": f"{c['refusals']} refused",
+                    "text": f"CGNAT pool {name} {ran}: {c['refusals']} "
+                            f"request(s) for a block refused since the "
+                            f"dataplane started, {c['in_use']} of "
+                            f"{c['blocks']} blocks in use"})
+    return out
+
+
+def collector_standing(cur):
+    """The configured streams of a collector_reading() not reaching their
+    collector (#588 phase 3)."""
+    out = []
+    for k in sorted(cur):
+        c = cur[k]
+        if not c["configured"] or c["ok"]:
+            continue
+        what = f"the CGNAT log export ({_STREAM.get(k, k)})"
+        out.append({"key": "collector:" + k, "source": "dataplane",
+                    "kind": "collector", "subject": k, "severity": "warning",
+                    "reason": c["why"],
+                    "text": f"{what} is not reaching its collector "
+                            f"{c['collector']}"
+                            + (f": {c['why']}" if c["why"] else "")})
+    return out
+
+
+#: Each kind's standing conditions. Logins are records, not a state.
+STANDING_OF = {"link": link_standing, "transceiver": module_standing,
+               "bgp": bgp_standing, "bfd": bfd_standing,
+               "pool": pool_standing, "collector": collector_standing}
+
+
+def standing_due(stood, kind, boot, start, now):
+    """
+    Whether `kind`'s reading at `now` is read for standing conditions: the
+    state does not carry them for this boot (`stood`, {kind: boot}), and
+    the component it is read from has run STANDING_SETTLE, when its start
+    `start` is known. A state with no `stood` - none at all, or one written
+    by 0.152, whose watcher never said them - says them: what stands was
+    never said (#588 phase 3, the X520 on 10.40.200.166).
+    """
+    if start is not None and 0 <= now - start < STANDING_SETTLE:
+        return False
+    said = stood.get(kind)
+    return said is None or abs(said - round(boot or 0)) > events.START_SLACK
+
+
+def standing_changes(kind, cur, said=()):
+    """
+    `kind`'s standing conditions in the reading `cur`, as change dicts whose
+    text starts STANDING; those whose key is in `said` - a change this very
+    tick already said - left out, and past STANDING_MAX one more saying how
+    many were not each recorded.
+    """
+    found = [c for c in STANDING_OF[kind](cur) if c["key"] not in said]
+    out = [dict(c, text=STANDING + c["text"], standing=True)
+           for c in found[:STANDING_MAX]]
+    if len(found) > STANDING_MAX:
+        rest = len(found) - STANDING_MAX
+        out.append({"key": f"{kind}:standing", "source": found[0]["source"],
+                    "kind": kind, "subject": "", "severity": "warning",
+                    "standing": True,
+                    "reason": f"{rest} more",
+                    "text": f"{STANDING}and {rest} more {kind} condition(s) "
+                            f"like these, not each recorded"})
     return out
 
 
@@ -808,14 +1022,17 @@ def tick(state, readings, starts, now, logins=None):
     the one before. `starts` is {"dataplane", "routing"}: when each last
     started (Shell.uptime_facts()), None when not known. `logins` is
     (wtmp_records, btmp_records, positions) when the login records were
-    read, positions being read_utmp()'s.
+    read, positions being read_utmp()'s. `starts["boot"]`, when given, is
+    the boot what stands is said once for (#588 phase 3); standing events
+    are not passed through flap_admit(): once a boot is their bound.
     """
     state = json.loads(json.dumps(state or {}))
     seen = state.setdefault("seen", {})
     started = state.setdefault("started", {})
     last = state.setdefault("last", {})
     flaps = state.setdefault("flaps", {})
-    changes = []
+    stood = state.setdefault("stood", {})
+    changes, standing = [], []
     for kind, cur in readings.items():
         last[kind] = now
         if cur is None:
@@ -827,11 +1044,20 @@ def tick(state, readings, starts, now, logins=None):
         prev = seen.get(kind)
         if kind == "pool":
             cur = pool_reading_carry(cur, prev)
+        moved = []
         if prev is not None:
             restarted = start is not None and started.get(kind) is not None \
                 and abs(start - started[kind]) > events.START_SLACK
             fn, takes = COMPARE[kind]
-            changes += fn(prev, cur, restarted) if takes else fn(prev, cur)
+            moved = fn(prev, cur, restarted) if takes else fn(prev, cur)
+            changes += moved
+        # After the comparison, so a condition this tick's change already
+        # says - a link that went down while the watcher was stopped - is
+        # said once, as the change.
+        if standing_due(stood, kind, starts.get("boot"), start, now):
+            standing += standing_changes(kind, cur,
+                                         {c["key"] for c in moved})
+            stood[kind] = round(starts.get("boot") or 0)
         seen[kind] = cur
         if start is not None:
             started[kind] = start
@@ -842,8 +1068,9 @@ def tick(state, readings, starts, now, logins=None):
         state["logins"] = pos
         last["login"] = now
     out = []
-    for c in changes:
-        if not flap_admit(flaps, c, c.get("t", now)):
+    for c in standing + changes:
+        if not c.get("standing") and not flap_admit(flaps, c,
+                                                    c.get("t", now)):
             continue
         out.append(events.make_event(
             c["source"], c["severity"], c["text"], who=c.get("who", ""),

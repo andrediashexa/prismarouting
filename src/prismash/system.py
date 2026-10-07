@@ -1459,6 +1459,20 @@ def snmp_monitors(pen):
         f"monitor -r 60 -I -D configReverted {b}.18.6.0 > 0",
         f"monitor -r 300 -I tuningBetweenPlans {b}.16.1.0 == 2",
         f"monitor -r 300 -I auditTrailDamaged {b}.19.1.0 >= 3",
+        # What the box's record says happened, as notifications (#588
+        # phase 3), where an object already holds it. A pool with no block
+        # free: the utilisation at 100, beside poolNearlyFull's 90 - the
+        # watcher's "out of blocks" also needs a refusal, which no object
+        # counts per block. A module's worst level moving - normal, warning,
+        # alarm, unknown (prXcvrState, #590): -D, as vrrpStateChange, so it
+        # fires going past a threshold AND coming back, with the port and
+        # the level in it. The links are IF-MIB's linkDown and linkUp
+        # (linkUpDownNotifications below) and BGP is bgpd's own
+        # bgpBackwardTransition: not sent twice.
+        f"monitor -r 60 -o {b}.10.1.1.2 -o {b}.10.1.1.12 "
+        f"poolExhausted {b}.10.1.1.12 >= 100",
+        f"monitor -r 60 -D -o {b}.20.1.1.2 -o {b}.20.1.1.18 "
+        f"transceiverStateChange {b}.20.1.1.18 != 0",
     ]
 
 

@@ -23,9 +23,21 @@ the SNMP and API settings applied or refused, and the dataplane given up on. A
 subject that flaps is held and said once a window, with its count. `show log
 kind <kind>` selects one kind.
 
+Since phase 3 what already **stands** when the watcher starts - a port up
+and dark, a module past its warning, a session not up, a pool out of blocks,
+a collector not reached - is said once a boot, in the present tense
+("standing at start: ..."). The record **goes** where the operator says:
+`system` > `logging` sends it to remote syslog collectors (RFC 5424, UDP or
+TCP, a minimum severity, a source address or a VRF), from the same watcher,
+with the record itself as the spool. It is **followed** with `monitor log`
+and the API's streaming `WatchEvents`, and a pool with no block free and a
+module's level moving are SNMP notifications beside the links' and BGP's
+standard ones.
+
 FRR's `show logging` is unchanged: each routing daemon's logging
-*configuration*, as before. Phase 1 is delivered in 0.151.14 and phase 2 in
-0.152.0; the issue stays open for phase 3 below.
+*configuration*, as before. Phase 1 is delivered in 0.151.14, phase 2 in
+0.152.0 and phase 3 in 0.152.2; what is left is at the end of phase 3's
+section.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
@@ -49,7 +61,7 @@ FRR's `show logging` is unchanged: each routing daemon's logging
 |---|---|---|
 | **1** | The record itself, bounded and kept across reboots. Commits, rollbacks, `commit confirmed` confirmed and expired, with the account and where the session came from. Upgrades (asked, and done). Reboots and shutdowns asked from the VTY or the API. Dataplane and routing starts with their cause, the cause recorded before the action. `show log [last <n>] [since <time>] [severity <level>] [source <name>]`, and the box's `| match`. `ListEvents`, and the cause in `GetSystem`. | *delivered in 0.151.14* |
 | **2** | What the box sees happen rather than what it is told: interface and link up/down, administrative or not, ports and sub-interfaces; a module inserted, removed, swapped, and its RX power or temperature past a threshold and back (#590's levels); BGP and BFD sessions up/down with the reason (FRR's last reset, bfdd's diagnostic); a CGNAT pool out of blocks and with blocks again; the log exporter losing or reaching its collector (`logstate`'s readings); logins, failed logins and logouts (wtmp and btmp); SNMP and API settings applied or refused; the dataplane given up on (`watch-the-dataplane`, `prisma-hot-card`). Each from a watcher that compares a reading with the last one, as `observe_starts()` does - never from a log line. Flapping held and counted. `show log kind`; ListEvents' `kind`, `subject`, `reason`. | *delivered in 0.152.0* |
-| **3** | Where the record goes and how it is followed: `system logging` in Prisma's terms (a remote syslog, its level, which sources), replacing FRR's per-daemon `log syslog` as what an operator configures; `monitor log`, a follow mode like `monitor cgnat logging`, and a streaming `WatchEvents` in the API; SNMP notifications for the events PRISMA-ROUTING-MIB has an object for (#507's traps). And what phase 2 left: the modules of cards Linux holds (read through a door today), and a link flap faster than a reading on a port with no counter of its own. | planned |
+| **3** | What stands when the watcher starts, said once a boot (the X520's RX below its warning on 10.40.200.166, never said). Where the record goes and how it is followed: `system` > `logging`, remote syslog destinations in Prisma's terms (address, port, UDP or TCP, a minimum severity, a source address or a VRF), sent by the watcher from events.log; `show system logging`; `monitor log`, a follow mode with `show log`'s filters, and a streaming `WatchEvents` in the API; SNMP notifications where PRISMA-ROUTING-MIB has an object (#507's machinery): a pool with no block free and a module's level moving, beside the standard linkDown/linkUp and bgpBackwardTransition already sent. | *delivered in 0.152.2*; left: a BFD notification (no MIB object), the modules of cards Linux holds, a link flap faster than a reading on a port with no counter of its own |
 
 ## How it is written
 
@@ -299,6 +311,240 @@ at boot is written, and so is the retry after the interfaces (#591).
 * **Logouts are `info`.** Kept for `last`-like reading, below what an
   operator filters with `severity notice`.
 
+## What stands, where it goes, how it is followed (phase 3)
+
+### What stands when the watcher starts
+
+**Said once a boot.** The watcher records changes, so a condition already
+true when it starts was never said: on 10.40.200.166 (2026-10-06) the X520's
+RX power stood at -14.8 dBm against a -13.0 dBm low warning before the
+watcher first ran, and the record had nothing. Now each kind's first reading
+of a boot is also read for what is abnormal in it, and each condition is said
+once, in the present tense, as a warning (an alarm as an error):
+
+| Kind | What stands | Not said |
+|---|---|---|
+| `link` | a port administratively up whose link is down, with the sub-interfaces on it | a port shut by configuration; a sub-interface (its link is its parent's) |
+| `transceiver` | a module's RX power or temperature past a warning or an alarm | a module within its thresholds; an empty cage |
+| `bgp` | a configured session not Established, with FRR's state and last reset | a session shut by the box's configuration (`neighbor X shutdown`) |
+| `bfd` | a session down, with bfdd's diagnostic | a session shut by configuration |
+| `pool` | a pool with no block free that has refused requests since the dataplane started | a pool full and refusing nobody - a deterministic pool is that by design |
+| `collector` | a configured CGNAT log stream not reaching its collector | a stream not configured |
+
+```
+2026-10-07 00:04:12  warning  dataplane  standing at start: enp1s0: rx power
+    -14.79 dBm, below its low warning (-13.00 dBm)
+```
+
+What `lab/show-log-watch.sh` read back, its first pass started with a port
+whose far end never came and a module whose light was already low (the
+lab's container in UTC):
+
+```
+2026-10-07 03:27:00  warning  dataplane  standing at start: interface memif3/0:
+    link down, administratively up: the wire or the far end
+2026-10-07 03:27:00  warning  dataplane  standing at start: memif1/0: rx power
+    -19.00 dBm, below its low warning (-18.01 dBm)
+```
+
+and its second pass - a new process, a restart of the watcher - said
+nothing.
+
+* **"Once a boot" is kept in the state file**: events-watch.state carries the
+  boot each kind was read for (`stood`), so a restart of the watcher within
+  the same boot - `systemctl restart`, an upgrade - says nothing again, and
+  the next boot says what stands then. A state file with no `stood` - none at
+  all, or one 0.152.0's watcher wrote - says them: what stands was never
+  said, which is the X520's case after the upgrade.
+* **Not before 180 s** of the component it is read from
+  (`STANDING_SETTLE`): a minute after a boot a BGP session is still
+  connecting (FRR's connect retry is 120 s), and "not Established" then
+  would be the boot, not news. A component whose start is not known is not
+  held.
+* **Not twice.** A condition the same tick's comparison already said - a link
+  that went down while the watcher was stopped, read against the state from
+  before - is said once, as the change.
+* **Bounded**: 20 a kind, and one more saying how many were not each
+  recorded. They are not counted by the flapping rule: once a boot is their
+  bound.
+* A standing pool is marked out of blocks, so the change that frees it is
+  said ("has free blocks again"), as for one that ran out while watched.
+
+### Where it goes: `system` > `logging`
+
+```
+prisma# [edit] system
+prisma# [edit system] logging
+prisma# [edit system / logging] host 192.0.2.10
+prisma# [edit system / logging] host 192.0.2.11 protocol tcp severity warning
+prisma# [edit system / logging] commit
+```
+
+`host <address> [port <n>] [protocol udp|tcp] [severity <level>]
+[source-address <address>] [vrf <name>]`, at most four, one per address (a
+second `host` to the same address replaces it); `no host <address>` stops
+sending there. Port 514 over UDP and 601 over TCP by default; `severity` is
+the least severe level sent, `info` (everything) by default; `vrf` names a
+`vrf <name> table <n>` of the configuration, refused at commit when it has
+none. An address, never a name: the watcher would resolve it at every send,
+and the box whose DNS failed is the one whose events most need to leave it.
+The API sets it with Edit at `["system","logging"]` and reads it typed in
+GetConfig's `SystemConfig.log_destinations`.
+
+**NOT THE CGNAT'S CONNECTION RECORDS.** `nat` > `cgnat` > `logging syslog`
+(and IPFIX) exports who held which public port, for a court order: a
+compliance stream the dataplane writes and spills to disk when its collector
+is away ([docs/logging.md](logging.md)). `system logging` is the box's own
+record - commits, restarts, links, sessions, logins - for the NOC's syslog.
+Two configurations, two streams, two collectors that SHOULD be different
+machines; neither carries the other's lines, and a change to one never
+touches the other.
+
+**The wire.** RFC 5424, facility `daemon` (3), the severity mapped (error 3,
+warning 4, notice 5, info 6), the hostname the box's, APP-NAME
+`prisma-routing`, MSGID the event's kind in upper case, and the event's
+fields as structured data under the product's enterprise number - two
+messages `lab/system-logging.sh`'s UDP collector received (2026-10-07; the
+hostname is the lab container's; one message a line, folded here):
+
+```
+<29>1 2026-10-07T03:42:13.839Z f4a5705a7276 prisma-routing - COMMIT
+[event@67033 source="vty" kind="commit" account="root"] configuration
+committed: first pool (by root)
+<28>1 2026-10-07T03:42:13.945Z f4a5705a7276 prisma-routing - GAVE-UP
+[event@67033 source="host" kind="gave-up" origin="the box"] the dataplane
+was given up on, as a lab says it (from the box)
+```
+
+Over UDP one datagram an event; over TCP RFC 6587 octet counting, the CGNAT
+exporter's framing (bpa_log_tcp.c says why it is not newlines).
+
+**WHY THE WATCHER SENDS, AND NOT RSYSLOG.** The box has no rsyslog: Debian's
+package is not on the medium, and install.sh installs no packages (it is
+also the upgrade, which runs with no network). Adding one would make this a
+medium release, and leave a second daemon with a generated configuration to
+keep in step and to watch. The watcher is already resident, root and on the
+host, and reads the record's neighbour files; it follows events.log itself,
+between its ticks, every second:
+
+* **The record is the spool.** Each destination keeps its position in
+  events.log (inode and offset, `events-forward.state` on the log volume),
+  advanced only past what was sent. A TCP collector that is away, a restart
+  of the watcher or a reboot loses nothing and repeats nothing: what waited
+  is sent when the collector is back, from events.log and events.log.1. A
+  collector away for longer than the record is long loses what rotated out
+  of it, which the record no longer has either.
+* **The event's own fields**, read off the JSON the record keeps: no line is
+  parsed back into a severity.
+* **A new destination starts at the end**: history is not news, as the
+  watcher's first reading of wtmp is not.
+* **Nothing restarts.** The commit writes `/etc/prisma-routing/logging.conf`
+  (the VTY's words, beside api.env) and the watcher reads it again when it
+  changes. A collector that refuses is asked again every 30 s; one send
+  waits at most 2 s, so a dead collector never holds the watcher's readings.
+* What a TCP stream that broke half way had in flight is sent again: a
+  collector may see a repeat, never a gap.
+
+`show system logging` says each destination and what the watcher last said
+of it (`/run/prisma-routing/state/logging`, nothing secret in it) - here
+the same lab with its TCP collector stopped:
+
+```
+127.0.0.1:5514 udp  info and above
+  sending
+  sent 2 event(s) since the watcher started, the last at 2026-10-07 03:42:16
+127.0.0.2:5601 tcp  warning and above
+  not reached: connection refused; tried again every 30 s
+  sent 0 event(s) since the watcher started
+```
+
+The two events said while it was away reached it, once each, at the first
+pass after it was back - a new watcher process, as after a restart.
+
+"not forwarding yet: the watcher (prisma-routing-events-watch) has not said"
+is a watcher that has not written its status for a minute - stopped, or not
+at its pass since the commit. GetSystem carries the same, typed
+(`logging`, `logging_text`). The commit is in the record as a `settings`
+event ("the logging settings were applied: 2 remote syslog
+destination(s)").
+
+### How it is followed: `monitor log`, WatchEvents
+
+```
+prisma> monitor log
+prisma> monitor log severity warning
+prisma> monitor log kind bgp last 5
+prisma> monitor log since 10m source routing
+```
+
+The record as it is written, a line each in `show log`'s words, until
+Ctrl-C (or `seconds <n>`). `show log`'s filters: `severity`, `source` and
+`kind` select what is followed; `last` and `since` what is shown first. With
+neither, it starts now - not `show log`'s last 50.
+
+It reads the record again every second, through the host's door as `show
+log` does, over its last 15 minutes: an event's time is when it HAPPENED,
+not when it was appended - a start is written by the host's apply up to
+minutes after it, a login carries wtmp's time - so one is said when it
+arrives, under its own time, rather than lost behind a newer one. The door
+answers a read of the record whole (at most 512 KiB of JSON); a follower is
+one such read a second.
+
+`OperationalService.WatchEvents(ListEventsRequest) returns (stream
+BoxEvent)` is the same in the API: the request's severity, source and kind
+select what is streamed, `last` and `since` what is sent first, and the
+stream starts now with neither. INVALID_ARGUMENT, in the VTY's words, for a
+filter `show log` refuses.
+
+### SNMP notifications
+
+To every `snmp trap-host` (#507). Standard where a standard one exists and
+the box already sends it; the product's own, as DISMAN-EVENT-MIB monitors on
+PRISMA-ROUTING-MIB, where it does not:
+
+| The record says | Notification | Whose | Since |
+|---|---|---|---|
+| a port's link down or up | `linkDown`, `linkUp` | IF-MIB, net-snmp polling the agent's `ifOperStatus` | #507 |
+| a BGP session leaving Established, and back | `bgpBackwardTransition`, `bgpEstablished` | BGP4-MIB, bgpd over AgentX | #507 |
+| a pool with no block free | `poolExhausted`, with the pool and its utilisation | the product's: `prPoolUtilisation` reaching 100 | 0.152.2 |
+| a module past a threshold, and back | `transceiverStateChange`, with the port and its level | the product's: `prXcvrState` changing (normal, warning, alarm, unknown) | 0.152.2 |
+
+Not sent twice: the links and BGP were already notifications, so phase 3
+adds none for them. `poolNearlyFull` (90%) and `portsRefused` stay as they
+were. **Not sent: BFD** - no MIB object holds a BFD session's state (bfdd
+serves no SNMP) - and logins, commits and restarts, which have no object to
+monitor either; `show log`, the syslog destinations and WatchEvents carry
+them. A monitor fires when its test BECOMES true (docs/snmp-mib.md), so a
+pool already out of blocks when snmpd starts is not notified: the record's
+standing event says it.
+
+### Decisions taken here, conservatively, that nobody asked for
+
+* **A destination is an address, never a name** (above).
+* **Facility `daemon`, fixed.** Apart from the CGNAT records' `local0`, so a
+  collector that receives both files them apart; a facility per
+  destination can be added when an operator asks for one.
+* **`info` (everything) by default.** A collector gets the whole record
+  unless the operator narrows it.
+* **No event when a syslog destination is lost.** It would be sent to the
+  other destinations and counted against the record's rotation for an
+  outage `show system logging` and GetSystem already say; the record is the
+  spool, so nothing is lost meanwhile.
+* **A standing condition says the present tense and keeps the change's
+  kind, subject, severity and reason**: a client filtering `kind link`
+  sees it; the words "standing at start:" tell it from a change.
+* **A 0.152.0 state file says what stands once**, although the boot did not
+  change: its watcher never said it.
+
+### What is left
+
+* **A BFD notification.** bfdd serves no SNMP and PRISMA-ROUTING-MIB has no
+  BFD object; it needs one (a session table) before a monitor can watch it.
+* **The modules of cards Linux holds** (phase 2's): read through a door
+  today, a call a minute the journal would carry.
+* **A link flap faster than a reading** on a port with no counter of its own
+  (phase 2's).
+
 ## Reading it
 
 ```
@@ -385,7 +631,29 @@ filter the VTY refuses.
   readings from the box's own screens, a tick and the loop, the settings.
 * `test/test_watch_dataplane.sh`, `test/test_prisma_hot_card.sh` (phase 2) -
   the dataplane given up on, and a restart that did not finish, in the record.
-* `lab/show-log-watch.sh` (phase 2) - a memif's far end deleted and put back,
+* `test/test_eventwatch.py` (phase 3) - what stands, kind by kind, once a
+  boot and not again on a restart of the watcher, after STANDING_SETTLE, not
+  twice with a change, bounded; the loop forwarding between its ticks.
+* `test/test_eventfwd.py` (phase 3) - a destination by the prompt's and the
+  file's one rule, the RFC 5424 wire and its framing, the record followed
+  across its rotation, a real UDP and TCP collector, a TCP outage that loses
+  nothing and repeats nothing, `show system logging`'s rows.
+* `test/test_events.py`, `test/test_prismash_units.py`,
+  `test/test_apiserver.py` (phase 3) - the follower (`follow_new`), `monitor
+  log`'s words and its screen with times pinned, `system` > `logging` at the
+  prompt, in a file and in a commit, WatchEvents' plan and GetSystem's state.
+* `lab/system-logging.sh` (phase 3) - two collectors configured from the VTY,
+  a UDP and a TCP one, each getting its severity, the TCP one away and back
+  with nothing lost, `show system logging`, and `monitor log` following the
+  record; its off run points the record at a path nothing can write.
+* `lab/api-grpc.sh`'s phase for #588 phase 3 - WatchEvents streaming what is
+  recorded while it is open, `last` first, a kind refused; `system logging`
+  set with Edit, read in GetConfig and GetSystem.
+* `lab/snmp-traps.sh` (phase 3) - `poolExhausted` and
+  `transceiverStateChange` received by snmptrapd.
+* `lab/show-log-watch.sh` (phases 2 and 3) - what stands at start: a port
+  whose far end never came and a module whose light starts low, said once by
+  the first pass and not by the second; a memif's far end deleted and put back,
   a sub-interface shut, a stand-in module's light low, taken out and put
   back, a BGP session shut by its peer with a message, the peer's bfdd
   killed, a wrong SSH password and a right one, a four-block pool given five
@@ -395,8 +663,8 @@ filter the VTY refuses.
 
 ### The mutations, each shown red and put back
 
-Measured on 2026-10-06 by applying each to the tree, running the suite named,
-and restoring the file.
+Measured on 2026-10-06 (phases 1 and 2) and 2026-10-07 (phase 3) by
+applying each to the tree, running the suite named, and restoring the file.
 
 | Mutation | Red in |
 |---|---|
@@ -436,3 +704,30 @@ and restoring the file.
 | `prisma-hot-card`'s record of an unfinished restart taken out | test_prisma_hot_card.sh |
 | `appliance/upgrade`'s record line replaced by `true`; and the line before it without `\|\| true` | test_upgrade_artifact.sh: no upgrade in the box's record; the second killed the upgrade itself under `set -e`, which is how it was found |
 | the contract reader without the check for a name defined twice, over a proto with a second `Event` | test_api_contract.py (the shape the first lab run of this phase met: protoc refused the contract, no stubs) |
+| `standing_due()` never true (phase 3) | test_eventwatch.py: 4 checks, nothing standing said, not even after a boot |
+| `standing_due()` not reading `stood` | test_eventwatch.py: 5 checks, what stands said again at every reading and by a restart of the watcher |
+| `standing_due()` without STANDING_SETTLE | test_eventwatch.py: a session said "not Established" while FRR was still starting |
+| `tick()` not leaving out what the same tick's change said | test_eventwatch.py: a link said twice, as a change and as standing |
+| `bgp_standing()` saying a session shut by configuration | test_eventwatch.py |
+| `pool_standing()` without the refusals | test_eventwatch.py: 2 checks, a full pool refusing nobody said out of blocks |
+| `standing_changes()` unbounded | test_eventwatch.py: 25 conditions, 25 events |
+| `watch_starts()` without the boot | test_eventwatch.py |
+| `run()` advancing a destination's position on a failed send | test_eventfwd.py: 4 checks, what waited for a TCP collector never sent |
+| `frame()` sending TCP unframed | test_eventfwd.py |
+| `rfc5424()` not mapping the severity | test_eventfwd.py: 5 checks, every event daemon.info |
+| `read_new()` not reading the rotated file's rest | test_eventfwd.py: 2 checks, the events before a rotation lost |
+| `wanted()` always true | test_eventfwd.py: 3 checks, a notice sent to a warning collector |
+| `parse_host()` taking a name | test_eventfwd.py: 3 checks |
+| a new destination starting at the record's start | test_eventfwd.py: 6 checks, history sent as news |
+| `destinations()` not falling back to the watcher's list | test_eventfwd.py: a read-only account told there is no destination |
+| `stage_logging()` appending a second host to one address | test_prismash_units.py: 3 checks |
+| the commit not writing logging.conf | test_prismash_units.py: 6 checks |
+| `running_config()` not reading logging.conf | test_prismash_units.py: 3 checks, a commit that would take the destinations away |
+| `watch_events()` not forwarding | test_eventwatch.py |
+| `follow_new()` following only past the newest time it said | test_events.py, and test_prismash_units.py's `monitor log`: a start written late never said |
+| `parse_follow_args()` keeping `show log`'s last 50 | test_events.py |
+| `monitor_log()` not taking what is there as seen | test_prismash_units.py: 2 checks, the record's past shown as it was written |
+| `events_watch_plan()` sending a backlog by default | test_apiserver.py: 2 checks |
+| `logging_state()` ignoring the watcher's status | test_apiserver.py |
+| `snmp_monitors()` without `poolExhausted` | test_prismash_system.py: 2 checks |
+| `transceiverStateChange` without `-D` | test_prismash_system.py: it would fire once, at the first warning, and never on the way back |

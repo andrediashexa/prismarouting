@@ -358,6 +358,77 @@ check(A.event_pb_fields({"t": 1, "kind": "bgp", "subject": "10.0.0.2",
       == "Hold Timer Expired",
       "event_pb_fields: what an event is about, and why (#588 phase 2)")
 
+print("=== WatchEvents and the logging state (#588 phase 3) ===")
+_b, _fo, _why = A.events_watch_plan({"last": 0, "since": "", "severity":
+                                     "warning", "source": "", "kind": "link"})
+check(_b is None and _fo == {"severity": "warning", "kind": "link"}
+      and _why is None,
+      "events_watch_plan: with neither last nor since, nothing first - not "
+      "ListEvents' 50 - and the filters followed")
+_b, _fo, _why = A.events_watch_plan({"last": 3, "source": "vty"})
+check(_b == {"last": 3, "source": "vty"} and _fo == {"source": "vty"},
+      f"events_watch_plan: last <n> is what is sent first: {_b} {_fo}")
+_b, _fo, _why = A.events_watch_plan({"severity": "loud"})
+check(_b is None and _fo is None and "severity is one of" in _why,
+      f"events_watch_plan: the VTY's refusal: {_why}")
+_saved_ev = (_EVM.EVENTS_PATH, _EVM.DOOR)
+_EVM.EVENTS_PATH = os.path.join(_evd, "events-raw.log")
+_EVM.DOOR = os.path.join(_evd, "no.sock")
+try:
+    _EVM.append_event(_EVM.make_event("dataplane", "warning", "a link",
+                                      now=1000.0, kind="link"))
+    _EVM.append_event(_EVM.make_event("vty", "notice", "a commit",
+                                      now=1001.0, kind="commit"))
+    check([e["text"] for e in A.events_raw({"since": 999.0, "kind": "link"})]
+          == ["a link"], "events_raw: select_events' own filters, read as "
+          "show log reads")
+    check(A.events_raw({"since": 1, "rm": "-rf"}) == []
+          and A.events_raw(None) == [],
+          "events_raw: anything but those filters reads nothing")
+finally:
+    _EVM.EVENTS_PATH, _EVM.DOOR = _saved_ev
+
+
+class _Ts:
+    seconds = nanos = 0
+
+
+class _Box:
+    def __init__(self, **kw):
+        self.kw, self.time = kw, _Ts()
+
+
+class _Pb:
+    BoxEvent = _Box
+
+
+_m = A.box_event_pb(_Pb, {"t": 1790836414.25, "severity": "warning",
+                          "source": "dataplane", "text": "x", "kind": "link"})
+check(_m.kw["kind"] == "link" and "seconds" not in _m.kw
+      and _m.time.seconds == 1790836414 and _m.time.nanos == 250000000,
+      "box_event_pb: the fields, the time as a Timestamp")
+import eventfwd as _FW  # noqa: E402
+_saved_lg = (_FW.CONF_PATH, _FW.STATUS_PATH)
+_FW.CONF_PATH = os.path.join(_evd, "logging.conf")
+_FW.STATUS_PATH = os.path.join(_evd, "logging.status")
+try:
+    _FW.write_conf([_FW.parse_host("192.0.2.10 protocol tcp".split())[0]])
+    _ls = A.logging_state(now=5000)
+    check(len(_ls) == 1 and _ls[0]["destination"]["port"] == 601
+          and _ls[0]["known"] is False,
+          f"logging_state: the destination, the watcher not heard: {_ls}")
+    with open(_FW.STATUS_PATH, "w") as _fh:
+        _fh.write('{"t": 4990, "destinations": [{"address": "192.0.2.10", '
+                  '"port": 601, "protocol": "tcp", "severity": "info", '
+                  '"source-address": "", "vrf": "", "state": "sending", '
+                  '"sent": 7, "last_sent": 4989, "error": ""}]}')
+    _ls = A.logging_state(now=5000)
+    check(_ls[0]["known"] and _ls[0]["state"] == "sending"
+          and _ls[0]["sent"] == 7 and _ls[0]["last_sent"] == 4989.0,
+          f"logging_state: and what it last said: {_ls}")
+finally:
+    _FW.CONF_PATH, _FW.STATUS_PATH = _saved_lg
+
 print("=== handle: what a worker answers ===")
 check(A.handle(sh, "candidate", None) is sh.cfg.text() or A.handle(sh, "candidate", None) == "hostname x\n",
       "the candidate's text")

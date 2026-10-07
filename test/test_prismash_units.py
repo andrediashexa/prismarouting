@@ -53,6 +53,10 @@ os.environ["PRISMA_SSH_HOST_KEY_ORIGIN"] = os.path.join(_root, "no-origin")
 os.environ["PRISMA_EVENTS"] = os.path.join(_root, "events.log")
 os.environ["PRISMA_EVENTS_STATE"] = os.path.join(_root, "events.state")
 os.environ["PRISMA_DOORS"] = os.path.join(_root, "no-doors.sock")
+# Where it goes (#588 phase 3): this suite's own logging.conf and status.
+os.environ["PRISMA_LOGGING_CONF"] = os.path.join(_root, "logging.conf")
+os.environ["PRISMA_LOGGING_STATUS"] = os.path.join(_root, "logging.status")
+os.environ["PRISMA_LOGGING_FWD_STATE"] = os.path.join(_root, "fwd.state")
 with open(os.environ["PRISMA_VERSION_FILE"], "w") as _f:
     _f.write("0.99.7\n")
 
@@ -2480,6 +2484,98 @@ finally:
     prismash.Shell.PROC_CMDLINE = _saved_pc
 ok("system > hardware: stored, the tuner run, shown beside this boot")
 
+print("\n=== system > logging: where the record of events goes (#588 phase 3) ===")
+_conf = os.environ["PRISMA_LOGGING_CONF"]
+sh = shell()
+_real = lambda: prismash.Shell.running_config(sh)
+sh.candidate = _real()
+check(sh.candidate.logging_hosts == [], "nothing configured, nothing read back")
+for _l in ("system", "logging", "host 192.0.2.10",
+           "host 192.0.2.11 protocol tcp severity warning"):
+    driven(lambda: sh.do_config(_l))
+check([d["address"] for d in sh.candidate.logging_hosts] ==
+      ["192.0.2.10", "192.0.2.11"] and sh.nat_ctx == ["system", "logging"],
+      f"typed under system > logging: {sh.candidate.logging_hosts}")
+rv, text = driven(lambda: sh.do_config("show this"))
+check(text.splitlines() == ["host 192.0.2.10",
+                            "host 192.0.2.11 protocol tcp severity warning"],
+      f"show this at the logging level: {text!r}")
+for _bad, _why in (("host syslog.example", "not an IP address"),
+                   ("host 192.0.2.12 protocol tls", "expected udp or tcp"),
+                   ("no host 192.0.2.99", "192.0.2.99 is not a destination"),
+                   ("port 514", "under 'logging' there is 'host <address>")):
+    rv, text = driven(lambda: sh.do_config(_bad))
+    check("error: logging: not taken" in text and _why in text,
+          f"{_bad!r} refused: {text!r}")
+for _n in ("192.0.2.12", "192.0.2.13"):
+    driven(lambda: sh.do_config(f"host {_n}"))
+rv, text = driven(lambda: sh.do_config("host 192.0.2.14"))
+check("at most 4 destinations" in text and len(sh.candidate.logging_hosts)
+      == 4, f"at most four: {text!r}")
+driven(lambda: sh.do_config("host 192.0.2.10 port 5514"))
+driven(lambda: sh.do_config("no host 192.0.2.12"))
+driven(lambda: sh.do_config("no host 192.0.2.13"))
+check([_config.eventfwd.host_words(d) for d in sh.candidate.logging_hosts]
+      == ["host 192.0.2.10 port 5514",
+          "host 192.0.2.11 protocol tcp severity warning"],
+      "a second host to an address replaces it; 'no host' takes it away")
+check(_config.stage_logging([], ["logging", "host"]).startswith(
+      "under 'logging' there is")
+      and _config.stage_logging([], "no logging host x".split()) ==
+      "no host: 'x' is not an address"
+      and _config.stage_logging([{"address": "192.0.2.1"}],
+                                "no logging host 192.0.2.1 port 1".split())
+      == "no host <address>: the address alone",
+      "stage_logging: the file's rule and the prompt's")
+rv, text = driven(lambda: sh.do_commit([]))
+check(os.path.exists(_conf) and "logging: 2 remote syslog destination(s)"
+      in text, f"commit writes logging.conf and says so: {text!r}")
+check(_real().logging_hosts == sh.candidate.logging_hosts,
+      "and it is read back into the running configuration")
+check("system\n logging\n  host 192.0.2.10 port 5514\n  host 192.0.2.11 "
+      "protocol tcp severity warning\n  exit\n exit" in _real().text(),
+      "which writes it in the system block")
+_c = Config.parse(_real().text())
+check(_c.logging_hosts == sh.candidate.logging_hosts and not _c.unknown,
+      "a saved file round-trips through the block")
+_c = Config.parse("system\n logging\n  host nonsense\n  exit\n exit\n")
+check(_c.unknown and "not an IP address" in _c.unknown[0][2],
+      f"and a file refuses what the prompt refuses: {_c.unknown}")
+_rec = prismash.events.read_events()
+check(_rec and _rec[-1]["kind"] == "settings" and _rec[-1]["subject"] ==
+      "logging" and _rec[-1]["text"] == "the logging settings were applied: "
+      "2 remote syslog destination(s)",
+      f"the commit's apply in the record: {_rec[-1:]}")
+rv, text = driven(lambda: sh.show_system_logging(now=1790836414))
+check(text.splitlines()[:2] == ["192.0.2.10:5514 udp  info and above",
+                                "  not forwarding yet: the watcher "
+                                "(prisma-routing-events-watch) has not said"],
+      f"show system logging: configured, and the watcher not heard: "
+      f"{text!r}")
+rv, text = driven(lambda: sh.show_or_pass("show system logging"))
+check("192.0.2.11:601 tcp  warning and above" in text,
+      f"show system logging, dispatched: {text!r}")
+sh.candidate = _real()
+sh.candidate.logging_hosts[0]["vrf"] = "red"
+rv, text = driven(lambda: sh.do_commit(["check"]))
+check("logging host 192.0.2.10: no vrf red" in text,
+      f"a VRF the configuration does not have is refused: {text!r}")
+sh.nat_ctx = ["system"]
+rv, text = driven(lambda: sh.do_config("dns"))
+check(_config.SYSTEM_LEVELS_SAY in text, f"the levels under system: {text!r}")
+sh.candidate = _real()
+sh.candidate.logging_hosts = sh.candidate.logging_hosts[:1]
+_saved_cp = prismash.eventfwd.CONF_PATH
+prismash.eventfwd.CONF_PATH = "/proc/no-such/logging.conf"
+try:
+    rv, text = driven(lambda: sh.do_commit([]))
+finally:
+    prismash.eventfwd.CONF_PATH = _saved_cp
+check("error: logging: " in text and "No such file or directory" in text,
+      f"a logging.conf that cannot be written fails the commit: {text!r}")
+os.remove(_conf)
+ok("system > logging: typed, refused, committed, read back and shown")
+
 print("\n=== system > dataplane: the levels, the file and the old line (#457) ===")
 check(_config.nest_system("ens19") == ["system", " dataplane", "  interface ens19",
                                       "  exit", " exit"],
@@ -2495,7 +2591,7 @@ _n, _bad = _config.denest_system(list(enumerate(
 check([l for _, l in _n] == ["dataplane interface ens19"] and _bad == [],
       "the old top-level line is still read: a box replays its file at boot")
 _n, _bad = _config.denest_system(list(enumerate(["system", " dns", " exit"], 1)))
-check(_bad and "there is 'dataplane', 'cpu', 'memory' and 'hardware'" in _bad[0][2],
+check(_bad and _bad[0][2] == _config.SYSTEM_LEVELS_SAY,
       f"anything else under system is said: {_bad}")
 _c = _config.Config.parse("system\n dataplane\n  interface ens19\n  exit\n exit\n")
 check(_c.dataplane_if == "ens19" and not _c.unknown
@@ -2510,8 +2606,9 @@ check("'dataplane' has moved under 'system'" in text
 check(sh.system_rewrite("system") == "" and sh.nat_ctx == ["system"],
       "system enters its level")
 rv, text = driven(lambda: sh.do_config("dns"))
-check("under 'system' there is 'dataplane', 'cpu', 'memory' and 'hardware'" in text,
-      f"and only those three are under it (#466): {text!r}")
+check("under 'system': 'dataplane', 'cpu', 'memory', 'hardware' or "
+      "'logging'" in text,
+      f"and only those levels are under it (#466, #588): {text!r}")
 check(sh.system_rewrite("dataplane") == ""
       and sh.nat_ctx == ["system", "dataplane"], "dataplane enters its level")
 check(sh.system_rewrite("interface ens19") == "dataplane interface ens19"
@@ -5548,7 +5645,7 @@ check(_sh.monitor_names(_cnt, []) == ["pg0"]
 with spoken() as o:
     _sh.do_monitor(["routes"])
 check(rows_of(o.getvalue())
-      == ["error: monitor what? 'monitor interface' or 'monitor cgnat logging'"],
+      == ["error: monitor what? 'interface', 'cgnat logging' or 'log'"],
       f"a thing it does not monitor: {o.getvalue()!r}")
 for _args, _said in (
         (["interval"], "error: interval needs a number of seconds after it"),
@@ -9548,6 +9645,64 @@ check(_e[-1]["kind"] == "asked" and _e[-1]["cause"] == "shutdown"
       and _e[-1]["text"] == "system shutdown asked",
       f"system shutdown is recorded before systemd is asked: {_e[-1]}")
 ok("show log reads the record; the asking, the start and its cause are in it")
+
+print("\n=== monitor log: the record as it is written (#588 phase 3) ===")
+# Mutation shown red: monitor_log() following only past the newest time it
+# has said (a start written late was never said).
+for _p in (_EV, _EV + ".1"):
+    if os.path.exists(_p):
+        os.remove(_p)
+_T = [1790836414.0]
+events.append_event(events.make_event("vty", "notice", "before it started",
+                                      now=_T[0] - 30, kind="commit"))
+
+
+def _tick(n):
+    _T[0] += 1
+    events.append_event(events.make_event(
+        "dataplane", "warning", f"link {int(_T[0]) % 100}", now=_T[0],
+        kind="link"))
+    if _T[0] == 1790836416.0:
+        events.append_event(events.make_event(
+            "routing", "notice", "a start, written late", now=_T[0] - 200,
+            kind="start"))
+
+
+_sh = shell()
+rv, text = driven(lambda: _sh.monitor_log(["seconds", "3"],
+                                          now=lambda: _T[0], sleep=_tick))
+_rows = [" ".join(r.split()[2:]) for r in text.splitlines()]
+check(_rows == ["Ctrl-C to stop", "warning dataplane link 15",
+                "notice routing a start, written late",
+                "warning dataplane link 16", "warning dataplane link 17", ""]
+      and text.splitlines()[0].startswith("monitor log")
+      and text.splitlines()[-1].endswith(" stopped")
+      and "before it started" not in text,
+      f"monitor_log: from now, each event once as it arrives, a late one "
+      f"under its own time: {text!r}")
+rv, text = driven(lambda: _sh.monitor_log(
+    ["last", "2", "kind", "link", "seconds", "1"], now=lambda: _T[0],
+    sleep=_tick))
+check([r.split()[-1] for r in text.splitlines()[1:4]] == ["16", "17", "18"],
+      f"monitor_log: last <n> shown first, then followed, by kind: {text!r}")
+
+
+def _ctrl_c(n):
+    raise KeyboardInterrupt
+
+
+rv, text = driven(lambda: _sh.monitor_log([], now=lambda: _T[0],
+                                          sleep=_ctrl_c))
+check(text.splitlines()[-1].endswith(" stopped"), "monitor_log: Ctrl-C stops "
+      "it, and says so")
+rv, text = driven(lambda: _sh.monitor_log(["follow", "1"]))
+check("error: monitor log: not a filter it takes" in text,
+      f"monitor_log: a word it does not take: {text!r}")
+rv, text = driven(lambda: _sh.do_monitor(["log", "seconds", "0"]))
+check("seconds takes 1-86400" in text, f"do_monitor: monitor log: {text!r}")
+rv, text = driven(lambda: _sh.do_monitor(["weather"]))
+check("'log'" in text, f"do_monitor: says what there is: {text!r}")
+ok("monitor log follows the record from now, with show log's filters")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

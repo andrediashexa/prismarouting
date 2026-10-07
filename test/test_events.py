@@ -398,5 +398,43 @@ check(p.returncode == 2 and "source is one of" in p.stdout,
 with contextlib.redirect_stdout(io.StringIO()):
     check(events.main(["nothing"]) == 2, "main: usage")
 
+print("\n=== following the record: monitor log, WatchEvents (#588 phase 3) ===")
+T0 = 1790836414.0
+a = events.make_event("vty", "notice", "a commit", now=T0, kind="commit")
+b = events.make_event("dataplane", "warning", "a link", now=T0 + 1,
+                      kind="link")
+late = events.make_event("routing", "notice", "a start, written late",
+                         now=T0 - 200, kind="start")
+check(events.event_key(a) == events.event_key(dict(a))
+      and events.event_key(a) != events.event_key(b),
+      "event_key: an event is itself, whole")
+seen = {}
+check(events.follow_new([a], seen, T0) == [a] and events.follow_new(
+    [a, b], seen, T0 + 2) == [b], "follow_new: each event said once")
+check(events.follow_new([late, a, b], seen, T0 + 3) == [late],
+      "follow_new: one appended after its own time is said when it arrives "
+      "- a follower reading only past the newest time would never say it")
+events.follow_new([], seen, T0 + events.FOLLOW_LOOKBACK + 400)
+check(seen == {}, "follow_new: what left the window is forgotten")
+f, secs, why = events.parse_follow_args(["severity", "warning", "kind",
+                                         "link", "seconds", "30"], T0)
+check(f == {"severity": "warning", "kind": "link"} and secs == 30
+      and why is None, f"parse_follow_args: show log's filters and seconds; "
+      f"with neither last nor since, nothing first: {f}")
+f, secs, why = events.parse_follow_args(["last", "5"], T0)
+check(f == {"last": 5} and secs is None, "parse_follow_args: last <n> is "
+      "what is shown first")
+f, secs, why = events.parse_follow_args(["since", "1h"], T0)
+check(f == {"since": T0 - 3600}, "parse_follow_args: since, as show log")
+for w, want in ((["seconds", "0"], "seconds takes 1-86400"),
+                (["seconds", "5", "seconds", "6"], "given twice"),
+                (["seconds"], "seconds takes 1-86400, not ''"),
+                (["follow", "1"], "monitor log takes last <n>"),
+                (["kind", "weather"], "kind is one of"),
+                (["last"], "'last' needs a value")):
+    f, secs, why = events.parse_follow_args(w, T0)
+    check(f is None and why and want in why,
+          f"parse_follow_args refuses {' '.join(w)}: {why}")
+
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)
