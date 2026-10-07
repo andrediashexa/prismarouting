@@ -2211,8 +2211,9 @@ SHOW = {
         "uptime": ("since when the box, the dataplane and the routing run",
                    None)}),
     "log": ("what happened on this box, newest last: commits, restarts "
-            "and why, upgrades, reboots",
-            "[last <n>] [since <time>] [severity <level>] [source <name>]"),
+            "and why, upgrades, links, sessions, logins",
+            "[last <n>] [since <time>] [severity <level>] [source <name>] "
+            "[kind <kind>]"),
     "logging": ("each routing daemon's logging configuration (FRR); "
                 "'show log' is what happened", None),
 }
@@ -9167,6 +9168,9 @@ class Shell:
         self.api = vppapi.client()
         self.dp.api = self.api
         self.frr = Frr()
+        # The host's watcher's readings of the log export over time (#588
+        # phase 2): a UDP stream is stalled only after logstate.LOG_STALL.
+        self.log_watch = None
         self.rb = Rollback()
         self.confirm = ConfirmPending()
         self.state = ConfigState()
@@ -13163,6 +13167,7 @@ class Shell:
                                       target.snmp_users,
                                       target.snmp_trap_hosts,
                                       hostname=name)
+            self.record_settings("SNMP", ok, msg)
             if not ok and self.booting:
                 # NOT A REASON FOR THE BOX NOT TO COME UP (#591). snmpd is
                 # applied before the interfaces, so a listen-address on one
@@ -13187,6 +13192,7 @@ class Shell:
         # The management API's listener on the host (#532).
         if d.get("api_changed"):
             ok, msg = self.apisvc.apply(target.api)
+            self.record_settings("API", ok, msg)
             if not ok:
                 self.err(f"api: {msg}")
                 return False
@@ -13817,6 +13823,7 @@ class Shell:
         self.snmp_pending = None
         ok, msg = self.snmp.apply(settings, communities, users, traps,
                                   hostname=name)
+        self.record_settings("SNMP", ok, msg, retried=True)
         if ok:
             print("snmp: applied once the interfaces were up"
                   + (f" ({msg})" if msg else ""))
@@ -15274,6 +15281,34 @@ class Shell:
         return self.record_event("notice", text, kind="asked", cause=cause,
                                  affects=affects)
 
+    def record_settings(self, what, ok, msg, retried=False):
+        """
+        The SNMP or the API settings applied, or refused, in the box's
+        record (#588 phase 2): `what` is "SNMP" or "API", `msg` what the
+        apply said. A commit's, said by its session.
+
+        NOT EVERY BOOT'S. The boot's apply (and each restart's, and
+        --reapply) puts the same settings on again, and an event per load
+        saying nothing changed is the routine noise #588 keeps out: under
+        `booting` only a refusal is written, and the retry after the
+        interfaces (#591) either way, since it answers that refusal.
+        """
+        if ok and self.booting and not retried:
+            return False
+        said = " ".join(str(msg or "").split())
+        if ok:
+            text = f"the {what} settings were applied" + \
+                (" once the interfaces were up" if retried else "") + \
+                (f": {said}" if said else "")
+        else:
+            text = f"the {what} settings were refused" + \
+                (f": {said}" if said else "")
+        return self.record_event(
+            "notice" if ok else "warning", text, kind="settings",
+            source="host" if self.booting else None,
+            origin="the box" if self.booting else None,
+            subject=what.lower(), reason="" if ok else said[:160])
+
     def record_restart_asked(self, kind, version=""):
         """
         `system dataplane restart` (kind "dataplane") or `system upgrade
@@ -15322,11 +15357,143 @@ class Shell:
             events.write_state(seen)
         return new
 
+    def watch_starts(self):
+        """
+        When the dataplane and the routing daemons last started, as
+        uptime_facts() reads them - without the record of events it also
+        reads, which a tick every 10 s has no use for (#588 phase 2).
+        """
+        rc, out = self.dp.run("show clock")
+        up = vpp_uptime(out) if rc == 0 else None
+        return {"dataplane": time.time() - up if up is not None else None,
+                "routing": file_mtime(FRR_STARTED_FILE)}
+
+    def watch_read(self, kind):
+        """
+        One reading of `kind` for the watcher (#588 phase 2), as
+        eventwatch's *_reading() makes it, or None when its source did not
+        answer - which is not "nothing there": a dataplane that does not
+        answer has not lost every link.
+        """
+        import eventwatch
+        if kind == "link":
+            rc, out = self.dp.run("show interface")
+            rc2, hw = self.dp.run("show hardware-interfaces brief")
+            if rc or rc2 or not out.strip():
+                return None
+            return eventwatch.link_reading(routes.parse_interfaces(out),
+                                           routes.parse_hardware(hw))
+        if kind == "transceiver":
+            # The plugin's ports only: a card Linux owns is read through a
+            # door, and a door call every minute is the journal noise #588
+            # removed. A plugin older than #590 answers "unknown input".
+            rc, out = self.dp.run("show bpa transceiver")
+            if rc or transceiver.plugin_predates(out):
+                return None
+            return eventwatch.module_reading(
+                [transceiver.decode(r)
+                 for r in transceiver.parse_dump(out).values()
+                 if r.get("unread") != "not-dpdk"])
+        if kind == "bgp":
+            data = self.frr_json("show bgp vrf all neighbors json")
+            return None if data is None else eventwatch.bgp_reading(data)
+        if kind == "bfd":
+            import opshow
+            return eventwatch.bfd_reading(opshow.bfd_fields(self.bfd_facts()))
+        if kind == "pool":
+            import cgnatshow
+            rc, out = self.dp.run("show bpa blocks")
+            return None if rc else \
+                eventwatch.pool_reading(cgnatshow.parse_blocks(out))
+        if kind == "collector":
+            rc, out = self.dp.run("show bpa logging")
+            if rc or not out.strip():
+                return None
+            if self.log_watch is None:
+                self.log_watch = logstate.LogWatch()
+            self.log_watch.observe(out)
+            return eventwatch.collector_reading(self.log_watch.snapshot()[1])
+        return None
+
+    def watch_read_safe(self, kind):
+        """
+        watch_read(), with a reading that raised taken as no reading - said
+        once per kind, not every tick. A resident watcher that died on one
+        malformed answer would stop recording every other kind with it, and
+        systemd's restart would meet the same answer again.
+        """
+        try:
+            return self.watch_read(kind)
+        except Exception as e:     # noqa: BLE001 - see the docstring
+            said = self.__dict__.setdefault("_watch_said", set())
+            if kind not in said:
+                said.add(kind)
+                print(f"watch-events: reading {kind} failed: {e!r}",
+                      file=sys.stderr)
+            return None
+
+    def watch_tick(self, state, now=None, force=False):
+        """
+        One tick of the host's watcher (#588 phase 2): the kinds whose
+        cadence has come, read, and handed with `state` to eventwatch.tick();
+        (events, new_state). `force` reads every kind - a lab's or a test's
+        single pass.
+        """
+        import eventwatch
+        now = time.time() if now is None else now
+        readings = {k: self.watch_read_safe(k) for k in eventwatch.CADENCE
+                    if k != "login" and eventwatch.due(state, k, now, force)}
+        logins = None
+        if eventwatch.due(state, "login", now, force):
+            pos = (state.get("logins") or {})
+            wtmp, wpos = eventwatch.read_utmp(eventwatch.WTMP, pos.get("wtmp"))
+            btmp, bpos = eventwatch.read_utmp(eventwatch.BTMP, pos.get("btmp"))
+            logins = (wtmp, btmp, {"wtmp": wpos, "btmp": bpos})
+        return eventwatch.tick(state, readings, self.watch_starts(), now,
+                               logins)
+
+    def watch_events(self, once=False, sleep=time.sleep):
+        """
+        `prismash --watch-events`: the host's watcher of what happens on
+        the box (#588 phase 2), a tick every eventwatch.TICK seconds; `once`
+        is one tick of every kind, for a lab. Root's, on the host
+        (prisma-routing-events-watch.service): it writes the box's own
+        events, which no account may. Its state is written only when it
+        changed, so a restart of the watcher says nothing again.
+
+        A LOOP, NOT A TIMER. Measured on the bench this release was made on:
+        importing the VTY costs 0.28-0.46 s of CPU, which a timer every 10 s
+        would pay forever - 3 to 4% of a core for a watcher. Resident it is
+        paid once, and a tick is its readings: a few vppctl at ~11 ms and
+        two vtysh.
+        """
+        import eventwatch
+        # Every reading through vppctl, not a held API connection: a
+        # dataplane restarted under a resident process leaves it a dead
+        # socket, and vppctl finds the new one by itself.
+        self.dp.api = None
+        state = eventwatch.read_state()
+        while True:
+            t0 = time.time()
+            new, nxt = self.watch_tick(state, t0, force=once)
+            for ev in new:
+                events.record(ev)
+            # Not for the reading times alone, which move every tick: the
+            # state file is written when what was SEEN moved.
+            if eventwatch.state_moved(state, nxt):
+                eventwatch.write_state(nxt)
+            state = nxt
+            if once:
+                return new
+            sleep(max(1.0, eventwatch.TICK - (time.time() - t0)))
+
     def show_log(self, args):
         """
         `show log [last <n>] [since <time>] [severity <level>] [source
-        <name>]` (#588): what happened on this box, newest last. Every
-        account may read it, as every account may `show version`.
+        <name>] [kind <kind>]` (#588): what happened on this box, newest
+        last. Every account may read it, as every account may `show
+        version`. `kind` since phase 2: what an event is - link, bgp,
+        login... - beside who said it.
         """
         f, why = events.parse_show_args(args)
         if why:
@@ -25958,6 +26125,16 @@ def main():
             return 0
         print(f"reapply: {path}")
         return 1 if sh.failed else 0
+
+    # The host's watcher of what happens on the box (#588 phase 2):
+    # prisma-routing-events-watch.service runs it as root, for ever; `once`
+    # is one pass over every kind, which is how a lab drives it.
+    if args and args[0] == "--watch-events":
+        once = args[1:2] == ["once"]
+        new = sh.watch_events(once=once)
+        if once:
+            print(f"watch-events: {len(new)} event(s)")
+        return 0
 
     # Not a command an operator types: it is the one thing a unit file needs
     # to be able to run, and it prints nothing at all unless a deadline has

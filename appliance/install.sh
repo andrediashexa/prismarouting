@@ -439,7 +439,8 @@ for u in prisma-routing.service prisma-routing-tune.service prisma-routing-selft
          prisma-routing-backplane.service prisma-routing-hot-card@.service \
          prisma-routing-doors.service prisma-routing-power-button.service \
          prisma-routing-api-config.service prisma-routing-api.service \
-         prisma-routing-api-proxy.service prisma-routing-leaks.service; do
+         prisma-routing-api-proxy.service prisma-routing-leaks.service \
+         prisma-routing-events-watch.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -750,7 +751,9 @@ install -d -m 0750 "$DESTDIR/var/agentx"
 chgrp frr "$DESTDIR/var/agentx" 2>/dev/null || true
 
 say "documentation"
-for d in architecture routing logging; do
+# logging-events since #588 phase 2: the unit that records what the box sees
+# (prisma-routing-events-watch.service) names it as its documentation.
+for d in architecture routing logging logging-events; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/prisma-routing/$d.md"
 done
 
@@ -810,8 +813,13 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
     prisma-routing-selftest.service prisma-routing-installer.service \
     prisma-routing-confirm.timer prisma-routing-backplane.service \
     prisma-routing-doors.service prisma-routing-power-button.service \
-    prisma-routing-api-config.service prisma-routing-leaks.service
+    prisma-routing-api-config.service prisma-routing-leaks.service \
+    prisma-routing-events-watch.service
   systemctl restart prisma-routing-power-button.service >/dev/null 2>&1 || true
+  # The watcher of what happens on the box (#588 phase 2), restarted for the
+  # new code like the doors below: its state file keeps what it had seen,
+  # so the restart says nothing again.
+  systemctl restart prisma-routing-events-watch.service >/dev/null 2>&1 || true
   # Restarted for the same reason as the doors below: the new code, now.
   systemctl restart prisma-routing-leaks.service >/dev/null 2>&1 || true
   # The doors (#448) run the code this install just put down: restarted, not
@@ -844,7 +852,7 @@ else
            prisma-routing-selftest.service prisma-routing-installer.service \
            prisma-routing-backplane.service prisma-routing-doors.service \
            prisma-routing-power-button.service prisma-routing-api-config.service \
-           prisma-routing-leaks.service; do
+           prisma-routing-leaks.service prisma-routing-events-watch.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done

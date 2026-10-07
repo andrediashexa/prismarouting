@@ -1,8 +1,10 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 216
+# OFF-RED-AT-LEAST: 219
 # (195, and #588's thirteen ListEvents and GetSystem checks: measured
 # 2026-10-06, 208 red in the off run, each of the thirteen among them; and
-# #590's eight ListTransceivers checks: 216, measured the same day.)
+# #590's eight ListTransceivers checks: 216, measured the same day; and
+# #588 phase 2's three - ListEvents' kind, a kind refused, a settings
+# event's subject: 219, measured 2026-10-07.)
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -888,6 +890,9 @@ expect "  since a date after everything: nothing" t11 events-since
 expect "  its text is the VTY's show log for the same filters" t11 events-text-is-vty
 expect "  a since that is no time: INVALID_ARGUMENT, in the VTY's words" t11 events-since-refused
 expect "  a source the box has not got: INVALID_ARGUMENT" t11 events-source-refused
+expect "  kind (#588 phase 2): the commits, and nothing else" t11 events-kind
+expect "  a kind the box has not got: INVALID_ARGUMENT, in the VTY's words" t11 events-kind-refused
+expect "  the API settings a commit applied, with what they are about (subject)" t11 events-settings-subject
 expect "  a read-only account reads the same record, through the door" t11 events-any-account
 expect "  GetSystem: why the dataplane last started, as recorded - unexpected" t11 system-start-cause
 t12() { printf '%s\n' "$T12" | grep -q "^RESULT $1 ok"; }

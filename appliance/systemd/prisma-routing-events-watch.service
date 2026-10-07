@@ -1,0 +1,30 @@
+# What the box sees happen, in its record of events (#588 phase 2): links,
+# modules, BGP and BFD sessions, CGNAT pools out of blocks, the log
+# exporter's collector, logins and failed logins - each a reading compared
+# with the one before it, every 10 s (src/prismash/eventwatch.py).
+#
+# A SERVICE AND NOT A TIMER, unlike prisma-routing-card-watch.timer beside
+# it: that one runs a shell script; this one is the VTY's Python, whose
+# import costs 0.28-0.46 s of CPU a run (measured on the bench, 2026-10-06),
+# which a 10 s timer would pay for ever. Resident, it pays it once.
+[Unit]
+Description=Prisma Routing - record what happens on the box (show log)
+Documentation=file:/usr/share/doc/prisma-routing/logging-events.md
+# After the boot's apply, so its first readings are of a configured box;
+# not Requires=, because a box whose load failed is the box whose links an
+# operator most needs to read about.
+After=prisma-routing.service prisma-routing-doors.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/prismash --watch-events
+Restart=always
+RestartSec=10
+# A reading is a few vppctl and vtysh calls; the dataplane's work is never
+# this process's to slow down.
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

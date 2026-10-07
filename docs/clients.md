@@ -27,6 +27,47 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.0 - show log, phase 2: what the box sees happen
+
+* **Contract:** additive (`prisma.proto` sha256 `eaf45c412fecadb2e7d4abaeeec722f998c5a9cbf3461d217a46447b462ccce5`).
+  Three fields (#588, phase 2): `ListEventsRequest.kind` (5),
+  `BoxEvent.subject` (10) and `BoxEvent.reason` (11).
+* **ListEvents has new events**, from a watcher on the box that compares
+  readings of its state every 10 s. New `kind`s: `link` (an interface's link
+  or administrative state; source `dataplane`), `transceiver` (a module in,
+  out, swapped, or its RX power or temperature past a threshold and back),
+  `bgp` and `bfd` (a session up or down; source `routing`), `pool` (a CGNAT
+  pool out of blocks, and with blocks again), `collector` (the CGNAT log
+  export lost or reached its collector), `login` (a login, a logout at
+  severity `info`, a failed login at `warning`; source `host`, `account` the
+  one who logged in, `origin` `ssh <address>` or `the console (tty1)`),
+  `settings` (the SNMP or API settings a commit applied or was refused;
+  source `vty` or `api`, by the commit's account) and `gave-up` (the
+  dataplane given up on, the cards given back to Linux, or a `system
+  dataplane restart` that did not finish; severity `error`). **Sources are
+  unchanged** - `vty`, `api`, `host`, `dataplane`, `routing`; filter on
+  `kind` for what an event is. Show `text` for any kind you do not know.
+* **`ListEventsRequest.kind`**: one kind, as `show log kind <kind>`; `""` is
+  all. INVALID_ARGUMENT, in the VTY's words, for a kind the box has not got.
+* **`BoxEvent.subject`**: what the event is about - an interface
+  (`GigabitEthernet0/8/0.100`), a module's port, a BGP or BFD peer's
+  address, a pool, a log stream (`syslog`, `ipfix-tcp`, `ipfix-udp`), an
+  account (for a failed login, the name typed, which may not exist), `snmp`
+  or `api`; `""` for phase 1's events.
+* **`BoxEvent.reason`**: why, when the box knows - FRR's last reset of a BGP
+  session ("BGP Notification received: Cease/Administrative Shutdown
+  ('maintenance')"), bfdd's diagnostic ("control detection time expired"),
+  `administrative` or `link` for an interface, the level a module crossed
+  (`rx power low-warning`), `authentication failed`, a pool's refusals, a
+  flapping subject's count. The same is in `text`; `""` when not known.
+* **Flapping is held:** a subject changing more than 4 times in 5 minutes
+  is written as one event per 5 minutes, "... flapped 37 times in 5 min, not
+  each recorded; it is now link up" (same `kind` and `subject`). A client
+  counting events per subject undercounts a flap by design.
+* **Within a minute of a restart** of the dataplane or of FRR, links,
+  modules, pools and sessions are not compared: the restart is already an
+  event (`start`), and the links coming back are not separate events.
+
 ## 0.151.17 - a box comes up whatever snmpd says
 
 * **Contract:** unchanged (`prisma.proto` sha256 `4e80a06cf449690c7347efa451ae2e43791b7920c5b4aef2e4ae8648a350133e`).

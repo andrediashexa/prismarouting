@@ -103,7 +103,16 @@ WAITVPP=${PRISMA_WAIT_FOR_VPP:-$ROOT/usr/lib/prisma-routing/wait-for-vpp}
 REAPPLY_TRIES=${PRISMA_REAPPLY_TRIES:-3}
 CLEAN_EXIT_RESTARTS=${PRISMA_CLEAN_EXIT_RESTARTS:-5}
 CLEAN_EXITS=${PRISMA_CLEAN_EXIT_STAMP:-$ROOT/run/prisma-routing/clean-exit-restarts}
+# The box's record of events (#588 phase 2): the dataplane given up on is
+# an event, written by this script that gives up - on 2026-10-06 a box
+# went dark after a restart and nothing on it said so (#591).
+EVENTS_PY=${PRISMA_EVENTS_PY:-$ROOT/usr/lib/prisma-routing/events.py}
 say() { echo "watch-dataplane: $*" >&2; }
+
+# One event, best effort: never a reason for this script to stop.
+record_event() { # <severity> <text>
+  python3 "$EVENTS_PY" record host=gave-up "$1" "$2" >/dev/null 2>&1 || true
+}
 
 record_why() { # <state> [<until>] - keep what the dataplane said before it died
   mkdir -p "$(dirname "$REPORT")" 2>/dev/null || true
@@ -188,6 +197,7 @@ reapply_if_restarted() {
   if [ "$_tries" -ge "$REAPPLY_TRIES" ]; then
     say "not trying again for this restart: 'systemctl restart"
     say "prisma-routing.service' puts the saved configuration back by hand."
+    record_event error "the configuration could not be put back on the restarted dataplane after $REAPPLY_TRIES attempts; not tried again: 'systemctl restart prisma-routing.service' puts it back by hand"
   fi
   return 0
 }
@@ -279,6 +289,7 @@ esac
 # management address with it on a bad day and a reason written after that is
 # a reason nobody gets. It is also before the reboot an operator does next.
 record_why "${state:-none}"
+record_event error "the dataplane container is '${state:-not there}' and Docker stopped restarting it: its cards are given back to Linux, and the box has no dataplane until a restart or a reboot (why: show version)"
 say "it. The card was bound to a DPDK driver before it started, so the box"
 say "has no interface until it is given back. Undoing the bind (#379)."
 say "why it stopped is kept in $REPORT"

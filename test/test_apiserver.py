@@ -321,6 +321,12 @@ check(_f == {"last": 5, "since": 6400, "severity": "warning",
 _f, _why = A.events_filters({"since": "soon"})
 check(_f is None and "is not a time" in _why,
       f"events_filters: the VTY's own refusal: {_why}")
+_f, _why = A.events_filters({"kind": "bgp"})
+check(_f == {"kind": "bgp", "last": _EVM.SHOW_LAST} and _why is None,
+      f"events_filters: a kind, as `show log kind` (#588 phase 2): {_f}")
+_f, _why = A.events_filters({"kind": "weather"})
+check(_f is None and _why.startswith("kind is one of"),
+      f"events_filters: a kind the box has not got is refused: {_why}")
 _evd = tempfile.mkdtemp()
 _saved_ev = (_EVM.EVENTS_PATH, _EVM.DOOR)
 _EVM.EVENTS_PATH = os.path.join(_evd, "events.log")
@@ -344,7 +350,13 @@ check(A.event_pb_fields({"t": 5.5, "severity": "warning", "source": "dataplane",
                          "cause": "unexpected"})
       == {"seconds": 5.5, "severity": "warning", "source": "dataplane", "text": "x",
           "account": "", "origin": "", "kind": "start", "component": "dataplane",
-          "cause": "unexpected"}, "event_pb_fields: an Event's fields, who as account")
+          "cause": "unexpected", "subject": "", "reason": ""},
+      "event_pb_fields: an Event's fields, who as account")
+check(A.event_pb_fields({"t": 1, "kind": "bgp", "subject": "10.0.0.2",
+                         "reason": "Hold Timer Expired"})["subject"] == "10.0.0.2"
+      and A.event_pb_fields({"reason": "Hold Timer Expired"})["reason"]
+      == "Hold Timer Expired",
+      "event_pb_fields: what an event is about, and why (#588 phase 2)")
 
 print("=== handle: what a worker answers ===")
 check(A.handle(sh, "candidate", None) is sh.cfg.text() or A.handle(sh, "candidate", None) == "hostname x\n",

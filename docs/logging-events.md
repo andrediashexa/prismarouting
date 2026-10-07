@@ -13,9 +13,19 @@ from a journal - so the door calls and timer skips that fill the journal never
 reach it. The API reads it with `OperationalService.ListEvents`, and
 `GetSystem` carries why the dataplane and the routing daemons last started.
 
+Since phase 2 it is also what the box **sees** happen, recorded by a watcher
+on the host that compares each reading of the box's state with the one before:
+an interface's link down or up (a port or a sub-interface, administrative or
+the wire), a module put in, taken out or past its thresholds, a BGP or BFD
+session up or down with FRR's reason or bfdd's diagnostic, a CGNAT pool out of
+blocks, the log exporter's collector lost and found, logins and failed logins,
+the SNMP and API settings applied or refused, and the dataplane given up on. A
+subject that flaps is held and said once a window, with its count. `show log
+kind <kind>` selects one kind.
+
 FRR's `show logging` is unchanged: each routing daemon's logging
-*configuration*, as before. Phase 1 is delivered in 0.151.14; the issue stays
-open for phases 2 and 3 below.
+*configuration*, as before. Phase 1 is delivered in 0.151.14 and phase 2 in
+0.152.0; the issue stays open for phase 3 below.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
@@ -27,8 +37,8 @@ open for phases 2 and 3 below.
 |---|---|
 | **What** | A record of events on the box: time, severity, source, one sentence, and who and from where when known. `show log` and `ListEvents` read it. |
 | **Why** | On 2026-10-05 the operator found the VTY's logs "totally useless": `show logging` printed FRR's per-daemon logging configuration, and the journal on 10.40.200.166 had "door: uid 1000: hostname -> 0" every 2 s and a confirm timer's skip every 16 s. The same day prisma-web said "the dataplane restarted by itself" about an upgrade, because the box recorded no restart cause. |
-| **Who** | Written by the code that acts: the VTY and the API (as the account), the host's apply (`prismash --load`, `--reapply`, `--confirm-expired`), the upgrade. Read by every account. |
-| **When** | At the moment of the action; a restart's cause before the restart. |
+| **Who** | Written by the code that acts: the VTY and the API (as the account), the host's apply (`prismash --load`, `--reapply`, `--confirm-expired`), the upgrade, `watch-the-dataplane` and `prisma-hot-card` when they give up; and by the host's watcher (`prismash --watch-events`, root) for what the box sees happen. Read by every account. |
+| **When** | At the moment of the action; a restart's cause before the restart; what the box sees within one reading of it (10 s; a module's levels and a pool, 60 s and 30 s). |
 | **Where** | `/var/log/prisma-routing/events.log` (and `events.log.1`), on the log volume. |
 | **How** | One JSON object per line, appended in one write; through the host's door from the management container, locally on the host. |
 | **How much** | 256 KiB per file, two files: about 3000 events, years of commits and restarts. |
@@ -38,8 +48,8 @@ open for phases 2 and 3 below.
 | Phase | What | State |
 |---|---|---|
 | **1** | The record itself, bounded and kept across reboots. Commits, rollbacks, `commit confirmed` confirmed and expired, with the account and where the session came from. Upgrades (asked, and done). Reboots and shutdowns asked from the VTY or the API. Dataplane and routing starts with their cause, the cause recorded before the action. `show log [last <n>] [since <time>] [severity <level>] [source <name>]`, and the box's `| match`. `ListEvents`, and the cause in `GetSystem`. | *delivered in 0.151.14* |
-| **2** | What the box sees happen rather than what it is told: interface and link up/down, SFP inserted, removed or refused (#574's card states); BGP and BFD sessions up/down with the reason (bfdd's diagnostic, BGP's last error); CGNAT pool or block exhaustion and the log exporter losing or regaining its collector (the plugin's events and `logstate`'s verdicts); logins, failed logins and logouts (sshd and the VTY's broker); SNMP and API settings applied or refused; the dataplane giving up and its card given back (`watch-the-dataplane`). Each from a watcher that compares a reading with the last one, as `observe_starts()` does - never from a log line. | planned |
-| **3** | Where the record goes and how it is followed: `system logging` in Prisma's terms (a remote syslog, its level, which sources), replacing FRR's per-daemon `log syslog` as what an operator configures; `monitor log`, a follow mode like `monitor cgnat logging`, and a streaming `WatchEvents` in the API; SNMP notifications for the events PRISMA-ROUTING-MIB has an object for (#507's traps). | planned |
+| **2** | What the box sees happen rather than what it is told: interface and link up/down, administrative or not, ports and sub-interfaces; a module inserted, removed, swapped, and its RX power or temperature past a threshold and back (#590's levels); BGP and BFD sessions up/down with the reason (FRR's last reset, bfdd's diagnostic); a CGNAT pool out of blocks and with blocks again; the log exporter losing or reaching its collector (`logstate`'s readings); logins, failed logins and logouts (wtmp and btmp); SNMP and API settings applied or refused; the dataplane given up on (`watch-the-dataplane`, `prisma-hot-card`). Each from a watcher that compares a reading with the last one, as `observe_starts()` does - never from a log line. Flapping held and counted. `show log kind`; ListEvents' `kind`, `subject`, `reason`. | *delivered in 0.152.0* |
+| **3** | Where the record goes and how it is followed: `system logging` in Prisma's terms (a remote syslog, its level, which sources), replacing FRR's per-daemon `log syslog` as what an operator configures; `monitor log`, a follow mode like `monitor cgnat logging`, and a streaming `WatchEvents` in the API; SNMP notifications for the events PRISMA-ROUTING-MIB has an object for (#507's traps). And what phase 2 left: the modules of cards Linux holds (read through a door today), and a link flap faster than a reading on a port with no counter of its own. | planned |
 
 ## How it is written
 
@@ -146,6 +156,149 @@ as `dataplane_start_cause` and `control_plane_start_cause` (`""` when the box
 has not recorded that start). A client SHOULD say "restarted by itself" only
 for `unexpected`.
 
+## What the box sees: the watcher (phase 2)
+
+**Where it lives.** `prisma-routing-events-watch.service` runs `prismash
+--watch-events` on the host, as root, beside `watch-the-dataplane`'s timer.
+It is a loop and not a timer: the VTY's import costs 0.28-0.46 s of CPU a
+run (measured on the bench on 2026-10-06), which a timer every 10 s would pay
+for ever - 3 to 4% of a core. Resident, it pays it once (about 57 MB), and a
+tick is its readings: a few `vppctl` at about 11 ms each (no held API
+connection, which a dataplane restart would leave dead) and a few `vtysh`.
+`Shell.watch_read()` takes the readings; `src/prismash/eventwatch.py`
+compares them and is pure, so `test/test_eventwatch.py` drives every decision
+with readings built by hand and times pinned.
+
+**Readings compared, never log lines.** Each kind is the box's own state,
+read again a few seconds later: what changed between the two readings is an
+event, and nothing else is. So the journal's noise still has no way in: a
+door call, a timer run or FRR's debug is not a reading.
+
+| Kind | Read from | Every | Source | What it says |
+|---|---|---|---|---|
+| `link` | `show interface` (admin) and `show hardware-interfaces brief` (link) | 10 s | dataplane | a port's link down or up, saying it is not administrative ("the wire or the far end") and counting the sub-interfaces it took with it; a port or a sub-interface administratively down or up. A sub-interface's link is its parent's, so it says only its own administrative changes: an ISP's port carries hundreds |
+| `transceiver` | the plugin's `show bpa transceiver`, `transceiver.decode()` | 60 s | dataplane | a module inserted (with what it is), removed, swapped; its RX power or temperature past its warning (warning) or alarm (error) threshold, with the level and the threshold, and back within them |
+| `bgp` | `show bgp vrf all neighbors json` | 10 s | routing | a session Established, or leaving it with FRR's reason - `lastResetDueTo`, the NOTIFICATION's reason and the peer's shutdown message; and one that went down and came back between two readings, seen by FRR's `connectionsDropped` |
+| `bfd` | `show bfd peers [counters] json` | 10 s | routing | a session up, or down with bfdd's diagnostic; and down and back between two readings, by its down counter (at a 300 ms detect time a reading every 10 s sees the state only by luck) |
+| `pool` | `show bpa blocks` | 30 s | dataplane | a pool whose refusals grew: out of blocks, once, however long it goes on refusing; and with a block free again once it refuses nobody. A deterministic pool's reserve the same |
+| `collector` | `show bpa logging`, through `logstate.LogWatch` | 10 s | dataplane | a TCP stream (syslog, IPFIX over TCP) losing its collector - its connection is not `connected` - or reaching it again. A UDP stream has no connection to see: it is lost when LogWatch calls it stalled (sends failing, nothing delivered for 60 s) |
+| `login` | wtmp and btmp | 10 s | host | a login (who, from where, to the VTY or a shell), a logout (info), a failed login (the account typed, from where) |
+
+`show log`'s lines from the lab (`lab/show-log-watch.sh`, 2026-10-06, the
+lab's container in UTC):
+
+```
+2026-10-07 00:01:01  warning  dataplane  interface memif1/0: link down,
+    administratively up: the wire or the far end; its 1 sub-interface(s) with
+    it
+2026-10-07 00:01:02  notice   dataplane  interface memif1/0: link up, and its 1
+    sub-interface(s) with it
+2026-10-07 00:01:02  notice   dataplane  sub-interface memif1/0.100 is
+    administratively down: shut down by configuration
+2026-10-07 00:01:02  warning  dataplane  memif1/0: rx power -19.00 dBm, below
+    its low warning (-18.01 dBm)
+2026-10-07 00:01:03  warning  dataplane  module removed from memif1/0 (it was
+    Rei do SFP RSMPP8510GL-03D (serial FP23H150378))
+2026-10-07 00:01:03  notice   dataplane  module inserted in memif1/0: Rei do
+    SFP RSMPP8510GL-03D (serial FP23H150378)
+2026-10-07 00:01:04  warning  routing    BGP session with 10.9.0.2 (AS 65001)
+    left Established: BGP Notification received: Cease/Administrative Shutdown
+    ('maintenance window')
+2026-10-07 00:01:06  notice   routing    BGP session with 10.9.0.2 (AS 65001)
+    is Established
+2026-10-07 00:01:07  warning  routing    BFD session with 10.9.0.2 (on veth-a)
+    down: control detection time expired
+2026-10-07 00:01:07  warning  routing    BGP session with 10.9.0.2 (AS 65001)
+    left Established: BFD down initiated
+2026-10-07 00:01:09  warning  host       failed login as noc (from ssh
+    127.0.0.1)
+2026-10-07 00:01:10  notice   host       noc logged in to the VTY (by noc, from
+    ssh 127.0.0.1)
+2026-10-07 00:01:14  warning  dataplane  CGNAT pool small ran out of blocks: 1
+    request(s) for a block refused since the last reading, 4 of 4 blocks in use
+```
+
+**A start is not a change of everything.** Within `SETTLE` (60 s) of the
+dataplane's start its kinds are not compared, and within 60 s of FRR's start
+BGP and BFD are not: a restart is an event of its own (phase 1), and every
+link coming up after it is the restart, not news. After the minute the
+reading is compared with the one from before the restart, so a link that was
+up and is still down a minute after the dataplane came back IS said. Counters
+a restart zeroes (FRR's connections, a pool's refusals) are a new baseline
+across one.
+
+**Not everything again.** The last readings are kept in
+`/var/log/prisma-routing/events-watch.state`, beside `events.state` and
+written only when what was seen moved (not for the reading times alone). A
+restart of the watcher, or of the box, compares with what it last saw. A
+first reading with no state is a baseline and says nothing, as
+`observe_starts()`' first reading says nothing of a start long before it.
+
+**Flapping is held, by subject.** Four changes of one subject (an interface,
+a module's level, a session, a pool, a stream) in 5 minutes are written one
+by one; from the fifth the changes are counted and not written, and at the
+end of each 5-minute window one event says them: "interface X flapped 37
+times in 5 min, not each recorded; it is now link up". A window with no
+change ends the hold. Failed logins from one address are a subject too:
+"failed logins from ssh 203.0.113.9: 30 in 7 min, not each recorded". A link
+flapping all day writes 4 events and then one every 5 minutes, about 290 a
+day, against a record of about 3000.
+
+**Bounded otherwise by the record.** The watcher writes as root, so the
+door's 30-a-minute account limit (`doors.ACCOUNT_EVENTS_PER_MINUTE`) does not
+apply to it - it is for accounts, and is unchanged - and its events are
+bounded by the record's rotation and the flapping rule. No account may write
+a watcher's kind: `event_error()` refuses `link`, `bgp`, `login`... from
+anyone but root.
+
+**The dataplane given up on.** Not a reading: written by the code that gives
+up, as phase 1's events are. `watch-the-dataplane` records an error when
+Docker stopped restarting the dataplane and the cards go back to Linux, and
+when it stops trying to put the configuration back on a restarted dataplane
+(after 3 attempts, once); `prisma-hot-card` records `system dataplane restart`
+giving up (the dataplane would not stop) and not finishing (the tuner, the
+start, or the configuration not loading in 180 s) - the restart that left
+10.40.200.166 dark on 2026-10-06 (#591), which nothing recorded. Kind
+`gave-up`, source `host`.
+
+**The SNMP and API settings.** Written by the commit that applies them
+(kind `settings`, by the commit's account and session): applied, with what
+the apply said, or refused, with why. Not the boot's: the boot's load (and
+each restart's, and `--reapply`) applies the same settings again, and an
+event per load saying nothing changed is the noise #588 keeps out. A refusal
+at boot is written, and so is the retry after the interfaces (#591).
+
+**Decisions taken here, conservatively, that nobody asked for:**
+
+* **`source` keeps the issue's components; `kind` says what an event is.**
+  `source` stays who saw it - the dataplane (links, modules, pools, the
+  exporter), routing (BGP, BFD), the host (logins, giving up) - so phase 1's
+  filters keep their meaning, and `show log kind <kind>` is the new filter.
+  Sources `link`, `bgp`... would have split one component across several
+  names.
+* **Logins from wtmp and btmp, not sshd's log or PAM.** They are fixed-size
+  utmp records (glibc's layout, unchanged for decades) that sshd and
+  login(1) already write: a login and logout in wtmp, a failed password in
+  btmp (OpenSSH's `record_failed_login`). sshd's log lines are prose that
+  changes between releases and lives in the journal; a `pam_exec` line in
+  `/etc/pam.d/sshd` sees a failure only if placed after the module that
+  fails, and the package's upgrade rewrites the file. What they do not
+  have: a failed public key (an attempt, not a failure; OpenSSH does not
+  record it), and a VTY login is an SSH or a console login whose shell is
+  the VTY - the VTY has no password of its own, so "to the VTY" is read
+  from the account's shell. A first reading starts at the end of each file:
+  history is not news.
+* **Modules on the dataplane's ports only.** A card Linux holds (the
+  management card, an AF_XDP hot card) is read through a door, and a door
+  call every minute is the journal noise #588 removed. Left for phase 3,
+  with a reader that needs no door.
+* **A UDP collector cannot be seen.** The box sees its sends fail, not a
+  collector go away, so "lost" for IPFIX over UDP is LogWatch's stalled
+  verdict, which a collector that silently drops what it is sent never
+  reaches.
+* **Logouts are `info`.** Kept for `last`-like reading, below what an
+  operator filters with `severity notice`.
+
 ## Reading it
 
 ```
@@ -156,6 +309,8 @@ prisma> show log since 2026-10-05
 prisma> show log severity warning
 prisma> show log source dataplane
 prisma> show log since 1d source vty | match rollback
+prisma> show log kind bgp
+prisma> show log kind link since 1h
 ```
 
 With neither `last` nor `since`, the last 50. `since` takes `45s`, `30m`,
@@ -163,7 +318,10 @@ With neither `last` nor `since`, the last 50. `since` takes `45s`, `30m`,
 `Z` or an offset; none is the box's own zone, which is what the times print
 in). `severity` is `error`, `warning`, `notice` or `info`, and shows that level
 and every one above it. `source` is `vty`, `api`, `host`, `dataplane` or
-`routing`. An event wider than the console folds, its continuation indented,
+`routing`. `kind` is what an event is: phase 1's `commit`, `rollback`,
+`confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, and
+phase 2's `settings`, `link`, `transceiver`, `bgp`, `bfd`, `pool`,
+`collector`, `login`, `gave-up`. An event wider than the console folds, its continuation indented,
 as every row the VTY prints does (test_prismash_refusals.py holds them to 79
 columns): the first row carries the time, severity, source and the start of
 the sentence, so `| match` finds an event by those; `source` and `severity`
@@ -196,10 +354,13 @@ A session from the lab (`lab/show-log.sh` through `tools/run-all-labs.sh`,
     nothing on the box asked for it: unexpected
 ```
 
-`ListEvents` takes the same four filters (`last` 0 is the default, as at the
-prompt), answers each event as fields - `time`, `severity`, `source`, `text`,
-`account`, `origin`, `kind`, `component`, `cause` - and `show log`'s screen
-for the same filters in `text`. INVALID_ARGUMENT, in the VTY's words, for a
+`ListEvents` takes the same five filters (`last` 0 is the default, as at the
+prompt; `kind` since 0.152.0), answers each event as fields - `time`,
+`severity`, `source`, `text`, `account`, `origin`, `kind`, `component`,
+`cause`, and since 0.152.0 `subject` (the interface, peer, pool, stream or
+account it is about) and `reason` (FRR's reset, bfdd's diagnostic,
+`administrative` or `link`, the level a module crossed, a flapping subject's
+count) - and `show log`'s screen for the same filters in `text`. INVALID_ARGUMENT, in the VTY's words, for a
 filter the VTY refuses.
 
 ## How it is tested
@@ -219,6 +380,18 @@ filter the VTY refuses.
 * `lab/api-grpc.sh`'s phase for #588 - ListEvents against what the API's own
   phases did, phase 5's requests through the real doors daemon, and the cause
   in GetSystem.
+* `test/test_eventwatch.py` (phase 2) - each kind's reading and comparison,
+  the flapping rule, the settle, the state, the login records, the Shell's
+  readings from the box's own screens, a tick and the loop, the settings.
+* `test/test_watch_dataplane.sh`, `test/test_prisma_hot_card.sh` (phase 2) -
+  the dataplane given up on, and a restart that did not finish, in the record.
+* `lab/show-log-watch.sh` (phase 2) - a memif's far end deleted and put back,
+  a sub-interface shut, a stand-in module's light low, taken out and put
+  back, a BGP session shut by its peer with a message, the peer's bfdd
+  killed, a wrong SSH password and a right one, a four-block pool given five
+  subscribers, a link flapped 14 times, each read back from `show log` with
+  its reason; idle passes write nothing. Its off run points the record at a
+  path nothing can write.
 
 ### The mutations, each shown red and put back
 
@@ -246,5 +419,20 @@ and restoring the file.
 | `hostrun()` not recording the request | test_apiserver.py |
 | `session_argv()` passing a `from` that is not an address | test_doors.py |
 | the door's run of an API request not marked as recorded | test_doors.py |
+| `link_changes()` not telling administrative from link | test_eventwatch.py: 2 checks, a sub-interface and a port shut down said nothing |
+| `module_changes()` comparing nothing but presence | test_eventwatch.py: 3 checks, rx power past its warning, back, and no light |
+| `bgp_changes()` without FRR's counter | test_eventwatch.py: a flap between two readings said nothing |
+| `bfd_changes()` leaving the diagnostic out | test_eventwatch.py: "down" with no reason |
+| `pool_reading_carry()` not carrying `exhausted` | test_eventwatch.py: 2 checks, the pool said out of blocks at every reading |
+| `read_utmp()` starting a first reading at 0 | test_eventwatch.py: 4 checks, history said as news |
+| `flap_admit()` always True | test_eventwatch.py: 4 checks, 59 events for 59 changes |
+| `tick()` without the settle | test_eventwatch.py: 3 checks, a restart's links and sessions compared |
+| `watch_events()` not reading its state file | test_eventwatch.py: a restart of the watcher said nothing it should, nor kept the baseline |
+| `record_settings()` writing the boot's routine apply | test_eventwatch.py: 2 checks |
+| an account may write a watcher's kind | test_eventwatch.py: `event_error()` let a VTY "link" through |
+| `parse_show_args()` without `kind` | test_apiserver.py: 2 checks, ListEvents' kind refused |
+| `event_pb_fields()` without subject and reason | test_apiserver.py |
+| `watch-the-dataplane`'s two records replaced by `true` | test_watch_dataplane.sh: each, its check |
+| `prisma-hot-card`'s record of an unfinished restart taken out | test_prisma_hot_card.sh |
 | `appliance/upgrade`'s record line replaced by `true`; and the line before it without `\|\| true` | test_upgrade_artifact.sh: no upgrade in the box's record; the second killed the upgrade itself under `set -e`, which is how it was found |
 | the contract reader without the check for a name defined twice, over a proto with a second `Event` | test_api_contract.py (the shape the first lab run of this phase met: protoc refused the contract, no stubs) |

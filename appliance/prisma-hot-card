@@ -61,6 +61,16 @@ RESTART_CARDS=${PRISMA_RESTART_CARDS:-$ROOT/run/prisma-routing/restart-cards}
 
 say() { echo "prisma-hot-card: $*"; }
 
+# The box's record of events (#588 phase 2): a restart that did not finish
+# is an event, written by the tool that gave up. On 2026-10-06 a `system
+# dataplane restart` on 10.40.200.166 left the cards with Linux and the box
+# dark (#591), and nothing on the box recorded it. Best effort, as every
+# event: never a reason for the restart to stop.
+EVENTS_PY=${PRISMA_EVENTS_PY:-$ROOT/usr/lib/prisma-routing/events.py}
+record_event() { # <severity> <text>
+  python3 "$EVENTS_PY" record host=gave-up "$1" "$2" >/dev/null 2>&1 || true
+}
+
 # The kernel's name for a card the dataplane has taken: short enough for the
 # kernel's 15 characters whatever the card was called.
 kernel_name() {  # <netdev>
@@ -301,6 +311,7 @@ restart_dataplane() {
   if ! $SYSTEMCTL stop "$dp"; then
     if $SYSTEMCTL is-active --quiet "$dp"; then
       say "the dataplane could not be stopped; nothing was changed"
+      record_event warning "system dataplane restart gave up: the dataplane could not be stopped, and nothing was changed"
       rm -f "$names" "$RESTART_CARDS"
       return 1
     fi
@@ -348,21 +359,24 @@ restart_dataplane() {
     fi
   done
   rc=0
-  $SYSTEMCTL restart prisma-routing-tune.service || rc=1
+  why=""
+  $SYSTEMCTL restart prisma-routing-tune.service || { rc=1; why="the tuner failed"; }
   rm -f "$RESTART_CARDS"
   # Started whatever the tuner said: a box whose tuner failed still has the
   # startup.conf it had, and a dataplane on it beats none.
-  $SYSTEMCTL start "$dp" || rc=1
+  $SYSTEMCTL start "$dp" || { rc=1; why="${why:+$why; }the dataplane did not start"; }
   # PartOf stopped it with the containers and nothing starts it again: it is
   # what replays the saved configuration onto the dataplane.
   # The restart checks its own result (#564): the saved configuration has to
   # load onto the dataplane it started, or the box is up with nothing on it.
   if ! config_loaded; then
     rc=1
+    why="${why:+$why; }the saved configuration did not load in ${LOAD_WAIT} s"
     say "error: the saved configuration did not load onto the restarted dataplane"
     say "    in ${LOAD_WAIT} s; 'journalctl -u prisma-routing' on the box says why"
   fi
   api_socket_back
+  [ "$rc" = 0 ] || record_event error "system dataplane restart did not finish: $why"
   return $rc
 }
 
