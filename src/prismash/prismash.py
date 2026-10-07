@@ -21072,7 +21072,7 @@ class Shell:
                 sys.stdout.flush()
         except KeyboardInterrupt:
             print()
-        print(f"{time.strftime('%H:%M:%S', time.localtime(now()))} stopped")
+        print(logmon.stopped_line(now()))
 
     def monitor_cgnat_logging(self, args, segment=None, now=None,
                               sleep=None):

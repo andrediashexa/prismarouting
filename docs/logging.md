@@ -15,6 +15,14 @@ configuration.
 De-allocation records are **not optional**: without them a court order lands on
 the wrong subscriber.
 
+**This is not the box's record of events.** What happened on the box -
+commits, restarts, links, BGP sessions, logins - is `show log`, and it goes
+to a NOC's syslog through `system` > `logging`
+([docs/logging-events.md](logging-events.md), #588 phase 3). The two are
+configured apart (`nat` > `cgnat` > `logging` here), sent by different
+processes, and SHOULD go to different collectors: a court order is answered
+from this one, and an outage from the other.
+
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** and
 > **REQUIRED** in this document are to be interpreted as described in
 > [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).

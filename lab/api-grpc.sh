@@ -643,6 +643,11 @@ sed 's/^/  vty as netview: /' /tmp/xcvr-netview | head -3
 T12=$(python3 lab/api_phase12_check.py /tmp/apistubs $C 127.0.0.1:50556 \
   /tmp/xcvr-netview 2>&1)
 printf '%s\n' "$T12" | sed 's/^/  /'
+# #588 phase 3: the record as it is written (WatchEvents), and where it goes
+# (system > logging through Edit, GetConfig and GetSystem).
+echo "=========== #588 phase 3: WatchEvents, system logging ==========="
+T13=$(python3 lab/api_phase13_check.py /tmp/apistubs $C 127.0.0.1:50556 "$HX" 2>&1)
+printf '%s\n' "$T13" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -904,6 +909,15 @@ expect "  its text is the VTY's show interface pg0 transceiver" t12 xcvr-text-is
 expect "  every port asked: pg0, and no TAP" t12 xcvr-all
 expect "  a name that is neither a port nor a card is missing" t12 xcvr-missing
 expect "  an account with no role gets the screen the VTY gives it" t12 xcvr-any-account
+t13() { printf '%s\n' "$T13" | grep -q "^RESULT $1 ok"; }
+expect "#588 phase 3: WatchEvents streams what is recorded while it is open, of its kind" t13 watch-follows
+expect "  each a BoxEvent with its kind, source, severity and time" t13 watch-fields
+expect "  last 2: the last two first" t13 watch-last-first
+expect "  a kind the box has not got: INVALID_ARGUMENT, in the VTY's words" t13 watch-refused
+expect "  system logging set with Edit, read back typed in log_destinations" t13 logging-typed
+expect "  the VTY's running configuration has it" t13 logging-vty
+expect "  GetSystem: the destination, the watcher not heard, show system logging's text" t13 logging-system
+expect "  a name, not an address: INVALID_ARGUMENT" t13 logging-refused
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

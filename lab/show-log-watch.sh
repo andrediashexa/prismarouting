@@ -1,10 +1,12 @@
 #!/bin/sh
 # show log, phase 2: what the box sees happen, recorded by the host's watcher (#588).
 #
-#   sh tools/lab.sh show-log-watch       a link down and up, a module out and
-#                                        in, BGP and BFD sessions dropped, a
-#                                        failed SSH login, a pool filled - each
-#                                        read back from show log with its reason
+#   sh tools/lab.sh show-log-watch       what stands when the watcher starts,
+#                                        said once (phase 3); a link down and
+#                                        up, a module out and in, BGP and BFD
+#                                        sessions dropped, a failed SSH login,
+#                                        a pool filled - each read back from
+#                                        show log with its reason
 #   sh tools/lab.sh show-log-watch off   the record cannot be kept - every
 #                                        check on what show log says MUST fail
 #
@@ -30,7 +32,14 @@
 #   * the login is OpenSSH's sshd and ssh, with a wrong password and a right
 #     one, read from the wtmp and btmp they write;
 #   * the pool is four blocks, and five subscribers from the packet
-#     generator.
+#     generator;
+#   * WHAT STANDS AT START (#588 phase 3, the X520 on 10.40.200.166 whose RX
+#     stood below its warning before the watcher ever ran): memif3/0 is a
+#     master with no far end at all, its link down from the moment it is
+#     made, and the module's stand-in starts with its light low. The first
+#     pass says each once, "standing at start: ..."; the second - a new
+#     process, a restart of the watcher in the same boot - says nothing,
+#     because the state file carries them; and no later pass repeats them.
 #
 # The off run points the record at a path nothing can write, as
 # lab/show-log.sh's does: the box with nowhere to keep it. Every action
@@ -38,10 +47,11 @@
 # really dropped, btmp really has the failure, the pool really refused) stay
 # green.
 #
-# OFF-RED-AT-LEAST: 18
+# OFF-RED-AT-LEAST: 22
 #
 # A FLOOR, measured on the off run through tools/run-all-labs.sh (#588 phase
-# 2, 2026-10-07): 18 of its 24 checks red. Green in that run and rightly:
+# 2, 2026-10-07): 18 of its 24 checks red; phase 3's four on what stands at
+# start are red there too (measured below, 2026-10-07). Green in that run and rightly:
 # the five controls, and `kind weather` refused, which the VTY refuses
 # whether or not anything was kept. See lab/bypass.sh for why it is a floor and not a
 # target.
@@ -86,11 +96,16 @@ vppctl set interface state memif1/0 up
 vppctl set interface state memif2/0 up
 vppctl create sub-interfaces memif1/0 100
 vppctl set interface state memif1/0.100 up
+# A port whose far end never came: down before anything watched (phase 3).
+vppctl create memif socket id 3 filename /run/vpp/lab-memif-alone.sock
+vppctl create interface memif id 0 socket-id 3 master
+vppctl set interface state memif3/0 up
 hexof() {   # hexof <fixture expression> - its bytes as one hex word
   python3 -c "import sys; sys.path.insert(0, '/src/test'); \
 import transceiver_fixtures as F; print(($1).hex())"
 }
-vppctl bpa transceiver stand-in memif1/0 type sff-8472 hex "$(hexof 'F.sfp_internal()')"
+# Its light already low when the watcher first reads it (phase 3).
+vppctl bpa transceiver stand-in memif1/0 type sff-8472 hex "$(hexof 'F.sfp_low_rx()')"
 
 # The small pool: 16 ports in 4-port blocks, one subscriber a block.
 vppctl create packet-generator interface pg0 >/dev/null
@@ -185,15 +200,25 @@ echo "  BGP: $(bgp_state), BFD: $(bfd_status), memif1/0: $(link_of memif1/0)"
 # PAST THE SETTLE. Within 60 s of the dataplane's or the routing daemons'
 # start the watcher compares nothing (eventwatch.SETTLE): a restart is an
 # event of its own, and every link coming up after it is the restart. This
-# lab started both a moment ago, as a boot does.
+# lab started both a moment ago, as a boot does. And what stands is said only
+# once each has run 180 s (eventwatch.STANDING_SETTLE): at a boot a BGP
+# session is still connecting a minute in.
 VPP_UP=$(vppctl show clock 2>/dev/null | sed -n 's/.*Time now \([0-9]*\).*/\1/p' | head -1)
 FRR_AGE=$(( $(date +%s) - $(stat -c %Y "$PRISMA_FRR_STARTED") ))
-_wait=$(( 66 - ${VPP_UP:-0} )); [ $(( 66 - FRR_AGE )) -gt "$_wait" ] && _wait=$(( 66 - FRR_AGE ))
+_wait=$(( 186 - ${VPP_UP:-0} )); [ $(( 186 - FRR_AGE )) -gt "$_wait" ] && _wait=$(( 186 - FRR_AGE ))
 [ "$_wait" -gt 0 ] && { echo "  waiting ${_wait}s past the settle"; sleep "$_wait"; }
 
 echo
-echo "=========== 1. the first pass: a baseline, nothing said ==========="
+echo "=========== 1. the first pass: what stands is said, once ==========="
 P0=$(pass_); echo "  $P0"
+STAND=$($HX -c "show log last 1000" 2>&1 | grep -A2 "standing at start")
+echo "$STAND" | sed 's/^/  /'
+# A new process, as a restart of the watcher is: the state file carries what
+# was said, so nothing again.
+P1=$(pass_); echo "  a restart of the watcher: $P1"
+# The light back to normal: a change, said as one.
+vppctl bpa transceiver stand-in memif1/0 type sff-8472 hex "$(hexof 'F.sfp_internal()')"
+echo "  $(pass_)"
 
 echo
 echo "=========== 2. a link: the far end goes, and comes back ==========="
@@ -314,7 +339,8 @@ expect_said "the link up again" "interface memif1/0: link up" "$K_LINK"
 expect_said "a sub-interface shut down, said as administrative" \
   "sub-interface memif1/0.100 is administratively down: shut down by configuration" "$K_LINK"
 expect_said "the module's light below its warning, with the level" \
-  "memif1/0: rx power -19.00 dBm, below its low warning (-18.01 dBm)" "$ALL"
+  "dataplane memif1/0: rx power -19.00 dBm, below its low warning (-18.01 dBm)" \
+  "$($HX -c "show log last 1000" 2>&1)"
 expect_said "the module taken out" "module removed from memif1/0" "$ALL"
 expect_said "and put back, with what it is" "module inserted in memif1/0: Rei do SFP" "$ALL"
 expect_said "BGP leaving Established, with FRR's reason and the peer's message" \
@@ -333,6 +359,15 @@ expect "a flapping link is held: 4 changes one by one, not 14" \
   sh -c "[ \"$FLAPS\" -ge 1 ] && [ \"$FLAPS\" -le 4 ]"
 expect "the watcher's state is kept, so a restart of it says nothing again" \
   sh -c "[ -s \"$PRISMA_WATCH_STATE\" ]"
+# What stood when the watcher started (#588 phase 3).
+expect_said "standing at start: the port whose far end never came" \
+  "standing at start: interface memif3/0: link down, administratively up: the wire or the far end" "$STAND"
+expect_said "standing at start: the module's light already below its warning" \
+  "standing at start: memif1/0: rx power -19.00 dBm, below its low warning (-18.01 dBm)" "$STAND"
+expect_in "a restart of the watcher in the same boot says them not again" \
+  "watch-events: 0 event(s)" "$P1"
+expect "each said once in the whole run, and nothing healthy announced" \
+  sh -c "[ \"\$(grep -c 'standing at start' \"$PRISMA_EVENTS\")\" = 2 ]"
 expect "source routing is BGP and BFD, nothing of the dataplane's" \
   sh -c "printf '%s' \"\$1\" | grep -q 'BFD session' && ! printf '%s' \"\$1\" | grep -q memif" _ "$S_ROUTING"
 expect_in "kind weather: refused, with the kinds there are" "kind is one of" "$K_BAD"

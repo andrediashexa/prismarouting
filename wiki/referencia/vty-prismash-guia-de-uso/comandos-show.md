@@ -601,6 +601,7 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show lacp` | os bundles LACP: cada membro e se ele está no bundle |
 | `show system cpu` | quais núcleos fazem o quê: o configurado e o que está em vigor |
 | `show system memory` | a RAM por papel: o configurado e o que está em vigor |
+| `show system logging` | para onde vai o registro de eventos da caixa: cada destino syslog configurado em `system` > `logging` e se o vigia está conseguindo entregar (`sending`, `not reached: <motivo>`), com quantos eventos já mandou |
 | `show system uptime` | desde quando a caixa, o dataplane (VPP) e o roteamento (FRR) estão no ar, o motivo do último boot quando foi registrado (`system reboot by <conta>`; senão `not recorded`) e quando a versão foi instalada. Um dataplane mais novo que a caixa aparece como `restarted after the boot`, e desde a 0.151.14 a linha `started by:` diz **por quê**, como a caixa registrou: o boot, um `system dataplane restart`, uma atualização, ou `nothing recorded: unexpected` quando nada na caixa pediu |
 | `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é**, **quais daemons de roteamento estão rodando** e uma linha `uptime` com o tempo da caixa e do dataplane |
 | `show route [verbose] [<prefixo>]` | a tabela que encaminha (acima) |
@@ -666,7 +667,28 @@ O que ele registra hoje:
 
 Uma porta que fica caindo e voltando não enche o registro: quatro mudanças em 5 minutos saem uma a uma; dali em diante são contadas, e sai uma linha por janela de 5 minutos — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. Uma rajada de senhas erradas do mesmo endereço, igual. No primeiro minuto depois de o dataplane ou o FRR partir, nada disso é comparado: o reinício já é um evento, e as portas voltando são o reinício. Os logins vêm de `/var/log/wtmp` e `/var/log/btmp`, os registros que o sshd e o login(1) já escrevem; o módulo de uma placa que está com o Linux (a de gerência) ainda não é vigiado.
 
-O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento. O que vem a seguir — `system logging` em termos da caixa, um `monitor log`, traps SNMP — está planejado e ainda não existe.
+**O que já estava errado quando o vigia começou (desde a 0.152.2).** O vigia registra mudanças, então uma condição que já existia quando ele subiu nunca era dita — foi o caso do X520 da 10.40.200.166, com o RX abaixo do aviso antes de o vigia rodar pela primeira vez. Agora a primeira leitura de cada boot também diz o que **está** errado, uma vez, no presente: uma porta ligada e sem enlace, um módulo além de um aviso ou alarme, uma sessão BGP ou BFD configurada que não está de pé, um pool sem blocos recusando, um coletor da exportação CGNAT não alcançado.
+
+```
+2026-10-07 00:04:12  warning  dataplane  standing at start: enp1s0: rx power
+    -14.79 dBm, below its low warning (-13.00 dBm)
+```
+
+Reiniciar o vigia no mesmo boot não repete nada (o arquivo de estado guarda o que já foi dito); o próximo boot diz o que estiver errado então. O que está bem não é anunciado. Uma sessão BGP só entra depois de o FRR estar de pé há 3 minutos, para não chamar de problema a sessão que ainda está subindo.
+
+**Acompanhar ao vivo: `monitor log`.** O registro conforme é escrito, uma linha por evento, até Ctrl-C, com os mesmos filtros do `show log`:
+
+```
+prisma> monitor log
+prisma> monitor log severity warning
+prisma> monitor log kind bgp last 5
+```
+
+`severity`, `source` e `kind` escolhem o que é acompanhado; `last` e `since` o que é mostrado antes. Sem nenhum dos dois, começa agora. Um evento que chega depois da própria hora — a partida do dataplane, que o host registra quando a vê; um login, com a hora do wtmp — aparece quando chega, com a hora dele.
+
+**Mandar para um syslog: `system` > `logging`.** O registro vai para até quatro coletores syslog (RFC 5424, UDP ou TCP), cada um com o nível mínimo; quem manda é o próprio vigia, a partir do `events.log`, que serve de fila: um coletor TCP que caiu recebe o que esperou quando volta, sem perder e sem repetir. Veja a configuração em [Roteamento, SSH, usuários e SNMP](roteamento-ssh-usuarios-e-snmp.md). **Não é a exportação de registros do CGNAT** (`nat` > `cgnat` > `logging`), que é o registro de quem usou qual porta pública, para ordem judicial: são duas configurações e dois fluxos separados, e devem ir para coletores diferentes.
+
+O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento.
 
 ## Filtrando a saída com `|`
 

@@ -461,6 +461,9 @@ flowchart TD
 | "por que a sessão BGP caiu?" | `show log kind bgp` (o motivo do FRR) e `show log kind bfd` |
 | "quem entrou na caixa, e quem errou a senha?" | `show log kind login` |
 | "o pool esgotou?" | `show log kind pool` |
+| "o que já estava errado quando a caixa subiu?" | `show log` — as linhas `standing at start:` da primeira leitura do boot |
+| "quero ver os eventos chegando" | `monitor log` (os mesmos filtros; Ctrl-C para) |
+| "os eventos estão chegando no meu syslog?" | `show system logging` |
 | "quem mudou o pool, e quando?" | `show cgnat history` |
 | "o que estou prestes a aplicar?" | `show configuration compare` |
 | "que versão é essa máquina?" | `show version` |

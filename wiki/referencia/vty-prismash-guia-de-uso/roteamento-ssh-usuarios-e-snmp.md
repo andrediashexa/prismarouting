@@ -353,8 +353,9 @@ configure
 | `control-plane`, `main-thread`, `workers`, `cgnat-workers` | `system` > `cpu` | os núcleos por papel |
 | `control-plane`, `buffers` | `system` > `memory` | a memória por papel |
 | `unsupported-sfp allow` | `system` > `hardware` | a placa ixgbe (X520 e família) aceita um módulo SFP+ que a Intel não homologou; `no unsupported-sfp` volta ao padrão, que recusa |
+| `host <endereço> [...]` | `system` > `logging` | manda o registro de eventos da caixa para um syslog; vale **no commit** (veja abaixo) |
 
-Todas valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+Todas, menos `logging`, valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
 
 ## Módulo SFP+ não homologado numa placa ixgbe
 
@@ -377,6 +378,52 @@ configure
 ```
 
 Vale a partir do próximo boot: a caixa põe `ixgbe.allow_unsupported_sfp=1` na linha de comando do kernel, que o driver lê quando carrega. `show system hardware` mostra o que está configurado e o que o boot atual tem. A Intel avisa que um módulo que ela não testou pode ser instável; por isso vem desligado.
+
+## Para onde vai o registro de eventos: `system` > `logging`
+
+O que o `show log` mostra — commits, reinícios com a causa, enlaces, módulos, sessões BGP e BFD, pools sem bloco, logins — vai também para até quatro coletores syslog:
+
+```
+configure
+ system
+  logging
+   host 192.0.2.10
+   host 192.0.2.11 protocol tcp severity warning
+   exit
+  exit
+ commit
+```
+
+| Opção | Padrão | O que faz |
+|-------|--------|-----------|
+| `port <n>` | 514 em UDP, 601 em TCP | a porta do coletor |
+| `protocol udp\|tcp` | `udp` | UDP: um datagrama por evento. TCP: um fluxo, com o enquadramento por contagem de octetos (RFC 6587) |
+| `severity error\|warning\|notice\|info` | `info` (tudo) | o nível mínimo mandado: aquele e os mais graves |
+| `source-address <endereço>` | o da rota | o endereço de origem |
+| `vrf <nome>` | a tabela padrão | a VRF por onde sai; tem de ser um `vrf <nome> table <n>` da configuração |
+
+`no host <endereço>` para de mandar para ele; um segundo `host` com o mesmo endereço substitui o primeiro. O coletor é um **endereço**, nunca um nome: uma caixa cujo DNS caiu é justamente a que mais precisa mandar os eventos. Vale no `commit`, sem reiniciar nada.
+
+Cada evento sai em RFC 5424, facility `daemon`, com o tipo do evento (`LINK`, `BGP`, `COMMIT`...) no MSGID e os campos como dados estruturados:
+
+```
+<28>1 2026-10-07T00:01:01.250Z edge-1 prisma-routing - LINK [event@67033
+source="dataplane" kind="link" subject="memif1/0" reason="link"] interface
+memif1/0: link down, administratively up: the wire or the far end
+```
+
+**Nada se perde se o coletor TCP cair.** Quem manda é o vigia de eventos da caixa, a partir do próprio `events.log`, que serve de fila: cada destino guarda até onde já mandou, e o que esperou vai quando o coletor volta — sem repetir —, mesmo depois de reiniciar o vigia ou a caixa. `show system logging` diz cada destino e se está chegando:
+
+```
+192.0.2.10:514 udp  info and above
+  sending
+  sent 3 event(s) since the watcher started, the last at 2026-10-07 00:01:01
+192.0.2.11:601 tcp  warning and above
+  not reached: connection refused; tried again every 30 s
+  sent 0 event(s) since the watcher started
+```
+
+**Não confunda com a exportação do CGNAT.** `nat` > `cgnat` > `logging syslog` manda os registros de quem usou qual porta pública, para ordem judicial, e continua igual. São duas configurações e dois fluxos separados — um não carrega as linhas do outro — e devem ir para coletores diferentes.
 
 # SSH
 
@@ -840,7 +887,7 @@ Desde a 0.149.2 ela também:
 
 Ela também lê **em campos o resto das telas do CGNAT**: quem estava atrás de um endereço público e uma porta, e se a resposta vale para qualquer instante (o pool determinístico, pela fórmula) ou só para agora (um bloco dinâmico ou de reserva, que já foi de outro); os assinantes mais perto de esgotar os blocos; os descartes; a memória e quantas sessões ainda cabem; os blocos de cada worker; quantas identidades a caixa tem (nunca uma identidade); a verificação da trilha de configuração; os ALGs ligados em cada pool; os encaminhamentos de porta; e se esta caixa e o par de HA mapeiam os assinantes do mesmo jeito. Num pool NAT64 o assinante vem como o prefixo IPv6 dele. Cada resposta traz junto a tela da VTY, igual ao que o terminal mostra, porque é a mesma leitura.
 
-E lê em campos **as telas que faltavam**: o `show ospf interface` (cada interface com a área, o estado, o custo, os vizinhos, o MTU que o OSPF anuncia ao lado do MTU do dataplane, e se os dois travam a adjacência), o `show isis interface` (os circuitos, os que estão sem vizinho e se o dataplane está entregando o IS-IS ao sistema), o `show hardware` (as placas que o Linux tem, qual leva a rota padrão e o que o dataplane já pegou) e o `show logging` (a configuração de log de cada daemon de roteamento). Desde a 0.151.14 lê também o `show log` — o registro do que aconteceu na caixa, com os mesmos filtros — e o `GetSystem` diz por que o dataplane e o roteamento partiram pela última vez (`boot`, `operator`, `upgrade` ou `unexpected`), para a interface web não precisar adivinhar "reiniciou sozinho". O `show snmp mib` e o template do Zabbix vêm **como arquivo**, já com o número de empresa da caixa, para importar direto no NMS.
+E lê em campos **as telas que faltavam**: o `show ospf interface` (cada interface com a área, o estado, o custo, os vizinhos, o MTU que o OSPF anuncia ao lado do MTU do dataplane, e se os dois travam a adjacência), o `show isis interface` (os circuitos, os que estão sem vizinho e se o dataplane está entregando o IS-IS ao sistema), o `show hardware` (as placas que o Linux tem, qual leva a rota padrão e o que o dataplane já pegou) e o `show logging` (a configuração de log de cada daemon de roteamento). Desde a 0.151.14 lê também o `show log` — o registro do que aconteceu na caixa, com os mesmos filtros — e o `GetSystem` diz por que o dataplane e o roteamento partiram pela última vez (`boot`, `operator`, `upgrade` ou `unexpected`), para a interface web não precisar adivinhar "reiniciou sozinho". Desde a 0.152.2 acompanha o registro ao vivo (`WatchEvents`, o `monitor log` da API), configura os destinos syslog do `system` > `logging` e lê, no `GetSystem`, se cada um está chegando. O `show snmp mib` e o template do Zabbix vêm **como arquivo**, já com o número de empresa da caixa, para importar direto no NMS.
 
 O `ping`, o `traceroute` e o `mtr` chegam **linha a linha, enquanto rodam**, cada resposta ou salto já em campos e um resumo no fim. Valem as mesmas regras da VTY: o mesmo endereço, a mesma contagem (até 100), o mesmo limite de 300 segundos, e a caixa recusa com as mesmas palavras. Se quem chamou desistir no meio, a caixa para o teste.
 

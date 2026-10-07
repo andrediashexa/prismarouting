@@ -467,6 +467,8 @@ sending there.
 | a commit confirmed nobody confirmed was reverted | `configReverted` | a monitor on `prConfigConfirmReverts` (#524) |
 | the tuning waits for a reboot | `tuningBetweenPlans` | a monitor on `prTuningState`, every five minutes (#524) |
 | the configuration trail no longer verifies | `auditTrailDamaged` | a monitor on `prAuditState`, every five minutes (#524) |
+| a pool has no block free | `poolExhausted`, with the pool's name and utilisation | a monitor on `prPoolUtilisation` reaching 100 (#588) |
+| a module's RX power, temperature, voltage, bias or TX power goes past a threshold, or comes back | `transceiverStateChange`, with the port and its level | a monitor on `prXcvrState`, the change since the last poll (#588) |
 | a disk, memory or load threshold | net-snmp's default monitors (`dskErrorFlag` and the rest) | net-snmp |
 
 The monitors are polled every 30 or 60 seconds, so a notification follows the
@@ -480,6 +482,19 @@ is received too (#524); `configReverted`, `tuningBetweenPlans` and
 `auditTrailDamaged` are not, the first needing a window to expire and the
 other two polled every five minutes - their objects are read in
 `lab/snmp.sh`.
+
+**Which of the box's events are notifications (#588 phase 3).** The record
+`show log` keeps says more than these: a notification is sent where an
+object holds the state and no standard notification already says it. The
+links are IF-MIB's `linkDown`/`linkUp` and BGP is bgpd's
+`bgpBackwardTransition`/`bgpEstablished` - standard, and not sent a second
+time as the product's; a pool out of blocks (`poolExhausted`) and a module
+past a threshold (`transceiverStateChange`) are the product's. **Not a
+notification**: a BFD session (bfdd serves no SNMP, and no object of
+PRISMA-ROUTING-MIB holds one yet), and logins, commits and restarts - the
+record carries them, to `show log`, `system` > `logging`'s syslog
+collectors and the API's WatchEvents (docs/logging-events.md).
+`lab/snmp-traps.sh` receives both of the product's.
 
 Two things measured on the way, both in the monitors' definitions: a monitor
 fires when its test **becomes** true - one already true when snmpd starts is

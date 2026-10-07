@@ -27,6 +27,43 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.2 - show log, phase 3: what stands, where it goes, how it is followed
+
+* **Contract:** additive (`prisma.proto` sha256 `c6816ee42302484e720bc0cf32ade22650f4e2c55d219298928627e96524ecdd`).
+  #588 phase 3: `OperationalService.WatchEvents(ListEventsRequest) returns
+  (stream BoxEvent)`; `SystemConfig.log_destinations` (11) of the new
+  `LoggingDestination`; `SystemInfo.logging` (27) of the new
+  `LoggingDestinationState`, and `SystemInfo.logging_text` (28).
+* **WatchEvents** streams the box's record as it is written, one BoxEvent
+  each, until the call is cancelled. `severity`, `source` and `kind` select
+  what is streamed; `last` and `since` what is sent first, oldest first.
+  **With neither, nothing is sent first** - the stream starts now - which is
+  not ListEvents' "last 50". The record is read again every second over its
+  last 15 minutes, so an event appended after its own time (a `start`, a
+  `login`) arrives when it is written, not in time order: sort by `time` if
+  the order matters. INVALID_ARGUMENT, in the VTY's words, for a filter
+  ListEvents refuses. Any account, like ListEvents.
+* **ListEvents and WatchEvents carry "standing at start" events**: the first
+  reading of each boot says what already stands - `kind` `link`,
+  `transceiver`, `bgp`, `bfd`, `pool` or `collector`, the same `subject`,
+  `severity` and `reason` a change of that kind has, and `text` beginning
+  "standing at start: ". Once a boot; a box upgraded onto 0.152.2 says them
+  once at its first reading, although it did not reboot.
+* **The record's remote syslog destinations** (`system` > `logging`): set
+  with Edit at path `["system","logging"]` - `host <address> [port <n>]
+  [protocol udp|tcp] [severity <level>] [source-address <address>] [vrf
+  <name>]`, `no host <address>` - and read typed in GetConfig's
+  `SystemConfig.log_destinations` (`port` is the effective one: 514 udp, 601
+  tcp; `severity` defaults to `info`). Not `TypedConfig.logging`, which
+  stays the CGNAT's connection records. A commit of them is a ListEvents
+  `settings` event with `subject` `logging`.
+* **GetSystem's `logging`**: each destination and the watcher's word on it -
+  `known` false when the watcher has not said within a minute; `state`
+  "ready", "sending" or "not reached" (with `error`); `sent` since the
+  watcher started; `last_sent`. `logging_text` is `show system logging`.
+* **Notifications** (for an NMS, not the API): `poolExhausted` and
+  `transceiverStateChange` are new mteTriggerFired names.
+
 ## 0.152.1 - the default MTU is 1500
 
 * **Contract:** unchanged since 0.152.0 (`prisma.proto` sha256 `eaf45c412fecadb2e7d4abaeeec722f998c5a9cbf3461d217a46447b462ccce5`).
