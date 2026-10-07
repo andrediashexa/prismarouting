@@ -383,6 +383,9 @@ def build():
         ("configReverted", "configReverted"),
         ("tuningBetweenPlans", "tuningBetweenPlans"),
         ("auditTrailDamaged", "auditTrailDamaged"),
+        # #588 phase 3: the box's record, where an object holds it.
+        ("poolExhausted", "poolExhausted"),
+        ("transceiverStateChange", "transceiverStateChange"),
     ]
     for name, rx in traps:
         items.append(item(f"Notification: {name}", None, f'snmptrap["{rx}"]', "LOG", None,

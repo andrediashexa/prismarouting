@@ -1681,6 +1681,38 @@
             ]
           },
           {
+            "uuid": "8303ad4d05ca420eaadf90e79acd4545",
+            "name": "Notification: poolExhausted",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"poolExhausted\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
+            "uuid": "6de640a32a17408ba0c3919a5b1e1604",
+            "name": "Notification: transceiverStateChange",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"transceiverStateChange\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
             "uuid": "ddd1750f80584d16a6bcaf4dfd4ee466",
             "name": "Notification: anything else",
             "type": "SNMP_TRAP",
