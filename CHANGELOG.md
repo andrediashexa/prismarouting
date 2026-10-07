@@ -77,6 +77,10 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.1 - the default MTU is 1500
+
 ### Changed
 
 * **The default MTU is 1500, not VPP's 9000.** ([#592](https://github.com/andrediashexa/hexarouting/issues/592))
@@ -103,8 +107,6 @@ version has a chance of seeing it.
   interface that exists on the box but has no block in the saved
   configuration is set to 1500 at the next load. The pin runs once: an
   operator's later `no mtu` is respected. A new install starts at 1500.
-
-### Fixed
 
 ## 0.152.0 - show log, phase 2: what the box sees happen
 
