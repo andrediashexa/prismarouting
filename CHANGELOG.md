@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.0 - show log, phase 2: what the box sees happen
+
+### Added
+
 * **`show log`, phase 2: what the box sees happen, not only what it is
   told.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
   A watcher on the host (`prisma-routing-events-watch.service`, `prismash
@@ -105,8 +111,6 @@ version has a chance of seeing it.
   did not finish (#591's dark box). `show log kind <kind>` selects one kind;
   ListEvents takes `kind` and gives each event's `subject` and `reason`.
   docs/logging-events.md has the design and what phase 3 leaves.
-
-### Fixed
 
 ## 0.151.17 - a box comes up whatever snmpd says
 
