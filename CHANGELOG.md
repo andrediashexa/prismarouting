@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.3 - BFD's traps
+
+### Added
+
 * **BFD notifications: `bfdSessDown` and `bfdSessUp`.** ([#559](https://github.com/andrediashexa/hexarouting/issues/559))
   A BFD session going down or coming back is now told to every `snmp
   trap-host`, as BFD-STD-MIB's own notifications (RFC 7331): `bfdSessDown`
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   file the watcher writes every tick. The Zabbix template has an item for
   each and a problem on `bfdSessDown`. docs/bfd.md's design had the two
   OIDs swapped; RFC 7331 numbers `bfdSessUp` 1 and `bfdSessDown` 2.
-
-### Fixed
 
 ## 0.152.2 - show log, phase 3: what stands at start, remote syslog, follow mode, traps
 
