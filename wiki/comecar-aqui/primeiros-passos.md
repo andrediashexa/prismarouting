@@ -317,7 +317,7 @@ show cgnat drops     o que não passou, e por quê
 
 
 :::warning
-**Cuidado com MTU.** Numa placa que aceita 9000, a interface e o par dela no Linux começam em 9000. Um vizinho em 1500 deixa a adjacência OSPF travada em Exchange, sem mensagem de erro. Ajuste com `mtu` dentro do bloco `interface`. Numa placa que não chega a 9000 — toda máquina virtual — a caixa já começa a interface no máximo da placa.
+**Cuidado com MTU.** Uma interface sem `mtu`, e o par dela no Linux, começam em 1500, o padrão da caixa desde a 0.152.1 (numa placa que não chega a 1500, no máximo da placa). Um vizinho em outra MTU deixa a adjacência OSPF travada em Exchange, sem mensagem de erro. Ajuste com `mtu` dentro do bloco `interface`. Numa caixa instalada antes da 0.152.1 as interfaces seguem em 9000: a atualização escreveu `mtu 9000` nelas.
 
 :::
 

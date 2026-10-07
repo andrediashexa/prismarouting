@@ -96,6 +96,8 @@ O pacote confere a plataforma da caixa, troca os arquivos do produto e diz, arqu
 :::info
 **A configuração não é tocada.** `/etc/prisma-routing/prisma-routing.conf`, as revisões de rollback e o ajuste de tuning que você editou continuam onde estavam. O pacote reescreve os arquivos do produto, não os seus.
 
+**Com uma exceção, feita uma vez, para que nada mude sozinho: a MTU, ao passar para a 0.152.1 vindo de uma versão anterior.** Até a 0.152.1 uma interface sem `mtu` subia em 9000; dali em diante sobe em 1500. Para a caixa continuar como estava, o pacote escreve `mtu 9000` em toda interface da configuração salva que não tinha `mtu` (e nas revisões de rollback, mantendo as datas delas), diz quais foram na saída — o bloco `==> interface MTUs` — e registra no `show log` a linha "interfaces with no mtu pinned at 9000, the default before 0.152.1: ..." com a lista. Ele deixa também `/etc/prisma-routing/mtu-9000-kept`: com esse arquivo, a placa continua aceitando quadros de até 9000, como antes. Um `no mtu` seu depois disso é respeitado e não volta: a interface vai para 1500.
+
 :::
 
 ## 4. Escolha quando reiniciar o dataplane

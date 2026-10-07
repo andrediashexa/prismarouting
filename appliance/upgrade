@@ -248,6 +248,27 @@ echo
 # `|| true`: this file runs under `set -e`, and a box with no stamp (or a
 # DESTDIR one, test/test_upgrade_artifact.sh) made awk's failure the upgrade's.
 WAS=$(awk 'NR == 1 { print $1 }' "$DESTDIR/usr/share/prisma-routing/VERSION" 2>/dev/null || true)
+# THE DEFAULT MTU MOVED FROM VPP'S 9000 TO 1500 IN 0.152.1 (#592), and a box
+# installed before then MUST NOT change by itself. src/prismash/mtupin.py, from
+# this artifact, pins `mtu 9000` on every interface of the saved configuration
+# that has none (and of the rollback revisions, and of a pending confirm's
+# revert), writes /etc/prisma-routing/mtu-9000-kept - which keeps the tuner off
+# `default-mtu` on this box - and records the event `show log` shows. It says
+# nothing on a box with no stamp, or from 0.152.1 or later.
+#
+# HERE AND NOT IN install.sh, which is the medium's too (tools/release-gate.sh
+# refuses a patch that changes it): this file is the artifact's own. BEFORE
+# install.sh writes the new stamp, so a run that stops after this and is run
+# again still decides from the old one - and the file it wrote is what stops
+# it pinning twice. Best effort, like the event record: an upgrade is not
+# failed by it, and what it could not pin it names.
+_pin=$(python3 "$ART/src/prismash/mtupin.py" --root "$DESTDIR" \
+         --previous "${WAS:-}" 2>&1) || true
+if [ -n "$_pin" ]; then
+  echo "==> interface MTUs"
+  printf '%s\n' "$_pin"
+  echo
+fi
 env DESTDIR="$DESTDIR" PRISMA_VERSION_STAMP="$STAMP" \
     sh "$ART/appliance/install.sh" || exit $?
 

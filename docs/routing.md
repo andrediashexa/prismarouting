@@ -193,7 +193,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   linux-name   another name for FRR and 'ip' to see this interface by; without one it is its own
   mac-address  the MAC this interface answers to
   mtr          ping every hop of the path, as a report
-  mtu          MTU, on both the dataplane interface and its TAP
+  mtu          MTU, on both the dataplane interface and its TAP; unset is 1500
   no           remove a statement from this interface
   ping         send echo requests and say what came back
   replace      a regular expression substituted across this level
@@ -877,7 +877,7 @@ prisma# [edit interface GigabitEthernet0/12/0] ?
   linux-name   another name for FRR and 'ip' to see this interface by; without one it is its own
   mac-address  the MAC this interface answers to
   mtr          ping every hop of the path, as a report
-  mtu          MTU, on both the dataplane interface and its TAP
+  mtu          MTU, on both the dataplane interface and its TAP; unset is 1500
   no           remove a statement from this interface
   ping         send echo requests and say what came back
   replace      a regular expression substituted across this level
@@ -2394,8 +2394,11 @@ FRR does not need to know VPP exists.
 
 ## Pitfall 1 - inherited MTU stalls OSPF
 
-The TAP created by `linux_cp` comes up with MTU 9000. If the physical link is
-1500, OSPF forms a neighbour, reaches **`Exchange/DR` and stops there**: it
+The TAP created by `linux_cp` comes up with the dataplane's MTU - VPP's 9000
+until 0.152.1, the box's 1500 since
+([#592](https://github.com/andrediashexa/hexarouting/issues/592)), and 9000
+still on a box upgraded from before it. If the TAP and the link disagree,
+OSPF forms a neighbour, reaches **`Exchange/DR` and stops there**: it
 compares MTU in Database Description packets and gives up silently. No log
 says "MTU mismatch"; the operator sees an adjacency that never completes.
 
@@ -2403,15 +2406,15 @@ With the MTU aligned, the adjacency reached **`Full` in 8 seconds**.
 
 * MTU **MUST** be explicit configuration, never inherited.
 
-**The box now supplies that explicit configuration itself when the card cannot
-carry VPP's default.** On a card whose maximum MTU is below 9000 - every
-virtual machine - the tuner writes `ethernet { default-mtu <the card's
-maximum> }` into `startup.conf`, so the dataplane interface *and* its
-`linux_cp` pair start at a value the card accepts with nobody told to do
-anything ([#382](https://github.com/andrediashexa/hexarouting/issues/382), and
-`docs/appliance.md` carries the measurements). That is a **default, not an
-override**: `mtu <n>` below is applied after VPP is up and wins. It also does
-not touch a card that can do 9000 or more.
+**The box supplies a default itself.** The tuner writes `ethernet {
+default-mtu 1500 }` into `startup.conf` (#592), or the card's own maximum when
+that is lower - `default-mtu <the card's maximum>`
+([#382](https://github.com/andrediashexa/hexarouting/issues/382)) - so the
+dataplane interface *and* its `linux_cp` pair start at a value the card
+accepts with nobody told to do anything; `docs/appliance.md` carries the
+measurements. That is a **default, not an override**: `mtu <n>` below is
+applied after VPP is up and wins. A box upgraded from before 0.152.1 keeps
+VPP's 9000, and the upgrade wrote `mtu 9000` into its interfaces.
 
 **OSPFv3 has the same stall, for the same reason.** RFC 5340 keeps the
 Interface MTU field in the database description packet, so a `linux_cp` pair
@@ -2440,7 +2443,20 @@ prisma# [edit] commit
 
 Accepted range 576-9216, refused by the parser rather than by the device, so
 the operator is told at the point of typing instead of at commit time. `no mtu`
-removes the statement.
+removes the statement and sets the interface back to the box's default (#560)
+- 1500 since 0.152.1, or the card's lower maximum (#592). An interface a
+commit creates with no `mtu` - a sub-interface, a loopback, a bundle - is set
+to that default as well: VPP alone gives a sub-interface no MTU of its own and
+forwards it at 9000 whatever its parent says (`show adj` read `mtu:9000` on
+`pg0.100` with `pg0` at 1500), and `tcp-mss auto` on a VLAN then clamped
+nothing.
+
+**`mtu` is the L3 MTU.** It does not change the frame a DPDK card receives,
+which VPP fixes from `ethernet { default-mtu }` when it configures the device:
+raising a port above the box's default forwards larger packets out of it, and
+the card still drops incoming frames above the default. That is why a box
+upgraded from before 0.152.1 keeps VPP's 9000 as its default
+(`docs/appliance.md`, "The box's default MTU").
 
 **It is applied to both sides.** `linux_cp` pairs a VPP interface with a Linux
 TAP, and only the VPP interface is on the packet path. Setting the TAP alone -

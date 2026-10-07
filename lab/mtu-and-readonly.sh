@@ -7,7 +7,8 @@
 # #560: `no mtu` printed a note and left the dataplane at the last committed
 # MTU; the running configuration, which reads the device, went on saying it.
 # Here: an MTU is committed, then removed, and the dataplane, the running
-# configuration and the next commit are read back.
+# configuration and the next commit are read back. Since #592 the box's
+# default is 1500, on the stanza the tuner renders, and pg0 starts there.
 #
 # #561: an account with no role took about 90 s for any read of the running
 # configuration. Here: the same `show running-config` timed as root and as an
@@ -29,7 +30,15 @@ use_binary_api
 export PRISMA_ROLLBACK=/tmp/rollback PRISMA_CONFIG=/tmp/prisma-routing.conf
 rm -rf /tmp/rollback
 
-vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
+# THE BOX'S DEFAULT, as the tuner renders it (#592): an interface with no
+# mtu comes up at 1500, not at VPP's own 9000, and `no mtu` goes back there.
+# The VTY reads the default off the file the dataplane started on (#560).
+STANZA=$(python3 -c "import importlib.machinery as m
+t = m.SourceFileLoader('tune', '/src/appliance/prisma-routing-tune').load_module()
+print(t.render_ethernet({'cards': []}))")
+{ cat "$(startup_conf test)"; printf '\n%s\n' "$STANZA"; } > /tmp/startup-mtu.conf
+export PRISMA_STARTUP_CONF=/tmp/startup-mtu.conf
+vpp -c /tmp/startup-mtu.conf > /tmp/vpp.log 2>&1 &
 wait_vpp
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
@@ -81,6 +90,8 @@ VIEW_MS=$(( ($(date +%s%N) - T0) / 1000000 ))
 echo "  $(wc -l < /tmp/run-viewer.txt) lines in ${VIEW_MS} ms"
 head -5 /tmp/run-viewer.txt | sed 's/^/    /'
 
+expect "pg0 started at the box's default of 1500, not VPP's 9000 (got $DEFAULT)" \
+  test "$DEFAULT" = 1500
 expect "mtu 1400 reached the dataplane (got $SET)" test "$SET" = 1400
 expect "and the running configuration (got $RUN_SET)" test "$RUN_SET" = 1400
 expect "no mtu put the dataplane back to the box's default $DEFAULT (got $BACK)" \

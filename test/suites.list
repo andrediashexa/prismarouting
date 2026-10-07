@@ -158,6 +158,7 @@ python3 test/test_prismash_ctrl_c.py
 python3 test/test_doors.py
 python3 test/test_events.py
 python3 test/test_eventwatch.py
+python3 test/test_mtupin.py
 python3 test/test_vrf_devices.py
 sh test/test_set_hostname.sh
 python3 test/test_zabbix_template.py

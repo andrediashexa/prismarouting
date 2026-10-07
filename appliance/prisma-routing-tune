@@ -546,6 +546,25 @@ class Topology:
 ETHERNET_DEFAULT_MTU = 9000
 ETHERNET_MTU_MIN = 64
 
+# THE BOX'S OWN DEFAULT, which is not VPP's (#592). An interface with no `mtu`
+# statement starts here: VPP's 9000 made `tcp-mss auto` resolve to 8960 on a
+# box whose subscribers' path is 1500 (measured on 10.40.200.166), so the clamp
+# clamped nothing. config.DEFAULT_MTU is the VTY's copy of the same number,
+# not imported because the tuner runs before anything of the VTY's is needed.
+BOX_DEFAULT_MTU = 1500
+
+# A BOX INSTALLED BEFORE 0.152.1 KEEPS VPP'S 9000 (#592). The upgrade onto it
+# writes this file (src/prismash/mtupin.py) after pinning `mtu 9000` on every
+# interface of the saved configuration that had no `mtu`. The pin alone does
+# not keep such a box as it was: `mtu <n>` in the VTY sets the L3 MTU, and the
+# frame a DPDK card RECEIVES is fixed when VPP configures the device, from
+# this stanza - VPP 26.06's dpdk_device_setup() sets rxmode.mtu to the smaller
+# of the card's maximum and `default-mtu`. A pinned port on a 1500 default
+# would forward 9000 and drop every frame above 1500 it is sent, which is an
+# OSPF neighbour's large Database Description packet as much as a jumbo frame.
+# So this box goes on writing no `default-mtu`, as it always did.
+MTU_KEPT_FILE = "/etc/prisma-routing/mtu-9000-kept"
+
 
 # VPP's own STAT_SEGMENT_DEFAULT_SIZE, in MB: the segment a box gets when no
 # statseg stanza names one. Kept as a constant rather than read from the
@@ -805,7 +824,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
          config_path=None, vpp_base=None, mgmt_conf=None, cgnat_memory_gb=None,
          control_plane_cores=None, main_thread="shared",
          control_plane_memory_gb=None, buffers_per_numa=None,
-         cgnat_workers=None, _interim=False, keep_pci=None):
+         cgnat_workers=None, _interim=False, keep_pci=None, mtu_kept=False):
     # The card this box is reached on, read for one reason: so the way back
     # can be computed off it below, before the bind takes it. It used to be
     # read to REFUSE that card when it was named (#123), and to let it
@@ -1229,6 +1248,9 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         # Somebody's own stanza in the base file, which is never overridden.
         "statseg_operator": operator_sized,
         "vpp_base": vpp_base,
+        # A box installed before 0.152.1, whose interfaces keep VPP's 9000
+        # (#592, MTU_KEPT_FILE); everything else starts at BOX_DEFAULT_MTU.
+        "mtu_kept": bool(mtu_kept),
     }
 
     # THE BOOT BETWEEN TWO PLANS (#486). A change that isolates more CPUs
@@ -1255,7 +1277,8 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
                        main_thread=main_thread,
                        control_plane_memory_gb=control_plane_memory_gb,
                        buffers_per_numa=buffers_per_numa,
-                       cgnat_workers=cgnat_workers, _interim=True)
+                       cgnat_workers=cgnat_workers, _interim=True,
+                       mtu_kept=mtu_kept)
             # Only a plan that is tuned by the same test as any other: a
             # half-measure that asks for what the kernel has not got is the
             # restart loop the conservative profile was written to avoid.
@@ -1432,12 +1455,19 @@ def ethernet_mtu(p):
     """
     The one MTU every interface on this box starts at, or None for VPP's own.
 
-    THE SMALLEST MAXIMUM OF THE CLAIMED CARDS, and the reason it is the
-    smallest is that there is nothing else it could be. `ethernet
-    { default-mtu }` is VPP-wide and there is no per-device MTU keyword in
-    this VPP's configuration at all - that is #380, measured one keyword at a
-    time against the binary. A box claiming a 1500 card and a 9000 card has
-    one number for both.
+    THE BOX'S DEFAULT, 1500, UNLESS A CARD CANNOT CARRY IT (#592). Before
+    0.152.1 this was VPP's 9000 and nothing was written; an interface with no
+    `mtu` statement now starts at BOX_DEFAULT_MTU, and a box upgraded from
+    before then keeps VPP's 9000 (MTU_KEPT_FILE, read into p["mtu_kept"]) -
+    its interfaces were pinned at `mtu 9000` by the upgrade, and this keeps
+    the frame its cards receive where it was.
+
+    THE SMALLEST MAXIMUM OF THE CLAIMED CARDS when that is lower, and the
+    reason it is the smallest is that there is nothing else it could be.
+    `ethernet { default-mtu }` is VPP-wide and there is no per-device MTU
+    keyword in this VPP's configuration at all - that is #380, measured one
+    keyword at a time against the binary. A box claiming a 1400 card and a
+    9000 card has one number for both.
 
     Taking the larger would leave the smaller card's device refused at PMD
     init, in `error` state, forwarding nothing and unrepairable at runtime,
@@ -1456,18 +1486,33 @@ def ethernet_mtu(p):
     about the number the box chose, and the operator's copy is the one nobody
     would check.
     """
+    start = ETHERNET_DEFAULT_MTU if p.get("mtu_kept") else BOX_DEFAULT_MTU
+    top = card_mtu_limit(p)
+    if top is not None and top < start:
+        start = top
+    return start if start < ETHERNET_DEFAULT_MTU else None
+
+
+def card_mtu_limit(p):
+    """
+    The smallest maximum MTU of the claimed cards that VPP would accept as a
+    default, or None when no card's maximum was read (#382, #592).
+
+    Its own function because render_ethernet() and render_report() have to
+    say WHY the box starts where it does - a card that cannot carry the
+    default is a different sentence from the default itself - and asking
+    ethernet_mtu() for the number cannot tell them which it was. A maximum
+    below what VPP accepts does not count: VPP refuses the whole file for it.
+    """
     tops = [c["max_mtu"] for c in p["cards"] if c["pci"] and c["max_mtu"]]
-    if not tops:
+    if not tops or min(tops) < ETHERNET_MTU_MIN:
         return None
-    top = min(tops)
-    if not ETHERNET_MTU_MIN <= top < ETHERNET_DEFAULT_MTU:
-        return None
-    return top
+    return min(tops)
 
 
 def render_ethernet(p):
     """
-    The `ethernet` stanza, or "" on a box whose card can do VPP's default.
+    The `ethernet` stanza, or "" on a box that keeps VPP's default (#592).
 
     THE ONE PLACE THE CARD'S MTU CAN BE SET, and it is here rather than at
     runtime because the device is configured ONCE, while VPP starts, before
@@ -1525,16 +1570,32 @@ def render_ethernet(p):
     with; `mtu <n>` under `interface` in the VTY is applied after VPP is up
     and wins. An operator who named an MTU keeps it.
 
-    Nothing is written for a card that can do 9000 or more: such a box gets
-    exactly what every physical box has always had.
+    WRITTEN ON EVERY BOX SINCE #592, with the box's 1500 when every card can
+    carry it. Nothing is written on a box upgraded from before 0.152.1 whose
+    cards can do 9000: such a box gets exactly what it always had, and its
+    interfaces carry the `mtu 9000` the upgrade pinned (MTU_KEPT_FILE).
     """
     top = ethernet_mtu(p)
     if not top:
         return ""
+    base = ETHERNET_DEFAULT_MTU if p.get("mtu_kept") else BOX_DEFAULT_MTU
+    if top == base:
+        return ("ethernet {\n"
+                f"  # The box's default MTU, {BOX_DEFAULT_MTU} (#592): an "
+                "interface with\n"
+                "  # no 'mtu' statement starts here, and 'no mtu' goes back "
+                "here.\n"
+                f"  # VPP's own is {ETHERNET_DEFAULT_MTU}, which made "
+                "'tcp-mss auto' clamp to\n"
+                f"  # {ETHERNET_DEFAULT_MTU - 40} on a 1500 path. 'mtu <n>' "
+                "under 'interface' in\n"
+                "  # prismash is applied afterwards and wins.\n"
+                f"  default-mtu {top}\n"
+                "}\n")
     return ("ethernet {\n"
             f"  # The smallest maximum MTU of the card(s) this box claims is\n"
-            f"  # {top}, below VPP's\n"
-            f"  # own default of {ETHERNET_DEFAULT_MTU}. Asked for more\n"
+            f"  # {top}, below the {base} this box would\n"
+            f"  # otherwise start at. Asked for more\n"
             "  # than the card can carry, the driver refuses the device:\n"
             "  # the port comes up in 'error' state and forwards nothing.\n"
             "  #\n"
@@ -1942,10 +2003,16 @@ def render_report(p, vpp_base):
     # too. It is the recoverable direction - `mtu <n>` under `interface` is
     # applied after VPP is up and raises that port - and the other direction
     # is a port that never starts and cannot be repaired at runtime.
+    #
+    # Against the box's default (#592), not VPP's: since 0.152.1 a box starts
+    # at 1500, and a 1500 card is no longer a card that lowers anything. A box
+    # upgraded from before then keeps VPP's 9000 and is measured against it.
+    _base = ETHERNET_DEFAULT_MTU if p.get("mtu_kept") else BOX_DEFAULT_MTU
+    _whose = "VPP's" if p.get("mtu_kept") else "the box's"
     for _c in p["cards"]:
-        if _c["max_mtu"] and _c["max_mtu"] < ETHERNET_DEFAULT_MTU:
+        if _c["max_mtu"] and _c["max_mtu"] < _base:
             out.append(f"# NIC max MTU, {_c['name']}: {_c['max_mtu']}, below "
-                       f"VPP's default of {ETHERNET_DEFAULT_MTU}")
+                       f"{_whose} default of {_base}")
         elif not _c["max_mtu"]:
             # UNREAD IS NOT FINE, the same argument the queue count above
             # makes. A card whose maximum could not be read cannot lower the
@@ -1953,7 +2020,7 @@ def render_report(p, vpp_base):
             # it cannot carry that, the port will not start.
             out.append(f"# NIC max MTU, {_c['name']}: could not be read")
     _mtu = ethernet_mtu(p)
-    if _mtu:
+    if _mtu and _mtu < _base:
         # THREE ROWS AND NOT ONE. This report reaches an 80-column serial
         # console through the journal, and as a single sentence it measured
         # 162 columns - folded by the terminal at whatever width the window
@@ -1967,13 +2034,22 @@ def render_report(p, vpp_base):
                    "too. 'mtu <n>'")
         out.append("#          under 'interface' in prismash raises that port "
                    "afterwards.")
-    elif any(not c["max_mtu"] for c in p["cards"]):
-        out.append(f"# interfaces start at: VPP's {ETHERNET_DEFAULT_MTU}, "
-                   f"because no card's maximum")
-        out.append("#          could be read. A card that cannot carry that "
-                   "refuses the port:")
-        out.append("#          'show interface' reports it in 'error' state "
-                   "and it forwards nothing.")
+    elif _mtu:
+        out.append(f"# interfaces start at: {_mtu}, this box's default. "
+                   f"'mtu <n>' under")
+        out.append("#          'interface' in prismash raises a port "
+                   "afterwards.")
+    else:
+        # The box an upgrade onto 0.152.1 found (#592): said, because an
+        # operator comparing two boxes sees 1500 on one and 9000 on the other.
+        out.append(f"# interfaces start at: VPP's {ETHERNET_DEFAULT_MTU}, kept "
+                   f"on a box installed before")
+        out.append(f"#          0.152.1 ({MTU_KEPT_FILE}).")
+        if any(not c["max_mtu"] for c in p["cards"]):
+            out.append("#          A card whose maximum could not be read "
+                       "and cannot carry that")
+            out.append("#          refuses the port: 'show interface' "
+                       "reports it in 'error' state.")
     if p["hugepages_gb"]:
         _heap = main_heap_gb(p)
         _given = (f"{p['cgnat_memory_gb']} GB given to the CGNAT"
@@ -2788,6 +2864,12 @@ def main():
     ap.add_argument("--config", default="/etc/prisma-routing/prisma-routing.conf",
                     help="the box's saved configuration, read for the number "
                          "of interfaces the statistics segment has to hold")
+    # A path for the same reason --config is one: a synthetic box can be
+    # given the file, or not, without the machine running the suite.
+    ap.add_argument("--mtu-kept", default=MTU_KEPT_FILE,
+                    help="written by the upgrade onto 0.152.1 on a box "
+                         "installed before it: when it exists, interfaces "
+                         "start at VPP's 9000 rather than 1500 (#592)")
     ap.add_argument("--write", action="store_true",
                     help="write to /etc/default/grub.d and /etc/vpp")
     # The other direction entirely: everything else here computes what to
@@ -2835,7 +2917,8 @@ def main():
              main_thread=a.main_thread,
              control_plane_memory_gb=a.control_plane_memory_gb,
              buffers_per_numa=a.buffers_per_numa,
-             cgnat_workers=a.cgnat_workers, keep_pci=keep_pci)
+             cgnat_workers=a.cgnat_workers, keep_pci=keep_pci,
+             mtu_kept=os.path.exists(a.mtu_kept))
 
     if a.would_claim:
         return would_claim(p, a.would_claim)

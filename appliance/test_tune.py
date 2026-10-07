@@ -1524,8 +1524,8 @@ with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
     add_nic(root, "eth1", "0000:3b:00.1")
-    out = run(root, maxmtu={"eth0": 1500, "eth1": 9216})
-    check("default-mtu 1500" in out,
+    out = run(root, maxmtu={"eth0": 1400, "eth1": 9216})
+    check("default-mtu 1400" in out,
           f"the box took the larger card's maximum, so the 1500 card's device "
           f"is refused at PMD init and that port forwards nothing: "
           f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
@@ -1557,9 +1557,21 @@ with tempfile.TemporaryDirectory() as root:
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
     add_nic(root, "eth1", "0000:3b:00.1")
     out = run(root, maxmtu={"eth0": 9216, "eth1": 9216})
-    check("ethernet {" not in out,
-          f"a box whose cards can all carry VPP's default was given an "
-          f"ethernet stanza anyway: "
+    # SINCE #592 IT GETS THE BOX'S 1500, which is not VPP's 9000: that is the
+    # whole change, and a jumbo card is where it shows.
+    check("default-mtu 1500" in out,
+          f"a box whose cards can all carry jumbo frames was left on VPP's "
+          f"9000, which is `tcp-mss auto` at 8960 on a 1500 path: "
+          f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
+    # A BOX INSTALLED BEFORE 0.152.1 IS LEFT ALONE: the upgrade wrote the
+    # file and pinned `mtu 9000`, and the frame its cards receive stays
+    # VPP's (#592).
+    _kept = os.path.join(root, "mtu-9000-kept")
+    open(_kept, "w").close()
+    out = run(root, "--mtu-kept", _kept, maxmtu={"eth0": 9216, "eth1": 9216})
+    check("ethernet {" not in out and "kept on a box installed before" in out,
+          f"a box upgraded from before 0.152.1 was given an ethernet stanza, "
+          f"or not told why it has none: "
           f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
 
 print("\n=== a card whose maximum cannot be read does not lower the box's ===")
@@ -1571,8 +1583,8 @@ with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
     add_nic(root, "eth1", "0000:3b:00.1")
-    out = run(root, maxmtu={"eth0": 4000})      # eth1 cannot be read
-    check("default-mtu 4000" in out,
+    out = run(root, maxmtu={"eth0": 1400})      # eth1 cannot be read
+    check("default-mtu 1400" in out,
           f"a card that could not be read changed the value the box chose: "
           f"{[l for l in out.splitlines() if 'mtu' in l.lower()][:6]}")
     check("NIC max MTU, eth1: could not be read" in out,
@@ -2031,7 +2043,7 @@ _vq = tempfile.mkdtemp()
 build(_vq, 1, 8, 1, nic_node=0, hugepages_gb=4, isolated="1-7",
       nic_pci="0000:00:12.0", nic_bus="virtio3", ram_gb=8, tx_queues=1)
 _vout = run(_vq, "--interface", "eth0", "--subscribers", "200000",
-            maxmtu=1500)
+            maxmtu=1400)
 
 check("num-tx-queues 1" in _vout,
       f"a one-queue card was asked for more than one transmit queue, which is "
@@ -2062,13 +2074,13 @@ check("mtu" not in _dpdk_stanza(_vout),
       f"the dev stanza carries an mtu keyword, which VPP has not got: it "
       f"refuses the file and the box never starts: "
       f"{[l for l in _dpdk_stanza(_vout).splitlines() if 'mtu' in l]}")
-check("NIC max MTU, eth0: 1500" in _vout,
-      f"a card with maxmtu 1500 is not mentioned in the report at all, so "
+check("NIC max MTU, eth0: 1400" in _vout,
+      f"a card with maxmtu 1400 is not mentioned in the report at all, so "
       f"an operator has no way to connect VPP's MTU complaint to their "
       f"card. It was: "
       f"error the box printed: "
       f"{[l.strip() for l in _vout.splitlines() if 'mtu' in l.lower()]}")
-check("NIC max MTU, eth0: 1500" in _vout,
+check("NIC max MTU, eth0: 1400" in _vout,
       f"the MTU the card forced was not reported: "
       f"{[l for l in _vout.splitlines() if 'MTU' in l]}")
 
@@ -2081,8 +2093,8 @@ check("NIC max MTU, eth0: 1500" in _vout,
 # THE VALUE, not the presence of a stanza. The number is the card's, read off
 # the card, and a stanza carrying VPP's own 9000 would leave the box exactly
 # where it was while looking like a fix.
-check("ethernet {" in _vout and "default-mtu 1500" in _vout,
-      f"a card whose maximum is 1500 was left to start at VPP's 9000, which "
+check("ethernet {" in _vout and "default-mtu 1400" in _vout,
+      f"a card whose maximum is 1400 was left to start at VPP's 9000, which "
       f"is the driver refusing the port and the box forwarding nothing: "
       f"{[l.strip() for l in _vout.splitlines() if 'mtu' in l.lower()]}")
 # IN THE dpdk STANZA IT WOULD BE #380 AGAIN, so the two are asserted apart:
@@ -2102,11 +2114,11 @@ _fb = tempfile.mkdtemp()
 build(_fb, 1, 8, 1, nic_node=0, hugepages_gb=0, isolated="", ram_gb=8,
       nic_pci="0000:00:12.0", nic_bus="virtio3", tx_queues=1)
 _fbout = run(_fb, "--interface", "eth0", "--subscribers", "200000",
-             maxmtu=1500)
+             maxmtu=1400)
 check("FIRST BOOT MODE" in _fbout,
       f"the fixture is not in first-boot mode, so this is measuring the "
       f"other profile: {_fbout[:200]!r}")
-check("default-mtu 1500" in _fbout,
+check("default-mtu 1400" in _fbout,
       f"the first-boot profile leaves interfaces at 9000 on a card that "
       f"cannot carry it: "
       f"{[l.strip() for l in _fbout.splitlines() if 'mtu' in l.lower()]}")
@@ -2131,13 +2143,13 @@ check("mtu " not in _jout.split("dpdk {", 1)[-1].split("}", 1)[0],
       f"a jumbo-capable card was given an mtu line, which changes what every "
       f"physical box has always done: "
       f"{_jout.split('dpdk {', 1)[-1].split('}', 1)[0]!r}")
-# AND NO ethernet STANZA EITHER. #382 is about a card that cannot do 9000; a
-# card that can keeps VPP's own default, and writing 9216 here would change
-# what every physical box has always started at for no reason anybody asked
-# for.
-check("default-mtu" not in _jout,
-      f"a card whose maximum is above VPP's default was given a default-mtu "
-      f"anyway: {[l.strip() for l in _jout.splitlines() if 'mtu' in l.lower()]}")
+# AND THE BOX'S DEFAULT, NOT THE CARD'S. #382 is about a card that cannot do
+# the default; a card that can starts at the box's 1500 since #592, and
+# writing 9216 here would hand every jumbo card a value nobody asked for.
+check("default-mtu 1500" in _jout and "default-mtu 9216" not in _jout,
+      f"a card whose maximum is above the box's default was not given the "
+      f"box's 1500: "
+      f"{[l.strip() for l in _jout.splitlines() if 'mtu' in l.lower()]}")
 
 print("\n=== and the check is reading a card at all ===")
 # Without this the two sections above pass on a fixture whose queue directory
@@ -3174,25 +3186,62 @@ _p_eth = {"cards": [{"name": "a", "pci": "0000:01:00.0", "max_mtu": 9000},
 check(tune.ethernet_mtu(_p_eth) == 1500,
       f"a 1500 card beside a 9000 one: the smallest maximum wins, got "
       f"{tune.ethernet_mtu(_p_eth)}")
+# #592: the box's default is 1500, and a card only ever LOWERS it. Each case
+# twice: on a box installed since 0.152.1, and on one the upgrade marked as
+# keeping VPP's 9000, where every answer is the one this gave before #592.
+_kept = {"mtu_kept": True}
+check(tune.ethernet_mtu({"cards": []}) == tune.BOX_DEFAULT_MTU == 1500,
+      f"a box with no card does not start at the box's 1500: "
+      f"{tune.ethernet_mtu({'cards': []})}")
+check(tune.ethernet_mtu(dict(_kept, cards=[])) is None,
+      "a box that keeps VPP's 9000 was given a stanza")
+check(tune.ethernet_mtu(dict(_p_eth, mtu_kept=True)) == 1500,
+      "on a box keeping 9000, a 1500 card no longer lowers the value")
 check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
-                                    "max_mtu": None}]}) is None,
+                                    "max_mtu": 1400}]}) == 1400,
+      "a card below the box's 1500 did not lower it, and the driver refuses "
+      "the port for it (#382)")
+check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
+                                    "max_mtu": None}]}) == 1500
+      and tune.ethernet_mtu(dict(_kept, cards=[
+          {"name": "a", "pci": "0000:01:00.0", "max_mtu": None}])) is None,
       "a card whose maximum could not be read lowered the value, and unread "
       "is not 1500")
 check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
-                                    "max_mtu": 9000}]}) is None,
-      "a card that can do VPP's default was given a stanza anyway")
+                                    "max_mtu": 9000}]}) == 1500
+      and tune.ethernet_mtu(dict(_kept, cards=[
+          {"name": "a", "pci": "0000:01:00.0", "max_mtu": 9000}])) is None,
+      "a card that can do VPP's default was given its maximum, or a kept box "
+      "a stanza")
 check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": None,
-                                    "max_mtu": 1500}]}) is None,
+                                    "max_mtu": 1400}]}) == 1500,
       "a card with no PCI address, which DPDK is never given, voted")
 check(tune.ethernet_mtu({"cards": [{"name": "a", "pci": "0000:01:00.0",
-                                    "max_mtu": 32}]}) is None,
+                                    "max_mtu": 32}]}) == 1500
+      and tune.ethernet_mtu(dict(_kept, cards=[
+          {"name": "a", "pci": "0000:01:00.0", "max_mtu": 32}])) is None,
       "a maximum below what VPP accepts was written, and VPP refuses the "
       "whole file for it")
+check(tune.card_mtu_limit(_p_eth) == 1500
+      and tune.card_mtu_limit({"cards": []}) is None
+      and tune.card_mtu_limit({"cards": [{"name": "a", "pci": "0000:01:00.0",
+                                          "max_mtu": 32}]}) is None,
+      "card_mtu_limit is not the smallest maximum VPP would accept")
 check("ethernet {\n" in tune.render_ethernet(_p_eth)
       and "  default-mtu 1500\n}" in tune.render_ethernet(_p_eth),
       f"the stanza does not carry the value: {tune.render_ethernet(_p_eth)!r}")
-check(tune.render_ethernet({"cards": []}) == "",
-      "a box with no card got an ethernet stanza")
+check("box's default MTU, 1500" in tune.render_ethernet({"cards": []})
+      and "  default-mtu 1500\n}" in tune.render_ethernet({"cards": []}),
+      f"a box with no card was not given the box's 1500: "
+      f"{tune.render_ethernet({'cards': []})!r}")
+check(tune.render_ethernet(dict(_kept, cards=[])) == "",
+      "a box that keeps VPP's 9000 got an ethernet stanza")
+_low = {"cards": [{"name": "a", "pci": "0000:01:00.0", "max_mtu": 4000}],
+        "mtu_kept": True}
+check("default-mtu 4000" in tune.render_ethernet(_low)
+      and "below the 9000 this box would" in tune.render_ethernet(_low),
+      f"a kept box with a 4000 card was not lowered, which is #382 again: "
+      f"{tune.render_ethernet(_low)!r}")
 _p_st = {"statseg_mb": 92, "statseg_operator": False,
          "configured_interfaces": 20000, "config_path": "/etc/h.conf",
          "vpp_base": "/etc/base.conf"}

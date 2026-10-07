@@ -334,6 +334,49 @@ case $EV in
     ok "the record says the box was upgraded to ${STAMP%% *}" ;;
   *) bad "no upgrade in the box's record of events: '$EV'" ;;
 esac
+# That box had no stamp, so it is a first install as far as the MTU goes: it
+# starts at 1500, and nothing is pinned or said (#592).
+case $OUTPUT in
+  *"interface MTUs"*) bad "a box with no previous release had MTUs pinned" ;;
+  *) ok "a box with no previous release has nothing pinned (#592)" ;;
+esac
+
+echo
+echo "=== an upgrade from before 0.152.1 pins mtu 9000, once (#592) ==="
+# Through the artifact's own entry point, on a box whose stamp is 0.151.17 and
+# whose saved configuration names a VLAN and a loopback with no mtu - which
+# came up at VPP's 9000 there and would come up at 1500 here. Shown red by
+# taking the pin's block out of appliance/upgrade: nothing is pinned or said.
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+mkdir -p "$BOX/usr/share/prisma-routing" "$BOX/etc/prisma-routing"
+echo "0.151.17 (d3044fe7)" > "$BOX/usr/share/prisma-routing/VERSION"
+printf 'interface ens18.100\n vlan 100\n exit\ninterface loop0\n exit\n' \
+  > "$BOX/etc/prisma-routing/prisma-routing.conf"
+upgrade
+PINNED=$(grep -c '^ mtu 9000$' "$BOX/etc/prisma-routing/prisma-routing.conf")
+case $OUTPUT in
+  *"==> interface MTUs"*"on 2 interface(s) of the saved configuration"*"ens18.100, loop0"*)
+    ok "the upgrade says what it pinned" ;;
+  *) bad "the upgrade from 0.151.17 did not say it pinned the two: $OUTPUT" ;;
+esac
+[ "$PINNED" = 2 ] && [ -f "$BOX/etc/prisma-routing/mtu-9000-kept" ] \
+  && ok "and pinned both, and marked the box as keeping VPP's 9000" \
+  || bad "the saved configuration has $PINNED pin(s), or no mtu-9000-kept"
+case $(cat "$BOX/var/log/prisma-routing/events.log" 2>/dev/null) in
+  *"interfaces with no mtu pinned at 9000, the default before 0.152.1: ens18.100, loop0"*)
+    ok "and the record of events says it, for show log" ;;
+  *) bad "the pin is not in the box's record of events" ;;
+esac
+# Once: the operator removes one, and the same artifact run again - from the
+# same old stamp, as a re-run after a failure would be - leaves it removed.
+printf 'interface ens18.100\n vlan 100\n mtu 9000\n exit\ninterface loop0\n exit\n' \
+  > "$BOX/etc/prisma-routing/prisma-routing.conf"
+echo "0.151.17 (d3044fe7)" > "$BOX/usr/share/prisma-routing/VERSION"
+upgrade
+grep -A1 '^interface loop0' "$BOX/etc/prisma-routing/prisma-routing.conf" \
+  | grep -q 'mtu' \
+  && bad "a second upgrade pinned again what the operator had removed" \
+  || ok "a second upgrade leaves the operator's 'no mtu' alone"
 
 echo
 echo "=== a box on another platform is refused, and nothing is written ==="
