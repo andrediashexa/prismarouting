@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.2 - show log, phase 3: what stands at start, remote syslog, follow mode, traps
+
+### Added
+
 * **`show log`, phase 3: what stands when the watcher starts, where the
   record goes, and how it is followed.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
   The watcher said only what changed, so on 10.40.200.166 the X520's RX
@@ -108,8 +114,6 @@ version has a chance of seeing it.
   back); links and BGP were already IF-MIB's `linkDown`/`linkUp` and bgpd's
   `bgpBackwardTransition`, and are not sent twice. Not yet: a BFD
   notification, which needs a MIB object first.
-
-### Fixed
 
 ## 0.152.1 - the default MTU is 1500
 
