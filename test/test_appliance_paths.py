@@ -115,7 +115,9 @@ print()
 print("=== and a document it names is one install.sh installs ===")
 # The list install.sh actually installs, read from the loop that installs it.
 _ins = open(os.path.join(APPLIANCE, "install.sh"), encoding="utf-8").read()
-_m = re.search(r"for d in ([a-z ]+); do\n\s*install -D[^\n]*"
+# A hyphen too since #588 phase 2 shipped logging-events.md: the reader
+# took "[a-z ]+" and stopped finding the loop at all.
+_m = re.search(r"for d in ([a-z -]+); do\n\s*install -D[^\n]*"
                r"usr/share/doc/prisma-routing", _ins)
 check(_m, "the loop in install.sh that installs the documents could not be "
           "read, so the list below would be empty and this check vacuous")
