@@ -676,7 +676,7 @@ Uma porta que fica caindo e voltando não enche o registro: quatro mudanças em 
 
 Reiniciar o vigia no mesmo boot não repete nada (o arquivo de estado guarda o que já foi dito); o próximo boot diz o que estiver errado então. O que está bem não é anunciado. Uma sessão BGP só entra depois de o FRR estar de pé há 3 minutos, para não chamar de problema a sessão que ainda está subindo.
 
-**Acompanhar ao vivo: `monitor log`.** O registro conforme é escrito, uma linha por evento, até Ctrl-C, com os mesmos filtros do `show log`:
+**Acompanhar ao vivo:** `**monitor log**`**.** O registro conforme é escrito, uma linha por evento, até Ctrl-C, com os mesmos filtros do `show log`:
 
 ```
 prisma> monitor log
@@ -686,7 +686,7 @@ prisma> monitor log kind bgp last 5
 
 `severity`, `source` e `kind` escolhem o que é acompanhado; `last` e `since` o que é mostrado antes. Sem nenhum dos dois, começa agora. Um evento que chega depois da própria hora — a partida do dataplane, que o host registra quando a vê; um login, com a hora do wtmp — aparece quando chega, com a hora dele.
 
-**Mandar para um syslog: `system` > `logging`.** O registro vai para até quatro coletores syslog (RFC 5424, UDP ou TCP), cada um com o nível mínimo; quem manda é o próprio vigia, a partir do `events.log`, que serve de fila: um coletor TCP que caiu recebe o que esperou quando volta, sem perder e sem repetir. Veja a configuração em [Roteamento, SSH, usuários e SNMP](roteamento-ssh-usuarios-e-snmp.md). **Não é a exportação de registros do CGNAT** (`nat` > `cgnat` > `logging`), que é o registro de quem usou qual porta pública, para ordem judicial: são duas configurações e dois fluxos separados, e devem ir para coletores diferentes.
+**Mandar para um syslog:** `**system**` **>** `**logging**`**.** O registro vai para até quatro coletores syslog (RFC 5424, UDP ou TCP), cada um com o nível mínimo; quem manda é o próprio vigia, a partir do `events.log`, que serve de fila: um coletor TCP que caiu recebe o que esperou quando volta, sem perder e sem repetir. Veja a configuração em [Roteamento, SSH, usuários e SNMP](roteamento-ssh-usuarios-e-snmp.md). **Não é a exportação de registros do CGNAT** (`nat` > `cgnat` > `logging`), que é o registro de quem usou qual porta pública, para ordem judicial: são duas configurações e dois fluxos separados, e devem ir para coletores diferentes.
 
 O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento.
 

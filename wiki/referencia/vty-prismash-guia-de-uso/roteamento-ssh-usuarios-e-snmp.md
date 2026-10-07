@@ -397,7 +397,7 @@ configure
 | Opção | Padrão | O que faz |
 |-------|--------|-----------|
 | `port <n>` | 514 em UDP, 601 em TCP | a porta do coletor |
-| `protocol udp\|tcp` | `udp` | UDP: um datagrama por evento. TCP: um fluxo, com o enquadramento por contagem de octetos (RFC 6587) |
+| `protocol udp\|tcp` | `udp`  | UDP: um datagrama por evento. TCP: um fluxo, com o enquadramento por contagem de octetos (RFC 6587) |
 | `severity error\|warning\|notice\|info` | `info` (tudo) | o nível mínimo mandado: aquele e os mais graves |
 | `source-address <endereço>` | o da rota | o endereço de origem |
 | `vrf <nome>` | a tabela padrão | a VRF por onde sai; tem de ser um `vrf <nome> table <n>` da configuração |
