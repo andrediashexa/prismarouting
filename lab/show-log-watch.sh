@@ -38,10 +38,13 @@
 # really dropped, btmp really has the failure, the pool really refused) stay
 # green.
 #
-# OFF-RED-AT-LEAST: 20
+# OFF-RED-AT-LEAST: 18
 #
 # A FLOOR, measured on the off run through tools/run-all-labs.sh (#588 phase
-# 2, 2026-10-06). See lab/bypass.sh for why it is a floor and not a target.
+# 2, 2026-10-07): 18 of its 25 checks red. Green in that run and rightly:
+# the six controls, and `kind weather` refused, which the VTY refuses whether
+# or not anything was kept. See lab/bypass.sh for why it is a floor and not a
+# target.
 set -u
 MODE=${1:-on}
 

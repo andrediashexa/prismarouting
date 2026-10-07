@@ -117,8 +117,8 @@ def write_state(state, path=None):
 def state_moved(before, after):
     """Whether `after` differs from `before` in more than the reading
     times: the watcher writes its state file only then."""
-    strip = lambda d: {k: v for k, v in (d or {}).items() if k != "last"}  # noqa: E731
-    return strip(before) != strip(after)
+    keep = [k for k in set(before or {}) | set(after or {}) if k != "last"]
+    return any((before or {}).get(k) != (after or {}).get(k) for k in keep)
 
 
 def due(state, kind, now, force=False):
@@ -321,7 +321,8 @@ def module_reading(modules):
             v = xc.mw_to_dbm(rx["value"])
             r["rx_dbm"] = "no light" if v == float("-inf") else \
                 f"{xc.fmt_dbm(v)} dBm"
-            r["rx_bound"] = _bound(rx, lambda x: f"{xc.fmt_dbm(xc.mw_to_dbm(x))} dBm")
+            r["rx_bound"] = _bound(
+                rx, lambda x: f"{xc.fmt_dbm(xc.mw_to_dbm(x))} dBm")
         t = _worst([m.get("temperature")])
         if t:
             r["temp"] = t["level"]

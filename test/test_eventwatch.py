@@ -139,7 +139,8 @@ ch = W.link_changes(up, links("up", shut))
 check(len(ch) == 1 and "interface GigabitEthernet0/9/0 is administratively "
       "down" in ch[0]["text"],
       f"link_changes: so does a port: {texts(ch)}")
-check(W.link_changes(up, up) == [], "link_changes: nothing moved, nothing said")
+check(W.link_changes(up, up) == [],
+      "link_changes: nothing moved, nothing said")
 gone = {k: v for k, v in up.items() if k != "GigabitEthernet0/9/0"}
 check(W.link_changes(up, gone) == [] and W.link_changes(gone, up) == [],
       "link_changes: an interface deleted or created is a commit's, not news")
@@ -424,7 +425,8 @@ for i in range(60):
     said += got
     t += 7
 check(len([e for e in said if "flapped" not in e["text"]]) ==
-      W.FLAP_EVENTS, f"flap_admit: {W.FLAP_EVENTS} changes written one by one, "
+      W.FLAP_EVENTS,
+      f"flap_admit: {W.FLAP_EVENTS} changes written one by one, "
       f"then held: {len(said)} events for 59 changes")
 summ = [e for e in said if "flapped" in e["text"]]
 check(len(summ) == 1 and summ[0]["text"].startswith(

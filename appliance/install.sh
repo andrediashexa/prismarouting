@@ -751,7 +751,9 @@ install -d -m 0750 "$DESTDIR/var/agentx"
 chgrp frr "$DESTDIR/var/agentx" 2>/dev/null || true
 
 say "documentation"
-for d in architecture routing logging; do
+# logging-events since #588 phase 2: the unit that records what the box sees
+# (prisma-routing-events-watch.service) names it as its documentation.
+for d in architecture routing logging logging-events; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/prisma-routing/$d.md"
 done
 
