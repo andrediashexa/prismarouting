@@ -652,7 +652,7 @@ O que ele registra hoje:
 **O que a caixa vê acontecer (desde a 0.151.18).** Um vigia no host (`prisma-routing-events-watch.service`) lê o estado da própria caixa a cada 10 s e registra o que mudou desde a leitura anterior — nunca uma linha de log:
 
 | Tipo (`kind`) | Exemplo |
-|--------|---------|
+|-------------|---------|
 | `link`: enlace de uma porta, dizendo se não foi administrativo e quantas sub-interfaces caíram junto | `interface memif1/0: link down, administratively up: the wire or the far end; its 1 sub-interface(s) with it` |
 | `link`: `shutdown` numa porta ou sub-interface | `sub-interface memif1/0.100 is administratively down: shut down by configuration` |
 | `transceiver`: módulo inserido, removido, trocado; RX ou temperatura além de um limiar, e de volta | `memif1/0: rx power -19.00 dBm, below its low warning (-18.01 dBm)` |
