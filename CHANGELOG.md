@@ -90,8 +90,8 @@ version has a chance of seeing it.
   as an AgentX subagent and snmpd sends them as each destination asked,
   trap or inform - not with `snmptrap`, which the box does not have (it is
   in Debian's `snmp` package; the medium installs `snmpd` alone). Measured
-  in `lab/snmp-traps.sh`: `bfdSessDown` arrived 6.6 s after bfdd saw the
-  session down, `bfdSessUp` 9.1 s after it came up; BFD's own detection
+  in `lab/snmp-traps.sh` (three runs): `bfdSessDown` arrived 6.6 s after
+  bfdd saw the session down, `bfdSessUp` 6.0 to 9.1 s after it came up; BFD's own detection
   and the routes it withdraws do not wait on this. A session that went down
   and came back between two readings is sent as both, from bfdd's down
   counter. At most four per session in five minutes, never repeating what

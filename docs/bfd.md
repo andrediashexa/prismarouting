@@ -229,9 +229,9 @@ session that went down and came back inside 10 s. The notifications are
 that comparison said to the NMS: one reader of bfdd, so the record and the
 NMS cannot disagree, and no second resident process. The cost is that a
 notification follows the change by up to a tick: measured in
-`lab/snmp-traps.sh`, `bfdSessDown` reached snmptrapd 6.6 s after bfdd said
-the session was down and `bfdSessUp` 9.1 s after it said up (one run,
-2026-10-07). BFD's own detection - what withdraws the routes, in 252 ms
+`lab/snmp-traps.sh` (three runs, 2026-10-07), `bfdSessDown` reached
+snmptrapd 6.6 s after bfdd said the session was down, each time, and
+`bfdSessUp` 6.0 to 9.1 s after it said up. BFD's own detection - what withdraws the routes, in 252 ms
 above - is bfdd's and does not wait on this: the notification only reports
 it. A flap shorter than a reading is not lost: bfdd's down counter moved, and
 it is sent as a `bfdSessDown` followed by a `bfdSessUp`. A reading every

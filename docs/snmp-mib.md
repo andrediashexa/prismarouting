@@ -507,7 +507,7 @@ lowest and highest index of the sessions that changed together (the same
 index twice for one), indexed as the agent's `bfdSessTable` is; at most four
 per session in five minutes, never repeating what the NMS was last told. A
 notification follows bfdd's own detection by up to one reading (measured
-6.6 s and 9.1 s), and a session that went down and came back between two
+6.0 to 9.1 s in the lab), and a session that went down and came back between two
 readings is sent as both, from bfdd's down counter. `bfdNotificationsEnable`
 reads true(1) only while the watcher runs and snmpd holds a destination.
 docs/bfd.md has the measurement and why not `snmptrap`.
