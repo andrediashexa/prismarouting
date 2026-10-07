@@ -207,6 +207,30 @@ def read_conf(path=None):
     return out
 
 
+def destinations(status=None, path=None):
+    """
+    The destinations configured, for `show system logging` and GetSystem:
+    logging.conf's - or, when this account may not read it, the ones the
+    watcher last said it sends to, from its status. /etc/prisma-routing is
+    2770 root:prisma-cgnat (every revision there carries password hashes),
+    and a read-only account is in no group: read_conf() alone answered it
+    "no remote syslog destination" on a box sending to two.
+    """
+    p = path or CONF_PATH
+    try:
+        with open(p):
+            pass
+    except FileNotFoundError:
+        return []
+    except OSError:
+        keys = ("address", "port", "protocol", "severity", "source-address",
+                "vrf")
+        return [{k: r[k] for k in keys}
+                for r in (status or {}).get("destinations", [])
+                if isinstance(r, dict) and all(k in r for k in keys)]
+    return read_conf(p)
+
+
 def conf_text(dests):
     """logging.conf's text for `dests`."""
     return ("# Written by prismash: system > logging (#588). Edit through "

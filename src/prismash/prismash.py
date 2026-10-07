@@ -20185,8 +20185,9 @@ class Shell:
         now = time.time() if now is None else now
         when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S",  # noqa: E731
                                        time.localtime(t))
-        for row in eventfwd.status_rows(eventfwd.read_conf(),
-                                        eventfwd.read_status(), now, when):
+        status = eventfwd.read_status()
+        for row in eventfwd.status_rows(eventfwd.destinations(status),
+                                        status, now, when):
             print(row)
 
     def show_system_hardware(self):

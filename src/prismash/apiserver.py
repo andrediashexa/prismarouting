@@ -1745,8 +1745,8 @@ def logging_state(now=None):
     """GetSystem's `logging` (#588 phase 3): eventfwd.status_fields() of
     the destinations configured, against the watcher's last status."""
     import eventfwd
-    return eventfwd.status_fields(eventfwd.read_conf(),
-                                  eventfwd.read_status(),
+    status = eventfwd.read_status()
+    return eventfwd.status_fields(eventfwd.destinations(status), status,
                                   time.time() if now is None else now)
 
 

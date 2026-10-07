@@ -332,6 +332,25 @@ except OSError as e:
 check(bound == "cannot assign requested address",
       f"open_socket: bound to its source address before it connects: "
       f"{bound}")
+_locked = os.path.join(_root, "locked")
+os.makedirs(_locked)
+with open(os.path.join(_locked, "logging.conf"), "w") as _fh:
+    _fh.write("host 192.0.2.99\n")
+check([x["address"] for x in F.destinations(None, os.path.join(
+    _locked, "logging.conf"))] == ["192.0.2.99"]
+      and F.destinations(None, os.path.join(_root, "none")) == [],
+      "destinations: logging.conf when it can be read; none is none")
+os.chmod(_locked, 0)
+try:
+    _blocked = os.geteuid() != 0
+    _d = F.destinations({"destinations": [dict(
+        F.parse_host(["192.0.2.98"])[0], state="sending")]},
+        os.path.join(_locked, "logging.conf"))
+finally:
+    os.chmod(_locked, 0o755)
+check(not _blocked or [x["address"] for x in _d] == ["192.0.2.98"],
+      "destinations: an account that may not read logging.conf (a read-only "
+      "one) gets the watcher's list, not 'no destination'")
 check(F.SD_ID == f"event@{system.PRODUCT_PEN}",
       "SD_ID: under the product's own enterprise number")
 

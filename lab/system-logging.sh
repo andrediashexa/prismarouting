@@ -80,10 +80,14 @@ sleep 1
 
 echo
 echo "=========== 1. system > logging, from the VTY ==========="
+# A name is refused at the prompt, and a batch with a refusal in it commits
+# nothing - so it is a batch of its own.
+BADNAME=$($HX -c configure -c system -c logging -c "host syslog.example" 2>&1)
+echo "$BADNAME" | sed 's/^/  /'
 CFG=$($HX -c configure -c system -c logging -c "host 127.0.0.1 port 5514" \
   -c "host 127.0.0.2 port 5601 protocol tcp severity warning" \
   -c "host 127.0.0.3 vrf nowhere" -c "no host 127.0.0.3" \
-  -c "host syslog.example" -c exit -c exit -c commit 2>&1)
+  -c exit -c exit -c commit 2>&1)
 echo "$CFG" | sed 's/^/  /'
 RUN=$($HX -c "show running-config" 2>&1 | sed -n '/^system/,/^ exit/p')
 echo "$RUN" | sed 's/^/  /'
@@ -100,7 +104,7 @@ echo "  udp: $U0 message(s), tcp: $T0"
 echo
 echo "=========== 3. events, at two severities ==========="
 $HX -c configure -c "interface loop1" -c "description lab" -c exit -c commit \
-  >/dev/null 2>&1
+  2>&1 | sed 's/^/  /'
 say host=gave-up warning "the dataplane was given up on, as a lab says it"
 echo "  $(pass_)"
 sleep 1
@@ -135,7 +139,7 @@ MON=$!
 sleep 2
 say host=gave-up warning "said while monitor log ran"
 $HX -c configure -c "interface loop1" -c "description lab two" -c exit \
-  -c commit >/dev/null 2>&1
+  -c commit 2>&1 | sed 's/^/  /'
 wait "$MON"
 MON1=$(cat /tmp/monitor.out)
 echo "$MON1" | sed 's/^/  /'
@@ -154,7 +158,7 @@ expect_in "control: the destinations are in the running configuration" \
 expect_in "control: and the UDP one, its defaults left out" \
   "  host 127.0.0.1 port 5514" "$RUN"
 expect_said "control: a name is refused - an address, never a name" \
-  "logging host 'syslog.example': not an IP address" "$CFG"
+  "logging host 'syslog.example': not an IP address" "$BADNAME"
 expect_said "control: show system logging lists them before the watcher said anything" \
   "127.0.0.2:5601 tcp warning and above" "$SHOW0"
 # What reached the collectors.
