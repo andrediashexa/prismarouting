@@ -513,7 +513,7 @@ expect "BFD-STD-MIB: bfdd's one session, down(2), through snmpd as Debian-snmp" 
 expect_in "  its neighbour, 192.0.2.77, as InetAddress octets" "C0 00 02 4D" "$BFDDST"
 expect "  its transmit interval in microseconds, bfdd's 300 ms ($BFDTX)" \
   test "$BFDTX" = "300000"
-expect "  and bfdNotificationsEnable false: the agent sends no BFD trap" \
+expect "  and bfdNotificationsEnable false: no watcher sends BFD notifications here (#559)" \
   test "$BFDNOTIF" = "2"
 expect "a SET is refused" sh -c "case \"$SETOUT\" in *noAccess*|*otWritable*) exit 0;; *) exit 1;; esac"
 expect "and changed nothing" test "$AFTERSET" = "600"

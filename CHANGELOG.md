@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **BFD notifications: `bfdSessDown` and `bfdSessUp`.** ([#559](https://github.com/andrediashexa/hexarouting/issues/559))
+  A BFD session going down or coming back is now told to every `snmp
+  trap-host`, as BFD-STD-MIB's own notifications (RFC 7331): `bfdSessDown`
+  (`1.3.6.1.2.1.222.0.2`) and `bfdSessUp` (`.0.1`), each carrying
+  `bfdSessDiag` of the session's index - the index the agent serves
+  `bfdSessTable` by, so an NMS reads the row it names - with the session's
+  diagnostic. FRR 10.7.1's bfdd has no SNMP module to send them and the
+  agent's pass_persist cannot raise one, so they come from the host's
+  watcher of events (#588), which already read bfdd every 10 s for `show
+  log`: the same comparison, said to the NMS too. It hands them to snmpd
+  as an AgentX subagent and snmpd sends them as each destination asked,
+  trap or inform - not with `snmptrap`, which the box does not have (it is
+  in Debian's `snmp` package; the medium installs `snmpd` alone). Measured
+  in `lab/snmp-traps.sh` (three runs): `bfdSessDown` arrived 6.6 s after
+  bfdd saw the session down, `bfdSessUp` 6.0 to 9.1 s after it came up; BFD's own detection
+  and the routes it withdraws do not wait on this. A session that went down
+  and came back between two readings is sent as both, from bfdd's down
+  counter. At most four per session in five minutes, never repeating what
+  the NMS was last told, and a held flap ends with the NMS told the state
+  the session is in. `bfdNotificationsEnable` reads true(1) only while they
+  are being sent - the watcher runs and snmpd holds a destination - from a
+  file the watcher writes every tick. The Zabbix template has an item for
+  each and a problem on `bfdSessDown`. docs/bfd.md's design had the two
+  OIDs swapped; RFC 7331 numbers `bfdSessUp` 1 and `bfdSessDown` 2.
+
 ### Fixed
 
 ## 0.152.2 - show log, phase 3: what stands at start, remote syslog, follow mode, traps

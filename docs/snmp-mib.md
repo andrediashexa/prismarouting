@@ -469,6 +469,7 @@ sending there.
 | the configuration trail no longer verifies | `auditTrailDamaged` | a monitor on `prAuditState`, every five minutes (#524) |
 | a pool has no block free | `poolExhausted`, with the pool's name and utilisation | a monitor on `prPoolUtilisation` reaching 100 (#588) |
 | a module's RX power, temperature, voltage, bias or TX power goes past a threshold, or comes back | `transceiverStateChange`, with the port and its level | a monitor on `prXcvrState`, the change since the last poll (#588) |
+| a BFD session goes down, or comes up | `bfdSessDown`, `bfdSessUp` (BFD-STD-MIB, RFC 7331), with `bfdSessDiag` of the session's index | the host's watcher of events, over AgentX (#559) |
 | a disk, memory or load threshold | net-snmp's default monitors (`dskErrorFlag` and the rest) | net-snmp |
 
 The monitors are polled every 30 or 60 seconds, so a notification follows the
@@ -489,12 +490,27 @@ object holds the state and no standard notification already says it. The
 links are IF-MIB's `linkDown`/`linkUp` and BGP is bgpd's
 `bgpBackwardTransition`/`bgpEstablished` - standard, and not sent a second
 time as the product's; a pool out of blocks (`poolExhausted`) and a module
-past a threshold (`transceiverStateChange`) are the product's. **Not a
-notification**: a BFD session (bfdd serves no SNMP, and no object of
-PRISMA-ROUTING-MIB holds one yet), and logins, commits and restarts - the
-record carries them, to `show log`, `system` > `logging`'s syslog
-collectors and the API's WatchEvents (docs/logging-events.md).
-`lab/snmp-traps.sh` receives both of the product's.
+past a threshold (`transceiverStateChange`) are the product's. A BFD
+session is BFD-STD-MIB's own `bfdSessDown` / `bfdSessUp` (#559, below).
+**Not a notification**: logins, commits and restarts - the record carries
+them, to `show log`, `system` > `logging`'s syslog collectors and the API's
+WatchEvents (docs/logging-events.md). `lab/snmp-traps.sh` receives both of
+the product's.
+
+**BFD (#559).** bfdd serves no SNMP and pass_persist cannot raise a
+notification, so `bfdSessDown` (`1.3.6.1.2.1.222.0.2`) and `bfdSessUp`
+(`.0.1`) are sent by the host's watcher of events, which already reads
+bfdd's sessions every 10 s for `show log`: it hands each to snmpd as an
+AgentX subagent, and snmpd sends it to every destination above, trap or
+inform as each asked. They carry RFC 7331's objects, `bfdSessDiag` of the
+lowest and highest index of the sessions that changed together (the same
+index twice for one), indexed as the agent's `bfdSessTable` is; at most four
+per session in five minutes, never repeating what the NMS was last told. A
+notification follows bfdd's own detection by up to one reading (measured
+6.0 to 9.1 s in the lab), and a session that went down and came back between two
+readings is sent as both, from bfdd's down counter. `bfdNotificationsEnable`
+reads true(1) only while the watcher runs and snmpd holds a destination.
+docs/bfd.md has the measurement and why not `snmptrap`.
 
 Two things measured on the way, both in the monitors' definitions: a monitor
 fires when its test **becomes** true - one already true when snmpd starts is

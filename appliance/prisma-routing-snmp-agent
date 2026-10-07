@@ -1626,9 +1626,15 @@ INTERFACES = Interfaces()
 # serves as bfdSessDiscriminator: stable for as long as bfdd runs, which is as
 # long as the session exists. bfdSessInterface is 0: bfdd names the Linux end
 # of an interface and IF-MIB numbers the dataplane's, and serving a number
-# that belongs to another interface is worse than serving none. Traps
-# (bfdSessUp, bfdSessDown) are not sent - pass_persist answers polls and
-# cannot raise one - so bfdNotificationsEnable reads false(2), which is true.
+# that belongs to another interface is worse than serving none.
+#
+# The notifications (bfdSessUp, bfdSessDown) are not this agent's -
+# pass_persist answers polls and cannot raise one - but the host's watcher
+# of events', which reads bfdd every tick and hands them to snmpd over
+# AgentX (#559, src/prismash/bfdtraps.py). bfdNotificationsEnable says
+# whether that is happening, from the file the watcher writes every tick:
+# true(1) only while its pid runs, the file is fresh and snmpd holds a
+# destination. This user cannot read snmpd.conf to know the last itself.
 
 BFD_MIB = "1.3.6.1.2.1.222"
 VTYSH = os.environ.get("VTYSH", "/usr/bin/vtysh")
@@ -1643,6 +1649,11 @@ BFD_DIAG = {"ok": 0, "control detection time expired": 1,
 #: IANAbfdSessStateTC.
 BFD_STATE = {"shutdown": 1, "admindown": 1, "admin-down": 1, "down": 2,
              "init": 3, "up": 4}
+#: The watcher's file (bfdtraps.STATE_PATH), and how old it may be: three of
+#: the watcher's 10 s ticks and a margin. A watcher stopped by systemd is
+#: caught sooner, by its pid.
+BFD_NOTIFY_FILE = "bfd-notifications"
+BFD_NOTIFY_FRESH = 35
 
 
 #: THROUGH THE HOST'S DOOR (#571). snmpd runs this agent as Debian-snmp, and
@@ -1745,16 +1756,33 @@ def _octets(text):
     return (1 if a.version == 4 else 2), a.packed
 
 
-def bfd_rows(sessions):
+def bfd_notifying(state_dir=None, now=None, alive=None):
+    """
+    Whether BFD notifications are being sent (#559): the watcher's file
+    says it sends, was written within BFD_NOTIFY_FRESH, and names a pid
+    that runs. False when any of it cannot be read.
+    """
+    st = parse_state_file(_read_or_none(
+        os.path.join(state_dir or STATE_DIR, BFD_NOTIFY_FILE))) or {}
+    now = time.time() if now is None else now
+    at, pid = _int(st, "at"), _int(st, "pid")
+    alive = alive or (lambda p: os.path.exists(f"/proc/{p}"))
+    return (st.get("sending") == "yes" and 0 <= now - at <= BFD_NOTIFY_FRESH
+            and pid > 0 and alive(pid))
+
+
+def bfd_rows(sessions, notifying=False):
     """
     BFD-STD-MIB's rows for `sessions` (parse_bfd): the scalars, bfdSessTable,
     bfdSessPerfTable, and the two map tables, every OID as RFC 7331 numbers
     it. Timers are microseconds there and milliseconds in bfdd.
+    `notifying` is bfd_notifying()'s answer, served as bfdNotificationsEnable.
     """
     objs = f"{BFD_MIB}.1"
     out = [(f"{objs}.1.1.0", "integer", 1),     # bfdAdminStatus enabled
            (f"{objs}.1.2.0", "integer", 1),     # bfdOperStatus up
-           (f"{objs}.1.3.0", "integer", 2),     # bfdNotificationsEnable false
+           (f"{objs}.1.3.0", "integer",         # bfdNotificationsEnable
+            1 if notifying else 2),
            (f"{objs}.1.4.0", "gauge", 0)]       # bfdSessIndexNext: none
     sess, perf = f"{objs}.2.1", f"{objs}.3.1"
     for s in sessions:
@@ -1847,7 +1875,8 @@ class Bfd:
         sessions = parse_bfd(peers, counters) if peers and counters else None
         # bfdd silent: nothing, not the last rows (the module docstring's
         # "no stale numbers").
-        self.rows = bfd_rows(sessions) if sessions is not None else []
+        self.rows = bfd_rows(sessions, bfd_notifying()) \
+            if sessions is not None else []
         self.at = time.time()
         return self.rows
 

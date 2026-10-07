@@ -162,6 +162,7 @@ MACROS = [
     ("{$PRISMA.XCVR.TEMP.MAX}", "70", "A module's temperature, degrees C, above which a warning is raised - beside the module's own high warning, whichever is crossed first."),
     ("{$PRISMA.XCVR.RX.MIN}", "-40", "RX power, dBm, below which a warning is raised - beside the module's own low warning. -40 is no light: raise it on a port to watch a level the module's thresholds do not."),
     ("{$PRISMA.XCVR.RX.MAX}", "10", "RX power, dBm, above which a warning is raised - beside the module's own high warning."),
+    ("{$PRISMA.BFD.TRAP.HOLD}", "10m", "How long a bfdSessDown keeps its problem open after the last one arrived; the session's own state is bfdSessState."),
     ("{$BGP4V2.INDEX.MATCHES}", "^[0-9]+\\.2\\.", "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."),
 ]
 
@@ -386,11 +387,29 @@ def build():
         # #588 phase 3: the box's record, where an object holds it.
         ("poolExhausted", "poolExhausted"),
         ("transceiverStateChange", "transceiverStateChange"),
+        # #559: BFD-STD-MIB's own (RFC 7331), from the host's watcher of
+        # events - bfdSessUp is { bfdNotifications 1 }, bfdSessDown 2.
+        ("bfdSessDown", "bfdSessDown|1\\.3\\.6\\.1\\.2\\.1\\.222\\.0\\.2\\b"),
+        ("bfdSessUp", "bfdSessUp|1\\.3\\.6\\.1\\.2\\.1\\.222\\.0\\.1\\b"),
     ]
+    # A bfdSessDown raises a problem, cleared {$PRISMA.BFD.TRAP.HOLD} after
+    # the last one or by hand (#559). Not paired with bfdSessUp: Zabbix
+    # cannot tell which session a LOG item's value is about, and one
+    # session's up would clear another's down.
+    bfd_down = 'snmptrap["' + dict(traps)["bfdSessDown"] + '"]'
+    on_trap = {"bfdSessDown": [trig(
+        f"nodata({ref(bfd_down)},{{$PRISMA.BFD.TRAP.HOLD}})=0",
+        "Prisma Routing: a BFD session went down (bfdSessDown)", "HIGH",
+        "A neighbour stopped answering BFD, or said its session was down. The notification "
+        "carries bfdSessDiag.<bfdSessIndex>: the session's row in bfdSessTable and its "
+        "diagnostic (1 is the detection time expiring, 3 the neighbour saying down). "
+        "Whether it came back is bfdSessUp's latest value, and `show bfd peers` on the box.",
+        tags=[("scope", "availability")], manual=True)]}
     for name, rx in traps:
         items.append(item(f"Notification: {name}", None, f'snmptrap["{rx}"]', "LOG", None,
                           typ="SNMP_TRAP", history="31d", tags=[("component", "notification")],
-                          desc="Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`."))
+                          desc="Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+                          triggers=on_trap.get(name, ())))
     items.append(item("Notification: anything else", None, "snmptrap.fallback", "LOG", None,
                       typ="SNMP_TRAP", history="31d", tags=[("component", "notification")]))
 

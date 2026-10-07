@@ -27,6 +27,18 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.3 - BFD notifications
+
+* **Contract:** unchanged since 0.152.2 (`prisma.proto` sha256 `c6816ee42302484e720bc0cf32ade22650f4e2c55d219298928627e96524ecdd`).
+* Nothing a client sees changes. The BFD session events in ListEvents and
+  WatchEvents (`kind` `bfd`) and WatchBfd are as they were.
+* **Notifications** (for an NMS, not the API): `bfdSessDown` and `bfdSessUp`
+  (BFD-STD-MIB, RFC 7331, `1.3.6.1.2.1.222.0.2` and `.0.1`) are sent to
+  every `snmp trap-host` (#559), naming the session by the `bfdSessTable`
+  index the agent serves; `bfdNotificationsEnable` reads true(1) while they
+  are sent. The Zabbix template from `show snmp zabbix-template` has an item
+  for each and a problem on `bfdSessDown`.
+
 ## 0.152.2 - show log, phase 3: what stands, where it goes, how it is followed
 
 * **Contract:** additive (`prisma.proto` sha256 `c6816ee42302484e720bc0cf32ade22650f4e2c55d219298928627e96524ecdd`).

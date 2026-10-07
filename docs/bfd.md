@@ -163,7 +163,7 @@ never would.
   scalars, bfdSessTable, bfdSessPerfTable and the map tables - read from
   bfdd through vtysh on its own registration, so it answers while the
   dataplane does not. `bfdNotificationsEnable` reads false: pass_persist
-  cannot send a trap.
+  cannot send a trap (the traps came in 0.152.3, below).
 * **The IGPs.** `bfd profile <name>` at an OSPF, OSPFv3 or IS-IS interface;
   the VTY stages the bare `bfd` line first, because FRR 10.7.1 answers the
   profile line alone with "has not been set" and stores nothing. lab/bfd.sh
@@ -188,29 +188,113 @@ never would.
   (dead time 40 s) - the peer's side asks with FRR's defaults, 300 ms x 3,
   which the session negotiates up to; with BFD off neither left within 12 s.
 
-## Traps: designed, not built
+## Traps: built (0.152.3)
 
-`bfdNotificationsEnable` reads false, and stays false until this is built.
-The product sends no notification of its own today - the BGP, OSPF and IS-IS
-ones come from FRR's daemons over AgentX - and FRR 10.7.1 has no `bfdd_snmp`
-to send `bfdSessDown` / `bfdSessUp` (RFC 7331, `1.3.6.1.2.1.222.0.1` and
-`.0.2`). pass_persist, which serves the table, cannot originate one. What it
-takes:
+`bfdSessUp` and `bfdSessDown` (RFC 7331) are sent to every `snmp trap-host`,
+by the host's watcher of events (`prisma-routing-events-watch.service`,
+`src/prismash/bfdtraps.py`), and `bfdNotificationsEnable` reads true while
+they are. FRR 10.7.1 has no `bfdd_snmp` to send them, and the agent that
+serves the table is a pass_persist, which answers polls and cannot raise one.
 
-1. A watcher on the host, reading bfdd through the same read-only doors the
-   agent reads (#571), every second, with WatchBfd's comparison: a state
-   change, or a down counter that moved between two readings.
-2. Sent with net-snmp's `snmptrap` / `snmpinform` to the `trap2sink` /
-   `informsink` destinations snmpd.conf already holds, as the root that can
-   read their community or v3 credentials - which is why it is a unit of its
-   own and not the agent, which runs as Debian-snmp.
-3. Rate-limited per session, as docs/snmp-plan.md asks of every
-   notification, and `bfdNotificationsEnable` true only while the watcher
-   runs.
+**The OIDs.** RFC 7331 section 5 makes `bfdNotifications` `{ bfdMIB 0 }`,
+`bfdSessUp` `{ bfdNotifications 1 }` and `bfdSessDown` `{ bfdNotifications 2
+}`: **`bfdSessUp` is `1.3.6.1.2.1.222.0.1` and `bfdSessDown` is `.0.2`**.
+This section's design had them the other way round; the Zabbix template's
+test holds the right pair now.
 
-## What is left after phase 3
+**What one carries.** The notification's OBJECTS clause and nothing more:
+`bfdSessDiag` twice, the lowest and highest index of a run of contiguous
+sessions that made the same change in one reading (RFC 7331's SHOULD), the
+same instance twice for one session. The values are the sessions' current
+diagnostics, as IANAbfdDiagTC - RFC 7331's text said "set equal to this new
+state", which put a state in a diagnostic, and erratum 8327 (verified 2025)
+corrected it to the current values. The index is bfdd's local
+discriminator, which is what the agent indexes `bfdSessTable` by: an NMS
+reads the row the notification names. Received by snmptrapd in
+`lab/snmp-traps.sh`:
 
-* **Traps**, as designed above.
+```
+.1.3.6.1.2.1.1.3.0 = Timeticks: (16036) 0:02:40.36	.1.3.6.1.6.3.1.1.4.1.0 = OID: .1.3.6.1.2.1.222.0.2	.1.3.6.1.2.1.222.1.2.1.13.1598380235 = INTEGER: 1	.1.3.6.1.2.1.222.1.2.1.13.1598380235 = INTEGER: 1
+```
+
+`bfdSessDown` for session 1598380235, diagnostic 1 (control detection time
+expired: the neighbour's bfdd was killed). Its `bfdSessUp` carries 0, because
+bfdd clears its diagnostic when the session comes up.
+
+**Why the watcher, and not a reader of its own every second.** The watcher
+already reads bfdd's sessions as root on the host every 10 s and compares
+each reading with the one before for the record (`show log`, #588 phase 2):
+a state change, or bfdd's down counter moving between two readings - a
+session that went down and came back inside 10 s. The notifications are
+that comparison said to the NMS: one reader of bfdd, so the record and the
+NMS cannot disagree, and no second resident process. The cost is that a
+notification follows the change by up to a tick: measured in
+`lab/snmp-traps.sh` (three runs, 2026-10-07), `bfdSessDown` reached
+snmptrapd 6.6 s after bfdd said the session was down, each time, and
+`bfdSessUp` 6.0 to 9.1 s after it said up. BFD's own detection - what withdraws the routes, in 252 ms
+above - is bfdd's and does not wait on this: the notification only reports
+it. A flap shorter than a reading is not lost: bfdd's down counter moved, and
+it is sent as a `bfdSessDown` followed by a `bfdSessUp`. A reading every
+second would have meant a vtysh call every second for ever, for a page that
+then reaches a person in minutes.
+
+**Why AgentX, and not `snmptrap`.** The design named net-snmp's `snmptrap`
+and `snmpinform`. They are in Debian's `snmp` package, and the medium
+installs `snmpd` alone (`appliance/build-iso.sh`): the box has no
+`snmptrap`, and adding it is a change to the medium, which a patch cannot
+make. snmpd is already the AgentX master FRR's daemons send their BGP and
+OSPF notifications through (#502) and already holds the destinations `snmp
+trap-host` writes (#507), so the watcher opens an AgentX session on its
+socket, hands it a Notify-PDU (RFC 2741 6.2.10) and closes it. snmpd sends
+it to each destination the way that destination asked - a trap, or an
+inform it resends until acknowledged. The watcher never reads a community
+and never retries a datagram.
+
+**Bounded, and not said twice** (docs/snmp-plan.md: every notification
+rate-limited and de-duplicated). Each session gets at most four
+notifications in five minutes - the bound the record keeps for one subject
+(`eventwatch.FLAP_EVENTS`, `FLAP_WINDOW`). A notification saying what the
+NMS was last told for that session is not sent. And a session whose bound
+held a change back is told its state once the window lets it, so a flap
+never ends with the NMS believing the wrong state. When snmpd takes nothing
+(it is restarting), nothing is recorded as told, and the next tick says
+each session's state.
+
+**`bfdNotificationsEnable`** reads true(1) when, and only when, the
+notifications are being sent: the watcher writes
+`/run/prisma-routing/state/bfd-notifications` every tick - whether snmpd.conf
+holds a `trap2sink` or `informsink` (root's to read, 0600) and snmpd's AgentX
+socket is there, and its own pid - and the agent, as Debian-snmp, serves true
+only from that file saying so, written within 35 s (three ticks), naming a
+pid that runs. A watcher stopped by systemd reads false at once (its pid is
+gone), one that hangs within 35 s. Measured in the lab: 1 with a destination,
+2 one tick after `no snmp trap-host`. It is read-only, as every object the
+agent serves.
+
+**Not sent twice.** Links are IF-MIB's `linkDown`/`linkUp` and BGP is
+bgpd's `bgpBackwardTransition`/`bgpEstablished` (#588 phase 3 decided both):
+the BFD notifications are the only ones this watcher sends, and only for BFD.
+
+**What it does not say.** A restart of the routing daemons draws every
+session a new discriminator and zeroes bfdd's counters: a session up before
+and after is not sent as down and up - the restart is an event of its own in
+`show log`, and bgpd's own notification says what it cost; one that stays
+down is sent `bfdSessDown` under its new index. A session removed from the
+configuration has no row to name and is not sent. In the minute after the
+routing daemons start the watcher compares nothing (`eventwatch.SETTLE`),
+and neither is anything sent.
+
+Each behaviour has a mutation shown red in `test/test_bfdtraps.py` and
+`appliance/test_snmp_agent.py`: the down counter not read; the index taken
+from the reading's position; the bound; the catching up; the
+de-duplication; the ranges; `bfdNotificationsEnable` true without a
+destination, without freshness, without the pid; the two OIDs swapped. The
+lab (`sh tools/lab.sh snmp-traps`) kills a neighbour's bfdd and starts it
+again, and receives one `bfdSessDown` and one `bfdSessUp` naming the index
+the agent serves; its off run, with no destination, receives neither.
+
+## What is left
+
 * **The installer.** The next medium SHOULD enable bfdd beside the other four
   daemons, so that the entrypoint is a second line of defence rather than the
   only one.
