@@ -403,12 +403,17 @@ touches the other.
 **The wire.** RFC 5424, facility `daemon` (3), the severity mapped (error 3,
 warning 4, notice 5, info 6), the hostname the box's, APP-NAME
 `prisma-routing`, MSGID the event's kind in upper case, and the event's
-fields as structured data under the product's enterprise number:
+fields as structured data under the product's enterprise number - two
+messages `lab/system-logging.sh`'s UDP collector received (2026-10-07; the
+hostname is the lab container's; one message a line, folded here):
 
 ```
-<28>1 2026-10-07T00:01:01.250Z edge-1 prisma-routing - LINK [event@67033
-source="dataplane" kind="link" subject="memif1/0" reason="link"] interface
-memif1/0: link down, administratively up: the wire or the far end
+<29>1 2026-10-07T03:42:13.839Z f4a5705a7276 prisma-routing - COMMIT
+[event@67033 source="vty" kind="commit" account="root"] configuration
+committed: first pool (by root)
+<28>1 2026-10-07T03:42:13.945Z f4a5705a7276 prisma-routing - GAVE-UP
+[event@67033 source="host" kind="gave-up" origin="the box"] the dataplane
+was given up on, as a lab says it (from the box)
 ```
 
 Over UDP one datagram an event; over TCP RFC 6587 octet counting, the CGNAT
@@ -441,16 +446,20 @@ between its ticks, every second:
   collector may see a repeat, never a gap.
 
 `show system logging` says each destination and what the watcher last said
-of it (`/run/prisma-routing/state/logging`, nothing secret in it):
+of it (`/run/prisma-routing/state/logging`, nothing secret in it) - here
+the same lab with its TCP collector stopped:
 
 ```
-192.0.2.10:514 udp  info and above
+127.0.0.1:5514 udp  info and above
   sending
-  sent 3 event(s) since the watcher started, the last at 2026-10-07 00:01:01
-192.0.2.11:601 tcp  warning and above
+  sent 2 event(s) since the watcher started, the last at 2026-10-07 03:42:16
+127.0.0.2:5601 tcp  warning and above
   not reached: connection refused; tried again every 30 s
   sent 0 event(s) since the watcher started
 ```
+
+The two events said while it was away reached it, once each, at the first
+pass after it was back - a new watcher process, as after a restart.
 
 "not forwarding yet: the watcher (prisma-routing-events-watch) has not said"
 is a watcher that has not written its status for a minute - stopped, or not
@@ -654,8 +663,8 @@ filter the VTY refuses.
 
 ### The mutations, each shown red and put back
 
-Measured on 2026-10-06 (phases 1 and 2) and 2026-10-07 (phase 3) by applying each to the tree, running the suite named,
-and restoring the file.
+Measured on 2026-10-06 (phases 1 and 2) and 2026-10-07 (phase 3) by
+applying each to the tree, running the suite named, and restoring the file.
 
 | Mutation | Red in |
 |---|---|
