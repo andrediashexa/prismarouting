@@ -2371,12 +2371,19 @@ check(_c.interfaces.get("pg0") == "inside" and not _c.unknown,
 
 
 
-# The box's default MTU, which `no mtu` goes back to (#560).
+# The box's default MTU, which `no mtu` goes back to (#560, #592).
 check(config.startup_default_mtu("ethernet {\n  default-mtu 1500\n}\n") == 1500,
       "startup_default_mtu reads the tuner's ethernet default-mtu")
-check(config.startup_default_mtu("unix {\n nodaemon\n}\n") == config.VPP_DEFAULT_MTU == 9000,
-      "and VPP's own 9000 when startup.conf sets none")
-check(config.startup_default_mtu("ethernet { default-mtu 99 }") == 9000,
+check(config.startup_default_mtu("ethernet {\n  default-mtu 1400\n}\n") == 1400,
+      "and a card's lower maximum, which the tuner wrote there (#382)")
+# NOT VPP'S 9000 WHEN THERE IS NO STANZA (#592): a box upgraded from before
+# 0.152.1 has none - it keeps VPP's 9000 frame and its interfaces were pinned
+# at `mtu 9000` - and `no mtu` there goes back to the 1500 every box has.
+check(config.startup_default_mtu("unix {\n nodaemon\n}\n") == config.DEFAULT_MTU == 1500,
+      "the box's 1500 when startup.conf sets none (#592)")
+check(config.VPP_DEFAULT_MTU == 9000,
+      "VPP's own default is still named, as a fact about VPP")
+check(config.startup_default_mtu("ethernet { default-mtu 99 }") == 1500,
       "a value outside the MTU range is not believed")
 
 print("\n=== a NAT64 pool: its statements, its refusals, its message (#485) ===")

@@ -39,7 +39,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRF_RESERVED_PREFIX, vrf_device_error, vrf_table_taken,
                     PROBE_DEADLINE, Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     CONSOLE_COLUMNS, VLAN_RANGE, vlan_tag_error,
-                    MTU_MIN, MTU_MAX, MTU_RANGE,
+                    MTU_MIN, MTU_MAX, MTU_RANGE, DEFAULT_MTU,
                     IFACE_VRF_MAX, IFACE_VRF_RANGE,
                     is_number,
                     FRR_IFNAME_MAX, linux_ifname_error,
@@ -2563,7 +2563,10 @@ INTERFACE_BLOCK = {
     # it - at the prompt AND in a saved file, since #417. A hint that spells
     # the numbers out is a second copy of them, which is what `vlan` above
     # says and what this statement had three of.
-    "mtu": ("MTU, on both the dataplane interface and its TAP", MTU_RANGE),
+    # The default in the hint (#592), because it moved: an operator who
+    # learned 9000 reads here that it is now 1500 - and GetSchema with them.
+    "mtu": (f"MTU, on both the dataplane interface and its TAP; unset is "
+            f"{DEFAULT_MTU}", MTU_RANGE),
     "urpf": ("drop packets whose source does not route back this way", {
         "strict": ("the source MUST route back out this interface", None),
         "loose": ("the source MUST have a route somewhere", None),
@@ -13384,6 +13387,23 @@ class Shell:
         for ifname, mtu in d["mtu_set"].items():
             if not self.apply_mtu(ifname, mtu):
                 return False
+        # AN INTERFACE THIS COMMIT CREATES STARTS AT THE BOX'S DEFAULT (#592),
+        # unless the commit names its MTU above. A loopback and a bundle
+        # register at `default-mtu` - VPP's 9000 on a box upgraded from
+        # before 0.152.1 - and a sub-interface registers with NO MTU, which
+        # VPP forwards at 9000 whatever its parent says: measured on VPP
+        # 26.06, `show adj` read mtu:9000 on pg0.100 with pg0 at 1500, so
+        # `tcp-mss auto` on a VLAN would have stayed at 8960 on every box.
+        created = (list(d["loopback_add"]) + list(d.get("bundle_add", {}))
+                   + list(d["subif_add"]))
+        if any(n not in target.mtus for n in created):
+            default = self.box_default_mtu()
+            have = self.device_mtus()
+            for ifname in created:
+                if ifname in target.mtus or have.get(ifname) == default:
+                    continue
+                if not self.apply_mtu(ifname, default):
+                    return False
         # uRPF before the MTU changes and after the CGNAT ones, which is
         # arbitrary except in one respect: it MUST be applied before the box
         # starts carrying the traffic the operator turned it on for, and a
@@ -21230,7 +21250,8 @@ class Shell:
         """
         The MTU an interface with no `mtu` statement has here: the tuner's
         `ethernet { default-mtu }` in the startup.conf the dataplane started
-        with, or VPP's own (#560). config.startup_default_mtu() reads it.
+        with, or the box's 1500 when it names none (#560, #592).
+        config.startup_default_mtu() reads it.
         """
         try:
             with open(self.STARTUP_CONF) as f:

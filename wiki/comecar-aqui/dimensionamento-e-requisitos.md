@@ -59,20 +59,32 @@ O dataplane pega a porta pelo endereço PCI dela. Uma interface que **não** tem
 
 O ajuste de boot pergunta **à placa** quantas filas ela tem e qual é a MTU máxima dela, em vez de deduzir do processador. Antes ele pedia uma fila por worker, e numa placa virtual, que tem **uma** fila, isso fazia o dispositivo ser recusado: a caixa subia dona de uma placa que não conseguia iniciar. O número de filas é corrigido a partir da placa.
 
-A MTU também é lida e **corrigida**. O dataplane começa toda interface em 9000, e uma placa que não aceita isso — toda placa virtual — recusa o dispositivo: a porta fica em erro e não encaminha nada. Por isso, quando alguma placa reivindicada tem máximo abaixo de 9000, a caixa faz as interfaces começarem no **menor máximo** entre as placas que ela reivindica. O valor vale para todas: numa caixa com uma placa de 1500 ao lado de uma de 9000, a de 9000 também começa em 1500, e `mtu <n>` no bloco da interface sobe aquela porta depois.
+A MTU também é lida e **corrigida**. Desde a 0.152.1 toda interface sem `mtu` começa em **1500**, o padrão da caixa — antes começava nos 9000 do próprio VPP, e com isso o `tcp-mss auto` dava 8960 e não rebaixava nada num caminho de 1500. Uma placa que não aceita nem o padrão recusa o dispositivo: a porta fica em erro e não encaminha nada. Por isso, quando alguma placa reivindicada tem máximo abaixo de 1500, a caixa faz as interfaces começarem no **menor máximo** entre as placas que ela reivindica. O valor vale para todas: numa caixa com uma placa de 1400 ao lado de uma de 9000, a de 9000 também começa em 1400, e `mtu <n>` no bloco da interface sobe aquela porta depois.
 
-O relatório de boot diz o que ele encontrou, uma linha por placa. Numa máquina de oito núcleos com uma placa virtual `ens18`:
+O relatório de boot diz o que ele encontrou, uma linha por placa. Numa máquina de oito núcleos com uma placa virtual `ens18` de máximo 1500:
 
 ```
 # NIC queues, ens18: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
-# NIC max MTU, ens18: 1500, below VPP's default of 9000
+# interfaces start at: 1500, this box's default. 'mtu <n>' under
 ```
 
-seguidas de um parágrafo que começa com `# interfaces start at: 1500` e diz por que aquele valor vale para todas as placas.
+Com uma placa de máximo 1400, aparece a linha dela e o parágrafo começa no máximo da placa:
+
+```
+# NIC max MTU, ens18: 1400, below the box's default of 1500
+```
+
+seguida de um parágrafo que começa com `# interfaces start at: 1400` e diz por que aquele valor vale para todas as placas.
+
+**Uma caixa instalada antes da 0.152.1 continua em 9000.** A atualização escreve `mtu 9000` em toda interface da configuração salva que não tinha `mtu` e deixa o arquivo `/etc/prisma-routing/mtu-9000-kept`; com ele, o ajuste de boot não escreve `default-mtu` nenhum, como antes, e o relatório diz:
+
+```
+# interfaces start at: VPP's 9000, kept on a box installed before
+```
 
 **O limite é dito, não aplicado em silêncio.** Uma fila com sete workers significa um worker recebendo pacotes, e isso é uma fração da capacidade que aquele processador teria — é informação de dimensionamento, e esconder o corte trocaria uma caixa que não sobe por uma caixa lenta sem explicação.
 
-Placa com filas de sobra recebe uma linha curta, e placa com MTU de 9000 ou mais **não** ganha linha de MTU nenhuma — fica exatamente como estava:
+Placa com filas de sobra recebe uma linha curta, e placa que aguenta o padrão **não** ganha linha de MTU nenhuma:
 
 ```
 # NIC queues, ens18: 8, enough for 7 worker(s)

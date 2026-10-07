@@ -482,7 +482,7 @@ flowchart TD
 
 | Sintoma | Causa provável |
 |---------|----------------|
-| Adjacência OSPF travada em Exchange | MTU herdada do TAP (9000). Ajuste com `mtu` dentro de `interface` |
+| Adjacência OSPF travada em Exchange | MTU herdada do TAP (o padrão da caixa, 1500; 9000 numa caixa instalada antes da 0.152.1). Ajuste com `mtu` dentro de `interface` |
 | Um lado reclama de queda e a configuração está de pé | `show interface terse`: `Admin up` com `Link down` é cabo, transceiver ou o outro lado |
 | `show interface` anota erros de CRC numa porta | fibra suja ou danificada, conector, ou um dos módulos: compare a potência de RX de `show interface <nome> transceiver` com a de TX do outro lado (abaixo) |
 | `show interface` anota `rx power ... below its low warning` | pouca luz chegando: fibra, conector, um vão longo demais, ou o laser do outro lado |

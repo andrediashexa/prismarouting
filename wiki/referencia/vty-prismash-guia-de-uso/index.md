@@ -467,7 +467,7 @@ prisma# [edit interface ens18] ?
   linux-name   another name for FRR and 'ip' to see this interface by; without one it is its own
   mac-address  the MAC this interface answers to
   mtr          ping every hop of the path, as a report
-  mtu          MTU, on both the dataplane interface and its TAP
+  mtu          MTU, on both the dataplane interface and its TAP; unset is 1500
   no           remove a statement from this interface
   ping         send echo requests and say what came back
   replace      a regular expression substituted across this level

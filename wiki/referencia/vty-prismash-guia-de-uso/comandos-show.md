@@ -499,7 +499,7 @@ Quando alguma não chegou, a linha diz **quantas** e nomeia até cinco:
 
 `show ospf neighbor` é onde a caixa diz uma coisa que o roteamento não diz: uma adjacência que não sai de `Exchange` quase sempre é MTU. O OSPF leva o MTU da interface dentro dos pacotes de descrição da base, e quem recebe descarta os que anunciam um MTU maior que o seu **sem registrar nada, nos dois lados**. É a falha que custa uma tarde em vez de um minuto.
 
-A caixa não tem como saber o MTU do outro lado, mas sabe o que **ela** está anunciando - e é esse o número a comparar. Nesta caixa quem anuncia é a interface do lado do sistema, que começa em 9000, então ela está errada mais vezes do que certa.
+A caixa não tem como saber o MTU do outro lado, mas sabe o que **ela** está anunciando - e é esse o número a comparar. Nesta caixa quem anuncia é a interface do lado do sistema, que começa na MTU da interface do dataplane — 1500 desde a 0.152.1, 9000 numa caixa instalada antes —, então confira os dois lados antes de mais nada.
 
 ### `show ospf interface` e `show isis interface`
 

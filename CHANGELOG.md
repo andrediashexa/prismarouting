@@ -77,6 +77,33 @@ version has a chance of seeing it.
 
 ### Added
 
+### Changed
+
+* **The default MTU is 1500, not VPP's 9000.** ([#592](https://github.com/andrediashexa/hexarouting/issues/592))
+  An interface with no `mtu` statement came up at 9000, so on 10.40.200.166
+  `tcp-mss auto` resolved to 8960 and clamped nothing for subscribers whose
+  path is 1500. The tuner now writes `ethernet { default-mtu 1500 }` (still
+  lower on a card that cannot carry it, #382), `no mtu` goes back to 1500,
+  and a sub-interface, loopback or bundle a commit creates with no `mtu`
+  starts at 1500 too - VPP on its own forwards a sub-interface with no MTU at
+  9000 whatever its parent says, measured. `tcp-mss auto` derives from the
+  interface MTUs as before, so at 1500 it is 1460. An explicit `mtu` is kept.
+
+  **A box upgraded from before 0.152.1 does not change by itself.** The
+  upgrade writes `mtu 9000`, once, into every interface block of the saved
+  configuration that has none (ports, VLANs, loopbacks, bundles; also the
+  rollback revisions, keeping their dates, and a pending `commit confirmed`
+  revert), says so in its output, and records "interfaces with no mtu pinned
+  at 9000, the default before 0.152.1: <list>" in `show log`. It also
+  writes `/etc/prisma-routing/mtu-9000-kept`, and on such a box the tuner
+  keeps writing no `default-mtu`: VPP sets the frame a card receives from
+  that stanza, not from `mtu`, so a pinned port on a 1500 default would have
+  dropped every incoming frame above 1500. What does change there: `no mtu`
+  goes back to 1500 (in L3; the card still receives up to 9000), and an
+  interface that exists on the box but has no block in the saved
+  configuration is set to 1500 at the next load. The pin runs once: an
+  operator's later `no mtu` is respected. A new install starts at 1500.
+
 ### Fixed
 
 ## 0.152.0 - show log, phase 2: what the box sees happen

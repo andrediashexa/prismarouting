@@ -24,7 +24,7 @@ Mudar uma interface exige a capacidade de **administrador**. A exceção é o la
 | `ipv4 address` | `<prefixo>` | endereço IPv4; pode repetir |
 | `ipv6 address` | `<prefixo>` | endereço IPv6; pode repetir |
 | `no ipv4 address` | `<prefixo>` | remove **um** endereço, sem tocar nos outros |
-| `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela |
+| `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela; sem ela, 1500 |
 | `linux-name` | `<nome>`  | **outro** nome pelo qual o roteamento e o `ip` enxergam esta interface; sem ele, toda interface já entra no Linux com o próprio nome |
 | `vrf`   | `<1-4294967295>` | tabela de roteamento onde os endereços vivem; `0` tira a interface de uma |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
@@ -45,6 +45,20 @@ Mudar uma interface exige a capacidade de **administrador**. A exceção é o la
 | `ip router isis`, `ipv6 router isis` | `<instância>` | IS-IS nesta interface, para IPv4 e para IPv6 |
 | `isis ...` |           | ajustes do IS-IS nesta interface |
 | `exit`  |           | sai da interface |
+
+## MTU
+
+Uma interface sem `mtu` fica em **1500**, o padrão da caixa desde a 0.152.1, e `no mtu` volta para ele. Vale também para o que o `commit` cria: uma VLAN, um loopback, um bundle. Numa placa que não aguenta 1500 o padrão é o máximo da placa.
+
+```
+interface ens18
+ mtu 9000
+ exit
+```
+
+O `mtu` muda a interface do dataplane e o par dela no Linux, juntos. O `tcp-mss auto` de um pool é tirado da MTU das interfaces do CGNAT: em 1500 ele dá 1460.
+
+Numa caixa instalada **antes** da 0.152.1 as interfaces continuam em 9000: a atualização escreveu `mtu 9000` em cada uma que não tinha `mtu`, e a placa segue aceitando quadros de até 9000. Ali, `no mtu` também leva a interface para 1500.
 
 ## Endereços
 

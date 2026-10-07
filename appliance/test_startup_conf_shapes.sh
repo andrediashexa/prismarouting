@@ -295,22 +295,40 @@ grep -q "dev 0000:00:12.0" "$WORK/onecard.conf" \
   || bad "the 'onecard' shape names the device after nothing, or in the" \
          "wrong block: $(dev_names "$WORK/onecard.conf")"
 
-# 4. A CARD WHOSE MAXIMUM MTU IS BELOW VPP'S DEFAULT. This is #377's box and
-# the shape nothing had ever generated: the tuner reads the maximum off the
-# card, and what it does with a maximum below 9000 is a decision that has to
-# meet VPP's parser like every other.
+# AND THE BOX'S DEFAULT (#592): a card that can carry 9000 starts at 1500,
+# so this file carries `ethernet { default-mtu 1500 }` - and the [ ok ] above
+# is VPP accepting that stanza in the file the tuner really writes.
+grep -q "default-mtu 1500" "$WORK/onecard.conf" \
+  && ok "and it starts the card at the box's 1500, not VPP's 9000 (#592)" \
+  || bad "the 'onecard' shape wrote no default-mtu 1500 (#592)"
+
+# 3b. THE SAME BOX, UPGRADED FROM BEFORE 0.152.1 (#592): the upgrade wrote
+# the file that keeps VPP's 9000, and the tuner writes no ethernet stanza -
+# exactly the file such a box had before.
+: > "$WORK/mtu-9000-kept"
+R=$(mkroot kept 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
+shape kept "$R" 9000 --interface ens18 --mtu-kept "$WORK/mtu-9000-kept"
+grep -q "default-mtu" "$WORK/kept.conf" \
+  && bad "the 'kept' shape wrote a default-mtu on a box that keeps 9000" \
+  || ok "and a box that keeps VPP's 9000 is given no default-mtu (#592)"
+
+# 4. A CARD WHOSE MAXIMUM MTU IS BELOW THE BOX'S DEFAULT. This is #377's box
+# and the shape nothing had ever generated: the tuner reads the maximum off
+# the card, and what it does with a maximum below the default (1500 since
+# #592, 9000 before) is a decision that has to meet VPP's parser like every
+# other.
 R=$(mkroot lowmtu 2 "1" 2 8); addcard "$R" ens18 0000:00:12.0 1
-shape lowmtu "$R" 1500 --interface ens18
+shape lowmtu "$R" 1400 --interface ens18
 # The decision, named. Without this the [ ok ] above is "VPP accepted a file
 # that happens to say nothing about the MTU", which is exactly the state
 # before #382 and is what this shape exists to stop being invisible.
-if grep -q "default-mtu 1500" "$WORK/lowmtu.conf"; then
+if grep -q "default-mtu 1400" "$WORK/lowmtu.conf"; then
   ok "and it carries the card's maximum, so the line above is VPP"
   echo "         accepting the decision #382 made and not a file that is"
   echo "         silent about the MTU"
 else
   bad "the 'lowmtu' shape wrote no default-mtu, so VPP accepting it says"
-  echo "         nothing about a card that cannot do 9000"
+  echo "         nothing about a card that cannot do the default"
 fi
 
 # 5. SEVERAL WORKERS AND SEVERAL QUEUES. corelist-workers with a range, and a

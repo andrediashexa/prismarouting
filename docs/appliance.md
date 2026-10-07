@@ -1389,12 +1389,90 @@ configures it in the VTY and pings through it. Its off mode, the script not
 run, turns 7 checks red. `test/test_prisma_hot_card.sh` holds what the script
 takes and leaves, and `appliance/test_tune.py` the `--would-claim` rule.
 
+### The box's default MTU: 1500, and 9000 on a box installed before 0.152.1
+
+**An interface with no `mtu` statement comes up at 1500**
+([#592](https://github.com/andrediashexa/hexarouting/issues/592), decided with
+the operator on 2026-10-06). It came up at VPP's own 9000 until 0.152.1,
+because nothing was written; on 10.40.200.166 that made `tcp-mss auto`
+resolve to 8960, a clamp that clamped nothing for subscribers whose path is
+1500, and setting `mtu 1500` there made it 1460. So the tuner writes, on
+every box:
+
+```
+ethernet {
+  default-mtu 1500
+}
+```
+
+lower on a card that cannot carry 1500 (the next section). `no mtu` goes back
+to it (`config.DEFAULT_MTU`, read off the `startup.conf` the dataplane started
+on), and `tcp-mss auto` derives from the interface MTUs as it always did, so
+at 1500 it is 1460.
+
+| Interface | What it starts at, measured on VPP 26.06 with `default-mtu 1500` |
+|---|---|
+| A port, a loopback, a bundle, a TAP, a host-interface | 1500: each registers at `default-mtu` |
+| A sub-interface (VLAN) | VPP alone gives it **no** MTU (`0/0/0/0` in `show interface`) and forwards it at 9000 whatever its parent says: `show adj` read `mtu:9000` on `pg0.100` with `pg0` at 1500. So the VTY sets a sub-interface it creates to the box's default, as it does a loopback and a bundle, unless the commit names its `mtu` |
+
+**A box upgraded from before 0.152.1 does not change by itself.** The upgrade
+(`appliance/upgrade`, the artifact's entry point, running
+`src/prismash/mtupin.py` from the release being installed, before `install.sh`
+writes the new version stamp) does this once. It is the artifact's step and not
+`install.sh`'s, because `install.sh` is the medium's too and a patch release may
+not change it; a box moved by running `install.sh` from a source tree is not
+pinned:
+
+* it writes `mtu 9000` into every `interface` block of
+  `/etc/prisma-routing/prisma-routing.conf` that has none - ports, VLANs,
+  loopbacks, bundles, and a bundle's member that has a block of its own - at
+  the end of the block, where `save` puts it; the routing section's FRR
+  stanzas, which name Linux interfaces, are never touched. The file is read
+  back before it is written: it must hold the same configuration with exactly
+  those MTUs added, or it is left alone and the upgrade says so;
+* the same in every rollback revision (each keeps its date) and in the revert
+  a pending `commit confirmed` waits on, so going back is going back to 9000;
+* it writes `/etc/prisma-routing/mtu-9000-kept`, and on a box carrying it the
+  tuner writes **no** `default-mtu`, exactly as before. That half is not
+  optional: `mtu <n>` in the VTY is the L3 MTU (`sw_interface_set_mtu`), and
+  the frame a DPDK card *receives* is fixed when VPP configures the device,
+  from `default-mtu` - VPP 26.06's `dpdk_device_setup()` sets `rxmode.mtu` to
+  the smaller of the card's maximum and `default-mtu`. A pinned port on a 1500
+  default would forward 9000 and drop every incoming frame above 1500, an OSPF
+  neighbour's large Database Description packet included;
+* it records `interfaces with no mtu pinned at 9000, the default before
+  0.152.1: <list>` in the box's record, which `show log` reads, and prints
+  what it did:
+
+```
+==> interface MTUs
+  The default MTU is 1500 from this release; it was VPP's 9000.
+  This box was installed before 0.152.1, so nothing on it changes:
+    'mtu 9000' pinned on 3 interface(s) of the saved configuration,
+    /etc/prisma-routing/prisma-routing.conf:
+      GigabitEthernet0/8/0, GigabitEthernet0/8/0.200, loop0
+    and in 1 rollback revision(s)
+    and its cards keep VPP's 9000 frame: /etc/prisma-routing/mtu-9000-kept
+  'no mtu' on an interface now goes back to 1500.
+```
+
+What does change on such a box, and is meant to: `no mtu` goes back to 1500
+(in L3; the card still receives up to 9000), an interface a commit creates
+starts at 1500, and an interface that exists on the box but has no block in
+the saved configuration is set to 1500 at the next load. The pin is done once:
+`mtu-9000-kept` is also its record, so an operator's later `no mtu` is never
+pinned again, and an upgrade from 0.152.1 or later, or a fresh install, pins
+nothing. Removing the file moves the cards to 1500 at the next boot; take
+`mtu 9000` off the interfaces first. `lab/default-mtu.sh` measures both
+boxes on a real dataplane; its off run is the build before #592.
+
 ### The MTU the card can carry
 
-**A card whose maximum MTU is below 9000 - which is every virtual machine -
-had to be told to VPP before VPP configured the device, or the port never
-started at all.** VPP registers an ethernet interface at its own default of
-**9000**; a driver asked for more than the card can carry refuses the device,
+**A card whose maximum MTU is below the box's default - 1500 since #592,
+VPP's 9000 before it and on a box that keeps it - had to be told to VPP before
+VPP configured the device, or the port never started at all.** VPP registers
+an ethernet interface at `default-mtu`; a driver asked for more than the card
+can carry refuses the device,
 and the box comes up assembled correctly and forwarding nothing
 ([#382](https://github.com/andrediashexa/hexarouting/issues/382)).
 
@@ -1430,7 +1508,7 @@ ethernet {
 | | |
 |---|---|
 | Where the number comes from | `ip -d link show <card>`, field `maxmtu`, read by the tuner **before** `bind-dataplane-nic` hands the card to DPDK. After the handover the card is not under `/sys/class/net` at all, and VPP does not report it either: `show hardware-interfaces` on a virtio port carries `max rx packet len: 9728`, which is the PMD's own ceiling and not the 1500 the card negotiated |
-| When nothing is written | The card can do 9000 or more, or its maximum could not be read. A jumbo-capable card gets exactly what every physical box has always had |
+| When the card does not lower it | The card can carry the box's default, or its maximum could not be read: the box's 1500 is written (#592), or nothing on a box that keeps VPP's 9000 |
 | What it is | A **default**, not an override: it is the value interfaces *start* at. `mtu <n>` under `interface` in the VTY is applied after VPP is up and wins |
 | Why the pair agrees | The stanza is VPP-wide, so the `linux_cp` TAP registers at the same value as the card. Measured against the real binary: with no stanza a TAP and a host-interface both register at 9000, and with `default-mtu 1500` both register at 1500 |
 
@@ -3329,7 +3407,7 @@ once per boot. It restarts nothing: Docker has already tried five times.
 ### When Docker starts the dataplane again
 
 A dataplane Docker's policy started again after a crash comes up with
-nothing on it: every interface down at VPP's default MTU of 9000, no pool,
+nothing on it: every interface down at the box's default MTU, no pool,
 no route. The configuration reaches the dataplane from
 `prisma-routing.service`, a oneshot that ran at boot and stays `active
 (exited)` while the container under it restarts - on the virtio bench that

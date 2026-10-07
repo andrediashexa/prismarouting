@@ -27,6 +27,26 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.1 - the default MTU is 1500
+
+* **Contract:** unchanged since 0.152.0 (`prisma.proto` sha256 `eaf45c412fecadb2e7d4abaeeec722f998c5a9cbf3461d217a46447b462ccce5`).
+* **The box's default MTU is 1500, not 9000** (#592). `InterfaceConfig.mtu`
+  0 still means "no `mtu` statement, the box's default"; that default is now
+  1500 (lower on a card that cannot carry it). Clearing `mtu` in SetConfig
+  sets the interface to 1500. GetConfig and the running configuration go on
+  naming the device's MTU for every interface, so a client that wants "no
+  explicit MTU" compares against 1500 now, not 9000. An interface SetConfig
+  creates with no `mtu` - a sub-interface, a loopback, a bundle - comes up at
+  1500; a sub-interface used to forward at 9000.
+* **A box upgraded onto 0.152.1 keeps 9000 where it had it.** The upgrade
+  writes `mtu 9000` into every interface of the saved configuration that had
+  none, so GetConfig there reads `mtu: 9000` on those interfaces, as an
+  explicit statement. ListEvents carries one `host`/`notice` event, "interfaces
+  with no mtu pinned at 9000, the default before 0.152.1: <names>".
+* **GetSchema:** the `mtu` statement's hint reads "MTU, on both the dataplane
+  interface and its TAP; unset is 1500". Its range is unchanged.
+* **`tcp-mss auto`** is derived from the CGNAT interfaces' MTUs as before, so
+  on a box at 1500 a pool's resolved clamp reads 1460.
 ## 0.152.0 - show log, phase 2: what the box sees happen
 
 * **Contract:** additive (`prisma.proto` sha256 `eaf45c412fecadb2e7d4abaeeec722f998c5a9cbf3461d217a46447b462ccce5`).
@@ -894,7 +914,7 @@ prisma-web's ask (b) on #558: the BGP and OSPF forms stop parsing running text.
   before, the dataplane kept the old value and `GetConfig` went on reporting
   it. The running configuration still names an MTU for every interface - the
   device's, which after the removal is the default (9000 unless the tuner set
-  `ethernet { default-mtu }`). A client that wants "no explicit MTU" compares
+  `ethernet { default-mtu }`; 1500 since 0.152.1, #592). A client that wants "no explicit MTU" compares
   against that default; it is not a separate field.
 * **Lab box:** .166 is on 0.149.14.
 

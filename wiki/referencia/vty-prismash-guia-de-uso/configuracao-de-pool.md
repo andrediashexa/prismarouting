@@ -349,7 +349,7 @@ tcp-mss <536-9000>
 tcp-mss auto
 ```
 
-Rebaixa o MSS dos handshakes para que os segmentos caibam no caminho. `auto` deriva o valor das MTUs das interfaces com `cgnat inside` ou `cgnat outside`; enquanto nenhuma interface estiver no CGNAT, ele não tem de onde derivar e não rebaixa nada. Abaixo de 536 (o MSS que todo host IPv4 aceita) o valor não serve para nada, e acima de 9000 não descreve caminho nenhum: os dois são recusados. `no tcp-mss` desliga.
+Rebaixa o MSS dos handshakes para que os segmentos caibam no caminho. `auto` deriva o valor das MTUs das interfaces com `cgnat inside` ou `cgnat outside` (a menor delas menos 40: com as interfaces no padrão da caixa, 1500, dá 1460); enquanto nenhuma interface estiver no CGNAT, ele não tem de onde derivar e não rebaixa nada. Abaixo de 536 (o MSS que todo host IPv4 aceita) o valor não serve para nada, e acima de 9000 não descreve caminho nenhum: os dois são recusados. `no tcp-mss` desliga.
 
 Vale notar o modo de falha que isso corrige: sem clamp, o par descarta o segmento e a conexão trava — silenciosamente, com um contador afirmando que tudo foi aplicado.
 

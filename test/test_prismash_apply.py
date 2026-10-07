@@ -534,12 +534,21 @@ class FakeDataplane(FakeApi):
     def __init__(self, existing=()):
         super().__init__()
         self.have = {n: i for i, n in enumerate(existing, start=1)}
+        self.mtus_set = {}
 
     def interface_index(self, name):
         return self.have.get(name)
 
     def call(self, message, args):
         self.calls.append((message, args))
+        if message == "sw_interface_set_mtu":
+            # What VPP then shows in `show interface` (#592): an interface a
+            # commit creates is given the box's default MTU and read back,
+            # and this fake's interfaces are not in the CLI stub's screen.
+            name = {i: n for n, i in self.have.items()}.get(
+                args["sw_if_index"])
+            if name:
+                self.mtus_set[name] = args["mtu"][0]
         if message == "create_loopback_instance":
             n = args["user_instance"]
             self.have[f"loop{n}"] = 100 + n
@@ -553,6 +562,21 @@ class FakeDataplane(FakeApi):
                 self.have[f"{parent}.{args['vlan_id']}"] = \
                     1000 + args["vlan_id"]
         return vppapi.Reply(vppapi.OK)
+
+
+# The read-back half of FakeDataplane's MTU: the Shell reads MTUs off the CLI
+# stub's `show interface`, and the API fake is a separate object, so what it
+# was told is merged in. Only a FakeDataplane carries `mtus_set`.
+_device_mtus = prismash.Shell.device_mtus
+
+
+def _device_mtus_read_back(self):
+    got = _device_mtus(self)
+    got.update(getattr(self.api, "mtus_set", {}))
+    return got
+
+
+prismash.Shell.device_mtus = _device_mtus_read_back
 
 
 SAVED_LOOPBACK = """interface loop7
@@ -575,8 +599,13 @@ order = [m for m, _ in api.calls]
 # file in the first place, and it comes after the creation for the same
 # reason.
 check(order == ["create_loopback_instance", "sw_interface_set_flags",
-                "lcp_itf_pair_add_del"],
-      f"created, then shut down, then paired: {order}")
+                "lcp_itf_pair_add_del", "sw_interface_set_mtu"],
+      f"created, then shut down, then paired, then given the box's "
+      f"default MTU (#592): {order}")
+check([a["mtu"][0] for m, a in api.calls if m == "sw_interface_set_mtu"]
+      == [1500],
+      f"a loopback the commit creates with no mtu starts at the box's 1500, "
+      f"not the registration value (#592): {api.calls}")
 print(f"  order: {order}")
 
 # The ordering the exception is carved out of must be intact for an interface
@@ -2676,6 +2705,65 @@ with contextlib.redirect_stdout(io.StringIO()):
     check(sh.apply_mtu("ge0", 1400) is False,
           "apply_mtu fails when the dataplane does not take the value")
 os.unlink(startup)
+
+print("=== an interface a commit creates starts at the box's default (#592) ===")
+# Measured on VPP 26.06 with the packet generator: a sub-interface registers
+# with NO MTU (`0/0/0/0`), and VPP forwards it at 9000 whatever its parent
+# says - `show adj` read mtu:9000 on pg0.100 with pg0 at 1500 - so `tcp-mss
+# auto` on a VLAN stayed at 8960 on a box whose default is 1500. A loopback
+# registers at `default-mtu`, which is VPP's 9000 on a box upgraded from
+# before 0.152.1.
+api = MtuPlane()
+sh = shell_with(api)
+sh.device_mtus = lambda: {n: m for n, m in api.mtu.items()}
+sh.set_host_mtu = lambda ifname, mtu: None
+sh.STARTUP_CONF = "/nonexistent/startup.conf"     # no stanza: the box's 1500
+with contextlib.redirect_stdout(io.StringIO()):
+    ok = sh.apply(parse_nested(
+        "interface ge0\n mtu 1400\n exit\n"
+        "interface ge0.100\n vlan 100\n exit\n"
+        "interface ge0.200\n vlan 200\n mtu 9000\n exit\n"
+        "interface loop3\n exit\n"))
+check(ok is True and api.mtu.get("ge0.100") == 1500
+      and api.mtu.get("loop3") == 1500,
+      f"a sub-interface and a loopback created with no mtu were not given "
+      f"the box's 1500: {api.mtu}")
+check(api.mtu.get("ge0.200") == 9000 and api.mtu.get("ge0") == 1400,
+      f"an interface whose mtu the commit names keeps that one: {api.mtu}")
+check([a["mtu"][0] for m, a in api.calls if m == "sw_interface_set_mtu"
+       and a["sw_if_index"] == api.have["ge0.200"]] == [9000],
+      f"the named one was set once, to its own value, and not to the "
+      f"default first: {api.calls}")
+# On a card that cannot carry 1500 (#382) the tuner's lower value is the box's.
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("ethernet {\n  default-mtu 1400\n}\n")
+    sh.STARTUP_CONF = fh.name
+with contextlib.redirect_stdout(io.StringIO()):
+    sh.apply(parse_nested("interface ge0\n exit\ninterface ge0.300\n"
+                          " vlan 300\n exit\n"))
+check(api.mtu.get("ge0.300") == 1400,
+      f"a sub-interface on a 1400 box was not given 1400: {api.mtu}")
+os.unlink(sh.STARTUP_CONF)
+
+# AND A FILE THE UPGRADE PINNED LOADS AS THE BOX WAS (#592): the pin wrote
+# `mtu 9000` under each block, so the boot's load sets 9000 where VPP would
+# now register 1500 - on the port and on the sub-interface it creates.
+import mtupin  # noqa: E402
+api = MtuPlane()
+api.mtu["ge0"] = 1500                              # registered at the new default
+sh = shell_with(api)
+sh.device_mtus = lambda: {n: m for n, m in api.mtu.items()}
+sh.set_host_mtu = lambda ifname, mtu: None
+sh.STARTUP_CONF = "/nonexistent/startup.conf"
+_pinned, _names = mtupin.pin_text("interface ge0\n ipv4 address 10.0.0.1/24\n"
+                                  " exit\ninterface ge0.100\n vlan 100\n"
+                                  " exit\n")
+with contextlib.redirect_stdout(io.StringIO()):
+    ok = sh.apply(parse_nested(_pinned))
+check(ok is True and _names == ["ge0", "ge0.100"]
+      and api.mtu.get("ge0") == 9000 and api.mtu.get("ge0.100") == 9000,
+      f"a pinned file did not bring its interfaces up at 9000: {_names} "
+      f"{api.mtu}")
 
 # ---------------------------------------------------------------------------
 print("\n=== a card missing at boot: the rest loads, it is said, the file "

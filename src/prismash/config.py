@@ -3205,16 +3205,35 @@ MTU_MIN, MTU_MAX = 576, 9216
 MTU_RANGE = f"<{MTU_MIN}-{MTU_MAX}>"
 
 #: What VPP gives an interface when startup.conf sets no `ethernet {
-#: default-mtu }` - appliance/prisma-routing-tune's ETHERNET_DEFAULT_MTU, and
-#: the 9000 lab/mtu-and-readonly.sh reads off a fresh pg0.
+#: default-mtu }` - appliance/prisma-routing-tune's ETHERNET_DEFAULT_MTU. It
+#: is no longer what an interface with no `mtu` statement has (#592): that is
+#: DEFAULT_MTU below. It stays named because it is still a fact about VPP -
+#: the value a box upgraded from before 0.152.1 keeps its cards' frames at,
+#: and the 9000 a sub-interface with no MTU of its own forwards at.
 VPP_DEFAULT_MTU = 9000
+
+#: The MTU an interface with no `mtu` statement has, and what `no mtu` goes
+#: back to (#592). It was VPP's 9000, and on 10.40.200.166 that made
+#: `tcp-mss auto` resolve to 8960 - a clamp that clamped nothing for
+#: subscribers whose path is 1500. appliance/prisma-routing-tune's
+#: BOX_DEFAULT_MTU is the same number, written into startup.conf; the tuner
+#: lowers it on a card that cannot carry it (#382).
+DEFAULT_MTU = 1500
 
 
 def startup_default_mtu(text):
     """
     The MTU an interface with no `mtu` statement has on this box: the
-    tuner's `ethernet { default-mtu <n> }` in startup.conf, or VPP's own
-    default when there is none (#560).
+    tuner's `ethernet { default-mtu <n> }` in startup.conf - DEFAULT_MTU, or
+    less on a card that cannot carry it (#382) - and DEFAULT_MTU when the
+    file has none (#560, #592).
+
+    NOT VPP'S 9000 WHEN THE FILE HAS NO STANZA, since #592. The file has none
+    on a box upgraded from before 0.152.1, whose cards keep VPP's 9000 frame
+    (the tuner's MTU_KEPT_FILE) and whose interfaces were pinned at `mtu 9000`
+    by that upgrade; `no mtu` there means the same as on every other box -
+    the 1500 the operator decided on - and the card can carry it. It also has
+    none between an upgrade and the reboot that re-runs the tuner.
 
     `no mtu` used to leave the last committed value on the device - the note
     it printed said "the driver default applies after the interface is
@@ -3231,7 +3250,7 @@ def startup_default_mtu(text):
         n = int(m.group(1))
         if MTU_MIN <= n <= MTU_MAX:
             return n
-    return VPP_DEFAULT_MTU
+    return DEFAULT_MTU
 
 #: An interface's VRF. 0 is not in the range because on an INTERFACE that word
 #: is how the statement is taken back off, which is the split Pool.RANGES'

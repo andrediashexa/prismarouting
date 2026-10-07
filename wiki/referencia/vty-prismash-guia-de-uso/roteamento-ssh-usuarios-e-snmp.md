@@ -298,7 +298,7 @@ Do lado do vizinho, o mesmo fato aparece no `show isis database`, na última col
 
 ## 1. MTU herdada trava o OSPF
 
-O TAP do `linux_cp` vem com 9000. Uma interface que herda esse valor sem o outro lado concordar deixa a adjacência OSPF parada em Exchange. Ajuste com `mtu` dentro do bloco `interface` — ele muda a interface do dataplane **e** o TAP dela, juntos.
+O TAP do `linux_cp` vem com a MTU da interface do dataplane: 1500, o padrão da caixa desde a 0.152.1, ou 9000 numa caixa instalada antes dela. Uma interface que herda esse valor sem o outro lado concordar deixa a adjacência OSPF parada em Exchange. Ajuste com `mtu` dentro do bloco `interface` — ele muda a interface do dataplane **e** o TAP dela, juntos.
 
 Vale igual para o OSPFv3: ele também compara MTU antes de fechar a adjacência, e trava do mesmo jeito, sem log nenhum dizendo por quê. O `commit check` avisa quando as duas metades da interface discordam; `ipv6 ospf6 mtu-ignore` é a saída quando os dois lados não podem ser igualados.
 
