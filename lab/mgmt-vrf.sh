@@ -325,8 +325,27 @@ print('downloaded', n, 'bytes' if sha else why)" 2>&1; }
 pass_() { $HX --watch-events once > /dev/null 2>&1; }
 coldstarts() { grep -c "1.3.6.1.6.3.1.1.5.1" /tmp/traps.log 2>/dev/null || echo 0; }
 
+# THE GATEWAY'S NEIGHBOUR ENTRY, settled before anything is asked. A move
+# takes the card's addresses off and puts them back in the dataplane (VPP
+# refuses a table move with one on), and a restart makes the card anew: for
+# those seconds the gateway's ARP or ND entry for the box fails, and a check
+# that lands in them measures the gateway's retry timer, not the box. Seen
+# once in four runs on IPv6 right after the commit. Waited for, up to 20 s,
+# and the time said: it is what an operator's session sees too.
+settle() {
+  t0=$(date +%s); t=0
+  while [ "$t" -lt 20 ]; do
+    ip netns exec mg ping -c1 -W1 -I 198.51.100.7 10.200.0.1 >/dev/null 2>&1 \
+      && ip netns exec mg ping -6 -c1 -W1 -I 2001:db8:7::7 2001:db8:200::1 \
+         >/dev/null 2>&1 && break
+    sleep 1; t=$(( $(date +%s) - t0 ))
+  done
+  echo "  settled: the management addresses answer the gateway after ${t} s"
+}
+
 reach() {   # <when>
   W=$1
+  settle
   echo "  -- $W: what the host holds"
   ip route show table 100 2>&1 | sed 's/^/    table 100: /'
   ip -6 route show table 100 2>&1 | grep -v "^local\|^multicast\|fe80" | sed 's/^/    table 100: /'
