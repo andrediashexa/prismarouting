@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.4 - management in a VRF of its own
+
+### Added
+
 * **Management in a VRF of its own, so the main table can carry the
   subscribers' default.**
   ([#580](https://github.com/andrediashexa/hexarouting/issues/580)) Asked for
