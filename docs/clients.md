@@ -27,6 +27,16 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.6 - an interface moved to another VRF answers for its IPv6
+
+* **Contract:** unchanged since 0.152.4 (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).
+* Nothing a client sends or reads changes. What a client sees (#594): right
+  after `system management vrf` - or any `vrf <id>` - moves the management
+  card, the API answers on the IPv6 management address at once. Before, the
+  box's IPv6 could stay unresolvable by the gateway for more than 20 s
+  (lab/mgmt-vrf.sh measured over 30 s), so a client reconnecting over IPv6
+  after such a commit could time out where one over IPv4 did not.
+
 ## 0.152.5 - SSH listens on a list of addresses, IPv4 and IPv6
 
 * **Contract:** unchanged since 0.152.4 (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).
