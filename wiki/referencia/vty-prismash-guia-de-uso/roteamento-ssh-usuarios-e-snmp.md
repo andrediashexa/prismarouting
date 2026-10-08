@@ -452,7 +452,7 @@ configure
 
 `listen-address` tem de ser um endereço: qualquer outra coisa é recusada no prompt, porque o SSH recusaria o próprio arquivo e não subiria — numa caixa cujo outro caminho é um cabo serial.
 
-**Desde a versão 0.152.5, `ssh listen-address` aceita uma lista**, IPv4 e IPv6 juntos, como `snmp listen-address` e `api listen-address` desde a 0.151.8:
+**Desde a versão 0.152.5,** `**ssh listen-address**` **aceita uma lista**, IPv4 e IPv6 juntos, como `snmp listen-address` e `api listen-address` desde a 0.151.8:
 
 ```
 configure
@@ -462,10 +462,10 @@ configure
 
 O SSH passa a responder em cada endereço da lista, e só neles. `show running-config` mostra o IPv6 entre colchetes, como o próprio sshd escreve: `ssh listen-address 10.40.200.166 [2804:4ed4:1000:6::166]`.
 
-- **Sem `listen-address`** — ou depois de `no ssh listen-address` — o SSH responde em todos os endereços da caixa, **IPv4 e IPv6** (`0.0.0.0 [::]`), que é o padrão do próprio sshd. Até a 0.152.4, qualquer `commit` que mexesse no `ssh` gravava `ListenAddress 0.0.0.0` e o SSH por IPv6 parava de responder.
-- **Um endereço que a caixa não tem é recusado no `commit`**, antes de o sshd ser avisado: `error: ssh listen-address 192.0.2.99: not an address of this box`. Um endereço de uma interface que está numa VRF só é aceito quando a gerência está nessa VRF (`system` > `management` > `vrf`), que é o que permite ao sshd escutar nele.
-- Um `0.0.0.0` (ou `::`) junto com um endereço da mesma família é recusado: o curinga já escuta em todos.
-- **Uma configuração salva antes da 0.152.5 carrega igual.** Um endereço só continua sendo um endereço só. Uma caixa que nunca teve um `commit` de `ssh` salvou `ssh listen-address [::]` — o primeiro endereço do padrão do sshd, lido sozinho; carregada numa caixa em que o sshd está no padrão, essa linha continua valendo IPv4 e IPv6, em vez de tirar o SSH por IPv4 no boot.
+* **Sem** `**listen-address**` — ou depois de `no ssh listen-address` — o SSH responde em todos os endereços da caixa, **IPv4 e IPv6** (`0.0.0.0 [::]`), que é o padrão do próprio sshd. Até a 0.152.4, qualquer `commit` que mexesse no `ssh` gravava `ListenAddress 0.0.0.0` e o SSH por IPv6 parava de responder.
+* **Um endereço que a caixa não tem é recusado no** `**commit**`, antes de o sshd ser avisado: `error: ssh listen-address 192.0.2.99: not an address of this box`. Um endereço de uma interface que está numa VRF só é aceito quando a gerência está nessa VRF (`system` > `management` > `vrf`), que é o que permite ao sshd escutar nele.
+* Um `0.0.0.0` (ou `::`) junto com um endereço da mesma família é recusado: o curinga já escuta em todos.
+* **Uma configuração salva antes da 0.152.5 carrega igual.** Um endereço só continua sendo um endereço só. Uma caixa que nunca teve um `commit` de `ssh` salvou `ssh listen-address [::]` — o primeiro endereço do padrão do sshd, lido sozinho; carregada numa caixa em que o sshd está no padrão, essa linha continua valendo IPv4 e IPv6, em vez de tirar o SSH por IPv4 no boot.
 
 **O** `**commit**` **recusa uma configuração em que ninguém mais consegue entrar por SSH**, ou em que ninguém que entra consegue mudar nada — tirar o papel do último administrador, por exemplo. O console não conta: pode não estar ao alcance de quem está configurando.
 
