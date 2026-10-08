@@ -2999,6 +2999,41 @@ check("management could not be put in its VRF" in _o580.getvalue()
       and sh.failed > _b580,
       f"#580: a failed re-apply is said and counted: {_o580.getvalue()!r}")
 
+print("\n=== a card changes VRF in Linux bare, in the gap (#595) ===")
+# Mutation shown red: move_linux_end() called after the addresses are back
+# (the box before #595 moved the Linux end after them, by
+# apply_vrf_devices) - zebra could then lose the prefix route that crossed
+# with the card. The devices are made before any move and removed after.
+_r595 = config.Config()
+_r595.addresses = {"GigabitEthernet0/12/0": ["10.200.0.1/24",
+                                             "2001:db8:200::1/64"]}
+_t595 = config.Config()
+_t595.vrf_devices = {"mgmt": 100}
+_t595.vrfs = {"GigabitEthernet0/12/0": 100}
+_t595.addresses = dict(_r595.addresses)
+sh = shell_with(FakeDataplane(existing=("GigabitEthernet0/12/0",)))
+sh.sys = system.System(runner=lambda a, stdin=None, timeout=30: (0, ""))
+sh.running_config = lambda: _r595
+_seq = []
+sh.make_vrf_devices = lambda d, t, r: _seq.append("devices made") or True
+sh.set_address = lambda i, a, add: _seq.append(
+    f"{a} {'on' if add else 'off'}") or True
+sh.move_linux_end = lambda i, want, addrs, reapply=False: _seq.append(
+    f"{i}'s Linux end to {want}, {len(addrs)} off") or True
+sh.set_vrf = lambda i, t: _seq.append(f"table {t}") or True
+sh.apply_vrf_devices = lambda d, t, r: _seq.append(
+    f"devices removed, {r is _r595}") or True
+_o595 = io.StringIO()
+with contextlib.redirect_stdout(_o595):
+    _ok = sh.apply(_t595)
+check(_ok and _seq == ["devices made", "10.200.0.1/24 off",
+                       "2001:db8:200::1/64 off",
+                       "GigabitEthernet0/12/0's Linux end to mgmt, 2 off",
+                       "table 100", "10.200.0.1/24 on",
+                       "2001:db8:200::1/64 on", "devices removed, True"],
+      f"#595: made, off, the Linux end, the table, on, removed: {_seq} "
+      f"{_o595.getvalue()[-300:]!r}")
+
 print("\n=== a pool given by prefix-lists: resolved, sent, refused (#589) ===")
 # Mutations shown red: the resolve_pool_lists() call at the top of _apply
 # removed (the pool reaches the dataplane with no inside at all); the

@@ -1136,10 +1136,10 @@ still FRR's block, handed to FRR as before.
 | Done | On the host | In VPP |
 |---|---|---|
 | `vrf red table 10` | `ip link add red type vrf table 10`, then up | nothing: the table is the interfaces' `vrf 10` |
-| an interface's `vrf 10` | its Linux end `master red` | the interface into table 10, as before |
-| an interface's `no vrf` | its Linux end `nomaster` | the interface back to table 0 |
-| `no vrf red table` | `ip link del red`; the kernel takes the members out | nothing |
-| `vrf red table 11` over 10 | `red` removed and made again: a device's table is fixed when it is made | nothing |
+| an interface's `vrf 10` | its Linux end `master red`, while its addresses are off | the interface into table 10, as before |
+| an interface's `no vrf` | its Linux end `nomaster`, while its addresses are off | the interface back to table 0 |
+| `no vrf red table` | its members taken out first, each with its addresses off, then `ip link del red` once zebra has let go of it | nothing |
+| `vrf red table 11` over 10 | `red` removed as above and made again, before any interface moves into it: a device's table is fixed when it is made | nothing |
 
 **Through the host's doors, not a shell.** From the management container the
 same `ip link` would act on the container's own interfaces, so each of these
@@ -1269,6 +1269,30 @@ card. IPv4 never had it: ARP is a broadcast, not a multicast group.
 `vppctl show ip6 mfib table <id> ff02::1:ff00:0/104` lists the interface as
 `Accept` in the table it is in.
 
+**And zebra keeps up with it (#595).** A card used to change Linux VRF with
+its addresses on - after they came back, or when the kernel took it out of a
+VRF device being deleted - and zebra, which hears links and routes on two
+sockets and processes its RIB later still, could lose track of the prefix
+route that crossed with it. Measured with zebra's debug on, in 2 runs of
+about 51 of `lab/mgmt-vrf.sh` with many labs at once: the expired `commit
+confirmed` deleted `mgmt` with the card in it; zebra kept a kernel route for
+2001:db8:200::/64 in table 100 with its next hop in a VRF that no longer
+existed (`vrf Unknown` in `show ipv6 route vrf mgmt`), and the VRF was
+disabled while that route's node was queued. FRR 10.7.1 then leaves the node
+marked queued for good, and keeps table 100's nodes for the next VRF on that
+table: the next move's connected route and static default on that prefix were
+never processed, so table 100 had no IPv6 default until zebra restarted. So
+every change of an interface's VRF is now, in order: the VRF's device made
+if it is new; the addresses off; zebra seen to have dropped them (`show
+interface <linux end> json`, and each prefix in the VRF zebra holds it in);
+the Linux end moved; zebra seen to hold it in its new VRF; the dataplane's
+table; the addresses back. A VRF device is removed only after its members
+are out and zebra lists none of their routes in it and nothing of it in the
+FIB. Each wait is bounded by 10 s (`PRISMA_VRF_SETTLE_S`); past it the commit
+goes on, prints a warning and records a `vrf-settle` event with what zebra
+still held, for `show log`. Management and a tenant VRF (#540) take the same
+path, and IPv4 the same waits as IPv6.
+
 **When it is applied.** At commit, through the host's doors
 (`doors.management_argvs()`: the old rules removed, the settings, the new
 rules; a rule already absent is not a failure, one that cannot be added fails
@@ -1321,8 +1345,13 @@ after: a `commit confirmed` that expires and one that is confirmed; another
 commit; `system dataplane restart` as prisma-hot-card does it (the tuner, the
 cards claimed again, the way back, `--load`); the containers restarted behind
 the VTY (`--reapply`); a boot (no VRF device, no rules, the tuner, the host's
-services started before the load, `--load`); and a boot whose tuner did not
-run. Not proven there: a reboot of a real box, systemd's own ordering of the
+services started before the load, `--load`); a boot whose tuner did not
+run; and a tenant VRF moved, taken away by a `commit confirmed` and given
+back, its routes of both families in its table again. `lab/mgmt-vrf.sh
+loaded` runs it all with zebra's RIB queue held a second (`zebra
+work-queue 1000`) and every core busy, the shape of the runs that lost the
+IPv6 default (#595); `unsettled` is the same with the box not waiting for
+zebra, and is red. Not proven there: a reboot of a real box, systemd's own ordering of the
 units, and a card whose MAC changes, which a real one does not.
 
 ### What the lab asserts, and why the second one is the point

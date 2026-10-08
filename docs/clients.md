@@ -27,6 +27,21 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.7 - a VRF given back keeps its IPv6 default
+
+* **Contract:** unchanged since 0.152.4 (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).
+* Nothing a client sends or reads changes. What a client sees (#595): after
+  a `commit confirmed` that moved management into its VRF expires and a
+  later commit moves it in again, the API answers on the IPv6 management
+  address. Before, on a busy box, that address could stay unreachable until
+  a dataplane restart, while IPv4 answered.
+* **A commit that moves an interface between VRFs, or removes a VRF, can
+  take longer:** the box waits for FRR's zebra on each move - milliseconds
+  normally, about a second per move with zebra held a second in the lab,
+  at most 10 s. A client's SetConfig/Edit deadline should allow for it. A
+  wait that runs out does not fail the commit; it is a `warning` event of
+  kind `vrf-settle` in `show log` (ListEvents).
+
 ## 0.152.6 - an interface moved to another VRF answers for its IPv6
 
 * **Contract:** unchanged since 0.152.4 (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).

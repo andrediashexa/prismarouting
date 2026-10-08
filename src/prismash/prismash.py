@@ -1059,6 +1059,60 @@ def compiled_lines(cfg):
     return policy_mod.compile_all(pol, policy_uses(cfg.routing))
 
 
+#: The routes zebra makes of an interface's own addresses, and learns from
+#: the kernel beside them (#595): what a move between VRFs carries along.
+ZEBRA_OWN_PROTOCOLS = ("kernel", "connected", "local")
+
+
+def zebra_json(text):
+    """zebra's answer to a `... json` show as a dict, or None when it gave
+    something else - an error, or nothing because vtysh did not run."""
+    try:
+        got = json.loads(text or "")
+    except ValueError:
+        return None
+    return got if isinstance(got, dict) else None
+
+
+def zebra_if_vrf(shown, host):
+    """The VRF zebra holds the interface `host` in, from `show interface
+    <host> json`; None when zebra does not know it (#595)."""
+    return ((shown or {}).get(host) or {}).get("vrfName")
+
+
+def zebra_held_routes(shown, host):
+    """
+    The prefixes zebra still holds through `host` as its own - kernel,
+    connected or local - in a `show ip[v6] route ... json` answer (#595).
+    Link-local left out: fe80::/64 is the TAP's whatever its addresses, and
+    it moves with the link.
+    """
+    held = []
+    for prefix, entries in sorted((shown or {}).items()):
+        if prefix.startswith("fe80:"):
+            continue
+        for e in entries or []:
+            if e.get("protocol") in ZEBRA_OWN_PROTOCOLS and any(
+                    n.get("interfaceName") == host
+                    for n in e.get("nexthops") or []):
+                held.append(prefix)
+                break
+    return held
+
+
+def zebra_vrf_unsettled(shown):
+    """
+    What zebra still has to process in a VRF whose interfaces have all left
+    it (#595), from `show ip[v6] route vrf <name> json`: a route of an
+    interface's own (kernel, connected, local), or any route still in the
+    FIB. A static whose next hop went with the interfaces stays listed,
+    neither selected nor installed, until FRR is told - and it is settled.
+    """
+    return [prefix for prefix, entries in sorted((shown or {}).items())
+            if any(e.get("protocol") in ZEBRA_OWN_PROTOCOLS
+                   or e.get("installed") for e in entries or [])]
+
+
 def compare_redact(diff):
     """
     A unified diff of two configurations with every secret blanked, as
@@ -10861,21 +10915,20 @@ class Shell:
                 ok = False
         return ok
 
-    def apply_vrf_devices(self, d, target):
+    def make_vrf_devices(self, d, target, running=None):
         """
-        The Linux VRF devices onto `target` (#540), then their members.
-
-        Removed first: a VRF given another table is its device removed and
-        made again, since a VRF device's table is fixed when it is made, and
-        the kernel takes the members out with it.
+        The Linux VRF devices a commit makes, BEFORE any interface moves
+        into one (#595): each interface's Linux end now changes VRF inside
+        its own move, with its addresses off, so the device it goes to has
+        to be there first. A VRF given another table is removed here, its
+        members out, and made again.
         """
-        for vrf in d["vrfdev_del"]:
-            rc, out = self.sys._run(["ip", "link", "del", "dev", vrf])
-            if rc != 0:
-                self.err_prose(f"vrf {vrf}: the device was not removed",
-                               out.strip())
-                return False
+        have = self.device_vrf_devices()
         for vrf, table in d["vrfdev_add"].items():
+            if have.get(vrf) == table:
+                continue
+            if vrf in have and not self.remove_vrf_device(vrf, running):
+                return False
             rc, out = self.sys._run(["ip", "link", "add", vrf, "type",
                                      "vrf", "table", str(table)])
             if rc == 0:
@@ -10885,7 +10938,249 @@ class Shell:
                 self.err_prose(f"vrf {vrf}: the device was not made",
                                out.strip())
                 return False
+        return True
+
+    def apply_vrf_devices(self, d, target, running=None):
+        """
+        The Linux VRF devices onto `target` (#540), then their members.
+
+        What make_vrf_devices() did is not done twice - a device already on
+        the host with its table is left, one already gone is not removed
+        again - so this is the whole of it when called alone. A device goes
+        through remove_vrf_device(), its members out first (#595).
+        """
+        have = self.device_vrf_devices()
+        for vrf in d["vrfdev_del"]:
+            if vrf not in have or d["vrfdev_add"].get(vrf) == have[vrf]:
+                continue
+            if not self.remove_vrf_device(vrf, running):
+                return False
+        if not self.make_vrf_devices(d, target, running):
+            return False
         return self.enslave_vrf_members(target)
+
+    def remove_vrf_device(self, vrf, running=None):
+        """
+        A Linux VRF device removed (#595): its members moved out one at a
+        time by move_linux_end(), then zebra let go of the VRF, then the
+        device.
+
+        WHY NOT JUST `ip link del`. The kernel takes the members out with
+        the device, and zebra hears the two halves on two sockets: the
+        links on its dataplane thread, the routes on its main one. Measured
+        in lab/mgmt-vrf.sh with zebra's debug on (FRR 10.7.1, 1 run of 8
+        with 16 busy cores): a `commit confirmed` taken back deleted mgmt
+        with vppmg0 still in it, zebra moved vppmg0 to the default VRF
+        BEFORE it read the kernel deleting 2001:db8:200::/64 from table
+        100 - "doesn't exist in rib", the delete matched against the wrong
+        VRF - so a kernel route stayed in table 100 with its next hop in a
+        VRF that no longer existed ("vrf Unknown"). The device's own link
+        going down queued that route's node for processing, and zebra
+        disabled the VRF 0.1 ms later: it drops a disabled VRF's nodes from
+        its queue and leaves each one MARKED queued, and it keeps table
+        100's nodes for the next VRF on that table. The next move into
+        mgmt added the connected route and the kernel's to that node -
+        "already queued in sub-queue Kernel Routes", every time, never
+        processed - so 2001:db8:200::/64 stayed inactive, `ipv6 route ::/0
+        2001:db8:200::2` unresolved and table 100 without its IPv6 default
+        until zebra itself restarted. With nothing left in the VRF there
+        is no node for its going to strand.
+
+        `running` gives each member's addresses, taken off for its move and
+        put back after; without it a member moves as it is.
+        """
+        rc, out = self.sys._run(list(doors.LINKS_ARGV))
+        links = doors.ip_links(out) if rc == 0 else {}
+        ends = {h: i for i, h in (self.pair_ends() or {}).items()}
+        for host in sorted(h for h, l in links.items()
+                           if l["master"] == vrf):
+            ifname = ends.get(host)
+            if not ifname:
+                continue
+            addrs = list((running.addresses if running else {}).get(ifname,
+                                                                    []))
+            if not self.move_linux_end(ifname, None, addrs, reapply=True):
+                return False
+        self.zebra_settle(f"vrf {vrf}", lambda: self.zebra_vrf_held(vrf))
+        rc, out = self.sys._run(["ip", "link", "del", "dev", vrf])
+        if rc != 0:
+            self.err_prose(f"vrf {vrf}: the device was not removed",
+                           out.strip())
+            return False
+        return True
+
+    def pair_ends(self):
+        """
+        {dataplane interface: its Linux end} for every linux_cp pair, or
+        None when the dataplane cannot be asked. One entry per PAIR, keyed
+        by the dataplane's member: the TAP is a dataplane interface too, in
+        no table, and asked by its own name it would take the Linux end
+        back out of the VRF.
+        """
+        rc, lcp_out = self.dp.run("show lcp")
+        if rc != 0:
+            return None
+        pairs = routes.lcp_pairs(lcp_out)
+        names = self.dataplane_names()
+        ends = {}
+        for members in sorted({tuple(m) for m in pairs.values()}):
+            ifname = routes.dataplane_end(pairs, members[0], names)
+            host = routes.linux_end(pairs, ifname, names) if ifname else None
+            if host:
+                ends[ifname] = host
+        return ends
+
+    def set_linux_master(self, ifname, host, want, have):
+        """`host` into VRF device `want`, or out of `have` when `want` is
+        None, through the host's door; False, said, when refused."""
+        if want:
+            rc, out = self.sys._run(["ip", "link", "set", "dev", host,
+                                     "master", want])
+            did = f"put in {want}"
+        else:
+            rc, out = self.sys._run(["ip", "link", "set", "dev", host,
+                                     "nomaster"])
+            did = f"taken out of {have}"
+        if rc != 0:
+            self.err_prose(f"interface {ifname}: {host} was not {did}",
+                           out.strip())
+            return False
+        return True
+
+    def move_linux_end(self, ifname, want, addrs, reapply=False):
+        """
+        `ifname`'s Linux end into VRF device `want`, or out of the one it
+        is in (None), with NONE of its addresses on it (#595): `addrs` off
+        - here when `reapply`, or already by the caller - zebra seen to
+        have dropped them, the link moved, zebra seen to hold it in its new
+        VRF, and `addrs` back when `reapply`.
+
+        MOVED BARE because a card that changes VRF holding an address takes
+        its prefix route from one kernel table to the other, and zebra can
+        apply the link's move before it reads the route's delete: measured,
+        it then matched the delete against the wrong VRF and kept the route
+        (remove_vrf_device() has the sequence). With the address gone
+        first, and zebra seen to have dropped it, there is no route to
+        cross. THE ADDRESSES BACK only once zebra holds the link in its new
+        VRF, so the routes they make are read against that VRF.
+
+        A Linux end in something that is not a tenant VRF - the box's own,
+        a bridge - is left where it is, as enslave_vrf_members() leaves it.
+        """
+        host = (self.pair_ends() or {}).get(ifname)
+        rc, out = self.sys._run(list(doors.LINKS_ARGV))
+        link = (doors.ip_links(out) if rc == 0 else {}).get(host or "")
+        if not link:
+            return True
+        have = link["master"] if link["vrf_slave"] is not None else None
+        if link["master"] and have is None \
+                or (have or "").startswith(VRF_RESERVED_PREFIX) \
+                or want == have:
+            return True
+        if reapply:
+            for a in addrs:
+                if not self.set_address(ifname, a, False):
+                    return False
+        self.zebra_settle(f"interface {ifname}",
+                          lambda: self.zebra_if_held(host, addrs))
+        if not self.set_linux_master(ifname, host, want, have):
+            return False
+        self.zebra_settle(f"interface {ifname}",
+                          lambda: self.zebra_if_elsewhere(host, want))
+        if reapply:
+            for a in addrs:
+                if not self.set_address(ifname, a, True):
+                    return False
+        return True
+
+    def zebra_ask(self, cmd):
+        """zebra's answer to `cmd` (a `... json` show) as a dict, or None
+        when FRR could not be asked - which is not an empty answer."""
+        rc, out = self.frr.show(cmd)
+        return zebra_json(out) if rc == 0 else None
+
+    def zebra_if_held(self, host, addrs):
+        """
+        What zebra still holds of `addrs` on `host`, in the VRF it holds
+        `host` in (#595): the addresses on the interface, then each one's
+        routes - kernel, connected, local - asked by prefix, since the
+        default VRF may carry a full table. [] when zebra cannot be asked
+        or does not know the interface: there is nothing to wait for.
+        """
+        shown = self.zebra_ask(f"show interface {host} json")
+        vrf = zebra_if_vrf(shown, host)
+        if vrf is None:
+            return []
+        on = {a.get("address") for a in shown[host].get("ipAddresses") or []}
+        held = [a for a in addrs if a in on]
+        for a in addrs:
+            try:
+                ifa = ipaddress.ip_interface(a)
+            except ValueError:
+                continue
+            fam = "ipv6" if ifa.version == 6 else "ip"
+            for p in (ifa.network, ipaddress.ip_network(ifa.ip)):
+                held += zebra_held_routes(
+                    self.zebra_ask(f"show {fam} route vrf {vrf} {p} json"),
+                    host)
+        return held
+
+    def zebra_if_elsewhere(self, host, want):
+        """[] once zebra holds `host` in VRF `want` (None: the default),
+        or cannot say; otherwise what it holds it in (#595)."""
+        vrf = zebra_if_vrf(self.zebra_ask(f"show interface {host} json"),
+                           host)
+        return [] if vrf in (None, want or "default") else [f"{host} in {vrf}"]
+
+    def zebra_vrf_held(self, vrf):
+        """What zebra has still to process in `vrf`, both families
+        (zebra_vrf_unsettled()); [] when it cannot be asked (#595)."""
+        return [p for fam in ("ip", "ipv6")
+                for p in zebra_vrf_unsettled(
+                    self.zebra_ask(f"show {fam} route vrf {vrf} json"))]
+
+    #: How long a move between VRFs waits for zebra, at most (#595). 0 is
+    #: the box before #595, which did not wait: lab/mgmt-vrf.sh's
+    #: `unsettled` run sets it, to show what the waiting is worth.
+    ZEBRA_SETTLE_S = 10.0
+
+    def zebra_settle(self, what, pending):
+        """
+        Wait until `pending()` - what zebra has still to catch up on - is
+        empty, polling, for at most PRISMA_VRF_SETTLE_S seconds (default
+        ZEBRA_SETTLE_S). True when it is.
+
+        Bounded and not a refusal: the kernel has already done what the
+        commit asked, and a zebra slower than the bound is told about, not
+        held against the operator - said, and recorded for `show log` with
+        what zebra still held, which is where a VRF route missing afterwards
+        would be traced from.
+        """
+        try:
+            bound = float(os.environ.get("PRISMA_VRF_SETTLE_S",
+                                         self.ZEBRA_SETTLE_S))
+        except ValueError:
+            bound = self.ZEBRA_SETTLE_S
+        if bound <= 0:
+            return True
+        start = time.monotonic()
+        while True:
+            left = pending()
+            if not left:
+                return True
+            if time.monotonic() - start >= bound:
+                break
+            time.sleep(0.1)
+        said = ", ".join(left[:3]) + (" and more" if len(left) > 3 else "")
+        # The headline fixed, what moved and what zebra held in prose: an
+        # interface name and a list of prefixes have no widest.
+        print("warning: zebra had not caught up with a move between VRFs")
+        print_prose(f"{what}: after {bound:g} s it still held {said}; "
+                    f"'show log' keeps it")
+        self.record_event("warning", f"{what}: zebra had not caught up "
+                          f"after {bound:g} s, still holding {said}",
+                          kind="vrf-settle")
+        return False
 
     def enslave_vrf_members(self, target):
         """
@@ -10896,23 +11191,18 @@ class Shell:
         Read off the host every time rather than kept, so a pair made again
         - a dataplane restart makes every TAP anew - is put back. A TAP in
         anything that is not a tenant VRF (the box's own, a bridge) is left
-        where it is: the host's door refuses it too.
+        where it is: the host's door refuses it too. A commit has already
+        moved its own interfaces, bare (move_linux_end(), #595): this is
+        what is left over, and what a dataplane made anew needs.
         """
         by_table = {t: n for n, t in target.vrf_devices.items()}
         rc, out = self.sys._run(list(doors.LINKS_ARGV))
         links = doors.ip_links(out) if rc == 0 else {}
-        rc, lcp_out = self.dp.run("show lcp")
-        if rc != 0:
+        ends = self.pair_ends()
+        if ends is None:
             return True
-        pairs = routes.lcp_pairs(lcp_out)
-        names = self.dataplane_names()
-        # One pass per PAIR, keyed by the dataplane's member: the TAP is a
-        # dataplane interface too, in no table, and asked by its own name
-        # it would take the Linux end back out of the VRF.
-        for members in sorted({tuple(m) for m in pairs.values()}):
-            ifname = routes.dataplane_end(pairs, members[0], names)
-            host = routes.linux_end(pairs, ifname, names) if ifname else None
-            if not host or host not in links:
+        for ifname, host in sorted(ends.items()):
+            if host not in links:
                 continue
             link = links[host]
             have = link["master"] if link["vrf_slave"] is not None else None
@@ -10920,19 +11210,8 @@ class Shell:
                     or (have or "").startswith(VRF_RESERVED_PREFIX):
                 continue
             want = by_table.get(target.vrfs.get(ifname, 0))
-            if want == have:
-                continue
-            if want:
-                rc, out = self.sys._run(["ip", "link", "set", "dev", host,
-                                         "master", want])
-                did = f"put in {want}"
-            else:
-                rc, out = self.sys._run(["ip", "link", "set", "dev", host,
-                                         "nomaster"])
-                did = f"taken out of {have}"
-            if rc != 0:
-                self.err_prose(f"interface {ifname}: {host} was not {did}",
-                               out.strip())
+            if want != have and not self.set_linux_master(ifname, host,
+                                                          want, have):
                 return False
         return True
 
@@ -13504,21 +13783,35 @@ class Shell:
         #
         # The interfaces here are excluded from the ordinary address delta, so
         # their addresses are applied once, here, and not twice.
+        #
+        # THE LINUX END MOVES IN THE GAP (#595), while the interface holds no
+        # address: into the VRF device of its new table, which is therefore
+        # made first, or out of the one it leaves. It used to move after the
+        # addresses were back, by the device's removal or enslave_vrf_members,
+        # and zebra could lose track of the prefix route that crossed with it
+        # - remove_vrf_device() has what was measured.
+        vrfdev = bool(target.vrf_devices or running.vrf_devices)
+        if vrfdev and not self.make_vrf_devices(d, target, running):
+            return False
+        by_table = {t: n for n, t in target.vrf_devices.items()}
         for ifname, (table, had, want) in d["vrf_set"].items():
             for a in had:
                 if not self.set_address(ifname, a, False):
                     return False
+            if vrfdev and not self.move_linux_end(ifname, by_table.get(table),
+                                                  had):
+                return False
             if not self.set_vrf(ifname, table):
                 return False
             for a in want:
                 if not self.set_address(ifname, a, True):
                     return False
 
-        # The Linux VRF devices and their members (#540), after the pairs and
-        # the tables they join and before FRR is reloaded: `router bgp <as>
-        # vrf <name>` is a VRF FRR finds through the device.
-        if (target.vrf_devices or running.vrf_devices) \
-                and not self.apply_vrf_devices(d, target):
+        # The Linux VRF devices removed and the members left over (#540),
+        # after the pairs and the tables they join and before FRR is
+        # reloaded: `router bgp <as> vrf <name>` is a VRF FRR finds through
+        # the device.
+        if vrfdev and not self.apply_vrf_devices(d, target, running):
             return False
 
         # Addresses before everything except the admin state, and removals

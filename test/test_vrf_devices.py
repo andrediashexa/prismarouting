@@ -21,6 +21,7 @@ and undoes both. Each part is shown red by a mutation:
 """
 import contextlib
 import io
+import json
 import os
 import sys
 
@@ -395,20 +396,24 @@ check(shell(r).vrf_tables_free(Config()) and r.asked == [],
       "a target with no VRF devices asks the host nothing")
 
 print("\n=== apply_vrf_devices: removed, made, up, then the members ===")
+# `old` on the host, a VRF with nothing in it, as the list prints a device.
+OLD = ("12: old: <NOARP,MASTER,UP,LOWER_UP> mtu 65575 qdisc noqueue state UP "
+       "mode DEFAULT group default qlen 1000\\    link/ether "
+       "8a:5e:6b:89:51:b2 brd ff:ff:ff:ff:ff:ff promiscuity 0 \\    vrf "
+       "table 40 addrgenmode eui64 numtxqueues 1\n")
 r = Runner(links=LINKS.replace("master red ", "").replace(
-    "vrf_slave table 10 ", ""))
+    "vrf_slave table 10 ", "") + OLD)
 sh = shell(r)
 t = Config()
 t.vrf_devices = {"red": 10, "svc": 30}
 t.vrfs = {"host-veth-red": 10, "host-veth-svc": 30}
 d = {"vrfdev_add": {"svc": 30}, "vrfdev_del": ["old"]}
 check(sh.apply_vrf_devices(d, t), "applied")
-check(r.asked[:4] == [["ip", "link", "del", "dev", "old"],
-                      ["ip", "link", "add", "svc", "type", "vrf", "table",
-                       "30"],
-                      ["ip", "link", "set", "dev", "svc", "up"],
-                      list(doors.LINKS_ARGV)],
-      f"in that order: {r.asked[:4]}")
+said = [a for a in r.asked if tuple(a) != doors.LINKS_ARGV]
+check(said[:3] == [["ip", "link", "del", "dev", "old"],
+                   ["ip", "link", "add", "svc", "type", "vrf", "table", "30"],
+                   ["ip", "link", "set", "dev", "svc", "up"]],
+      f"in that order: {said[:3]}")
 check(["ip", "link", "set", "dev", "vppred0", "master", "red"] in r.asked
       and ["ip", "link", "set", "dev", "vppsvc0", "master", "svc"]
       in r.asked, "each TAP into its table's VRF")
@@ -418,11 +423,24 @@ for cmd in r.asked:
 for refuse, needle in (
         ((["ip", "link", "del"]), "vrf old: the device was not removed"),
         ((["ip", "link", "add"]), "vrf svc: the device was not made")):
-    sh = shell(Runner(refuse=[refuse]))
+    sh = shell(Runner(links=LINKS + OLD, refuse=[refuse]))
     with spoken() as o:
         ok = sh.apply_vrf_devices(d, t)
     check(not ok and needle in o.getvalue() and narrow(o.getvalue()),
           f"a refusal stops it: {o.getvalue().strip()!r}")
+r = Runner(links=LINKS.replace("master red ", "").replace(
+    "vrf_slave table 10 ", ""))
+sh = shell(r)
+check(sh.apply_vrf_devices(d, t)
+      and ["ip", "link", "del", "dev", "old"] not in r.asked,
+      "a device already gone is not removed again")
+r = Runner()
+sh = shell(r)
+check(sh.apply_vrf_devices({"vrfdev_add": {"red": 10}, "vrfdev_del": ["red"]},
+                           t)
+      and not [a for a in r.asked if a[:3] == ["ip", "link", "del"]
+               or a[:3] == ["ip", "link", "add"]],
+      "and one make_vrf_devices() already made again is left as it is")
 
 print("\n=== enslave_vrf_members: converged, both ways ===")
 r = Runner()
@@ -468,6 +486,302 @@ with spoken() as o:
     ok = sh.enslave_vrf_members(t)
 check(not ok and "vppred0 was not taken out of red" in o.getvalue(),
       f"and a refused release: {o.getvalue().strip()!r}")
+
+print("\n=== #595: zebra's answers, read ===")
+# Shapes measured on FRR 10.7.1: `show interface <if> json`, and `show ip
+# route vrf <name> json` - a route of an interface's own, the kernel's beside
+# it, a static, and a static whose next hop went (neither selected nor
+# installed).
+ZIF = {"vppred0": {"vrfName": "red", "ipAddresses": [
+    {"address": "10.10.0.1/24"}, {"address": "fe80::fe:ff:fe00:1/64"}]}}
+ZRT = {"10.10.0.0/24": [{"protocol": "connected", "selected": True,
+                         "installed": True,
+                         "nexthops": [{"interfaceName": "vppred0"}]}],
+       "2001:db8:a::/64": [{"protocol": "kernel", "nexthops": [
+           {"interfaceName": "vppred0"}]}],
+       "10.20.0.0/24": [{"protocol": "connected", "installed": True,
+                         "nexthops": [{"interfaceName": "vppsvc0"}]}],
+       "0.0.0.0/0": [{"protocol": "static", "selected": True,
+                      "installed": True,
+                      "nexthops": [{"ip": "10.10.0.2",
+                                    "interfaceName": "vppred0"}]}],
+       "fe80::/64": [{"protocol": "connected", "nexthops": [
+           {"interfaceName": "vppred0"}]}]}
+check(prismash.zebra_json('{"a": 1}') == {"a": 1}
+      and prismash.zebra_json("{}") == {}
+      and prismash.zebra_json("% VRF red not active") is None
+      and prismash.zebra_json("[1]") is None
+      and prismash.zebra_json("") is None,
+      "zebra_json: a JSON object, and None for anything else")
+check(prismash.zebra_if_vrf(ZIF, "vppred0") == "red"
+      and prismash.zebra_if_vrf(ZIF, "vppsvc0") is None
+      and prismash.zebra_if_vrf(None, "vppred0") is None,
+      "zebra_if_vrf: the VRF zebra holds it in, None when it does not know")
+check(prismash.zebra_held_routes(ZRT, "vppred0")
+      == ["10.10.0.0/24", "2001:db8:a::/64"]
+      and prismash.zebra_held_routes(ZRT, "vppsvc0") == ["10.20.0.0/24"]
+      and prismash.zebra_held_routes(None, "vppred0") == [],
+      "zebra_held_routes: its own routes through it - not a static, not "
+      "another's, not the link-local")
+settled = {"0.0.0.0/0": [{"protocol": "static", "nexthops": [
+    {"ip": "10.10.0.2"}]}]}
+check(prismash.zebra_vrf_unsettled(ZRT)
+      == ["0.0.0.0/0", "10.10.0.0/24", "10.20.0.0/24", "2001:db8:a::/64",
+          "fe80::/64"]
+      and prismash.zebra_vrf_unsettled(settled) == []
+      and prismash.zebra_vrf_unsettled({}) == []
+      and prismash.zebra_vrf_unsettled(None) == [],
+      "zebra_vrf_unsettled: an interface's routes or one in the FIB; a "
+      "static with no next hop is settled")
+
+
+class Zebra:
+    """FRR's vtysh as the VTY asks it: `answers` by command, each a list
+    taken one per ask (the last kept), and every command in `log`."""
+
+    def __init__(self, answers=None, log=None, rc=0):
+        self.answers = {k: list(v) for k, v in (answers or {}).items()}
+        self.log = log if log is not None else []
+        self.rc = rc
+
+    def show(self, cmd):
+        self.log.append(("zebra", cmd))
+        got = self.answers.get(cmd, ["{}"])
+        return self.rc, got.pop(0) if len(got) > 1 else got[0]
+
+
+@contextlib.contextmanager
+def pinned_clock(step=1.0):
+    """time.monotonic advancing `step` per sleep, and no real sleeping."""
+    now = [100.0]
+    saved = (prismash.time.monotonic, prismash.time.sleep)
+    prismash.time.monotonic = lambda: now[0]
+    prismash.time.sleep = lambda s: now.__setitem__(0, now[0] + step)
+    try:
+        yield now
+    finally:
+        prismash.time.monotonic, prismash.time.sleep = saved
+
+
+def recorded(sh):
+    """The events the shell records, kept instead of written."""
+    kept = []
+    sh.record_event = lambda sev, text, **k: kept.append((sev, text, k))
+    return kept
+
+
+print("\n=== #595: zebra_settle: until zebra caught up, bounded, said ===")
+sh = shell()
+kept = recorded(sh)
+left = [["10.10.0.0/24"], ["10.10.0.0/24"], []]
+with pinned_clock() as now, spoken() as o:
+    ok = sh.zebra_settle("interface x", lambda: left.pop(0))
+check(ok and left == [] and now[0] == 102.0 and o.getvalue() == ""
+      and kept == [], f"waits, polling, until nothing is pending: {now[0]}")
+asked = []
+os.environ["PRISMA_VRF_SETTLE_S"] = "0"
+try:
+    check(sh.zebra_settle("x", lambda: asked.append(1) or ["y"])
+          and asked == [], "PRISMA_VRF_SETTLE_S=0: the box before #595, "
+          "which did not wait")
+    os.environ["PRISMA_VRF_SETTLE_S"] = "3"
+    with pinned_clock() as now, spoken() as o:
+        ok = sh.zebra_settle("vrf red",
+                             lambda: ["a/1", "b/2", "c/3", "d/4"])
+finally:
+    del os.environ["PRISMA_VRF_SETTLE_S"]
+check(not ok and now[0] == 103.0, f"bounded by the setting: {now[0]}")
+check("warning: zebra had not caught up with a move between VRFs" in o.getvalue()
+      and "vrf red: after 3 s it still held" in o.getvalue()
+      and "a/1, b/2, c/3 and more" in o.getvalue() and narrow(o.getvalue()),
+      f"said: {o.getvalue()!r}")
+check(kept and kept[0][0] == "warning" and kept[0][2] == {"kind": "vrf-settle"}
+      and "still holding a/1, b/2, c/3 and more" in kept[0][1],
+      f"and recorded for show log: {kept}")
+with pinned_clock() as now, spoken():
+    sh.zebra_settle("x", lambda: ["z"])
+check(now[0] == 100.0 + prismash.Shell.ZEBRA_SETTLE_S,
+      f"10 s when not set: {now[0]}")
+
+print("\n=== #595: what zebra holds, asked of zebra ===")
+sh = shell()
+sh.frr = Zebra({"show interface vppred0 json": [json.dumps(ZIF)],
+                "show ip route vrf red 10.10.0.0/24 json":
+                    [json.dumps({"10.10.0.0/24": ZRT["10.10.0.0/24"]})]})
+check(sh.zebra_ask("show interface vppred0 json") == ZIF
+      and Zebra(rc=1).show("x")[0] == 1
+      and shell().zebra_ask("show interface x json") is None,
+      "zebra_ask: its answer, None when FRR could not be asked")
+sh.frr.log.clear()
+check(sh.zebra_if_held("vppred0", ["10.10.0.1/24"])
+      == ["10.10.0.1/24", "10.10.0.0/24"],
+      "zebra_if_held: the address on the interface and its route")
+check([c for _, c in sh.frr.log]
+      == ["show interface vppred0 json",
+          "show ip route vrf red 10.10.0.0/24 json",
+          "show ip route vrf red 10.10.0.1/32 json"],
+      f"asked by prefix in the VRF zebra holds it in: {sh.frr.log}")
+sh.frr = Zebra({"show interface vppred0 json": [json.dumps(
+    {"vppred0": {"vrfName": "default", "ipAddresses": []}})]})
+check(sh.zebra_if_held("vppred0", ["2001:db8:a::1/64", "bad"]) == []
+      and ("zebra", "show ipv6 route vrf default 2001:db8:a::/64 json")
+      in sh.frr.log
+      and ("zebra", "show ipv6 route vrf default 2001:db8:a::1/128 json")
+      in sh.frr.log,
+      f"nothing held, IPv6 asked as IPv6, a non-address skipped: "
+      f"{sh.frr.log}")
+check(shell().zebra_if_held("vppred0", ["10.10.0.1/24"]) == [],
+      "and nothing to wait for when zebra cannot be asked")
+sh.frr = Zebra({"show interface vppred0 json": [json.dumps(ZIF)]})
+check(sh.zebra_if_elsewhere("vppred0", "red") == []
+      and sh.zebra_if_elsewhere("vppred0", None) == ["vppred0 in red"]
+      and shell().zebra_if_elsewhere("vppred0", "red") == [],
+      "zebra_if_elsewhere: [] once it is in the VRF asked (None: default)")
+sh.frr = Zebra({"show ip route vrf red json": [json.dumps(ZRT)],
+                "show ipv6 route vrf red json": [json.dumps(settled)]})
+check(sh.zebra_vrf_held("red") == prismash.zebra_vrf_unsettled(ZRT)
+      and shell().zebra_vrf_held("red") == [],
+      "zebra_vrf_held: both families, nothing when it cannot be asked")
+
+print("\n=== #595: the pairs, and a Linux end put in or taken out ===")
+check(shell().pair_ends() == {"host-veth-red": "vppred0",
+                              "host-veth-svc": "vppsvc0"},
+      f"pair_ends: each dataplane interface's Linux end: "
+      f"{shell().pair_ends()}")
+sh = shell()
+sh.dp.run = lambda cmd: (1, "")
+check(sh.pair_ends() is None, "pair_ends: None when the dataplane says nothing")
+r = Runner()
+check(shell(r).set_linux_master("host-veth-svc", "vppsvc0", "red", None)
+      and shell(r).set_linux_master("host-veth-red", "vppred0", None, "red")
+      and r.asked == [["ip", "link", "set", "dev", "vppsvc0", "master", "red"],
+                      ["ip", "link", "set", "dev", "vppred0", "nomaster"]],
+      f"set_linux_master: in, and out: {r.asked}")
+with spoken() as o:
+    ok = shell(Runner(refuse=[["ip", "link", "set"]])).set_linux_master(
+        "host-veth-red", "vppred0", None, "red")
+check(not ok and "interface host-veth-red: vppred0 was not taken out of red"
+      in o.getvalue() and narrow(o.getvalue()),
+      f"set_linux_master: a refusal said: {o.getvalue().strip()!r}")
+
+
+def moving(links=LINKS, answers=None):
+    """A shell whose addresses, host and zebra all write to one log."""
+    log = []
+    r = Runner(links=links)
+    sh = shell(r)
+    sh.sys = system.System(runner=lambda a, stdin=None, timeout=30:
+                           log.append(("host", " ".join(a))) or r(a))
+    sh.frr = Zebra(answers, log)
+    sh.set_address = lambda i, a, add: log.append(
+        ("addr", f"{i} {a} {'on' if add else 'off'}")) or True
+    return sh, log
+
+
+print("\n=== #595: move_linux_end: bare, zebra caught up each side ===")
+GONE = json.dumps({"vppred0": {"vrfName": "red", "ipAddresses": []}})
+OUT = json.dumps({"vppred0": {"vrfName": "default", "ipAddresses": []}})
+sh, log = moving(answers={"show interface vppred0 json":
+                          [json.dumps(ZIF), GONE, OUT],
+                          "show ip route vrf red 10.10.0.0/24 json": ["{}"]})
+with pinned_clock(), spoken():
+    ok = sh.move_linux_end("host-veth-red", None, ["10.10.0.1/24"],
+                           reapply=True)
+steps = [w for k, w in log if k == "addr"
+         or w.startswith(("ip link set", "show interface"))]
+check(ok and steps == ["host-veth-red 10.10.0.1/24 off",
+                       "show interface vppred0 json",
+                       "show interface vppred0 json",
+                       "ip link set dev vppred0 nomaster",
+                       "show interface vppred0 json",
+                       "host-veth-red 10.10.0.1/24 on"],
+      f"off, zebra lets go of it, out, zebra has it out, on: {steps}")
+sh, log = moving(answers={"show interface vppsvc0 json": [OUT.replace(
+    "vppred0", "vppsvc0"), json.dumps({"vppsvc0": {"vrfName": "red"}})]})
+with pinned_clock() as now, spoken():
+    ok = sh.move_linux_end("host-veth-svc", "red", ["10.20.0.1/24"])
+check(ok and not [w for k, w in log if k == "addr"]
+      and log[-2:] == [("host", "ip link set dev vppsvc0 master red"),
+                       ("zebra", "show interface vppsvc0 json")],
+      f"addresses the caller's when not reapply, zebra asked after: {log}")
+for links, want, why in ((LINKS, "red", "already where it goes"),
+                         (LINKS.replace("master red ", "master bp0 ")
+                          .replace("vrf_slave table 10 ", ""), None,
+                          "in a bridge, left there"),
+                         (LINKS.replace("7: vppred0", "7: vppx0"), None,
+                          "with no Linux end on the host")):
+    sh, log = moving(links=links)
+    check(sh.move_linux_end("host-veth-red", want, ["10.10.0.1/24"],
+                            reapply=True)
+          and not [w for k, w in log if k == "addr"
+                   or w.startswith("ip link set")],
+          f"move_linux_end: nothing to move when {why}")
+sh, log = moving()
+sh.set_address = lambda i, a, add: False
+check(not sh.move_linux_end("host-veth-red", None, ["10.10.0.1/24"],
+                            reapply=True)
+      and not [w for k, w in log if w.startswith("ip link set")],
+      "a refused address stops it before the link moves")
+sh, log = moving()
+sh.sys = system.System(runner=Runner(refuse=[["ip", "link", "set"]]))
+with spoken():
+    check(not sh.move_linux_end("host-veth-red", None, []),
+          "and so does a refused move")
+
+print("\n=== #595: remove_vrf_device: the members out, zebra, the device ===")
+sh, log = moving(answers={"show ip route vrf red json":
+                          [json.dumps(ZRT), "{}"]})
+run = Config()
+run.addresses = {"host-veth-red": ["10.10.0.1/24"]}
+with pinned_clock(), spoken():
+    ok = sh.remove_vrf_device("red", run)
+steps = [w for k, w in log if k == "addr" or w.startswith(
+    ("ip link", "show ip route vrf red json"))]
+check(ok and steps == ["host-veth-red 10.10.0.1/24 off",
+                       "ip link set dev vppred0 nomaster",
+                       "host-veth-red 10.10.0.1/24 on",
+                       "show ip route vrf red json",
+                       "show ip route vrf red json",
+                       "ip link del dev red"],
+      f"its member moved out bare, zebra settled, then removed: {steps}")
+sh, log = moving()
+with spoken():
+    check(sh.remove_vrf_device("red") and ("addr", "host-veth-red "
+          "10.10.0.1/24 off") not in log
+          and ("host", "ip link del dev red") in log,
+          "without the running configuration a member moves as it is")
+sh, log = moving()
+sh.sys = system.System(runner=Runner(refuse=[["ip", "link", "del"]]))
+with spoken() as o:
+    ok = sh.remove_vrf_device("svc")
+check(not ok and "vrf svc: the device was not removed" in o.getvalue(),
+      f"a refused removal said: {o.getvalue().strip()!r}")
+
+print("\n=== #595: make_vrf_devices: before any interface moves ===")
+r = Runner()
+sh = shell(r)
+check(sh.make_vrf_devices({"vrfdev_add": {"red": 10, "svc": 30},
+                           "vrfdev_del": []}, Config())
+      and [a for a in r.asked if tuple(a) != doors.LINKS_ARGV]
+      == [["ip", "link", "add", "svc", "type", "vrf", "table", "30"],
+          ["ip", "link", "set", "dev", "svc", "up"]],
+      f"made and up, one already there left: {r.asked}")
+sh, log = moving()
+with spoken():
+    ok = sh.make_vrf_devices({"vrfdev_add": {"red": 11},
+                              "vrfdev_del": ["red"]}, Config())
+said = [w for k, w in log if w.startswith(("ip link del", "ip link add",
+                                           "ip link set"))]
+check(ok and said == ["ip link set dev vppred0 nomaster",
+                      "ip link del dev red",
+                      "ip link add red type vrf table 11",
+                      "ip link set dev red up"],
+      f"one on another table: members out, removed, made again: {said}")
+with spoken() as o:
+    ok = shell(Runner(refuse=[["ip", "link", "add"]])).make_vrf_devices(
+        {"vrfdev_add": {"svc": 30}, "vrfdev_del": []}, Config())
+check(not ok and "vrf svc: the device was not made" in o.getvalue(),
+      f"a refusal stops it: {o.getvalue().strip()!r}")
 
 print("\n" + ("ALL TESTS PASSED" if not fail else f"{fail} FAILURES"))
 sys.exit(1 if fail else 0)
