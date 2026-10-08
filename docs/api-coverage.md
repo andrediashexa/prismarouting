@@ -21,9 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 771 |
+| typed | 775 |
 | text | 1 |
-| n/a | 54 |
+| n/a | 55 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -182,6 +182,7 @@ reachable in the phase their note names.
 | `show system cpu` | typed | OperationalService.GetSystem | every account | worker_load per worker; per-core figures are text (phase 7) |
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
+| `show system management` | typed | OperationalService.GetSystem | every account | management: the VRF configured and in effect; management_text (#580) |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times, and why each started (#588) |
 | `show system logging` | typed | OperationalService.GetSystem | every account | logging: each destination and whether it is reached; logging_text (#588 phase 3) |
 | `show log [last <n>] [since <time>] [severity <level>] [source <name>] [kind <kind>]` | typed | OperationalService.ListEvents | every account | the same filters, `kind` too, with each event's subject and reason; the restart causes are also in GetSystem (#588) |
@@ -507,6 +508,7 @@ Entered with `system`; `EditRequest.path` = `["system"]`; changed by: administra
 | `cpu` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `hardware` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `logging` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `management` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: system memory
@@ -557,6 +559,16 @@ Entered with `system > logging`; `EditRequest.path` = `["system","logging"]`; ch
 |---|---|---|---|
 | `host <address> [port <n>] [protocol udp\|tcp] [severity <level>] [source-address <address>] [vrf <name>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `no host <address>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `exit` | n/a | - | the session's |
+
+## Configuration: system management
+
+Entered with `system > management`; `EditRequest.path` = `["system","management"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `vrf <name>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `no vrf` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: system dataplane

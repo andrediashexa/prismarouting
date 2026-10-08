@@ -77,37 +77,60 @@ version has a chance of seeing it.
 
 ### Added
 
-<!-- #580 is deferred (2026-10-05) and this branch is not merged. Done: the
-statement, the host rules and sysctls at commit, at boot (tuner) and at
---load, the way-back route in the VRF's table, unit tests with mutations,
-lab/mgmt-vrf.sh (on 29 ok, off red 15). Not done: make test on the rebased
-branch unconfirmed, labs api-grpc/commit-readback/routing/control-plane-dies/
-doors not re-run, no reboot, dataplane or container restart proven, never
-run on a box. -->
 * **Management in a VRF of its own, so the main table can carry the
   subscribers' default.**
   ([#580](https://github.com/andrediashexa/hexarouting/issues/580)) Asked for
-  on 10.40.200.166, whose management (enp6s18, gateway 10.40.200.1) has to
-  stay reachable while the main default goes to the SW-CORE on VLAN 802. The
-  card goes into a VRF as any interface does (`vrf mgmt table 100`, its
-  `vrf 100`, the default in FRR's `vrf mgmt` block), and `system` >
-  `management` > `vrf mgmt` makes the box's own services follow it:
-  `tcp_l3mdev_accept`/`udp_l3mdev_accept` so sshd, the API and snmpd answer
-  on the VRF, and two `iif lo` rules so what the box originates - DNS, NTP,
-  `system upgrade`'s downloads, traps, the log container's export - leaves by
-  management's default unless the main table has a specific route to it. Put
-  on the host at commit, at every boot by the tuner, and again by `--load`;
-  the boot's way-back route goes into the VRF's table rather than main. IPFIX
-  over UDP is sent by the dataplane through its own table and does not follow
-  it. `commit check` refuses a VRF the configuration does not make;
-  `commit confirmed` takes it all back if the session is lost.
-  `lab/mgmt-vrf.sh` proves SSH, the API, SNMP and the download over the VRF
-  with the main default elsewhere, across commits and a `--load`; its off run
-  is red on 15. Not proven: a dataplane restart, a container restart, a
-  reboot. The API's `SystemConfig` gains `management` (11) and `GetSchema`
-  the `system management` mode: additive.
+  on 10.40.200.166, whose management (enp6s18, 10.40.200.166/24 and
+  2804:4ed4:1000:6::166/64) has to stay reachable while the main default goes
+  to the subscribers' side. The card goes into a VRF as any interface does
+  (`vrf mgmt table 100`, its `vrf 100`, both families' defaults and any other
+  management network in FRR's `vrf mgmt` block), and `system` > `management`
+  > `vrf mgmt` makes the box's own services follow it: l3mdev accept so
+  sshd, the API and snmpd answer on the VRF; nonlocal bind so a listener that
+  names the management address (`snmp listen-address`, sshd's ListenAddress)
+  can bind it once that address is the VRF's - without it snmpd measured
+  "Error opening specified endpoint" and did not start; IPv6 keeping its
+  addresses when the card moves, which the kernel otherwise drops; and two
+  `iif lo` rules per family so what the box originates - DNS, NTP, `system
+  upgrade`'s downloads, traps, `system logging`, the log container's export -
+  leaves by management's routes unless the main table has a specific one.
+  Put on the host at commit, at every boot by the tuner (before snmpd, sshd
+  and the API's socket start), and again by `--load`; the boot's way-back
+  route goes into the VRF's table, and again after the apply enslaves the
+  card, which flushes it. IPFIX over UDP is sent by the dataplane through its
+  own table and does not follow it. `commit check` refuses a VRF the
+  configuration does not make, and a commit setting one no interface is in.
+  `show system management` says the VRF configured and what the host has in
+  effect. `lab/mgmt-vrf.sh` proves SSH, the API and SNMP on IPv4 and IPv6,
+  the downloads, DNS, a trap and `system logging` over the VRF with the main
+  defaults elsewhere, after a `commit confirmed` that expires (all of it
+  taken back, and reachable on the main table) and one confirmed (a TCP
+  session open across it still answering), another commit, a `system
+  dataplane restart`, a restart of the containers, a boot and a boot without
+  the tuner. The API: `SystemConfig.management` (12; 11 is
+  `log_destinations`), `SystemInfo.management` (29) and `management_text`
+  (30), and `GetSchema`'s `system management` mode: additive.
 
 ### Fixed
+
+* **An interface's `vrf <id>` moved its IPv4 and left its IPv6 in table 0.**
+  ([#580](https://github.com/andrediashexa/hexarouting/issues/580)) The
+  dataplane kept the interface's IPv6 in the subscribers' table while its
+  Linux end was in the VRF, so table 0 forwarded to the VRF's IPv6 subnet and
+  the VRF's IPv6 routes reached a table no interface was in. Both families
+  move now. Found putting management in a VRF.
+* **A `commit confirmed` nobody confirmed could stop at SNMP and leave the
+  box where it was.** ([#580](https://github.com/andrediashexa/hexarouting/issues/580))
+  The unattended revert restarted snmpd before the interfaces, and an
+  snmpd that could not bind its `listen-address` failed the revert there:
+  measured with the management card moved into a VRF without `system
+  management`, the box stayed in the VRF nobody could reach it on. The
+  revert now treats SNMP as a boot does (#591): a warning, tried again after
+  the interfaces.
+* **`exit-vrf` typed at the prompt did not leave the `vrf` block.** It went
+  to FRR as a line inside it, and the next statement of the batch was handed
+  to FRR within `vrf <name>` and refused. It leaves the block now, as `exit`
+  does, and is refused outside one.
 
 ## 0.152.3 - BFD's traps
 
