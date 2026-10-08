@@ -3274,7 +3274,7 @@ It is now in the candidate like everything else:
 
 ```
 ssh port 22
-ssh listen-address 0.0.0.0
+ssh listen-address 0.0.0.0 [::]
 ssh permit-root-login prohibit-password
 ssh password-authentication no
 user noc

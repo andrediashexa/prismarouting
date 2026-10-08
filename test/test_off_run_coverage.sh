@@ -83,8 +83,9 @@ echo "=== and every other lab is named, with the count as a floor ==="
 # right thing turn this red.
 # 32 until #385 deleted lab/one-nic.sh, which was #303's proof and had no off
 # run; a lab that leaves lowers the floor, which is the ratchet. 31 until
-# #571 gave lab/snmp.sh its no-door run.
-UNACCOUNTED_AT_MOST=30
+# #571 gave lab/snmp.sh its no-door run. 30 until #593 gave lab/vty-ssh.sh
+# its off run.
+UNACCOUNTED_AT_MOST=29
 unaccounted=""
 for f in "$REPO"/lab/*.sh; do
   n=$(basename "$f" .sh)

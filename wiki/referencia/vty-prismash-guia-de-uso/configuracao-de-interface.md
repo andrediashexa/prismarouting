@@ -317,6 +317,8 @@ Faça com `commit confirmed 10` e confirme com `commit` depois de entrar de novo
 
 Sem `system` > `management` > `vrf mgmt` a placa fica na VRF e a caixa **não** responde por ela: os serviços escutam na tabela principal, e o snmpd e o sshd que escutam no endereço de gerência nem sobem. Com ele, a caixa liga `tcp_l3mdev_accept`/`udp_l3mdev_accept`, `ip_nonlocal_bind` (IPv4 e IPv6) e `keep_addr_on_down` do IPv6, e põe duas regras por família para o tráfego dela mesma - no commit e em todo boot, antes de o snmpd, o sshd e a API subirem. `show system management` mostra o que está configurado e o que está valendo no host. `no vrf` dentro de `management` volta tudo para a tabela principal. `commit check` recusa uma VRF que a configuração não cria, ou sem nenhuma interface dentro.
 
+Para o SSH responder só na gerência, IPv4 e IPv6, liste os dois endereços dela em `ssh listen-address` (desde a 0.152.5), como no `snmp` e no `api`: `ssh listen-address 10.40.200.166 2804:4ed4:1000:6::166`. Com a gerência na VRF, o `commit` aceita esses endereços mesmo estando na VRF, porque o `ip_nonlocal_bind` deixa o sshd escutar neles; sem o `vrf` em `management`, recusa.
+
 ## Estado administrativo
 
 `shutdown` derruba os dois lados: a interface que encaminha pacotes e o par que o roteamento enxerga. Derrubar só um deixaria o protocolo de roteamento segurando adjacência sobre uma porta que parou de encaminhar — o vizinho acredita que o enlace está bom até o próprio temporizador dele expirar, e o tráfego some nesse meio-tempo.

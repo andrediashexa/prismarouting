@@ -160,7 +160,8 @@ print("=== system (system_typed, _kv) ===")
 s = T.system_typed(cfg)
 check(s["hostname"] == "edge-1" and s["dns_servers"] == ["1.1.1.1", "8.8.8.8"],
       "hostname and resolvers, in order")
-check(s["ssh"] == {"port": 2222, "listen_address": "0.0.0.0",
+# Both families with no `ssh listen-address` at all, sshd's default (#593).
+check(s["ssh"] == {"port": 2222, "listen_address": "0.0.0.0 [::]",
                    "permit_root_login": "no", "password_authentication": True},
       f"ssh, defaults included: {s['ssh']}")
 check(s["api"] == {"enabled": True, "listen_address": "10.0.0.1", "port": 50051},
@@ -423,6 +424,15 @@ check(not T.statement_matches("logging syslog 10.95.200.196 port 1601", sl),
 check(not T.statement_matches("logging syslog 10.0.0.1 enterprise 1 port 2 port 3", sl),
       "nor does a group twice")
 
+# The three listen-addresses are lists (#582, #593): `...` in the hint, so
+# a running configuration's two addresses match their statement. Mutation
+# shown red, then restored: ssh's hint back to ARG_LOCAL_ADDRESS (2 red
+# here, the sample's default line below with them).
+_lists = ("ssh listen-address 10.0.0.1 [2001:db8::1]\n"
+          "snmp listen-address 10.0.0.1 2001:db8::1\n"
+          "api listen-address 10.0.0.1 2001:db8::1\n")
+check(not T.unmatched_lines(sch, _lists),
+      f"listen-address lists match GetSchema: {T.unmatched_lines(sch, _lists)}")
 print("=== every line the VTY renders matches the schema (unmatched_lines) ===")
 rendered = cfg.text()
 misses = T.unmatched_lines(sch, rendered)
