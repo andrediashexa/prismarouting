@@ -100,7 +100,7 @@ version has a chance of seeing it.
   solicitation. `lab/mgmt-vrf.sh` makes the gateway forget the box's address
   in every phase and asks within 5 s, moves a tenant card too, and passed 10
   runs of 10; `lab/mgmt-vrf.sh unrepaired`, the dataplane started with
-  `bpa { ip6-mcast-follow off }`, fails 18 checks. IPv4 never had it: ARP is
+  `bpa { ip6-mcast-follow off }`, fails 21 checks. IPv4 never had it: ARP is
   a broadcast.
 
 ## 0.152.5 - ssh listen-address takes a list, IPv4 and IPv6

@@ -69,28 +69,22 @@
 # asks, rather than the case a run is lucky enough to hit. Then
 #   9. a tenant VRF (#540): the upstream card into `vrf cust`, and the
 #      upstream must learn its IPv6 address afresh the same way.
-# `unrepaired` turns those red and nothing else, measured on 2026-10-08: 18
+# `unrepaired` turns those red and nothing else, measured on 2026-10-08: 21
 # checks - afresh, the solicited-node Accept and IPv6's SSH, API and SNMP in
 # phases 1, 2 and 3 (once moved, the card stays deaf to multicast until it
-# moves again; phase 3 also lost IPv6's download and TCP syslog), and phase
-# 9's afresh. Phases 4 to 7 are green either way, and rightly: a dataplane
-# started anew binds the card before linux_cp enables its IPv6, and the
-# link's own enable then puts the Accept in the table it is in.
+# moves again; phases 2 and 3 also lose IPv6's download and TCP syslog, and
+# 3 its `ssh listen-address` on IPv6), and phase 9's afresh. Phases 4 to 7
+# are green either way, and rightly: the Accept is in table 100 there, read
+# by the check - a dataplane started anew has the card bound to its table
+# before its IPv6 is enabled, and the link's own enable puts it there.
 #
-# Off is the configuration without the statement, not a broken one: the VRF,
-# the pair in it and both families' defaults are there, so what goes red is
-# exactly what the statement adds. A main-table listener does not answer a
-# connection that arrives on a VRF (l3mdev_accept 0); one that names the
-# management address cannot bind it once the address is the VRF's
-# (EADDRNOTAVAIL: snmpd and sshd do not start); and what the box itself sends
-# follows the main table's default, to the upstream, where the administrator
-# is not. The controls, and the rollback of phase 1 on IPv4, are green
-# either way.
+# OFF-RED-AT-LEAST: 155
 #
-# NOT here: a reboot of a real box, and systemd's own ordering of units; those
-# are the box's. What the reboot does to this feature is phases 6 and 7.
-#
-# OFF-RED-AT-LEAST: 147
+# 155 since #594, measured on 2026-10-08 (155 of 220): afresh is red in each
+# of the seven phases and after the rollback, and rightly - without the
+# statement the card has no IPv6 address in the VRF to be learnt. The
+# solicited-node Accept is green there: the link-local alone keeps the
+# card's IPv6 enabled, and the plugin moves its Accept with it either way.
 #
 # 147 since #593, measured on 2026-10-08: phase 3's `ssh listen-address`
 # changed inside the VRF adds four. Without the statement the commit check
