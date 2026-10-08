@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.152.6 - IPv6 answers at once after a card moves to another table
+
+### Fixed
+
 * **After an interface moved into a VRF, its IPv6 address could not be
   learnt afresh: the dataplane dropped every multicast neighbour
   solicitation for it.** ([#594](https://github.com/andrediashexa/hexarouting/issues/594))
