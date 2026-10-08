@@ -281,6 +281,42 @@ São recusados: nomes que começam por `prisma-` (a `prisma-bp` é da própria c
 
 As VRFs aparecem no `show running-config` lidas do Linux, e o arquivo salvo as cria de novo no boot, antes de o roteamento precisar delas.
 
+### A gerência numa VRF própria
+
+Para a tabela principal levar a default dos assinantes e a gerência continuar acessível pelo gateway dela, a placa de gerência vai para uma VRF como qualquer interface, com as rotas dela (as duas defaults, IPv4 e IPv6, e qualquer outra rede de gerência) no bloco `vrf` do roteamento, e `system` > `management` > `vrf` diz à caixa que os serviços dela moram ali:
+
+```
+vrf mgmt table 100
+interface enp6s18
+  vrf 100
+  exit
+vrf mgmt
+ ip route 0.0.0.0/0 10.40.200.1
+ ip route 10.95.200.0/24 10.40.200.1
+ ipv6 route ::/0 2804:4ed4:1000:6::1
+ exit
+router static
+ 0.0.0.0/0 next-hop 10.40.10.29
+ exit
+system
+ management
+  vrf mgmt
+  exit
+ exit
+```
+
+O `router static` é só a tabela principal. Rota estática de uma VRF vai no bloco `vrf <nome>` dela, fechado com `exit` ou `exit-vrf`.
+
+Faça com `commit confirmed 10` e confirme com `commit` depois de entrar de novo pelo endereço de gerência, por IPv4 e por IPv6. Se a sessão cair, ninguém confirma e o rollback desfaz tudo: a VRF, as regras e os ajustes do kernel. A caixa volta a responder pela tabela principal.
+
+| O quê | Por onde vai |
+|-------|--------------|
+| SSH, API, SNMP e o prisma-web entrando, IPv4 e IPv6 | pela VRF de gerência; a resposta segue a conexão |
+| DNS, NTP, download do `system upgrade`, traps, `system logging`, export do container de log | pelas rotas da gerência, a menos que a tabela principal tenha uma rota específica para o destino |
+| IPFIX por UDP gerado pelo dataplane | pela tabela principal: o VPP manda por conta própria. Coletor atrás da gerência precisa de rota específica na principal, ou do export por TCP |
+
+Sem `system` > `management` > `vrf mgmt` a placa fica na VRF e a caixa **não** responde por ela: os serviços escutam na tabela principal, e o snmpd e o sshd que escutam no endereço de gerência nem sobem. Com ele, a caixa liga `tcp_l3mdev_accept`/`udp_l3mdev_accept`, `ip_nonlocal_bind` (IPv4 e IPv6) e `keep_addr_on_down` do IPv6, e põe duas regras por família para o tráfego dela mesma - no commit e em todo boot, antes de o snmpd, o sshd e a API subirem. `show system management` mostra o que está configurado e o que está valendo no host. `no vrf` dentro de `management` volta tudo para a tabela principal. `commit check` recusa uma VRF que a configuração não cria, ou sem nenhuma interface dentro.
+
 ## Estado administrativo
 
 `shutdown` derruba os dois lados: a interface que encaminha pacotes e o par que o roteamento enxerga. Derrubar só um deixaria o protocolo de roteamento segurando adjacência sobre uma porta que parou de encaminhar — o vizinho acredita que o enlace está bom até o próprio temporizador dele expirar, e o tráfego some nesse meio-tempo.

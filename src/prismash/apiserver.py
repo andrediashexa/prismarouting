@@ -980,6 +980,8 @@ READERS = {
     # The remote syslog destinations and the watcher's word on each (#588
     # phase 3), as `show system logging` reads them.
     "logging_state": lambda sh, a: logging_state(),
+    # Management in its own VRF (#580), as `show system management` reads it.
+    "management": lambda sh, a: sh.management_state(),
     # Routing policy (#538): what `show policy`, `show policy <name>` and
     # `test policy` compute, as data, from the same Shell methods.
     "policies": lambda sh, a: sh.policies_data(),
@@ -3625,6 +3627,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             hw = self._ask(context, "screen", "show system hardware")
             drv = self._ask(context, "drivers")
             lg_text = self._ask(context, "screen", "show system logging")
+            mg_text = self._ask(context, "screen", "show system management")
+            mg = pb.ManagementState(**self._ask(context, "management"))
             lg = []
             for f in self._ask(context, "logging_state"):
                 last = f.pop("last_sent")
@@ -3654,6 +3658,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                                  uptime_seconds=up, cpu_text=cpu, memory_text=mem,
                                  hardware_text=hw,
                                  logging=lg, logging_text=lg_text,
+                                 management=mg, management_text=mg_text,
                                  unsupported_sfp_configured=bool(
                                      drv["unsupported_sfp_configured"]),
                                  unsupported_sfp_booted=bool(

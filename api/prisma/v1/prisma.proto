@@ -758,6 +758,11 @@ message SystemConfig {
   // [vrf <name>]`, `no host <address>`). Not the CGNAT's connection
   // records, which are `nat` > `cgnat` > `logging` and TypedConfig.logging.
   repeated LoggingDestination log_destinations = 11;
+  // system > management (#580): `vrf <name>` when management lives in a VRF
+  // of its own - the box's own traffic leaves by that VRF's default and the
+  // main table's default is the subscribers'; absent is the main table. In
+  // effect at the commit.
+  repeated KeyValue management = 12;
 }
 
 // One remote syslog destination of the box's record of events (#588 phase
@@ -2593,6 +2598,38 @@ message SystemInfo {
   // said; the screen in logging_text.
   repeated LoggingDestinationState logging = 27;
   string logging_text = 28;
+  // `show system management` (#580): the VRF the box's management is in,
+  // as configured and as the host has it; the screen in management_text.
+  ManagementState management = 29;
+  string management_text = 30;
+}
+
+// Management in a VRF of its own (#580): `system` > `management` > `vrf
+// <name>` as configured, beside what the host has in effect.
+message ManagementState {
+  // The VRF configured, and its table; "" and 0 for the main table.
+  string vrf = 1;
+  uint32 table = 2;
+  // The table the box's own traffic is sent to after the main table
+  // without its default (rules 31001 and 31000), per family; 0 for none -
+  // the main table.
+  uint32 ipv4_table = 3;
+  uint32 ipv6_table = 4;
+  // false when the host's settings could not be read; the three below are
+  // then not known.
+  bool known = 5;
+  // tcp/udp_l3mdev_accept: the main table's listeners answer on a VRF.
+  bool listeners_answer_on_vrf = 6;
+  // ip_nonlocal_bind, both families: a listener naming the management
+  // address can bind it once the address is the VRF's.
+  bool listeners_bind_vrf_address = 7;
+  // keep_addr_on_down: a card's IPv6 address survives its move between VRFs.
+  bool ipv6_addresses_kept = 8;
+  // The host's interfaces in the configured VRF, by name.
+  repeated string interfaces = 9;
+  // false when configured and in effect disagree: until the next commit
+  // that changes `system management`, or the next boot.
+  bool in_effect = 10;
 }
 
 // One remote syslog destination and how sending to it goes (#588 phase 3).

@@ -27,6 +27,29 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.4 - management in a VRF of its own
+
+* **Contract:** additive (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).
+  #580: `SystemConfig.management` (12) - `system` > `management`'s
+  statements as KeyValue, today `vrf` = the VRF's name, absent for the main
+  table (11 stays `log_destinations`); `SystemInfo.management` (29) of the
+  new `ManagementState`, and `SystemInfo.management_text` (30), `show system
+  management`. `GetSchema` has one mode more, `system management` (path
+  `["system","management"]`; `vrf <name>`, `no vrf`), 35 in all.
+* **Set it** with Edit at `["system","management"]`: `vrf <name>`, a `vrf
+  <name> table <id>` of the box with an interface in it - `commit check`
+  refuses either missing, in the VTY's words.
+* **ManagementState**: `vrf` and `table` as configured ("" and 0: the main
+  table); `ipv4_table`/`ipv6_table`, the table the box's own traffic goes to
+  per family (0: main); `known` false when the host's settings could not be
+  read; `listeners_answer_on_vrf`, `listeners_bind_vrf_address`,
+  `ipv6_addresses_kept`; `interfaces`, the host's interfaces in the VRF;
+  `in_effect` false while configured and in effect disagree.
+* **Where the API listens does not change**, and a client reaches it on the
+  management addresses as before. A commit that moves management into or out
+  of the VRF may end streams and sessions opened over it: taking management
+  out of the VRF ends the connections made through it.
+
 ## 0.152.3 - BFD notifications
 
 * **Contract:** unchanged since 0.152.2 (`prisma.proto` sha256 `c6816ee42302484e720bc0cf32ade22650f4e2c55d219298928627e96524ecdd`).

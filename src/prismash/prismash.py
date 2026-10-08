@@ -50,7 +50,9 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     CPU_LEVEL, CPU_KEYS, cpu_error,
                     MEMORY_LEVEL, SYSTEM_SETTINGS, HARDWARE_LEVEL,
                     HARDWARE_KEYS, LOGGING_LEVEL, SYSTEM_LEVELS_SAY,
-                    stage_logging,
+                    stage_logging, MANAGEMENT_LEVEL, MANAGEMENT_KEYS,
+                    MANAGEMENT_TABLE_KEY, management_table,
+                    management_vrf_error, management_members_error,
                     CGNAT_MEMORY_MAX_GB,
                     STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     BFD_BLOCK_WORD, BFD_SUBBLOCK_OPENERS, bfd_uses_profile,
@@ -2210,6 +2212,9 @@ SHOW = {
         "memory": ("the RAM by role: configured, and in effect", None),
         "hardware": ("the card drivers' settings: configured, and in effect",
                      None),
+        # #580: which VRF the box's own management is in.
+        "management": ("which VRF the box's management is in: configured, "
+                       "and in effect", None),
         "uptime": ("since when the box, the dataplane and the routing run",
                    None),
         # #588 phase 3: where the record of events goes, and whether it is
@@ -3483,7 +3488,7 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "snmp_changed", "api_changed", "dataplane_if_changed",
                "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
-               "hardware_changed", "logging_changed",
+               "hardware_changed", "logging_changed", "management_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -4516,6 +4521,7 @@ TREE["system"] = {
                  "list", None),
     "logging": ("where the box's events go: remote syslog destinations",
                 None),
+    "management": ("the VRF the box's own management lives in", None),
     "exit": ("leave 'system'", None),
     **_EVERY_LEVEL,
 }
@@ -4557,6 +4563,17 @@ TREE["hardware"] = {
         "unsupported-sfp": ("ixgbe refuses a module it does not list",
                             None)}),
     "exit": ("leave 'hardware'", None),
+    **_EVERY_LEVEL,
+}
+# MANAGEMENT IN A VRF OF ITS OWN (#580), a level under `system`: the VRF's
+# name, a `vrf <name> table <id>` of this configuration. In effect at the
+# commit, and at every boot from tune.env.
+TREE["management"] = {
+    "vrf": ("the VRF management lives in; the main table's default is then "
+            "the subscribers'", "<name>"),
+    "no": ("management back in the main table", {
+        "vrf": ("the box's own traffic by the main table again", None)}),
+    "exit": ("leave 'management'", None),
     **_EVERY_LEVEL,
 }
 TREE["cpu"] = {
@@ -10888,18 +10905,27 @@ class Shell:
         if idx is None:
             self.err(f"interface {ifname}: the dataplane does not have it")
             return False
-        if table:
-            self.api_call("ip_table_add_del",
-                          {"is_add": True,
-                           "table": {"table_id": table, "is_ip6": False,
-                                     "name": f"vrf{table}"}})
-        r = self.api_call("sw_interface_set_table",
-                          {"sw_if_index": idx, "is_ipv6": False,
-                           "vrf_id": table})
-        if r.state != vppapi.OK:
-            self.err_dataplane(f"interface {ifname}: could not move it to vrf {table}: "
-                               f"{r.reason}")
-            return False
+        # BOTH FAMILIES (#580). IPv4 alone was moved, and an interface's
+        # IPv6 stayed in the dataplane's table 0 while its Linux end was in
+        # the VRF: measured in lab/mgmt-vrf.sh, `show int addr` read
+        # "10.200.0.1/24 ip4 table-id 100" beside a bare 2001:db8:200::1/64,
+        # so table 0 - the subscribers' - forwarded to management's IPv6
+        # subnet, and the VRF's IPv6 routes linux_nl copies went to a table
+        # no interface was in. The addresses are already off (apply_delta's
+        # remove, move, add): VPP refuses either move while one is there.
+        for v6 in (False, True):
+            if table:
+                self.api_call("ip_table_add_del",
+                              {"is_add": True,
+                               "table": {"table_id": table, "is_ip6": v6,
+                                         "name": f"vrf{table}"}})
+            r = self.api_call("sw_interface_set_table",
+                              {"sw_if_index": idx, "is_ipv6": v6,
+                               "vrf_id": table})
+            if r.state != vppapi.OK:
+                self.err_dataplane(f"interface {ifname}: could not move it to "
+                                   f"vrf {table}: {r.reason}")
+                return False
         return True
 
     #: IS-IS is not carried over IP. It is OSI NLPID 0x83 straight over the
@@ -11226,7 +11252,7 @@ class Shell:
                 return True
         return False
 
-    def apply_management_path(self, mgmt):
+    def apply_management_path(self, mgmt, table=0):
         """
         Put the management address back, on the pair of the card that moved.
 
@@ -11313,9 +11339,24 @@ class Shell:
         # `replace` and not `add`: this runs on every boot and the second one
         # already has the route. An error there would be a box reporting a
         # failure for having succeeded twice.
+        self.management_way_home(mgmt, table)
+        return True
+
+    def management_way_home(self, mgmt, table=0):
+        """
+        The way back's default route (apply_management_path), into the main
+        table or - when the file puts management in a VRF - into that VRF's
+        `table` (#580). True when it is there.
+
+        INTO MANAGEMENT'S OWN TABLE: in the main table this route sat at
+        metric 0, under FRR's subscribers' default at 20, and linux_nl would
+        have handed it to the dataplane's table 0 - the subscribers' traffic
+        out of the management port, on every boot.
+        """
         gw = mgmt["gateway"]
         rc, out = self.sys._run(["ip", "route", "replace", "default",
-                                 "via", gw, "dev", mgmt["name"]])
+                                 "via", gw, "dev", mgmt["name"]]
+                                + (["table", str(table)] if table else []))
         if rc != 0:
             # SAID AND NOT FATAL. The address is already back, so the box
             # is reachable from its own subnet and an operator on it can
@@ -11325,6 +11366,7 @@ class Shell:
             print_prose(f"this box has {mgmt['address']} on "
                         f"{mgmt['name']} and no way off that subnet; "
                         f"the gateway it recorded is {gw}")
+            return False
         return True
 
     def device_linux_names(self) -> dict:
@@ -11814,6 +11856,14 @@ class Shell:
                                    "it is sent through a VRF this "
                                    "configuration has: 'vrf <name> table <n>'")
                     ok = False
+            # The management VRF is one this configuration makes (#580), and
+            # - when this commit sets it - one an interface is in.
+            why = management_vrf_error(target) or (
+                d.get("management_changed")
+                and management_members_error(target))
+            if why:
+                self.err_prose(*why)
+                ok = False
             # The same refusals `do_config` gives at the prompt, on the paths
             # that never see the prompt: `rollback` to a revision written when
             # the box had a different card in it, and `--load` of a file
@@ -13365,6 +13415,20 @@ class Shell:
                     target.linux_names.pop(ifname, None)
                 continue
             if not self.set_lcp_pair(ifname, host, True):
+                return False
+
+        # MANAGEMENT IN A VRF OF ITS OWN (#580), BEFORE any interface moves
+        # between tables: the rules and the sysctls are what keep the session
+        # this commit is typed in answering once the management interface is
+        # in its VRF, so they are there first. Taking it out the same way:
+        # the box's own traffic is back on the main table before the
+        # interface leaves the VRF.
+        if d.get("management_changed"):
+            ok, msg = self.apply_management(target)
+            if not ok:
+                # The verdict fixed, what failed in prose: `msg` carries an
+                # argv and the host's own words, whose width nothing bounds.
+                self.err_prose("management could not be put in its VRF", msg)
                 return False
 
         # Moving an interface between routing tables, addresses and all.
@@ -16969,6 +17033,20 @@ class Shell:
             else:
                 self.err("exit-address-family: not inside an address-family")
             return True
+        if w == ["exit-vrf"]:
+            # FRR's own spelling for leaving `vrf <name>`, the one its saved
+            # files carry and docs/routing.md shows. It went to FRR as a line
+            # INSIDE the block and left the prompt there: measured in
+            # lab/mgmt-vrf.sh (#580), the `router static` typed after it in
+            # the same batch was handed to FRR within `vrf mgmt` and refused,
+            # and the commit with it. Taken as `exit`, and only inside a VRF,
+            # as exit-address-family is only inside an address-family.
+            if self.frr_ctx and self.frr_ctx[-1].startswith("vrf "):
+                self.candidate.routing.append("exit")
+                self.frr_ctx.pop()
+            else:
+                self.err("exit-vrf: not inside a vrf block")
+            return True
         if w[0] in ("exit", "quit", "end"):
             if self.frr_ctx:
                 # The `exit` goes into the candidate, because without it the
@@ -20264,6 +20342,120 @@ class Shell:
                         "option is on the kernel command line, which ixgbe "
                         "reads when it loads")
 
+    def management_facts(self):
+        """
+        Management in its own VRF as the host has it now (#580), read through
+        the doors: {"tables": the table the box's own traffic is sent to by
+        rule 31001, per family, None where there is no such rule; "main":
+        whether rule 31000 is there, per family; "sysctls": {key: value} of
+        doors.MGMT_SYSCTLS, "" where unread; "links": doors.ip_links() of the
+        host, {} where unread}.
+        """
+        tables, main = {}, {}
+        for fam, argv in zip(("ipv4", "ipv6"), doors.MGMT_RULES_READ):
+            rc, out = self.sys._run(list(argv))
+            tables[fam], main[fam] = None, False
+            for line in (out or "").splitlines() if rc == 0 else ():
+                pref, _, rest = line.partition(":")
+                w = rest.split()
+                if pref.strip() == doors.MGMT_RULE_VRF and \
+                        w[-3:-1] == ["lo", "lookup"] and is_number(w[-1]):
+                    tables[fam] = int(w[-1])
+                elif pref.strip() == doors.MGMT_RULE_MAIN and \
+                        "suppress_prefixlength" in w:
+                    main[fam] = True
+        rc, out = self.sys._run(list(doors.MGMT_SYSCTLS_READ))
+        vals = (out or "").split() if rc == 0 else []
+        sysctls = {k: (vals[i] if len(vals) == len(doors.MGMT_SYSCTLS)
+                       else "") for i, k in enumerate(doors.MGMT_SYSCTLS)}
+        rc, out = self.sys._run(list(doors.LINKS_ARGV))
+        links = doors.ip_links(out) if rc == 0 else {}
+        return {"tables": tables, "main": main, "sysctls": sysctls,
+                "links": links}
+
+    def management_state(self, facts=None):
+        """
+        `show system management` as data (#580), for GetSystem: the VRF
+        configured beside management_facts(), in the fields of the API's
+        ManagementState.
+        """
+        cfg = self.running_config()
+        name = cfg.management.get("vrf", "")
+        table = management_table(cfg)
+        f = facts if facts is not None else self.management_facts()
+        sc = f["sysctls"]
+        known = all(sc.get(k) for k in doors.MGMT_SYSCTLS)
+        on = lambda *keys: known and all(sc.get(k) == "1" for k in keys)
+        t4, t6 = f["tables"].get("ipv4"), f["tables"].get("ipv6")
+        accept = on(*doors.MGMT_SYSCTLS[:2])
+        want = table or None
+        return {"vrf": name, "table": table, "ipv4_table": t4 or 0,
+                "ipv6_table": t6 or 0, "known": known,
+                "listeners_answer_on_vrf": accept,
+                "listeners_bind_vrf_address": on(*doors.MGMT_SYSCTLS[2:4]),
+                "ipv6_addresses_kept": on(doors.MGMT_KEEP_ADDR),
+                "interfaces": sorted(n for n, l in f["links"].items()
+                                     if name and l["master"] == name),
+                "in_effect": (t4, t6) == (want, want)
+                and (not want or bool(f["main"].get("ipv4"))
+                     and bool(f["main"].get("ipv6")))
+                and (not known or accept == bool(want))}
+
+    def show_system_management(self, facts=None):
+        """
+        `show system management` (#580): the VRF management is configured in,
+        beside what the host has in effect - the rules that send the box's
+        own traffic there, the settings that let its listeners answer and
+        bind there, and the interfaces in it. The show_system_hardware()
+        shape; here the two differ only until a commit or a boot puts them
+        in, so a difference is said.
+        """
+        cfg = self.running_config()
+        name = cfg.management.get("vrf", "")
+        table = management_table(cfg)
+        f = facts if facts is not None else self.management_facts()
+        print("configured:")
+        print("  management VRF       "
+              + (f"{name}, table {table}" if table else
+                 f"{name}, which no 'vrf {name} table' makes" if name else
+                 "none: the main table"))
+        print("in effect:")
+        t4, t6 = f["tables"].get("ipv4"), f["tables"].get("ipv6")
+        both = t4 == t6 and f["main"].get("ipv4") and f["main"].get("ipv6")
+        print("  the box's own        "
+              + (f"by table {t4}, after main without its default" if both
+                 and t4 else
+                 "by the main table" if t4 is None and t6 is None else
+                 f"IPv4 by table {t4 or 'main'}, IPv6 by {t6 or 'main'}"))
+        sc = f["sysctls"]
+        on = lambda *keys: all(sc.get(k) == "1" for k in keys)
+        read = all(sc.get(k) for k in doors.MGMT_SYSCTLS)
+        print("  listeners            "
+              + ("unknown: the host's settings could not be read" if not read
+                 else "answer on a VRF, and may bind its addresses"
+                 if on(*doors.MGMT_SYSCTLS[:4]) else
+                 "answer on the main table only"
+                 if not any(sc.get(k) == "1" for k in doors.MGMT_SYSCTLS[:4])
+                 else "partly: " + ", ".join(
+                     k.split(".")[-1] + "=" + sc[k]
+                     for k in doors.MGMT_SYSCTLS[:4])))
+        print("  IPv6 addresses       "
+              + ("kept when a card moves between VRFs"
+                 if on(doors.MGMT_KEEP_ADDR) else
+                 "dropped on a move between VRFs, the kernel's default"
+                 if read else "unknown"))
+        members = sorted(n for n, l in f["links"].items()
+                         if name and l["master"] == name)
+        # Names have no widest: wrapped, at the column the values start in.
+        for i, row in enumerate(console_prose(
+                ", ".join(members) if members else "none",
+                indent=" " * 23)):
+            print(("  interfaces in it     " + row.lstrip()) if i == 0
+                  else row)
+        if not self.management_state(f)["in_effect"]:
+            print_prose("the two differ: a commit that changes 'system "
+                        "management' puts them in, and so does every boot")
+
     def show_system_memory(self):
         """
         The RAM by role (#466): what is configured - tune.env, in effect from
@@ -20464,6 +20656,9 @@ class Shell:
             return
         if line == "show system logging":
             self.show_system_logging()
+            return
+        if line == "show system management":
+            self.show_system_management()
             return
         if line == "show system uptime":
             self.show_system_uptime()
@@ -22509,6 +22704,41 @@ class Shell:
         if rc not in (0, 127):
             print_prose("the tuner did not run, so the boot configuration is "
                         "not recomputed yet: " + " ".join(out.split())[:120])
+        return True, ""
+
+    def apply_management(self, target):
+        """
+        Management in a VRF of its own (#580): the VRF's name and table in
+        tune.env, where the boot's tuner reads them, and the same rules and
+        sysctls put on the host now, through its doors.
+
+        `tcp_l3mdev_accept`/`udp_l3mdev_accept` let sshd, the API's socket
+        and snmpd - which listen in the main table - answer a connection that
+        arrives on the VRF; a TCP reply follows its connection's VRF. Two
+        rules for what the box itself originates (`iif lo`): the main table
+        without its default first, so a peer or a collector the main table
+        has a route to is still reached by it, then the VRF's table, whose
+        default is management's. The main table's default is then the
+        subscribers' alone.
+        """
+        name = target.management.get("vrf", "")
+        table = management_table(target)
+        for key, value in ((MANAGEMENT_KEYS["vrf"], name),
+                           (MANAGEMENT_TABLE_KEY, str(table) if table else "")):
+            ok, why = self.write_tune_key(key, value)
+            if not ok:
+                return False, why
+        for argv, may_fail in doors.management_argvs(table):
+            rc, out = self.sys._run(argv)
+            if rc != 0 and not may_fail:
+                return False, f"{' '.join(argv)}: {out.strip()[:120]}"
+        if table:
+            print_prose(f"management: in VRF {name}, table {table}")
+            print_prose("the box's own traffic leaves by that VRF's default "
+                        "unless the main table has a more specific route; "
+                        "the main table's default is the subscribers'")
+        else:
+            print("management: in the main table")
         return True, ""
 
     def apply_cgnat_memory(self, gb):
@@ -26041,7 +26271,8 @@ class Shell:
             # abandon: `err` has already counted the failure, which is what
             # prisma-routing.service and the exit status read.
             if way_back:
-                self.apply_management_path(way_back)
+                self.apply_management_path(way_back,
+                                           management_table(target))
             return
 
         # Checked before it is applied, and refused whole if the check refuses.
@@ -26068,7 +26299,17 @@ class Shell:
         # still wants its pools and its routing - a box that forwards and is
         # reachable only at its console is better than one that is neither.
         if way_back:
-            self.apply_management_path(way_back)
+            self.apply_management_path(way_back, management_table(target))
+        # #580: the running config reads management back from tune.env, so
+        # the commit below sees no change and would put no rule in. The
+        # tuner puts them in at every boot, before the dataplane; this is the
+        # same set again, for a boot whose tuner did not run - without the
+        # rules the box's own traffic follows the subscribers' default and
+        # its replies to an SSH session in the VRF leave by the wrong table.
+        if target.management.get("vrf"):
+            ok, msg = self.apply_management(target)
+            if not ok:
+                self.err_prose("management could not be put in its VRF", msg)
 
         # #573: a file saved before `mode bpa` says `mode dynamic`. It is
         # read as the BPA pool it is, said here, and - once applied - written
@@ -26084,7 +26325,17 @@ class Shell:
             print_prose("the file is rewritten with it once applied (#573)",
                         indent="    ")
 
-        if self.apply(target):
+        applied = self.apply(target)
+        # AND AGAIN ONCE THE CARD IS IN ITS VRF (#580). The apply above puts
+        # the pair in the VRF device, and enslaving a device cycles it: the
+        # kernel flushes every route through it, the default just put in
+        # the VRF's table included - measured on Debian's 6.1, a route via
+        # a veth in table 100 was gone after `ip link set ... master`.
+        # FRR's `vrf mgmt` default comes back by itself; this one is the
+        # box's own way home and nothing else puts it back.
+        if way_back and management_table(target):
+            self.management_way_home(way_back, management_table(target))
+        if applied:
             if migrated and from_file:
                 # The FULL file (#575): `target` may be short of what waits
                 # for a card, and the file is never trimmed.
@@ -26373,7 +26624,17 @@ def main():
     # actually passed - prisma-routing-confirm.service fires it every few
     # seconds while a window is open.
     if args and args[0] == "--confirm-expired":
-        return sh.confirm_expired()
+        # UNATTENDED, LIKE A BOOT: an SNMP setting snmpd does not come up with
+        # is a warning and is tried again after the interfaces (#591), never
+        # the end of the revert. Measured in lab/mgmt-vrf.sh off (#580): the
+        # card moved into a VRF without `system management`, snmpd could not
+        # bind its listen-address, the revert stopped at SNMP - before the
+        # interfaces - and the box stayed in the VRF nobody could reach it
+        # on, which is the one box `commit confirmed` exists to bring back.
+        sh.booting = True
+        rc = sh.confirm_expired()
+        sh.retry_snmp()
+        return rc
 
     cmds = []
     while args:

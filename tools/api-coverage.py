@@ -104,6 +104,8 @@ OPERATIONAL_RULES = [
      "(#588 phase 3)"),
     (["show", "system", "hardware"], "typed", "OperationalService.GetSystem",
      "unsupported_sfp_configured/booted (#574)"),
+    (["show", "system", "management"], "typed", "OperationalService.GetSystem",
+     "management: the VRF configured and in effect; management_text (#580)"),
     (["show", "system", "cpu"], "typed", "OperationalService.GetSystem",
      "worker_load per worker; per-core figures are text (phase 7)"),
     # #590: each port's module and its optical levels.
@@ -358,6 +360,7 @@ TYPED_PHASE4 = {
     "system cpu": (("*", "system", False),),
     "system hardware": (("*", "system", False),),
     "system logging": (("*", "system", False),),
+    "system management": (("*", "system", False),),
     "system dataplane": (("*", "system", False),),
     "user": (("*", "users", False),),
     "snmp-user": (("*", "snmp_users", False),),

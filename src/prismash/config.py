@@ -191,8 +191,80 @@ def hardware_error(key, value):
 LOGGING_LEVEL = "logging"
 #: What a `system` level other than these is told, at the prompt and in a
 #: file. One row on an 80-column console with "error: " in front of it.
-SYSTEM_LEVELS_SAY = ("under 'system': 'dataplane', 'cpu', 'memory', "
-                     "'hardware' or 'logging'")
+#: With `management` (#580) the quoted list no longer fits that row, so
+#: the names go unquoted.
+SYSTEM_LEVELS_SAY = ("under 'system': dataplane, cpu, memory, hardware, "
+                     "logging, management")
+#: Management in a VRF of its own (#580): `system` > `management` > `vrf
+#: <name>`, beside `hardware`. The name is a VRF device of this configuration
+#: (`vrf <name> table <id>`, #540), and the management interface is put in it
+#: by its own `vrf <id>`. What this statement adds is the box's side: the
+#: services that listen in the main table answer on that VRF too
+#: (tcp/udp_l3mdev_accept), and what the box itself sends - DNS, NTP, the
+#: upgrade's download, SNMP traps, the log export over TCP - leaves by the
+#: VRF's default unless the main table has a more specific route for it, so
+#: the main table's default is free for the subscribers. Asked for on
+#: 10.40.200.166, where management is enp6s18 (10.40.200.1) and the
+#: subscribers' default is the SW-CORE on VLAN 802.
+MANAGEMENT_LEVEL = "management"
+MANAGEMENT_KEYS = {"vrf": "PRISMA_MANAGEMENT_VRF"}
+#: tune.env's second key, which no statement names: the VRF's table, written
+#: by the commit beside the name so the boot's tuner can put the rules in
+#: before the VRF device exists - `prismash --load` makes the device later.
+MANAGEMENT_TABLE_KEY = "PRISMA_MANAGEMENT_TABLE"
+
+
+def management_error(key, value):
+    """Why `management <key> <value>` cannot be taken, or None."""
+    if key == "vrf":
+        why = policy_mod.vrf_name_error(value) if value else "no name"
+        if why or value == "default" \
+                or value.startswith(VRF_RESERVED_PREFIX):
+            return ("expected: vrf <name>, a VRF of this configuration "
+                    "('vrf <name> table <id>')")
+        return None
+    return "under 'management' there is 'vrf'"
+
+
+def management_table(cfg) -> int:
+    """The table of the management VRF `cfg` names, or 0: none named, or a
+    name with no `vrf <name> table <id>` beside it."""
+    name = (getattr(cfg, "management", None) or {}).get("vrf", "")
+    return int(cfg.vrf_devices.get(name, 0)) if name else 0
+
+
+def management_vrf_error(cfg):
+    """
+    Why `cfg`'s `management vrf` cannot be applied, as (verdict, prose), or
+    None (#580): the VRF must be one this configuration makes, or the rules
+    would send the box's own traffic to a table nothing fills.
+    """
+    name = (getattr(cfg, "management", None) or {}).get("vrf", "")
+    if name and name not in cfg.vrf_devices:
+        return (f"management vrf {name}: no such VRF here",
+                f"'vrf {name} table <id>' makes it, and the management "
+                f"interface goes in with its own 'vrf <id>'")
+    return None
+
+
+def management_members_error(cfg):
+    """
+    Why `cfg`'s `management vrf` would strand the box's own traffic, as
+    (verdict, prose), or None (#580): a VRF no interface is in. The rules
+    send what the box originates to the VRF's table, and zebra gives every
+    VRF table an unreachable default - so it would go nowhere, the replies
+    to a session opened on the main table with it. Asked of a commit that
+    changes the setting, never of a boot: a card missing at boot (#575) is
+    a box that comes up without it, not one that refuses its file.
+    """
+    table = management_table(cfg)
+    if table and table not in set(getattr(cfg, "vrfs", {}).values()):
+        name = cfg.management["vrf"]
+        return (f"management vrf {name}: no interface is in it",
+                f"the management interface goes in with 'vrf {table}', in "
+                f"this commit or an earlier one; the box's own traffic "
+                f"would otherwise go to a table with no way out")
+    return None
 
 
 #: The levels under `system` that are tune.env settings: each one's keys and
@@ -200,7 +272,8 @@ SYSTEM_LEVELS_SAY = ("under 'system': 'dataplane', 'cpu', 'memory', "
 #: readback and the commit cannot each know a different list.
 SYSTEM_SETTINGS = {CPU_LEVEL: (CPU_KEYS, cpu_error),
                    MEMORY_LEVEL: (MEMORY_KEYS, memory_error),
-                   HARDWARE_LEVEL: (HARDWARE_KEYS, hardware_error)}
+                   HARDWARE_LEVEL: (HARDWARE_KEYS, hardware_error),
+                   MANAGEMENT_LEVEL: (MANAGEMENT_KEYS, management_error)}
 #: The most memory `cgnat memory` takes, in GB (#454): a bound on a typo, not
 #: on a machine. The tuner caps what is asked at what the box's RAM can give,
 #: and says so.
@@ -363,7 +436,7 @@ NAT64_LEVEL_SAYS = ("under 'nat64' there are pools; interfaces, logging and "
 
 
 def nest_system(dataplane_if, cpu=None, memory=None,
-                hardware=None, logging=None) -> list[str]:
+                hardware=None, logging=None, management=None) -> list[str]:
     """
     The `system` block a file carries (#457): `dataplane` for the card, and
     `cpu` for the cores by role (#466), each only when it says something -
@@ -376,7 +449,8 @@ def nest_system(dataplane_if, cpu=None, memory=None,
         body += [f" {DATAPLANE_LEVEL}", f"  interface {dataplane_if}",
                  "  exit"]
     for level, held in ((CPU_LEVEL, cpu or {}), (MEMORY_LEVEL, memory or {}),
-                        (HARDWARE_LEVEL, hardware or {})):
+                        (HARDWARE_LEVEL, hardware or {}),
+                        (MANAGEMENT_LEVEL, management or {})):
         if held:
             body.append(f" {level}")
             body += [f"  {k} {held[k]}" for k in SYSTEM_SETTINGS[level][0]
@@ -3811,6 +3885,10 @@ class Config:
         # phase 3), under `system` > `logging`: eventfwd.parse_host()'s
         # dicts, in the order they were typed. Read back from logging.conf.
         self.logging_hosts: list = []
+        # Management in a VRF of its own (#580), the same kind under
+        # `system` > `management`: in effect at the commit, and at every boot
+        # from tune.env.
+        self.management: dict[str, str] = {}
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -3988,7 +4066,8 @@ class Config:
         # carries no `shutdown`: recording an absence would put a line on every
         # box and make the file describe a decision nobody took.
         out += nest_system(self.dataplane_if, self.cpu, self.memory,
-                           self.hardware, self.logging_hosts)
+                           self.hardware, self.logging_hosts,
+                           self.management)
         out += policy_mod.nest(self.policy)
         if self.hostname:
             out.append(f"hostname {self.hostname}")
@@ -5786,6 +5865,11 @@ class Config:
             "hardware_changed": self.hardware != other.hardware,
             # One flag: logging.conf is written whole (#588 phase 3).
             "logging_changed": self.logging_hosts != other.logging_hosts,
+            # The VRF's table is part of the setting: `vrf mgmt table 101`
+            # over 100 moves the box's own traffic to another table.
+            "management_changed": (self.management != other.management
+                                   or management_table(self)
+                                   != management_table(other)),
             "cgnat_memory_changed":
                 self.cgnat_memory_gb != other.cgnat_memory_gb,
             "snmp_changed": snmp_changed,

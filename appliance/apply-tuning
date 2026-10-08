@@ -29,6 +29,10 @@ LIVEDIR=$ROOT/run/live
 : "${PRISMA_BUFFERS_PER_NUMA:=}"
 : "${PRISMA_CGNAT_WORKERS:=}"
 : "${PRISMA_ALLOW_UNSUPPORTED_SFP:=}"
+: "${PRISMA_MANAGEMENT_VRF:=}"
+: "${PRISMA_MANAGEMENT_TABLE:=}"
+IP=${PRISMA_IP:-ip}
+SYSCTL=${PRISMA_SYSCTL:-sysctl}
 
 # tune.env is a file an operator edits by hand, and every value in it used to
 # be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
@@ -118,6 +122,19 @@ case "$PRISMA_ALLOW_UNSUPPORTED_SFP" in
     echo "  It is allow or refuse - or empty, which is refuse." >&2
     say_using "refuse: ixgbe takes only the modules it lists"
     PRISMA_ALLOW_UNSUPPORTED_SFP= ;;
+esac
+
+# MANAGEMENT IN A VRF OF ITS OWN (#580): `system` > `management` > `vrf
+# <name>`, whose table the VTY writes beside the name. A table that is not one
+# - empty, a word, the kernel's own 253-255 - costs the box the setting, never
+# its tuning, and never a rule pointing the box's own traffic nowhere.
+case "$PRISMA_MANAGEMENT_TABLE" in
+  "") ;;
+  *[!0-9]*|253|254|255)
+    say_refused PRISMA_MANAGEMENT_TABLE "$PRISMA_MANAGEMENT_TABLE"
+    echo "  It is a VRF's table, 1 to 4294967295 and not 253-255." >&2
+    say_using "management in the main table"
+    PRISMA_MANAGEMENT_TABLE= ;;
 esac
 
 # The governor is runtime state, not a kernel parameter: asking for it in
@@ -392,6 +409,44 @@ fi
 printf 'reserved 1G pages now: %s\n' \
   "$(cat "$HUGEPAGES" 2>/dev/null \
      || echo '(no 1G support)')" >&2
+
+# MANAGEMENT'S RULES AND SYSCTLS (#580), runtime state like the governor: put
+# in at every boot, before the dataplane, the containers and FRR, so the box's
+# own traffic and its listeners are on the management VRF from the first
+# packet. The rules name the table, not the device: `prismash --load` makes
+# the VRF device later in the boot, and the rules wait for it. The same
+# commands the VTY runs at a commit (doors.management_argvs).
+for fam in "" -6; do
+  for pref in 31000 31001; do
+    # shellcheck disable=SC2086
+    $IP $fam rule del pref $pref 2>/dev/null
+  done
+done
+if [ -n "$PRISMA_MANAGEMENT_TABLE" ]; then
+  on=1
+else
+  on=0
+fi
+# l3mdev accept, so the listeners answer on the VRF; nonlocal bind, so one
+# that names the management address can bind it once that address is the
+# VRF's (snmpd's agentAddress, sshd's ListenAddress); and IPv6 keeping its
+# addresses when the VTY moves the card into the VRF, which cycles it. The
+# reasons, measured, are at doors.MGMT_SYSCTLS; the last is only turned on.
+for key in net.ipv4.tcp_l3mdev_accept net.ipv4.udp_l3mdev_accept \
+           net.ipv4.ip_nonlocal_bind net.ipv6.ip_nonlocal_bind; do
+  $SYSCTL -q -w "$key=$on" >/dev/null 2>&1
+done
+if [ -n "$PRISMA_MANAGEMENT_TABLE" ]; then
+  $SYSCTL -q -w net.ipv6.conf.all.keep_addr_on_down=1 >/dev/null 2>&1
+  for fam in "" -6; do
+    # shellcheck disable=SC2086
+    $IP $fam rule add pref 31000 iif lo lookup main suppress_prefixlength 0
+    # shellcheck disable=SC2086
+    $IP $fam rule add pref 31001 iif lo lookup "$PRISMA_MANAGEMENT_TABLE"
+  done
+  echo "management: in VRF ${PRISMA_MANAGEMENT_VRF:-?}," \
+       "table $PRISMA_MANAGEMENT_TABLE" >&2
+fi
 
 after=$(cat "$GRUBFILE" 2>/dev/null || true)
 

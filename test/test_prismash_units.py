@@ -2575,6 +2575,312 @@ check("error: logging: " in text and "No such file or directory" in text,
       f"a logging.conf that cannot be written fails the commit: {text!r}")
 os.remove(_conf)
 ok("system > logging: typed, refused, committed, read back and shown")
+print("\n=== system > management: management in a VRF of its own (#580) ===")
+check(_config.management_error("vrf", "mgmt") is None
+      and _config.management_error("vrf", "prisma-bp").startswith("expected")
+      and _config.management_error("vrf", "default").startswith("expected")
+      and "'vrf'" in _config.management_error("x", "1"),
+      "management_error: a VRF's name, never the box's own or 'default'")
+_tune = os.path.join(_root, "tune-mg", "tune.env")
+_saved_te = prismash.Shell.TUNE_ENV
+try:
+    prismash.Shell.TUNE_ENV = _tune
+    os.makedirs(os.path.dirname(_tune), exist_ok=True)
+    with open(_tune, "w") as _f:
+        _f.write("PRISMA_CGNAT_MEMORY_GB=8\n")
+    sh = shell()
+    _real = lambda: prismash.Shell.running_config(sh)
+    sh.candidate = _real()
+    check(sh.candidate.management == {}, "nothing set, nothing read back")
+    for _l in ("system", "management", "vrf mgmt"):
+        driven(lambda: sh.do_config(_l))
+    check(sh.candidate.management == {"vrf": "mgmt"},
+          f"typed under system > management: {sh.candidate.management}")
+    # A VRF the configuration does not make is refused at commit check: the
+    # rules would send the box's own traffic to a table nothing fills.
+    check(_config.management_vrf_error(sh.candidate) is not None
+          and "no such VRF" in _config.management_vrf_error(sh.candidate)[0],
+          "management vrf naming no `vrf <name> table <id>` is refused")
+    sh.candidate.vrf_devices["mgmt"] = 100
+    check(_config.management_vrf_error(sh.candidate) is None
+          and _config.management_table(sh.candidate) == 100,
+          "and taken once the VRF is made, its table read from it")
+    _calls = []
+    _run0 = sh.sys._run
+    sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh.apply_management(sh.candidate))
+    sh.sys._run = _run0
+    with open(_tune) as _f:
+        _got = _f.read()
+    check("PRISMA_MANAGEMENT_VRF=mgmt\n" in _got
+          and "PRISMA_MANAGEMENT_TABLE=100\n" in _got
+          and "PRISMA_CGNAT_MEMORY_GB=8\n" in _got,
+          f"the name and the table reach tune.env, the rest stays: {_got!r}")
+    check(_calls == [a for a, _ in prismash.doors.management_argvs(100)],
+          f"and the host's rules and sysctls are put in now: {_calls}")
+    check(["ip", "rule", "add", "pref", "31001", "iif", "lo", "lookup",
+           "100"] in _calls
+          and ["sysctl", "-q", "-w", "net.ipv4.tcp_l3mdev_accept=1"]
+          in _calls, "the VRF's table for the box's own traffic, and the "
+                     "listeners answering on it")
+    check(all(prismash.doors.management_door(a) for a in _calls),
+          "every one a door the host opens")
+    check("management: in VRF mgmt, table 100" in text,
+          f"the commit says where management is: {text!r}")
+    check(_real().management == {"vrf": "mgmt"},
+          "read back into the running configuration")
+    check("system\n management\n  vrf mgmt\n  exit" in _real().text(),
+          "which writes it in the system block")
+    # The table is part of the setting: the VRF given another one moves it.
+    _other = _real()
+    _other.vrf_devices["mgmt"] = 101
+    _base = _real()
+    _base.vrf_devices["mgmt"] = 100
+    check(_base.delta_to(_other)["management_changed"],
+          "a new table for the VRF is a change to apply")
+    # A failed rule fails the commit, named; a missing old rule does not.
+    sh.sys._run = lambda argv, *a, **k: (
+        (2, "RTNETLINK answers: No such file or directory")
+        if argv[:3] == ["ip", "rule", "del"] or argv[:4] == ["ip", "-6",
+                                                            "rule", "del"]
+        else (0, ""))
+    ok_, why_ = sh.apply_management(sh.candidate)
+    check(ok_, f"an old rule already gone is not a failure: {why_}")
+    sh.sys._run = lambda argv, *a, **k: ((1, "denied") if "add" in argv
+                                         else (0, ""))
+    ok_, why_ = sh.apply_management(sh.candidate)
+    check(not ok_ and "rule add" in why_,
+          f"a rule that cannot be added fails the commit, named: {why_}")
+    sh.sys._run = _run0
+    # Out of it: the key written empty, the rules removed, the sysctls off.
+    driven(lambda: sh.do_config("no vrf"))
+    check(sh.candidate.management == {}, "'no vrf' takes it out")
+    _calls = []
+    sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh.apply_management(sh.candidate))
+    sh.sys._run = _run0
+    with open(_tune) as _f:
+        _got = _f.read()
+    check("PRISMA_MANAGEMENT_VRF=\n" in _got
+          and "PRISMA_MANAGEMENT_TABLE=\n" in _got and _real().management == {},
+          f"and the file says the main table again: {_got!r}")
+    check(not any("add" in a for a in _calls)
+          and ["sysctl", "-q", "-w", "net.ipv4.tcp_l3mdev_accept=0"] in _calls,
+          f"no rule added, the sysctls off: {_calls}")
+    # A tune.env the box cannot write fails the commit, said by its level.
+    prismash.Shell.TUNE_ENV = os.path.join(_root, "no-such", "deeper", "mg")
+    sh3 = shell()
+    import copy as _copy
+    _run3 = prismash.Shell.running_config(sh3)
+    _run3.vrf_devices["mgmt"] = 100
+    # An interface in it, or the commit check refuses it before the write.
+    _run3.vrfs["pg0"] = 100
+    sh3.running_config = lambda: _copy.deepcopy(_run3)
+    sh3.candidate = _copy.deepcopy(_run3)
+    sh3.candidate.management = {"vrf": "mgmt"}
+    rv, text = driven(lambda: sh3.do_commit([]))
+    check("management could not be put in its VRF" in text,
+          f"an unwritable tune.env fails the commit: {text!r}")
+    # And the commit's own check refuses a VRF the configuration does not
+    # make, before anything reaches the host.
+    sh4 = shell()
+    sh4.running_config = lambda: _copy.deepcopy(_run3)
+    sh4.candidate = _copy.deepcopy(_run3)
+    del sh4.candidate.vrf_devices["mgmt"]
+    sh4.candidate.management = {"vrf": "mgmt"}
+    _calls4 = []
+    sh4.sys._run = lambda argv, *a, **k: (_calls4.append(list(argv)), (0, ""))[1]
+    rv, text = driven(lambda: sh4.do_commit([]))
+    check("management vrf mgmt: no such VRF here" in text
+          and not any("rule" in a for a in _calls4),
+          f"commit refuses management in a VRF it does not make: {text!r}")
+finally:
+    prismash.Shell.TUNE_ENV = _saved_te
+ok("system > management: stored, put on the host now, shown")
+
+print("\n=== the boot's way back goes into management's table (#580) ===")
+sh = shell()
+_calls = []
+sh.sys._run = lambda argv, *a, **k: (_calls.append(list(argv)), (0, ""))[1]
+sh.dataplane_if_with_mac = lambda mac: "enp6s18"
+sh.set_admin = lambda *a: True
+sh.device_linux_names = lambda: {"enp6s18": "enp6s18"}
+sh.dp.run = lambda cmd: (0, "10.40.200.166/24")
+_mg = {"mac": "aa", "name": "enp6s18", "address": "10.40.200.166/24",
+       "gateway": "10.40.200.1"}
+driven(lambda: sh.apply_management_path(_mg, 100))
+check(["ip", "route", "replace", "default", "via", "10.40.200.1", "dev",
+       "enp6s18", "table", "100"] in _calls,
+      f"with management in table 100 the route goes there, not in main: "
+      f"{_calls}")
+check(prismash.doors.verb_of(["ip", "route", "replace", "default", "via",
+                              "10.40.200.1", "dev", "enp6s18", "table",
+                              "100"]) is not None,
+      "and the host opens that door")
+_calls.clear()
+driven(lambda: sh.apply_management_path(_mg))
+check(["ip", "route", "replace", "default", "via", "10.40.200.1", "dev",
+       "enp6s18"] in _calls, f"without it, the main table as before: {_calls}")
+# management_way_home(): the route alone, which load() puts in again once the
+# apply has moved the card into its VRF; a refusal is said and returned.
+_calls.clear()
+rv, text = driven(lambda: sh.management_way_home(_mg, 100))
+check(rv and _calls == [["ip", "route", "replace", "default", "via",
+                         "10.40.200.1", "dev", "enp6s18", "table", "100"]]
+      and text == "", f"management_way_home: one route, said nothing: {_calls}")
+sh.sys._run = lambda argv, *a, **k: (2, "Error: Nexthop has invalid gateway.")
+rv, text = driven(lambda: sh.management_way_home(_mg, 100))
+check(rv is False and "the default route could not be put back" in text
+      and "gateway it recorded is 10.40.200.1" in text,
+      f"management_way_home: a refusal said, and False: {text!r}")
+ok("the way back: management's table when it has one")
+
+print("\n=== management in a VRF: what the commit refuses, what the host has (#580) ===")
+_mc = Config.parse("vrf mgmt table 100\ninterface pg0\n vrf 100\n exit\n"
+                   "system\n management\n  vrf mgmt\n  exit\n exit\n")
+check(_config.management_members_error(_mc) is None,
+      "management_members_error: a VRF an interface is in is taken")
+_mc.vrfs = {}
+_why = _config.management_members_error(_mc)
+check(_why and _why[0] == "management vrf mgmt: no interface is in it"
+      and "'vrf 100'" in _why[1],
+      f"management_members_error: a VRF with no interface in it, refused: {_why}")
+_mc.management = {}
+check(_config.management_members_error(_mc) is None,
+      "and nothing to say without the setting")
+# Through `commit check`, and only when this commit sets it: a boot whose
+# management card is missing (#575) must still load.
+sh = shell(running="vrf mgmt table 100\n")
+sh.candidate = Config.parse("vrf mgmt table 100\nsystem\n management\n"
+                            "  vrf mgmt\n  exit\n exit\n")
+rv, text = driven(lambda: sh.do_commit(["check"]))
+check("management vrf mgmt: no interface is in it" in text,
+      f"commit check refuses management in an empty VRF: {text!r}")
+sh = shell(running="vrf mgmt table 100\nsystem\n management\n  vrf mgmt\n"
+                   "  exit\n exit\n")
+sh.candidate = Config.parse("vrf mgmt table 100\nsystem\n management\n"
+                            "  vrf mgmt\n  exit\n exit\nhostname edge\n")
+rv, text = driven(lambda: sh.do_commit(["check"]))
+check("no interface is in it" not in text,
+      f"and a commit that does not change it is not refused for it: {text!r}")
+# The doors: turning it on sets keep_addr_on_down, turning it off leaves it.
+_on = [" ".join(a) for a, _ in prismash.doors.management_argvs(100)]
+_off = [" ".join(a) for a, _ in prismash.doors.management_argvs(0)]
+check("sysctl -q -w net.ipv4.ip_nonlocal_bind=1" in _on
+      and "sysctl -q -w net.ipv6.ip_nonlocal_bind=1" in _on
+      and "sysctl -q -w net.ipv6.conf.all.keep_addr_on_down=1" in _on,
+      f"management_argvs: on, a listener may bind the address and IPv6 keeps "
+      f"it: {_on}")
+check("sysctl -q -w net.ipv4.ip_nonlocal_bind=0" in _off
+      and not [a for a in _off if "keep_addr_on_down" in a],
+      f"management_argvs: off, nonlocal bind off and keep_addr left: {_off}")
+check(prismash.doors.mgmt_table_ok(100) and prismash.doors.mgmt_table_ok("4294967295")
+      and not any(prismash.doors.mgmt_table_ok(t)
+                  for t in (0, 253, 254, 255, "main", "-1", "100x")),
+      "mgmt_table_ok: a VRF's table, never the kernel's own, main or a word")
+check(all(prismash.doors.management_door(a) for a, _ in
+          prismash.doors.management_argvs(100)
+          + prismash.doors.management_argvs(0))
+      and not prismash.doors.management_door(
+          ["sysctl", "-q", "-w", "net.ipv4.ip_forward=1"]),
+      "management_door: each of them, and no other sysctl")
+# management_facts(): the host's rules, settings and links, read through the
+# doors and parsed.
+_RULES4 = ("0:\tfrom all lookup local\n1000:\tfrom all lookup [l3mdev-table]\n"
+           "31000:\tfrom all iif lo lookup main suppress_prefixlength 0\n"
+           "31001:\tfrom all iif lo lookup 100\n32766:\tfrom all lookup main\n")
+_LINKS = ("9: mgmt: <NOARP,MASTER,UP> mtu 65575 \\    vrf table 100 \n"
+          "10: enp6s18: <UP> mtu 1500 master mgmt \\    vrf_slave table 100 \n"
+          "11: enp1s0: <UP> mtu 1500 \n")
+sh = shell(runner=RecRunner({("ip", "rule"): (0, _RULES4),
+                             ("ip", "-6", "rule"): (0, _RULES4),
+                             ("sysctl", "-n"): (0, "1\n1\n1\n1\n1\n"),
+                             ("ip", "-d", "-o", "link"): (0, _LINKS)}),
+           running="vrf mgmt table 100\ninterface pg0\n vrf 100\n exit\n"
+                   "system\n management\n  vrf mgmt\n  exit\n exit\n")
+_f = sh.management_facts()
+check(_f["tables"] == {"ipv4": 100, "ipv6": 100}
+      and _f["main"] == {"ipv4": True, "ipv6": True}
+      and set(_f["sysctls"].values()) == {"1"}
+      and _f["links"]["enp6s18"]["master"] == "mgmt",
+      f"management_facts: the rules, the settings and the members read: {_f}")
+check([a for a in sh.sys._run.asked] == [list(prismash.doors.MGMT_RULES_READ[0]),
+                                         list(prismash.doors.MGMT_RULES_READ[1]),
+                                         list(prismash.doors.MGMT_SYSCTLS_READ),
+                                         list(prismash.doors.LINKS_ARGV)]
+      and all(tuple(a) in prismash.doors.QUERIES for a in sh.sys._run.asked),
+      f"management_facts: each a question any account may ask the host: "
+      f"{sh.sys._run.asked}")
+rv, text = driven(lambda: sh.show_system_management(_f))
+check(rows(text) == ["configured:",
+                     "  management VRF       mgmt, table 100",
+                     "in effect:",
+                     "  the box's own        by table 100, after main without its default",
+                     "  listeners            answer on a VRF, and may bind its addresses",
+                     "  IPv6 addresses       kept when a card moves between VRFs",
+                     "  interfaces in it     enp6s18"],
+      f"show_system_management: configured and in effect, agreeing: {text!r}")
+_st = sh.management_state(_f)
+check(_st == {"vrf": "mgmt", "table": 100, "ipv4_table": 100,
+              "ipv6_table": 100, "known": True,
+              "listeners_answer_on_vrf": True,
+              "listeners_bind_vrf_address": True, "ipv6_addresses_kept": True,
+              "interfaces": ["enp6s18"], "in_effect": True},
+      f"management_state: GetSystem's fields, agreeing: {_st}")
+_f2 = {"tables": {"ipv4": None, "ipv6": None},
+       "main": {"ipv4": False, "ipv6": False},
+       "sysctls": {k: "0" for k in prismash.doors.MGMT_SYSCTLS}, "links": {}}
+rv, text = driven(lambda: sh.show_system_management(_f2))
+check("  the box's own        by the main table" in rows(text)
+      and "  listeners            answer on the main table only" in rows(text)
+      and "  interfaces in it     none" in rows(text)
+      and "the two differ" in text,
+      f"show_system_management: a host without them, said to differ: {text!r}")
+check(sh.management_state(_f2)["in_effect"] is False
+      and sh.management_state(_f2)["ipv4_table"] == 0,
+      "management_state: and not in effect, its tables 0")
+sh = shell(runner=RecRunner({("ip",): (1, ""), ("sysctl",): (1, "")}))
+rv, text = driven(lambda: sh.show_system_management())
+check("  management VRF       none: the main table" in rows(text)
+      and "unknown: the host's settings could not be read" in text
+      and "the two differ" not in text
+      and all(len(l) <= 79 for l in rows(text)),
+      f"show_system_management: nothing configured, nothing readable: {text!r}")
+ok("management in a VRF: refused when empty, and shown as the host has it")
+
+print("\n=== set_vrf moves both families in the dataplane (#580) ===")
+_api = RecApi()
+_api.interface_index = lambda name: 7
+sh = shell(api=_api)
+rv, text = driven(lambda: sh.set_vrf("enp6s18", 100))
+check(rv and [(m, a.get("is_ipv6"), a.get("vrf_id")) for m, a in _api.calls
+              if m == "sw_interface_set_table"]
+      == [("sw_interface_set_table", False, 100),
+          ("sw_interface_set_table", True, 100)]
+      and [a["table"]["is_ip6"] for m, a in _api.calls
+           if m == "ip_table_add_del"] == [False, True],
+      f"set_vrf: IPv4 and IPv6 into table 100, each table made: {_api.calls}")
+_api.calls.clear()
+driven(lambda: sh.set_vrf("enp6s18", 0))
+check([(a["is_ipv6"], a["vrf_id"]) for m, a in _api.calls
+       if m == "sw_interface_set_table"] == [(False, 0), (True, 0)]
+      and not [m for m, a in _api.calls if m == "ip_table_add_del"],
+      f"set_vrf: and both back to table 0, no table made: {_api.calls}")
+ok("set_vrf: an interface's IPv6 goes where its IPv4 goes")
+
+print("\n=== exit-vrf at the prompt leaves the vrf block (#580) ===")
+sh = shell()
+sh.candidate = Config.parse("")
+sh.mode = "config"
+for _l in ("vrf mgmt", "ip route 0.0.0.0/0 10.40.200.1", "exit-vrf"):
+    driven(lambda: sh.do_config(_l))
+check(sh.frr_ctx == [] and sh.candidate.routing[-1] == "exit",
+      f"exit-vrf closes the block as exit does: {sh.frr_ctx} "
+      f"{sh.candidate.routing}")
+rv, text = driven(lambda: sh.do_config("exit-vrf"))
+check("error: exit-vrf: not inside a vrf block" in text and sh.mode == "config",
+      f"and outside one it is refused, the prompt staying: {text!r}")
+ok("exit-vrf: FRR's word for leaving a vrf, taken at the prompt")
 
 print("\n=== system > dataplane: the levels, the file and the old line (#457) ===")
 check(_config.nest_system("ens19") == ["system", " dataplane", "  interface ens19",
@@ -2606,9 +2912,8 @@ check("'dataplane' has moved under 'system'" in text
 check(sh.system_rewrite("system") == "" and sh.nat_ctx == ["system"],
       "system enters its level")
 rv, text = driven(lambda: sh.do_config("dns"))
-check("under 'system': 'dataplane', 'cpu', 'memory', 'hardware' or "
-      "'logging'" in text,
-      f"and only those levels are under it (#466, #588): {text!r}")
+check(_config.SYSTEM_LEVELS_SAY in text and "management" in text,
+      f"and only those levels are under it (#466, #588, #580): {text!r}")
 check(sh.system_rewrite("dataplane") == ""
       and sh.nat_ctx == ["system", "dataplane"], "dataplane enters its level")
 check(sh.system_rewrite("interface ens19") == "dataplane interface ens19"

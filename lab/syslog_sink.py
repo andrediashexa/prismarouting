@@ -14,6 +14,9 @@ import socket
 import sys
 
 proto, bind, port, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+# An IPv6 collector too (#580: lab/mgmt-vrf.sh's TCP one, over management's
+# IPv6 default).
+FAMILY = socket.AF_INET6 if ":" in bind else socket.AF_INET
 
 
 def put(msg):
@@ -22,12 +25,12 @@ def put(msg):
 
 
 if proto == "udp":
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s = socket.socket(FAMILY, socket.SOCK_DGRAM)
     s.bind((bind, port))
     while True:
         put(s.recv(65535))
 else:
-    s = socket.socket()
+    s = socket.socket(FAMILY)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((bind, port))
     s.listen(1)
