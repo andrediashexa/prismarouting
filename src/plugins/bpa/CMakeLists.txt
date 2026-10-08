@@ -24,6 +24,7 @@ add_vpp_plugin(bpa
   bpa_pptp.c
   bpa_cli.c
   bpa_ra.c
+  bpa_ip6_bind.c
   bpa_stats.c
   bpa_transceiver.c
 

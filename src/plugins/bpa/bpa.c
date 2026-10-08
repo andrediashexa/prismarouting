@@ -2736,6 +2736,10 @@ bpa_config (vlib_main_t *vm, unformat_input_t *input)
     {
       if (unformat (input, "cgnat-workers %U", unformat_bitmap_list, &bitmap))
 	;
+      /* For lab/mgmt-vrf.sh's `unrepaired` run only (#594): an IPv6 table
+       * move as VPP 26.06 makes it, without bpa_ip6_bind.c. */
+      else if (unformat (input, "ip6-mcast-follow off"))
+	bpa_ip6_mcast_follow_off = 1;
       else
 	return clib_error_return (0, "bpa: unknown input '%U'",
 				  format_unformat_error, input);

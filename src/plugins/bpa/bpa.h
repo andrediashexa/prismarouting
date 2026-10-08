@@ -263,6 +263,8 @@ extern vlib_node_registration_t bpa_in2out_node;
 extern vlib_node_registration_t bpa_out2in_node;
 extern vlib_node_registration_t bpa_in2out_handoff_node;
 extern vlib_node_registration_t bpa_out2in_handoff_node;
+/* `bpa { ip6-mcast-follow off }`: bpa_ip6_bind.c's repair not made (#594). */
+extern u8 bpa_ip6_mcast_follow_off;
 
 /* Queues a log event from the dataplane. No lock: the queue is per-thread. */
 /*

@@ -5,6 +5,10 @@
 #   sh tools/lab.sh mgmt-vrf        with `system / management / vrf mgmt`
 #   sh tools/lab.sh mgmt-vrf off    the same VRF and the same routes, without
 #                                   the statement - and the box is unreachable
+#   sh tools/lab.sh mgmt-vrf unrepaired
+#                                   with the statement, on a dataplane started
+#                                   with `bpa { ip6-mcast-follow off }`: an IPv6
+#                                   table move as VPP 26.06 makes it (#594)
 #
 # The box as 10.40.200.166 asked for it: its management card is a linux_cp
 # pair in VRF mgmt (table 100), with an IPv4 and an IPv6 address and a
@@ -52,20 +56,35 @@
 #      then `prismash --load`;
 #   7. a boot whose tuner did not run: `--load` puts management back alone.
 #
-# Off is the configuration without the statement, not a broken one: the VRF,
-# the pair in it and both families' defaults are there, so what goes red is
-# exactly what the statement adds. A main-table listener does not answer a
-# connection that arrives on a VRF (l3mdev_accept 0); one that names the
-# management address cannot bind it once the address is the VRF's
-# (EADDRNOTAVAIL: snmpd and sshd do not start); and what the box itself sends
-# follows the main table's default, to the upstream, where the administrator
-# is not. The controls, and the rollback of phase 1 on IPv4, are green
-# either way.
+# and in each, the gateway forgets the box's IPv6 address and must learn it
+# again within 5 s (#594). A move left the card's IPv6 enabled - linux_cp holds
+# it by the TAP's link-local - and VPP 26.06 moves such an interface to the new
+# table without its Accept on the solicited-node group, so every MULTICAST
+# solicitation for the address was dropped ("Multicast RPF check failed")
+# while unicast ones were answered. Whether a run saw it depended on the
+# gateway's entry: kept, it was answered; flushed by the card's link cycling
+# through the VRF's enslave (lcp-sync), it waited for the box to solicit the
+# gateway itself - 0 s in one run, over 30 s in the next, 3 runs of 4 red on
+# 2026-10-08. Forgetting the entry on purpose makes that the case every run
+# asks, rather than the case a run is lucky enough to hit. Then
+#   9. a tenant VRF (#540): the upstream card into `vrf cust`, and the
+#      upstream must learn its IPv6 address afresh the same way.
+# `unrepaired` turns those red and nothing else, measured on 2026-10-08: 21
+# checks - afresh, the solicited-node Accept and IPv6's SSH, API and SNMP in
+# phases 1, 2 and 3 (once moved, the card stays deaf to multicast until it
+# moves again; phases 2 and 3 also lose IPv6's download and TCP syslog, and
+# 3 its `ssh listen-address` on IPv6), and phase 9's afresh. Phases 4 to 7
+# are green either way, and rightly: the Accept is in table 100 there, read
+# by the check - a dataplane started anew has the card bound to its table
+# before its IPv6 is enabled, and the link's own enable puts it there.
 #
-# NOT here: a reboot of a real box, and systemd's own ordering of units; those
-# are the box's. What the reboot does to this feature is phases 6 and 7.
+# OFF-RED-AT-LEAST: 155
 #
-# OFF-RED-AT-LEAST: 147
+# 155 since #594, measured on 2026-10-08 (155 of 220): afresh is red in each
+# of the seven phases and after the rollback, and rightly - without the
+# statement the card has no IPv6 address in the VRF to be learnt. The
+# solicited-node Accept is green there: the link-local alone keeps the
+# card's IPv6 enabled, and the plugin moves its Accept with it either way.
 #
 # 147 since #593, measured on 2026-10-08: phase 3's `ssh listen-address`
 # changed inside the VRF adds four. Without the statement the commit check
@@ -85,6 +104,7 @@ set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api, wait_vpp
 . /src/lab/verdict.sh
 MODE=${1:-on}
+case "$MODE" in on|off|unrepaired) ;; *) echo "mode: on, off or unrepaired"; exit 2 ;; esac
 apt-get install -y -qq snmptrapd >/dev/null 2>&1
 mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/log/prisma-routing \
          /etc/snmp /var/lib/snmp /run/prisma-routing/state /run/sshd \
@@ -242,7 +262,13 @@ umount /etc/resolv.conf 2>/dev/null
 printf '# the container\nnameserver 192.0.2.53\n' > /etc/resolv.conf
 VPP_PID=
 start_box() {   # the dataplane and FRR, and the two cards claimed
-  vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
+  _conf=$(startup_conf lcp)
+  if [ "$MODE" = unrepaired ]; then
+    { cat "$_conf"; printf '\nbpa {\n  ip6-mcast-follow off\n}\n'; } \
+        > /tmp/startup-unrepaired.conf
+    _conf=/tmp/startup-unrepaired.conf
+  fi
+  vpp -c "$_conf" > /tmp/vpp.log 2>&1 &
   VPP_PID=$!
   wait_vpp
   # Each card with the MAC it had before, as a real one has: an af_packet
@@ -339,9 +365,10 @@ coldstarts() { grep -c "1.3.6.1.6.3.1.1.5.1" /tmp/traps.log 2>/dev/null || echo 
 # takes the card's addresses off and puts them back in the dataplane (VPP
 # refuses a table move with one on), and a restart makes the card anew: for
 # those seconds the gateway's ARP or ND entry for the box fails, and a check
-# that lands in them measures the gateway's retry timer, not the box. Seen
-# once in four runs on IPv6 right after the commit. Waited for, up to 20 s,
-# and the time said: it is what an operator's session sees too.
+# that lands in them measures the gateway's retry timer, not the box. Waited
+# for, up to 20 s, and the time said: it is what an operator's session sees
+# too. The 20 s that IPv6 used to reach here right after the commit were the
+# box's (#594), and afresh() below is what asserts they are gone.
 settle() {
   t0=$(date +%s); t=0
   while [ "$t" -lt 20 ]; do
@@ -353,8 +380,25 @@ settle() {
   echo "  settled: the management addresses answer the gateway after ${t} s"
 }
 
+# THE BOX'S IPv6 ADDRESS LEARNT AFRESH (#594): the neighbour's entry deleted
+# and asked for again, as a router asks whose entry went FAILED or was
+# flushed by the link going down - a multicast solicitation, which is what
+# the dataplane dropped after a move. Under a 5 s deadline, which Linux's
+# three solicitations a second apart (mcast_solicit) end before: answered,
+# it is the first of them; dropped, ping gives up at about 3 s.
+afresh() {  # <description> <namespace> <its device> <box address> <from>
+  ip netns exec "$2" ip -6 neigh del "$4" dev "$3" 2>/dev/null
+  _t0=$(date +%s.%N)
+  ip netns exec "$2" ping -6 -c1 -w5 -I "$5" "$4" > /dev/null 2>&1; _rc=$?
+  _dt=$(awk -v a="$_t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
+  echo "  afresh: $4 from $2 answered=$([ $_rc = 0 ] && echo yes || echo no) after ${_dt} s ($(ip netns exec "$2" ip -6 neigh show "$4" dev "$3" | tr -d '\n'))"
+  expect "$1" [ "$_rc" = 0 ]
+}
+
 reach() {   # <when>
   W=$1
+  afresh "$W: the gateway learns the box's IPv6 afresh within 5 s (#594)" \
+      mg veth-mg-o 2001:db8:200::1 2001:db8:200::2
   settle
   echo "  -- $W: what the host holds"
   ip route show table 100 2>&1 | sed 's/^/    table 100: /'
@@ -377,6 +421,10 @@ reach() {   # <when>
       "$(ip -o -6 addr show dev vppmg0 2>&1)"
   expect_in "$W: the dataplane has the card's IPv6 in table 100 too" \
       "ip6 table-id 100" "$(vppctl show int addr host-veth-mg 2>&1)"
+  # What afresh() needs of the dataplane, read where it lives (#594).
+  expect_in "$W: and accepts its solicited-node group from the card there" \
+      "host-veth-mg: Accept" \
+      "$(vppctl show ip6 mfib table 100 ff02::1:ff00:0/104 2>&1)"
   # Into the box, from the administrator.
   expect_in "$W: SSH answers on the IPv4 management address" "SSH-2.0-OpenSSH" \
       "$(tcp_in 10.200.0.1 22 198.51.100.7)"
@@ -544,6 +592,8 @@ expect_in "taken back: SSH answers on IPv6" "SSH-2.0-OpenSSH" \
     "$(tcp_in 2001:db8:200::1 22 2001:db8:7::7)"
 expect_in "taken back: the API answers on IPv4" "PRISMA-API" \
     "$(tcp_in 10.200.0.1 50051 198.51.100.7)"
+afresh "taken back: the gateway learns the box's IPv6 afresh within 5 s" \
+    mg veth-mg-o 2001:db8:200::1 2001:db8:200::2
 expect_in "taken back: SNMP answers on IPv4" "STRING:" \
     "$(snmp_in 10.200.0.1 198.51.100.7)"
 expect_in "taken back: SNMP answers on IPv6" "STRING:" \
@@ -687,6 +737,17 @@ if [ "$MODE" != off ]; then
   expect_not_in "no vrf: the rules are gone" "lookup 100" "$(ip rule show 2>&1)"
   expect_in "no vrf: and l3mdev accept is off" "= 0" \
       "$(sysctl net.ipv4.tcp_l3mdev_accept 2>&1)"
+
+  # The same move for a tenant's card (#540): one dataplane bind for every
+  # VRF, and the repair is in it, not in anything management does (#594).
+  echo; echo "=== 9. a tenant VRF: the upstream card into vrf cust ==="
+  $HX -c "configure" -c "vrf cust table 200" -c "interface host-veth-up" \
+      -c "vrf 200" -c "exit" -c "commit" > /tmp/c9.log 2>&1
+  sed 's/^/  c9: /' /tmp/c9.log | tail -3
+  expect_in "tenant: the card's IPv6 is in table 200" "ip6 table-id 200" \
+      "$(vppctl show int addr host-veth-up 2>&1)"
+  afresh "tenant: the upstream learns the card's IPv6 afresh within 5 s" \
+      up veth-up-o 2001:db8:10::1 2001:db8:10::2
 fi
 
 verdict
