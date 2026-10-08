@@ -131,6 +131,11 @@ _host = _socket.gethostname()
 sy = ops.GetSystem(pb.GetSystemRequest())
 result("hostname", v.hostname == _host and sy.hostname == _host,
        f"GetVersion {v.hostname!r}, GetSystem {sy.hostname!r}, the host {_host!r}")
+# #580: management's VRF, typed and as the screen. This box keeps it in the
+# main table, so the configured VRF is empty and the screen says so.
+result("management", sy.management.vrf == "" and sy.management.table == 0
+       and "none: the main table" in sy.management_text,
+       f"GetSystem.management {sy.management!r} {sy.management_text!r}")
 # THE CONSOLE DOES NOT HOLD THE STATUS. A Show that takes seconds (a ping
 # that waits for every reply) used to run in the account's one operational
 # process, and every GetVersion behind it waited - prisma-web polls with a
