@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`ssh listen-address` took one address, and an `ssh` commit took SSH
+  over IPv6 away.** ([#593](https://github.com/andrediashexa/hexarouting/issues/593))
+  The setting was read back as the first address `sshd -T` printed, and a
+  box with no `ssh listen-address` wrote `ListenAddress 0.0.0.0` at its next
+  `ssh` commit: SSH stopped answering on IPv6. It now takes a list, IPv4 and
+  IPv6 - `ssh listen-address 10.40.200.166 2804:4ed4:1000:6::166` - as
+  `snmp` and `api listen-address` have since 0.151.8 (#582): one
+  `ListenAddress` per address, IPv6 bracketed, read back from `sshd -T` as
+  the same list. No `listen-address`, or the new `no ssh listen-address`, is
+  sshd's default, both families (`0.0.0.0 [::]`), written as no
+  `ListenAddress` at all. An address the box does not have is refused at
+  commit, before sshd is told - `sshd -t` binds nothing, and a reload whose
+  every address fails leaves sshd down; one in a VRF is accepted only when
+  management is in that VRF (#580). A wildcard beside an address of its
+  family is refused. A file saved before this release loads as written; its
+  lone `ssh listen-address [::]` - what a box never given an `ssh` commit
+  saved, the default read one address at a time - stays both families on a
+  box whose sshd runs its default. GetSchema's hint for the three
+  listen-addresses says they take several (`...`).
+
 ## 0.152.4 - management in a VRF of its own
 
 ### Added

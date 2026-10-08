@@ -93,7 +93,8 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     validate_trap_host, validate_ssh, validate_role,
                     validate_operator,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT, GROUP_OPERATOR,
-                    ROLE_ADMIN, ROLE_CGNAT)
+                    ROLE_ADMIN, ROLE_CGNAT, SSH_DEFAULTS, listen_addresses,
+                    ssh_listen_legacy, ssh_listen_unbound)
 import routes
 import typedcfg
 import logmon
@@ -1891,6 +1892,10 @@ ARG_PREFIX46 = "<A.B.C.D/M|X:X::X:X/M>"
 #: An address of this box's own, either family: where a daemon listens.
 #: Completed from the addresses the configuration gives the box (#557).
 ARG_LOCAL_ADDRESS = "<A.B.C.D|X:X::X:X>"
+#: One or more of them: a `listen-address`, which is a list since #582
+#: (snmp, api) and #593 (ssh). `...` is GetSchema's `many`, so a running
+#: configuration's `ssh listen-address 0.0.0.0 [::]` matches its statement.
+ARG_LOCAL_ADDRESSES = ARG_LOCAL_ADDRESS + "..."
 ARG_WORD = "<word>"
 
 # A RANGE IS A PROMISE, so there is one of these per quantity and not one for
@@ -4371,6 +4376,9 @@ TREE = {
                 "community": ("remove one community", ARG_WORD),
                 "trap-host": ("stop sending notifications there", "<address>"),
             }),
+            "ssh": ("put an SSH setting back to its default", {
+                "listen-address": ("every address, IPv4 and IPv6: sshd's "
+                                   "default", None)}),
             "dns": ("stop asking a resolver", {
                 "server": ("the last one removed gives /etc/resolv.conf back "
                            "to DHCP or the installer's answer",
@@ -4436,7 +4444,9 @@ TREE = {
                        "typed", "<address>")}),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_PORT),
-            "listen-address": ("address to listen on", ARG_LOCAL_ADDRESS),
+            # A list since #593, as snmp's and api's (#582).
+            "listen-address": ("addresses to listen on, one or more, IPv4 "
+                               "and IPv6", ARG_LOCAL_ADDRESSES),
             "permit-root-login": ("whether root may log in over SSH", {
                 "yes": ("password or key", None),
                 "no": ("not at all", None),
@@ -4448,7 +4458,8 @@ TREE = {
         "user": ("an account that may log in", ARG_USER),
         "snmp": ("the SNMP agent, read-only by construction", {
             "enabled": ("run the agent", {"yes": ("", None), "no": ("", None)}),
-            "listen-address": ("address to listen on", ARG_LOCAL_ADDRESS),
+            "listen-address": ("addresses to listen on, one or more",
+                               ARG_LOCAL_ADDRESSES),
             "port": ("UDP port", ARG_PORT),
             "enterprise-number": ("the IANA number the product's MIB is "
                                   "served under; the product's own if unset",
@@ -4464,8 +4475,8 @@ TREE = {
         "snmp-user": ("an SNMPv3 user", ARG_SNMP_USER),
         "api": ("the management API (gRPC, mutual TLS), off by default", {
             "enabled": ("serve it", {"yes": ("", None), "no": ("", None)}),
-            "listen-address": ("the management address it listens on",
-                               ARG_LOCAL_ADDRESS),
+            "listen-address": ("the management addresses it listens on, "
+                               "one or more", ARG_LOCAL_ADDRESSES),
             "port": ("TCP port", ARG_PORT),
         }),
         "commit": ("apply the candidate configuration", COMMIT),
@@ -10797,6 +10808,38 @@ class Shell:
                 if link["vrf"] is not None
                 and (everything or not name.startswith(VRF_RESERVED_PREFIX))}
 
+    def ssh_listen_legacy(self, cfg):
+        """
+        A file written before #593 read as it was meant (system's
+        ssh_listen_legacy): its lone wildcard, against an sshd on its
+        default, is that default - not one family's SSH taken away at the
+        next boot. The load and `rollback`, the two that read old files.
+        """
+        cfg.ssh["listen-address"] = ssh_listen_legacy(
+            cfg.ssh.get("listen-address"),
+            self.sys.read_ssh().get("listen-address"))
+
+    def ssh_listen_refusals(self, target, running):
+        """
+        Why sshd could not listen where `target` asks, as [(verdict, prose)]
+        (#593): ssh_listen_unbound() over the host's addresses and links,
+        read through its doors. Only the addresses this change adds - one
+        sshd already has is not this commit's to refuse - and nothing when
+        the host cannot be asked, which leaves sshd -t as the check it was.
+        """
+        have = listen_addresses(running.ssh.get("listen-address"))
+        new = [a for a in listen_addresses(target.ssh.get("listen-address"))
+               if a not in have]
+        if not new:
+            return []
+        rc, addrs = self.sys._run(list(doors.ADDRS_ARGV))
+        if rc != 0:
+            return []
+        rc, links = self.sys._run(list(doors.LINKS_ARGV))
+        return ssh_listen_unbound(new, addrs,
+                                  doors.ip_links(links) if rc == 0 else {},
+                                  target.management.get("vrf", ""))
+
     def vrf_tables_free(self, target):
         """
         False, said, when a `vrf <name> table <id>` of `target` takes a table
@@ -11837,6 +11880,14 @@ class Shell:
             why = validate_ssh(target.ssh)
             if why:
                 self.err(why)
+                ok = False
+            # An address sshd could not bind (#593), refused as snmpd's
+            # refuses `snmp listen-address` - but before sshd is told, since
+            # sshd -t binds nothing. Not at boot: the load goes on, and the
+            # apply below keeps sshd's file as it was (#591's posture).
+            for why in (self.ssh_listen_refusals(target, running)
+                        if d["ssh_changed"] and not self.booting else ()):
+                self.err_prose(*why)
                 ok = False
             # The management API names its address before it listens (#532).
             why = api_enable_error(target.api)
@@ -13225,7 +13276,19 @@ class Shell:
             if not ok:
                 self.err(f"cgnat memory: {msg}")
                 return False
-        if d["ssh_changed"]:
+        unbound = self.ssh_listen_refusals(target, running) \
+            if d["ssh_changed"] else []
+        if unbound and self.booting:
+            # NOT A REASON FOR THE BOX NOT TO COME UP (#593, as #591): sshd
+            # keeps the file it runs on, and the rest is applied.
+            for verdict, prose in unbound:
+                print(f"warning: {verdict}")
+                print_prose(prose)
+            print_prose("sshd keeps the configuration it runs on")
+        elif unbound:
+            self.err_prose(*unbound[0])
+            return False
+        elif d["ssh_changed"]:
             ok, msg = self.sys.write_ssh(target.ssh)
             if not ok:
                 self.err(f"ssh: {msg}")
@@ -15747,6 +15810,7 @@ class Shell:
             self.err(f"revision {n} does not exist")
             return
         self.candidate = Config.parse(text)
+        self.ssh_listen_legacy(self.candidate)
         # The revision, not True (#588): the commit that applies it says in
         # the record of events which one it went back to.
         self.from_rollback = n
@@ -17238,15 +17302,24 @@ class Shell:
         if w[0] == "dns" or w[:2] == ["no", "dns"]:
             self.err("usage: [no] dns server <address>")
             return True
+        # sshd's default, both families (#593): the statement an API client's
+        # empty listen_address already sent (typedcfg.system_lines), and the
+        # way back from a list.
+        if w == ["no", "ssh", "listen-address"]:
+            self.candidate.ssh["listen-address"] = SSH_DEFAULTS["listen-address"]
+            return True
         if w[0] == "ssh":
             if len(w) < 3:
                 self.err("usage: ssh <setting> <value>")
                 return True
-            why = validate_ssh({w[1]: " ".join(w[2:])})
+            # Held as validate_ssh spells it, so a list typed `::` first
+            # compares equal to the readback (#593).
+            setting = {w[1]: " ".join(w[2:])}
+            why = validate_ssh(setting)
             if why:
                 self.err(why)
             else:
-                self.candidate.ssh[w[1]] = " ".join(w[2:])
+                self.candidate.ssh[w[1]] = setting[w[1]]
             return True
         if w[0] == "user" and len(w) > 1:
             why = text_error("user", w[1])
@@ -25249,6 +25322,7 @@ class Shell:
         ARG_AS_PATH_LIST: "dyn_as_path_lists",
         ARG_COMMUNITY_LIST: "dyn_community_lists",
         ARG_LOCAL_ADDRESS: "dyn_local_addresses",
+        ARG_LOCAL_ADDRESSES: "dyn_local_addresses",
         ARG_STATIC_NEXT_HOP: "dyn_next_hops",
     }
 
@@ -26098,6 +26172,7 @@ class Shell:
                         f"wherever it said {ifname}; the next 'save' writes "
                         "the new name")
         target = Config.parse(self.renamed_text(text, renames))
+        self.ssh_listen_legacy(target)
 
         # SAID, because the file and the running configuration differ by
         # these lines until the next `save`, and a difference nobody was told

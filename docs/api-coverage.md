@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 775 |
+| typed | 776 |
 | text | 1 |
 | n/a | 55 |
 
@@ -219,6 +219,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `no snmp enterprise-number` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no snmp community <word>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
 | `no snmp trap-host <address>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
+| `no ssh listen-address` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no dns server <address>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no hostname` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `ip prefix-list <prefix-list> [seq <1-4294967295>] permit\|deny <A.B.C.D/M> [ge <0-32>] [le <0-32>] [description <text>] \| <prefix-list> description <text> \| <prefix-list> insert seq <1-4294967295> before\|after seq <1-4294967295> \| <prefix-list> resequence` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area frr_lists: read as fields since 0.149.24; written as lines - written as lines, read as fields |
@@ -245,7 +246,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `hostname <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `dns server <address>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `ssh port <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
-| `ssh listen-address <A.B.C.D\|X:X::X:X>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
+| `ssh listen-address <A.B.C.D\|X:X::X:X>...` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `ssh permit-root-login yes` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `ssh permit-root-login no` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `ssh permit-root-login prohibit-password` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
@@ -255,7 +256,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `user <user>` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `snmp enabled yes` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `snmp enabled no` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
-| `snmp listen-address <A.B.C.D\|X:X::X:X>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
+| `snmp listen-address <A.B.C.D\|X:X::X:X>...` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `snmp port <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `snmp enterprise-number <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `snmp community <word>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area system: read as fields since 0.149.24; written as lines - a community or trap host carries a secret; system > memory, cpu and dataplane take effect at the next boot |
@@ -263,7 +264,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `snmp-user <snmp-user>` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `api enabled yes` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `api enabled no` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
-| `api listen-address <A.B.C.D\|X:X::X:X>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
+| `api listen-address <A.B.C.D\|X:X::X:X>...` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `api port <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `commit check` | typed | ConfigService.Check |  |
 | `commit remap` | typed | ConfigService.Commit (acknowledge_remap) |  |

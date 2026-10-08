@@ -3051,5 +3051,129 @@ check(ok is False and not [m for m, a in api.calls
                            if m in vppapi.WRITE_MESSAGES],
       f"and so does an apply nobody checked, before any write: {api.calls}")
 
+print("=== ssh listen-address: a list at the prompt and at commit (#593) ===")
+# Mutations shown red, then restored (#593): the prompt storing the words as
+# typed rather than validate_ssh's spelling (1 red); `no ssh listen-address`
+# removed (1 red); the check's ssh_listen_refusals call removed (1 red); the
+# apply's refusal removed, so an unchecked apply writes (2 red); the boot's
+# warning made a refusal (1 red); load() without ssh_listen_legacy (1 red);
+# do_rollback without it (1 red); ssh_listen_refusals refusing addresses
+# sshd already has (1 red).
+_SSHD_DEFAULT = ("port 22\nlistenaddress [::]:22\nlistenaddress 0.0.0.0:22\n"
+                 "permitrootlogin without-password\n"
+                 "passwordauthentication yes\n")
+_HOST_ADDRS = ("1: lo    inet 127.0.0.1/8 scope host lo\n"
+               "2: eth0    inet 10.0.0.1/24 scope global eth0\n"
+               "2: eth0    inet6 2001:db8::1/64 scope global\n")
+
+
+def _ssh_box(sshd_t=_SSHD_DEFAULT):
+    """A System over a root of its own, the host's addresses _HOST_ADDRS."""
+    root = tempfile.mkdtemp(prefix="ssh593-")
+    asked = []
+
+    def run(argv, stdin=None, timeout=30):
+        asked.append(list(argv))
+        if list(argv) == list(prismash.doors.ADDRS_ARGV):
+            return 0, _HOST_ADDRS
+        if list(argv[:2]) == ["sshd", "-T"]:
+            return 0, sshd_t
+        return 0, ""
+    return system.System(runner=run, root=root), asked
+
+
+_sh = shell_with(FakeApi())
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _sh.feed("configure")
+    _sh.feed("ssh listen-address 10.0.0.1 2001:db8::1")
+_after_list = _sh.candidate.ssh.get("listen-address")
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _sh.feed("no ssh listen-address")
+check(_after_list == "10.0.0.1 [2001:db8::1]",
+      f"the prompt takes a list, held in sshd -T's spelling: {_after_list!r}")
+check(_sh.candidate.ssh.get("listen-address") == "0.0.0.0 [::]",
+      f"`no ssh listen-address` is sshd's default, both families: "
+      f"{_sh.candidate.ssh} {_buf.getvalue()!r}")
+
+_sh = shell_with(FakeApi())
+_sh.sys, _asked = _ssh_box()
+_t = parse_nested("ssh listen-address 10.0.0.1 192.0.2.9\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _sh.apply(_t, check_only=True)
+check(_ok is False and "192.0.2.9: not an address of this box"
+      in _buf.getvalue(),
+      f"commit check refuses an address the host does not have: "
+      f"{_buf.getvalue()!r}")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _sh.apply(_t)
+check(_ok is False and _sh.sys.read_ssh()["listen-address"] == "0.0.0.0 [::]"
+      and not os.path.exists(_sh.sys.dropin),
+      f"and so does an apply nobody checked, before sshd is told: "
+      f"{_buf.getvalue()!r}")
+_r = _sh.ssh_listen_refusals(parse_nested("ssh listen-address 192.0.2.9\n"),
+                             parse_nested(""))
+_kept = _sh.ssh_listen_refusals(
+    parse_nested("ssh listen-address 192.0.2.9\n"),
+    parse_nested("ssh listen-address 192.0.2.9\n"))
+check(len(_r) == 1 and "192.0.2.9" in _r[0][0] and _kept == [],
+      f"Shell.ssh_listen_refusals: an address this change adds and the host "
+      f"has not got; one sshd already has is not this commit's: {_r} {_kept}")
+_t = parse_nested("ssh listen-address 10.0.0.1 2001:db8::1\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _sh.apply(_t, check_only=True) and _sh.apply(_t)
+with open(_sh.sys.dropin) as _f:
+    _drop = _f.read()
+check(_ok and "ListenAddress 10.0.0.1\nListenAddress [2001:db8::1]\n" in _drop,
+      f"addresses the host has: checked, and one ListenAddress each: "
+      f"{_buf.getvalue()!r} {_drop!r}")
+
+_sh = shell_with(FakeApi())
+_sh.sys, _asked = _ssh_box()
+_sh.booting = True
+_t = parse_nested("ssh listen-address 192.0.2.9\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _ok = _sh.apply(_t, check_only=True) and _sh.apply(_t)
+check(_ok and "warning: ssh listen-address 192.0.2.9" in _buf.getvalue()
+      and not os.path.exists(_sh.sys.dropin),
+      f"at boot it is a warning, the rest goes on, and sshd keeps its file: "
+      f"{_ok} {_buf.getvalue()!r}")
+
+# A file saved before #593 on a box never given an `ssh` commit says
+# `ssh listen-address [::]`: the first line of sshd's default, read alone.
+_sh = shell_with(FakeApi())
+_sh.sys, _asked = _ssh_box()
+_c = parse_nested("ssh listen-address [::]\n")
+_sh.ssh_listen_legacy(_c)
+check(_c.ssh["listen-address"] == "0.0.0.0 [::]",
+      f"Shell.ssh_listen_legacy: against sshd's default it is the default: "
+      f"{_c.ssh}")
+_sh.sys, _asked = _ssh_box("port 22\nlistenaddress [::]:22\n")
+_c = parse_nested("ssh listen-address [::]\n")
+_sh.ssh_listen_legacy(_c)
+check(_c.ssh["listen-address"] == "[::]",
+      f"and against an sshd that runs it, it is what it says: {_c.ssh}")
+_sh = shell_with(FakeApi())
+_sh.sys, _asked = _ssh_box()
+_sh.booting = True
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+    _sh.load("/nonexistent-593", text="ssh listen-address [::]\n")
+check(not os.path.exists(_sh.sys.dropin),
+      f"load(): that file leaves a box on sshd's default as it is, both "
+      f"families: {_buf.getvalue()[-300:]!r}")
+_sh = shell_with(FakeApi())
+_sh.sys, _asked = _ssh_box()
+_sh.rb = type("R", (), {"load": lambda s, n: "ssh listen-address [::]\n"})()
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.do_rollback(["1"])
+check(_sh.candidate.ssh["listen-address"] == "0.0.0.0 [::]",
+      f"and so does `rollback` to a revision written before #593: "
+      f"{_sh.candidate.ssh}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

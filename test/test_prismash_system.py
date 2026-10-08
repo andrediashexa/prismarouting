@@ -1195,6 +1195,130 @@ check(rv == (False, "ssh port '99999': expected 1-65535")
       f"an invalid setting: refused before anything is written or asked: "
       f"{rv} {box.asked}")
 
+# SSH ON A LIST OF ADDRESSES, IPv4 AND IPv6 (#593). The setting took one
+# address and read back the first of what sshd printed; a box on sshd's
+# default (both families) wrote `ListenAddress 0.0.0.0` at its next ssh
+# commit and stopped answering SSH over IPv6.
+# Mutations shown red, then restored (#593): ssh_listen_lines writing only
+# the first address (2 red); ssh_listen_lines writing `ListenAddress 0.0.0.0`
+# for the default (2 red); read_ssh keeping the first listenaddress line
+# only, as it did (2 red); ssh_listen_legacy returning `saved` always
+# (1 red); ssh_listen_unbound skipping its VRF test (1 red); validate_ssh
+# without ssh_listen_wildcard_error (1 red).
+print("--- ssh listen-address: a list, v4 and v6, both families by default (#593)")
+check(system.SSH_DEFAULTS["listen-address"] == "0.0.0.0 [::]",
+      "no listen-address at all is both families, sshd's own default")
+check(system.ssh_listen_normal("10.0.0.1 2001:db8::1")
+      == "10.0.0.1 [2001:db8::1]"
+      and system.ssh_listen_normal("2001:db8::1 10.0.0.1")
+      == "[2001:db8::1] 10.0.0.1",
+      "ssh_listen_normal: each address in sshd -T's spelling, the order kept")
+check(system.ssh_listen_normal(":: 0.0.0.0") == "0.0.0.0 [::]"
+      and system.ssh_listen_normal("[::] 0.0.0.0") == "0.0.0.0 [::]",
+      "and the two wildcards, in either order, are the default's one spelling")
+check(system.ssh_listen_lines("10.0.0.1 2001:db8::1")
+      == ["ListenAddress 10.0.0.1", "ListenAddress [2001:db8::1]"],
+      "ssh_listen_lines: one ListenAddress per address, IPv6 bracketed")
+check(system.ssh_listen_lines("10.0.0.1") == ["ListenAddress 10.0.0.1"],
+      "one address writes what it always wrote")
+check(system.ssh_listen_lines("0.0.0.0 [::]") == []
+      and system.ssh_listen_lines(None) == []
+      and system.ssh_listen_lines(":: 0.0.0.0") == [],
+      "the default writes no ListenAddress at all, never 0.0.0.0 alone")
+check(system.ssh_listen_lines("0.0.0.0") == ["ListenAddress 0.0.0.0"]
+      and system.ssh_listen_lines("::") == ["ListenAddress [::]"],
+      "one wildcard asked for is one wildcard written")
+_v = {"listen-address": "10.0.0.1 2001:db8::1"}
+check(system.validate_ssh(_v) is None
+      and _v["listen-address"] == "10.0.0.1 [2001:db8::1]",
+      f"validate_ssh takes the list and stores sshd's spelling: {_v}")
+check("named twice" in (system.validate_ssh(
+          {"listen-address": "2001:db8::1 [2001:db8::1]"}) or ""),
+      "an address twice, in two spellings, is refused")
+check("not an IP address" in (system.validate_ssh(
+          {"listen-address": "10.0.0.1 potato"}) or ""),
+      "a word that is not an address refuses the list")
+check(system.ssh_listen_wildcard_error("0.0.0.0 10.0.0.1")
+      == "ssh listen-address '10.0.0.1': 0.0.0.0 already listens on every "
+         "IPv4 address"
+      and "[::] already listens" in (system.ssh_listen_wildcard_error(
+          ":: 2001:db8::1") or ""),
+      "ssh_listen_wildcard_error: a wildcard beside an address of its family")
+check(system.ssh_listen_wildcard_error("0.0.0.0 2001:db8::1") is None
+      and system.ssh_listen_wildcard_error("0.0.0.0 [::]") is None
+      and system.validate_ssh({"listen-address": "0.0.0.0 10.0.0.1"})
+      is not None,
+      "but not across families, and validate_ssh refuses what it refuses")
+
+_T = ("port 22\nlistenaddress 10.0.0.1:22\n"
+      "listenaddress [2001:db8::1]:22\npermitrootlogin no\n")
+_b = Box({("sshd", "-T"): (0, _T)})
+check(_b.sys.read_ssh()["listen-address"] == "10.0.0.1 [2001:db8::1]",
+      f"read_ssh: every listenaddress sshd -T prints, in its order: "
+      f"{_b.sys.read_ssh()}")
+_b = Box({("sshd", "-T"): (0, "port 22\nlistenaddress [::]:22\n"
+                                 "listenaddress 0.0.0.0:22\n")})
+check(_b.sys.read_ssh()["listen-address"] == "0.0.0.0 [::]",
+      "sshd's default reads as the default, both families, not `[::]`")
+_b = Box({("sshd", "-T"): (255, "no")})
+_b.write(system.SSHD_DROPIN, "Port 22\nListenAddress 10.0.0.1\n"
+                             "ListenAddress [2001:db8::1]\n")
+check(_b.sys.read_ssh()["listen-address"] == "10.0.0.1 [2001:db8::1]",
+      "sshd not answering: the drop-in's ListenAddress lines, all of them")
+_b.write(system.SSHD_DROPIN, "Port 22\n")
+check(_b.sys.read_ssh()["listen-address"] == "0.0.0.0 [::]",
+      "and a drop-in with none is sshd's default")
+
+_b = Box()
+check(_b.sys.write_ssh({"port": "22", "listen-address":
+                        "10.0.0.1 2001:db8::1"}) == (True, ""),
+      "write_ssh takes the list")
+_txt = _b.read(system.SSHD_DROPIN)
+check("ListenAddress 10.0.0.1\nListenAddress [2001:db8::1]\n" in _txt,
+      f"and writes one ListenAddress per address: {_txt!r}")
+_b = Box()
+_b.sys.write_ssh({"port": "22", "listen-address": "0.0.0.0 [::]"})
+check("ListenAddress" not in _b.read(system.SSHD_DROPIN),
+      f"the default writes none: {_b.read(system.SSHD_DROPIN)!r}")
+_b = Box()
+_b.sys.write_ssh({"port": "22", "listen-address": "10.0.0.1"})
+_first = _b.read(system.SSHD_DROPIN)
+_b.answers[("sshd", "-t")] = (255, "bad address")
+_rv = _b.sys.write_ssh({"port": "22", "listen-address": "10.0.0.1 10.0.0.2"})
+check(_rv[0] is False and _b.read(system.SSHD_DROPIN) == _first,
+      f"a list sshd -t refuses is put back, byte for byte: {_rv}")
+
+check(system.ssh_listen_legacy("[::]", "0.0.0.0 [::]") == "0.0.0.0 [::]"
+      and system.ssh_listen_legacy("0.0.0.0", "0.0.0.0 [::]")
+      == "0.0.0.0 [::]",
+      "ssh_listen_legacy: a saved lone wildcard against sshd's default is "
+      "the default the old reader read")
+check(system.ssh_listen_legacy("[::]", "[::]") == "[::]"
+      and system.ssh_listen_legacy("10.0.0.1", "0.0.0.0 [::]") == "10.0.0.1"
+      and system.ssh_listen_legacy("10.0.0.1 [::1]", "0.0.0.0 [::]")
+      == "10.0.0.1 [::1]",
+      "anything else loads as written: one address, a list, a file sshd runs")
+
+_ADDRS = ("1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever\n"
+          "3: vppmg0    inet 10.200.0.1/24 brd 10.200.0.255 scope global "
+          "vppmg0\\       valid_lft forever\n"
+          "3: vppmg0    inet6 2001:db8:200::1/64 scope global \\  valid_lft\n"
+          "4: eth1    inet 10.9.0.1/24 scope global eth1\n")
+_LINKS = {"vppmg0": {"master": "mgmt"}, "eth1": {"master": None}}
+check(system.ssh_listen_unbound(["10.9.0.1", "0.0.0.0", "[::]"], _ADDRS,
+                                _LINKS) == [],
+      "ssh_listen_unbound: an address the host holds, and the wildcards, bind")
+_r = system.ssh_listen_unbound(["192.0.2.1"], _ADDRS, _LINKS)
+check(len(_r) == 1 and "192.0.2.1: not an address of this box" in _r[0][0],
+      f"one it does not hold is refused: {_r}")
+_r = system.ssh_listen_unbound(["10.200.0.1", "[2001:db8:200::1]"], _ADDRS,
+                               _LINKS)
+check(len(_r) == 2 and "in vrf mgmt" in _r[0][0],
+      f"one in a VRF does not bind from the main table: {_r}")
+check(system.ssh_listen_unbound(["10.200.0.1", "[2001:db8:200::1]"], _ADDRS,
+                                _LINKS, "mgmt") == [],
+      "unless management is that VRF, which turns nonlocal bind on (#580)")
+
 print("--- System._apply_groups: the memberships a role implies, both ways")
 GROUPS = ("prisma-admin:x:1001:alice\nprisma-cgnat:x:1002:alice\nvpp:x:1003:\n"
           "frr:x:1004:alice\nfrrvty:x:1005:alice\nsudo:x:27:alice\n")

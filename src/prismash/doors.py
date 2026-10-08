@@ -275,6 +275,10 @@ def detached(unit, log, body):
 #: table of a VRF device and of a VRF's member on it - what ip_links() reads.
 LINKS_ARGV = ("ip", "-d", "-o", "link", "show")
 
+#: The host's addresses, read (#593): where `ssh listen-address` may name,
+#: asked before sshd is told, since `sshd -t` binds nothing.
+ADDRS_ARGV = ("ip", "-o", "addr", "show")
+
 #: The doors that take no argument: the argv is the whole shape.
 FIXED = {
     ("sshd", "-T"): "read sshd's effective configuration",
@@ -355,6 +359,8 @@ QUERIES = {
     # whoever asks: the container has no network to list them in. What any
     # account on the host reads with `ip link`.
     LINKS_ARGV: "list the Linux interfaces, VRFs and members",
+    # Where sshd could listen (#593): what any account reads with `ip addr`.
+    ADDRS_ARGV: "list the host's addresses",
     # Management in its own VRF, in effect (#580).
     MGMT_RULES_READ[0]: "read the routing rules",
     MGMT_RULES_READ[1]: "read the IPv6 routing rules",

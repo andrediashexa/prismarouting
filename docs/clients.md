@@ -27,6 +27,28 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.5 - SSH listens on a list of addresses, IPv4 and IPv6
+
+* **Contract:** unchanged since 0.152.4 (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).
+* **`SystemConfig.ssh.listen_address`** (#593) may hold several addresses,
+  space-separated, as `api`'s and `snmp`'s have since 0.151.8: SetConfig and
+  Edit take `10.40.200.166 2804:4ed4:1000:6::166`; GetConfig reads IPv6
+  bracketed, as sshd prints it (`10.40.200.166 [2804:4ed4:1000:6::166]`).
+  One address reads and writes as before.
+* **A box with no `ssh listen-address` now reads `0.0.0.0 [::]`** - sshd's
+  default, both families - where it read `[::]` (the first address alone)
+  or `0.0.0.0`. An empty `listen_address` in SetConfig is `no ssh
+  listen-address`, a statement the VTY now has, and means that default;
+  before, the line went to FRR as one it does not know.
+* **Refusals:** an address the box does not have, or one on an interface in
+  a VRF other than management's, fails SetConfig/Edit's commit in the VTY's
+  words (`ssh listen-address <a>: not an address of this box`); so does a
+  wildcard beside an address of its family. Nothing is written to sshd.
+* **GetSchema:** the hint of `ssh`, `snmp` and `api listen-address` is
+  `<A.B.C.D|X:X::X:X>...` - the argument's `many` is true - so a running
+  line with two addresses matches its statement; `no ssh listen-address` is
+  one statement more.
+
 ## 0.152.4 - management in a VRF of its own
 
 * **Contract:** additive (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).

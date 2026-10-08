@@ -59,7 +59,12 @@ SSH_FIELDS = ("port", "listen-address", "permit-root-login",
 # be asked; they are Debian's documented defaults, not a guess.
 SSH_DEFAULTS = {
     "port": "22",
-    "listen-address": "0.0.0.0",
+    # Both families, which is what sshd listens on with no ListenAddress at
+    # all (#593): `sshd -T` on OpenSSH 9.2 says `[::]:22` and `0.0.0.0:22`.
+    # This said "0.0.0.0" alone, so a box whose sshd could not be asked, or a
+    # file with no `ssh listen-address`, wrote `ListenAddress 0.0.0.0` and
+    # SSH over IPv6 stopped answering. Written in ssh_listen_normal's order.
+    "listen-address": "0.0.0.0 [::]",
     "permit-root-login": "prohibit-password",
     "password-authentication": "yes",
 }
@@ -271,7 +276,8 @@ def unbracket(value: str) -> str:
 
 def ssh_listen_normal(value: str) -> str:
     """
-    A ListenAddress in the spelling `sshd -T` gives back.
+    A ListenAddress in the spelling `sshd -T` gives back - or a list of them,
+    each so (#593).
 
     IPv6 bracketed, IPv4 bare. Normalised for the reason `config.mac_normal`
     exists (#414): the candidate is compared against what the box reports, so
@@ -279,13 +285,128 @@ def ssh_listen_normal(value: str) -> str:
     the box re-applying a setting forever and `show configuration compare`
     never clean. Typing `::` and reading back `[::]` was exactly that, and it
     predates the refusal above rather than arriving with it.
+
+    The two wildcards together, in either order, are sshd's default and are
+    written as no ListenAddress at all (ssh_listen_lines); `sshd -T` then
+    prints them `[::]` first, so they are held in SSH_DEFAULTS' one order or
+    `ssh listen-address :: 0.0.0.0` would differ from its own readback. Any
+    other list keeps the operator's order, which `sshd -T` keeps too
+    (measured on OpenSSH 9.2: three ListenAddress lines read back in the
+    order written).
     """
-    bare = unbracket(value)
-    try:
-        addr = ipaddress.ip_address(bare)
-    except ValueError:
-        return value
-    return f"[{bare}]" if addr.version == 6 else bare
+    out = []
+    for word in listen_addresses(value):
+        bare = unbracket(word)
+        try:
+            addr = ipaddress.ip_address(bare)
+        except ValueError:
+            out.append(word)
+            continue
+        out.append(f"[{bare}]" if addr.version == 6 else bare)
+    if sorted(out) == sorted(listen_addresses(SSH_DEFAULTS["listen-address"])):
+        return SSH_DEFAULTS["listen-address"]
+    return " ".join(out) if out else value
+
+
+def ssh_listen_lines(value) -> list:
+    """
+    The drop-in's ListenAddress lines for `value`, one per address (#593).
+
+    None for sshd's own default, both wildcards: the file then says nothing
+    and sshd listens on both families as it does on a box nobody configured,
+    rather than this VTY spelling the default out - which is how one
+    wildcard alone, `ListenAddress 0.0.0.0`, came to be written. The port is
+    `Port`'s, which sshd applies to every ListenAddress without one.
+    """
+    value = ssh_listen_normal(str(value or SSH_DEFAULTS["listen-address"]))
+    if value == SSH_DEFAULTS["listen-address"]:
+        return []
+    return [f"ListenAddress {a}" for a in listen_addresses(value)]
+
+
+def ssh_listen_legacy(saved, running):
+    """
+    The listen-address a saved file's `saved` means on a box whose sshd
+    listens on `running` (#593).
+
+    Before #593 the box read back the FIRST address `sshd -T` printed, and
+    with no ListenAddress in effect that is `[::]` - so every box that never
+    had an `ssh` commit saved `ssh listen-address [::]`, and one whose sshd
+    could not be asked saved the old default `0.0.0.0`. Neither was anybody's
+    decision: both are the default, read one address at a time. Loaded as
+    written they would now differ from the default the box runs, and the
+    load would write that one wildcard and take the other family's SSH away
+    at boot. So a lone wildcard, against an sshd on its default, is the
+    default; anything else, and any file sshd already runs, is as written.
+    """
+    words = listen_addresses(ssh_listen_normal(str(saved or "")))
+    if (len(words) == 1 and words[0] in ("0.0.0.0", "[::]")
+            and ssh_listen_normal(str(running or ""))
+            == SSH_DEFAULTS["listen-address"]):
+        return SSH_DEFAULTS["listen-address"]
+    return saved
+
+
+def ssh_listen_wildcard_error(value):
+    """
+    Why a list names a wildcard beside an address of the same family, or
+    None (#593). sshd binds `0.0.0.0` and then cannot bind 10.0.0.1:22, which
+    it logs and goes on without: accepted, the second address is a setting
+    that does nothing.
+    """
+    words = [unbracket(a) for a in listen_addresses(value)]
+    for wild, v in (("0.0.0.0", 4), ("::", 6)):
+        others = [a for a in words if a != wild and ":" in a] if v == 6 \
+            else [a for a in words if a != wild and ":" not in a]
+        if wild in words and others:
+            return (f"ssh listen-address '{others[0]}': "
+                    f"{ssh_listen_normal(wild)} already listens on every "
+                    f"IPv{v} address")
+    return None
+
+
+def ssh_listen_unbound(addrs, addr_text, links, mgmt_vrf=""):
+    """
+    The refusals for listen-addresses `addrs` that sshd could not bind on
+    this host, as [(verdict, prose)] (#593) - what `snmp listen-address`
+    meets as snmpd failing to start, asked of the host BEFORE sshd is told:
+    sshd -t does not bind, and a reload whose every address fails leaves
+    sshd exited (255, which Debian's unit does not restart).
+
+    `addr_text` is the host's `ip -o addr show`, `links` doors.ip_links() of
+    `ip -d -o link show`. An address must be on one of the host's
+    interfaces. One whose interface is in a VRF binds only when management
+    is that VRF (#580), which turns nonlocal bind on: sshd listens in the
+    main table, and bind() answers EADDRNOTAVAIL there for a VRF's address.
+    The wildcards are always bindable.
+    """
+    held = {}
+    for line in (addr_text or "").splitlines():
+        w = line.split()
+        if len(w) > 3 and w[2] in ("inet", "inet6"):
+            try:
+                a = ipaddress.ip_address(w[3].split("/")[0])
+            except ValueError:
+                continue
+            held.setdefault(a, w[1].split("@")[0])
+    out = []
+    for word in addrs:
+        a = ipaddress.ip_address(unbracket(word))
+        if a.is_unspecified:
+            continue
+        dev = held.get(a)
+        if dev is None:
+            out.append((f"ssh listen-address {word}: not an address of this "
+                        "box", "sshd could not listen on it; give an "
+                        "interface the address first"))
+            continue
+        master = (links.get(dev) or {}).get("master")
+        if master and master != mgmt_vrf:
+            out.append((f"ssh listen-address {word}: on {dev}, in vrf "
+                        f"{master}", "sshd listens in the main table, and "
+                        "binds a VRF's address only when management is in "
+                        "that VRF"))
+    return out
 
 
 def validate_role(name, role):
@@ -476,8 +597,11 @@ def validate_ssh(settings: dict):
             # NOTHING asked until #413: `ssh listen-address potato` was taken
             # at the prompt, written to the file and handed to sshd, which
             # then refuses its own configuration and does not start - on a box
-            # whose other way in is a serial cable.
-            why = address_error(f"ssh {k}", str(v))
+            # whose other way in is a serial cable. A list since #593, as
+            # `snmp`/`api listen-address` are (#582): each address held to the
+            # one-address rule, none twice.
+            why = listen_error(f"ssh {k}", str(v)) \
+                or ssh_listen_wildcard_error(str(v))
             if why:
                 return why
             # Stored in the spelling sshd -T gives back, so the candidate and
@@ -736,25 +860,31 @@ class System:
         s = dict(SSH_DEFAULTS)
         rc, out = self._run(["sshd", "-T"])
         if rc == 0 and out.strip():
-            seen = {}
+            seen, listen = {}, []
             for line in out.splitlines():
                 w = line.split(None, 1)
                 if len(w) == 2:
                     seen.setdefault(w[0].strip().lower(), w[1].strip())
+                    if w[0].strip().lower() == _SSHD_T["listen-address"]:
+                        # sshd -T prints "0.0.0.0:22"; the port is its own
+                        # setting and repeating it here would put the same
+                        # number in two places. EVERY line (#593): the first
+                        # alone was read, so a box listening on both families
+                        # reported one, and its next commit wrote that one.
+                        v = w[1].split()[0]
+                        listen.append(v.rsplit(":", 1)[0] if ":" in v else v)
             for field, key in _SSHD_T.items():
                 if key in seen:
                     v = seen[key]
                     if field == "listen-address":
-                        # sshd -T prints "0.0.0.0:22"; the port is its own
-                        # setting and repeating it here would put the same
-                        # number in two places.
-                        v = v.rsplit(":", 1)[0] if ":" in v else v
+                        v = ssh_listen_normal(" ".join(listen))
                     v = _SSHD_T_ALIASES.get(field, {}).get(v, v)
                     s[field] = v
             return s
         # sshd could not be asked - not installed, or refusing its own config.
         # Fall back to the file this VTY owns rather than inventing an answer.
         try:
+            listen = []
             with open(self.dropin) as f:
                 for line in f:
                     w = line.split(None, 1)
@@ -763,6 +893,11 @@ class System:
                     for field, key in _SSHD_T.items():
                         if w[0].strip().lower() == key:
                             v = w[1].strip()
+                            if field == "listen-address":
+                                # One line per address (#593); none is
+                                # sshd's default, which s already holds.
+                                listen.append(v)
+                                v = ssh_listen_normal(" ".join(listen))
                             s[field] = _SSHD_T_ALIASES.get(field,
                                                            {}).get(v, v)
         except OSError:
@@ -871,9 +1006,10 @@ class System:
         if why:
             return False, why
 
+        # One ListenAddress per address, none for sshd's default (#593).
         body = ["# Generated by prismash. Edit through the VTY, not here.",
                 f"Port {settings.get('port', SSH_DEFAULTS['port'])}",
-                f"ListenAddress {settings.get('listen-address', SSH_DEFAULTS['listen-address'])}",
+                *ssh_listen_lines(settings.get('listen-address')),
                 f"PermitRootLogin {settings.get('permit-root-login', SSH_DEFAULTS['permit-root-login'])}",
                 f"PasswordAuthentication {settings.get('password-authentication', SSH_DEFAULTS['password-authentication'])}",
                 ""]

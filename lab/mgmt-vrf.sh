@@ -15,7 +15,8 @@
 # gateway, reached by no route of the main table - must reach, over IPv4 and
 # IPv6:
 #
-#   SSH       a real sshd, its ListenAddress the management addresses
+#   SSH       a real sshd on the drop-in `ssh listen-address` writes, the
+#             management addresses, both families (#593)
 #   the API   the socket appliance/api-configure writes from `api
 #             listen-address`, listened on as systemd does (FreeBind=yes)
 #   SNMP      a real snmpd on `snmp listen-address`, both families
@@ -64,7 +65,12 @@
 # NOT here: a reboot of a real box, and systemd's own ordering of units; those
 # are the box's. What the reboot does to this feature is phases 6 and 7.
 #
-# OFF-RED-AT-LEAST: 143
+# OFF-RED-AT-LEAST: 147
+#
+# 147 since #593, measured on 2026-10-08: phase 3's `ssh listen-address`
+# changed inside the VRF adds four. Without the statement the commit check
+# refuses the IPv6 address back ("in vrf mgmt"), and sshd, reloaded on one
+# address it cannot bind from the main table, answers on none.
 #
 # A FLOOR, measured on 2026-10-08 (#580): the off run red on 143 of its 197
 # checks. Green there and rightly: the controls before the move; the routes
@@ -128,6 +134,10 @@ case "$*" in
       >> /tmp/api-socket.log 2>&1 &
     echo $! > /run/api-lab.pid; sleep 1
     kill -0 "$(cat /run/api-lab.pid)" 2>/dev/null; exit $? ;;
+  # systemd's reload of ssh: a SIGHUP, sshd re-executing on the drop-in.
+  "reload ssh")
+    p=$(cat /run/sshd-lab.pid 2>/dev/null)
+    [ -n "$p" ] && kill -HUP "$p" 2>/dev/null && sleep 1; exit 0 ;;
   is-active*) exit 3 ;;
   *) exit 0 ;;
 esac
@@ -276,11 +286,11 @@ tuner() {       # appliance/apply-tuning, its computation stubbed
   grep -i "management" /tmp/tuner.log | sed 's/^/  tuner: /'
 }
 SSHD_PID=
-start_sshd() {  # sshd, its ListenAddress the management addresses
+start_sshd() {  # sshd on the drop-in the VTY wrote: `ssh listen-address`
   [ -n "$SSHD_PID" ] && kill "$SSHD_PID" 2>/dev/null && sleep 1
-  /usr/sbin/sshd -D -e -o ListenAddress=10.200.0.1 \
-      -o "ListenAddress=[2001:db8:200::1]" > /tmp/sshd.log 2>&1 &
+  /usr/sbin/sshd -D -e > /tmp/sshd.log 2>&1 &
   SSHD_PID=$!
+  echo "$SSHD_PID" > /run/sshd-lab.pid
   sleep 1
 }
 ssh-keygen -A >/dev/null 2>&1
@@ -427,6 +437,15 @@ $HX -c "configure" \
     -c "::/0 next-hop 2001:db8:200::2" -c "exit" \
     -c "commit" > /tmp/c0.log 2>&1
 sed 's/^/  c0: /' /tmp/c0.log | tail -4
+# SSH on the management addresses, both families (#593), once they are the
+# box's: a commit of its own, which an ssh change applies as `commit
+# confirmed`, confirmed here. Before the wait below, so what follows runs on
+# the timeline it ran on before - the gateway's IPv6 neighbour entry is what
+# a few seconds more or less moves (see settle).
+$HX -c "configure" -c "ssh listen-address 10.200.0.1 2001:db8:200::1" \
+    -c "commit" > /tmp/c0ssh.log 2>&1
+$HX -c "configure" -c "commit" >> /tmp/c0ssh.log 2>&1
+grep -E "error|commit complete|confirmed:" /tmp/c0ssh.log | sed 's/^/  c0ssh: /'
 # IPv6's duplicate address detection, over before snmpd binds the address.
 sleep 4
 # The services, each from the VTY: SNMP and the API listen on the management
@@ -448,8 +467,18 @@ pass_
 cat /run/lab-units/prisma-routing-api-proxy.socket 2>&1 | grep -E "Listen|FreeBind" | sed 's/^/  api unit: /'
 expect_in "control: the API's socket unit listens with FreeBind" "FreeBind=yes" \
     "$(cat /run/lab-units/prisma-routing-api-proxy.socket 2>&1)"
+grep '^ListenAddress' /etc/ssh/sshd_config.d/prisma-routing.conf 2>&1 \
+    | sed 's/^/  sshd drop-in: /'
+expect_said "control: the VTY wrote sshd one ListenAddress per address (#593)" \
+    "ListenAddress 10.200.0.1 ListenAddress [2001:db8:200::1]" \
+    "$(cat /etc/ssh/sshd_config.d/prisma-routing.conf 2>&1)"
+expect_in "control: and reads the list back" \
+    "ssh listen-address 10.200.0.1 [2001:db8:200::1]" \
+    "$($HX -c 'show running-config' 2>&1)"
 expect_in "control: before the move, SSH answers on IPv4" "SSH-2.0-OpenSSH" \
     "$(tcp_in 10.200.0.1 22 198.51.100.7)"
+expect_in "control: and on IPv6" "SSH-2.0-OpenSSH" \
+    "$(tcp_in 2001:db8:200::1 22 2001:db8:7::7)"
 expect_in "control: and SNMP on IPv6" "STRING:" "$(snmp_in 2001:db8:200::1 2001:db8:7::7)"
 
 # The move, as one commit: the VRF, the card in it with both addresses, its
@@ -565,6 +594,30 @@ $HX -c "configure" -c "router static" -c "192.0.2.0/24 next-hop 10.0.0.2" \
 sed 's/^/  c3: /' /tmp/c3.log | tail -3
 sleep 2
 reach recommit
+# THE LIST, CHANGED INSIDE THE VRF (#593): sshd reloaded on management's
+# addresses once they are the VRF's - one address, then both again. Each is
+# a bind of an address the main table does not hold, which nonlocal bind
+# makes possible and the commit check accepts because management is that
+# VRF. Off has no statement, so the check refuses the IPv6 address back.
+echo "  -- ssh listen-address, changed in the VRF"
+$HX -c "configure" -c "ssh listen-address 10.200.0.1" -c "commit" \
+    > /tmp/c3s1.log 2>&1
+$HX -c "configure" -c "commit" > /dev/null 2>&1
+sed 's/^/    one: /' /tmp/c3s1.log | tail -2
+expect_in "ssh in the VRF: one address, SSH answers on it" "SSH-2.0-OpenSSH" \
+    "$(tcp_in 10.200.0.1 22 198.51.100.7)"
+expect_not_in "ssh in the VRF: and no longer on the IPv6 one" "SSH-2.0" \
+    "$(tcp_in 2001:db8:200::1 22 2001:db8:7::7)"
+$HX -c "configure" -c "ssh listen-address 10.200.0.1 2001:db8:200::1" \
+    -c "commit" > /tmp/c3s2.log 2>&1
+$HX -c "configure" -c "commit" > /dev/null 2>&1
+sed 's/^/    both: /' /tmp/c3s2.log | tail -3
+expect_not_in "ssh in the VRF: the list back is accepted" "error" \
+    "$(cat /tmp/c3s2.log)"
+expect_in "ssh in the VRF: SSH answers on IPv4" "SSH-2.0-OpenSSH" \
+    "$(tcp_in 10.200.0.1 22 198.51.100.7)"
+expect_in "ssh in the VRF: and on IPv6 again" "SSH-2.0-OpenSSH" \
+    "$(tcp_in 2001:db8:200::1 22 2001:db8:7::7)"
 $HX -c "save" 2>&1 | tail -1 | sed 's/^/  /'
 
 # -------------------------------------------- 4. system dataplane restart

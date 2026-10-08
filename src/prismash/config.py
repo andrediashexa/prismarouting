@@ -4615,11 +4615,13 @@ class Config:
                 if len(w) < 3:
                     cfg.unknown.append((lineno, s, "expected: ssh <setting> <value>"))
                 else:
-                    why = validate_ssh({w[1]: w[2]})
+                    # Held as validate_ssh spells it (#593), as at the prompt.
+                    setting = {w[1]: w[2]}
+                    why = validate_ssh(setting)
                     if why:
                         cfg.unknown.append((lineno, s, why))
                     else:
-                        cfg.ssh[w[1]] = w[2]
+                        cfg.ssh[w[1]] = setting[w[1]]
                 continue
             if s.startswith("dns "):
                 # The prompt's predicate and the prompt's limit, so the file
