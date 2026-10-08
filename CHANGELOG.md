@@ -79,6 +79,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **After an interface moved into a VRF, its IPv6 address could not be
+  learnt afresh: the dataplane dropped every multicast neighbour
+  solicitation for it.** ([#594](https://github.com/andrediashexa/hexarouting/issues/594))
+  `lab/mgmt-vrf.sh` failed 2 runs of 4 on 0.152.4 (3 of 4 here), each time
+  IPv6's SSH, API and SNMP right after management moved into its VRF, with
+  the gateway still unresolved at the lab's 20 s. Measured: the gateway's
+  solicitations reached VPP and were counted as "Multicast RPF check
+  failed". VPP 26.06 moves an interface to another IPv6 table without
+  moving its Accept on the solicited-node, all-nodes, all-routers and MLDv2
+  groups, which `ip6_link` puts in the table the interface is in when its
+  IPv6 is first enabled - and a paired interface's IPv6 stays enabled across
+  the move, held by the TAP's link-local through linux_cp. A neighbour that
+  still had the address reached the box by unicast; one whose entry had gone
+  (the move cycles the card, and the gateway's entry went with the link)
+  waited until the box happened to solicit it, 0 s in one run and over 30 s
+  in the next. The plugin now moves the four paths with the interface on
+  every IPv6 table move - management, a tenant VRF (#540), `--load`,
+  `vppctl` - and a neighbour asking afresh is answered by the first
+  solicitation. `lab/mgmt-vrf.sh` makes the gateway forget the box's address
+  in every phase and asks within 5 s, moves a tenant card too, and passed 10
+  runs of 10; `lab/mgmt-vrf.sh unrepaired`, the dataplane started with
+  `bpa { ip6-mcast-follow off }`, fails 18 checks. IPv4 never had it: ARP is
+  a broadcast.
+
 ## 0.152.5 - ssh listen-address takes a list, IPv4 and IPv6
 
 ### Fixed

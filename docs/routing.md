@@ -1251,6 +1251,24 @@ its IPv4 (#580). Before, only IPv4 moved, so an interface in a VRF kept its
 IPv6 in table 0 - the subscribers' - which forwarded to management's IPv6
 subnet, and the VRF's IPv6 routes went to a table no interface was in.
 
+**And it answers neighbour solicitations there (#594).** VPP 26.06 moves an
+interface whose IPv6 is enabled - and a paired interface's always is, by the
+TAP's link-local that linux_cp mirrors - without moving its Accept on the
+solicited-node, all-nodes, all-routers and MLDv2 groups: they stayed in the
+old table, and the new one dropped every multicast solicitation for the
+interface's own addresses ("Multicast RPF check failed" in `show errors`).
+A neighbour that still had the box's address kept reaching it by unicast; one
+whose entry had gone - the move cycles the card, and a router's entry goes
+with the link - could not learn it again until the box solicited it first,
+which in `lab/mgmt-vrf.sh` took from 0 s to over 30 s right after `system
+management vrf`. The plugin now moves those four paths with the interface on
+every IPv6 table move, whatever made it - management, a tenant VRF (#540),
+`--load`, `vppctl` - so a neighbour that asks afresh is answered at once:
+measured, the first solicitation, in every phase of that lab and for a tenant
+card. IPv4 never had it: ARP is a broadcast, not a multicast group.
+`vppctl show ip6 mfib table <id> ff02::1:ff00:0/104` lists the interface as
+`Accept` in the table it is in.
+
 **When it is applied.** At commit, through the host's doors
 (`doors.management_argvs()`: the old rules removed, the settings, the new
 rules; a rule already absent is not a failure, one that cannot be added fails
