@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.152.5 - ssh listen-address takes a list, IPv4 and IPv6
+
+### Fixed
+
 * **`ssh listen-address` took one address, and an `ssh` commit took SSH
   over IPv6 away.** ([#593](https://github.com/andrediashexa/hexarouting/issues/593))
   The setting was read back as the first address `sshd -T` printed, and a
