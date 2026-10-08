@@ -311,6 +311,8 @@ Faça com `commit confirmed 10` e confirme com `commit` depois de entrar de novo
 
 Até a 0.152.5, logo depois de a placa entrar na VRF o endereço IPv6 dela podia ficar sem resposta por mais de 20 segundos, às vezes até a caixa falar primeiro com o gateway: o dataplane descartava as solicitações de vizinho que chegavam por multicast para uma interface movida de tabela. A partir da 0.152.6 ele responde já à primeira, nessa VRF e em qualquer outra.
 
+Até a 0.152.6, numa caixa ocupada, tirar a VRF (um `commit confirmed` que expirou, por exemplo) e pô-la de volta podia deixar a default IPv6 da VRF fora do Linux até o FRR reiniciar: o zebra ficava com a rota conectada da placa inativa. A partir da 0.152.7 a caixa troca a placa de VRF sem endereço nenhum nela, espera o zebra acompanhar antes de devolver os endereços e só remove uma VRF depois de o zebra soltá-la. Vale para a gerência e para a VRF de qualquer cliente. Se o zebra demorar mais de 10 segundos, o commit segue e avisa, e o `show log` guarda o que ele ainda tinha.
+
 | O quê | Por onde vai |
 |-------|--------------|
 | SSH, API, SNMP e o prisma-web entrando, IPv4 e IPv6 | pela VRF de gerência; a resposta segue a conexão |

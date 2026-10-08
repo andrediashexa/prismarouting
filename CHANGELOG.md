@@ -79,6 +79,38 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A VRF taken away and given back could come back without its IPv6
+  default, until FRR restarted: zebra left the card's connected route
+  inactive.** ([#595](https://github.com/andrediashexa/hexarouting/issues/595))
+  `lab/mgmt-vrf.sh` lost table 100's `::/0 via 2001:db8:200::2` in 2 runs of
+  about 51 with many labs at once, each time in the confirmed move that
+  follows an expired `commit confirmed`. Measured with zebra's debug on (FRR
+  10.7.1): the rollback deleted the `mgmt` device with the card still in it,
+  holding its addresses again. zebra hears links and routes on two sockets,
+  moved the card to the default VRF before it read the kernel deleting
+  2001:db8:200::/64 from table 100, matched that delete against the wrong
+  VRF ("doesn't exist in rib") and kept a kernel route whose next hop was in
+  a VRF that no longer existed ("vrf Unknown"). The device's own link going
+  down queued that route's node, and zebra disabled the VRF 0.1 ms later: it
+  drops a disabled VRF's nodes from its queue but leaves each marked queued,
+  and keeps table 100's nodes for the next VRF on that table - even after
+  `no vrf mgmt`, measured. Every route the next move put on that prefix was
+  "already queued", never processed. The box now changes a card's Linux VRF
+  in the gap between its addresses going off and coming back, waits for
+  zebra to have dropped them before the move and to hold the card in its new
+  VRF before they return, makes a VRF's device before any card moves into it
+  and removes one only after its cards are out and zebra lists nothing of
+  theirs in it. The same for a tenant VRF (#540), which the lab now takes
+  away and gives back with a route of each family. The wait is bounded (10 s,
+  `PRISMA_VRF_SETTLE_S`): past it the commit goes on, says so, and records
+  what zebra still held for `show log`. `lab/mgmt-vrf.sh loaded` - zebra's
+  RIB queue held 1 s, every core busy - passed 20 runs of 20, five at a time;
+  `unsettled`, the same with the box not waiting, fails the 15 checks the
+  field runs failed and the tenant's IPv6 route. IPv4 is exposed to the same
+  zebra behaviour and is covered by the same waits; it did not show in the
+  lab, where the node stranded was the IPv6 prefix's kernel route, the one
+  zebra learns while the address is still tentative.
+
 ## 0.152.6 - IPv6 answers at once after a card moves to another table
 
 ### Fixed

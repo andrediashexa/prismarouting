@@ -9,6 +9,25 @@
 #                                   with the statement, on a dataplane started
 #                                   with `bpa { ip6-mcast-follow off }`: an IPv6
 #                                   table move as VPP 26.06 makes it (#594)
+#   sh tools/lab.sh mgmt-vrf loaded with the statement, on a zebra whose RIB
+#                                   queue runs a second behind the kernel
+#                                   and with every core kept busy (#595)
+#   sh tools/lab.sh mgmt-vrf unsettled
+#                                   loaded, with the box not waiting for
+#                                   zebra (PRISMA_VRF_SETTLE_S=0): red
+#
+# LOADED IS WHAT 5-10 LABS AT ONCE DID TO ZEBRA, ON PURPOSE (#595). 2 runs in
+# about 51 lost table 100's IPv6 default after the move, and the cause was
+# measured with zebra's debug on (remove_vrf_device() in prismash has it):
+# zebra hears links and routes on two sockets and processes its RIB queue
+# later still, and the VRF's removal at the rollback stranded a node of
+# table 100 marked "queued" - never processed again. `zebra work-queue 1000`
+# holds that queue a second, so every route event lands inside the window
+# the busy runs only sometimes hit; measured on 2026-10-08 with the box as it
+# was in 0.152.6, 300, 1000 and 3000 ms each went red on all 15 checks the
+# field runs failed. The burners (one per core) are the contention itself.
+# frr-reload takes the knob away at each commit - it is not the box's
+# configuration - so every prismash call here puts it back first.
 #
 # The box as 10.40.200.166 asked for it: its management card is a linux_cp
 # pair in VRF mgmt (table 100), with an IPv4 and an IPv6 address and a
@@ -68,7 +87,9 @@
 # 2026-10-08. Forgetting the entry on purpose makes that the case every run
 # asks, rather than the case a run is lucky enough to hit. Then
 #   9. a tenant VRF (#540): the upstream card into `vrf cust`, and the
-#      upstream must learn its IPv6 address afresh the same way.
+#      upstream must learn its IPv6 address afresh the same way;
+#  10. that VRF taken away by a `commit confirmed` and given back by the box:
+#      its routes of both families back in table 200 (#595).
 # `unrepaired` turns those red and nothing else, measured on 2026-10-08: 21
 # checks - afresh, the solicited-node Accept and IPv6's SSH, API and SNMP in
 # phases 1, 2 and 3 (once moved, the card stays deaf to multicast until it
@@ -78,7 +99,18 @@
 # by the check - a dataplane started anew has the card bound to its table
 # before its IPv6 is enabled, and the link's own enable puts it there.
 #
-# OFF-RED-AT-LEAST: 155
+# OFF-RED-AT-LEAST: 122
+#
+# 122 since #595, measured on 2026-10-08 (122 of 220), and the 33 that went
+# green are the box doing better, not the lab asserting less: a card now
+# changes VRF with no address on it and gets them back after, so it no
+# longer needs the statement's keep_addr_on_down to keep its IPv6 address
+# in the VRF. Green now without the statement, in each of the seven phases:
+# the card's and the dataplane's IPv6 in table 100, table 100's IPv6 default
+# and afresh; and after the rollback the IPv6 address, SSH and SNMP on IPv6
+# and SNMP on IPv4 (snmpd names that address). What the statement is for -
+# SSH, the API, SNMP, the box's own traffic through the VRF - is red as
+# before. Phase 10 does not run off.
 #
 # 155 since #594, measured on 2026-10-08 (155 of 220): afresh is red in each
 # of the seven phases and after the rollback, and rightly - without the
@@ -104,7 +136,8 @@ set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api, wait_vpp
 . /src/lab/verdict.sh
 MODE=${1:-on}
-case "$MODE" in on|off|unrepaired) ;; *) echo "mode: on, off or unrepaired"; exit 2 ;; esac
+case "$MODE" in on|off|unrepaired|loaded|unsettled) ;;
+  *) echo "mode: on, off, unrepaired, loaded or unsettled"; exit 2 ;; esac
 apt-get install -y -qq snmptrapd >/dev/null 2>&1
 mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/log/prisma-routing \
          /etc/snmp /var/lib/snmp /run/prisma-routing/state /run/sshd \
@@ -128,6 +161,26 @@ export PRISMA_DOORS=/tmp/no-doors.sock
 cd /src
 use_binary_api
 T=4   # seconds a reach check waits: a red one costs this, and off has many
+# The slow zebra and the busy cores (#595), see the top.
+case "$MODE" in
+  loaded|unsettled)
+    cat > /usr/local/bin/hx-lagged <<'EOF'
+#!/bin/sh
+vtysh -c configure -c "zebra work-queue 1000" > /dev/null 2>&1
+exec python3 /src/src/prismash/prismash.py "$@"
+EOF
+    chmod +x /usr/local/bin/hx-lagged
+    HX=/usr/local/bin/hx-lagged
+    [ "$MODE" = unsettled ] && export PRISMA_VRF_SETTLE_S=0
+    BURNERS=
+    for _i in $(seq "$(nproc)"); do
+      python3 -c "while True: pass" & BURNERS="$BURNERS $!"
+    done
+    trap 'kill $BURNERS 2>/dev/null' EXIT
+    echo "  MODE=$MODE: zebra's RIB queue held 1 s, $(nproc) cores kept" \
+         "busy$([ "$MODE" = unsettled ] && echo ', the box not waiting')"
+    ;;
+esac
 
 # ------------------------------------------------------------------ stand-ins
 # systemctl, as far as the box's units go here.
@@ -747,6 +800,57 @@ if [ "$MODE" != off ]; then
   expect_in "tenant: the card's IPv6 is in table 200" "ip6 table-id 200" \
       "$(vppctl show int addr host-veth-up 2>&1)"
   afresh "tenant: the upstream learns the card's IPv6 afresh within 5 s" \
+      up veth-up-o 2001:db8:10::1 2001:db8:10::2
+
+  # THE TENANT'S VRF TAKEN AWAY AND GIVEN BACK (#595): what phases 1 and 2
+  # do to mgmt, done to cust - one device removal for every VRF, so the
+  # waiting is in it and not in anything management does. A route of each
+  # family in `vrf cust`, then a `commit confirmed` removing the VRF, its
+  # card and its routes, taken back by the box, which makes cust again. The
+  # main table's routes through the upstream go first: their next hop left
+  # with the card in phase 9, and the commit check refuses a route on no
+  # connected network.
+  echo; echo "=== 10. the tenant VRF taken away, and the box giving it back ==="
+  $HX -c "configure" -c "router static" -c "no 0.0.0.0/0 next-hop 10.0.0.2" \
+      -c "no ::/0 next-hop 2001:db8:10::2" \
+      -c "no 192.0.2.0/24 next-hop 10.0.0.2" -c "exit" -c "vrf cust" -c "ip route 198.18.0.0/15 10.0.0.2" \
+      -c "ipv6 route 2001:db8:99::/48 2001:db8:10::2" -c "exit-vrf" \
+      -c "commit" > /tmp/c10.log 2>&1
+  grep -v "^entering" /tmp/c10.log | sed 's/^/  c10: /' | tail -4
+  sleep 3
+  expect_in "tenant: its IPv4 route is in table 200" "via 10.0.0.2" \
+      "$(ip route show table 200 198.18.0.0/15 2>&1)"
+  expect_in "tenant: and its IPv6 one" "via 2001:db8:10::2" \
+      "$(ip -6 route show table 200 2001:db8:99::/48 2>&1)"
+  $HX -c "configure" -c "no vrf cust table 200" -c "interface host-veth-up" \
+      -c "vrf 0" -c "exit" -c "vrf cust" -c "no ip route 198.18.0.0/15 10.0.0.2" \
+      -c "no ipv6 route 2001:db8:99::/48 2001:db8:10::2" -c "exit-vrf" \
+      -c "commit confirmed 5" > /tmp/c10b.log 2>&1
+  sed 's/^/  c10b: /' /tmp/c10b.log | grep -v "^  c10b: entering" | tail -3
+  sleep 2
+  expect_not_in "tenant: taken away, cust is gone" "cust" \
+      "$(ip -o link show type vrf 2>&1)"
+  python3 - <<'EOF'
+import sys
+sys.path.insert(0, "/src/src/prismash")
+import prismash
+c = prismash.ConfirmPending(prismash.CONFIRM_PATH)
+p = c.read()
+c.arm(p["deadline"] - 301, p["config"], p["minutes"], p["attempts"])
+EOF
+  $HX --confirm-expired > /tmp/expired10.log 2>&1
+  sed 's/^/  expired: /' /tmp/expired10.log | head -2
+  sleep 3
+  ip route show table 200 2>&1 | sed 's/^/    table 200: /'
+  ip -6 route show table 200 2>&1 | grep -v "^local\|^multicast\|fe80" \
+      | sed 's/^/    table 200: /'
+  expect_in "tenant: given back, the card is in cust again" "master cust" \
+      "$(ip -o link show vppup0 2>&1)"
+  expect_in "tenant: given back, its IPv4 route is in table 200 again" \
+      "via 10.0.0.2" "$(ip route show table 200 198.18.0.0/15 2>&1)"
+  expect_in "tenant: and its IPv6 one (#595)" "via 2001:db8:10::2" \
+      "$(ip -6 route show table 200 2001:db8:99::/48 2>&1)"
+  afresh "tenant: given back, the upstream learns the card's IPv6 afresh" \
       up veth-up-o 2001:db8:10::1 2001:db8:10::2
 fi
 
