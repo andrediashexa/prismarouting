@@ -1589,6 +1589,31 @@ with tempfile.TemporaryDirectory() as tmp:
           f"the address went back and the default route did not, so the box "
           f"answers on its own subnet and nowhere else: {sh.ran!r}")
 
+print("\n=== with management in a VRF, the way home goes in again after the apply (#580) ===")
+# The apply puts the pair in the VRF device, enslaving cycles it, and the
+# kernel flushes every route through it - the default the way back had just
+# put in table 100 with them. So load() puts it in once more after the apply.
+# Mutation: without the second management_way_home() call this sees one.
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi(have=("GigabitEthernet0/3/0",))
+    sh, path = booted_after_handover(
+        tmp, "vrf mgmt table 100\ninterface GigabitEthernet0/3/0\n vrf 100\n"
+             " exit\nsystem\n management\n  vrf mgmt\n  exit\n exit\n",
+        api=api)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(path)
+    home = ["ip", "route", "replace", "default", "via", "10.95.200.1", "dev",
+            "ens18", "table", "100"]
+    at = [i for i, a in enumerate(sh.ran) if a == home]
+    rules = [i for i, a in enumerate(sh.ran) if a[:3] == ["ip", "rule", "del"]]
+    check(len(at) == 2 and rules and at[0] < rules[0] < at[1],
+          f"the way home into table 100 before the apply and again after it: "
+          f"{sh.ran!r}")
+    check(not [a for a in sh.ran if a[:3] == ["ip", "route", "replace"]
+               and "table" not in a],
+          f"and never into the main table: {sh.ran!r}")
+
 print("\n=== the boot after the handover makes the pair with nothing saved ===")
 with tempfile.TemporaryDirectory() as tmp:
     api = FakeApi(have=("GigabitEthernet0/3/0",))

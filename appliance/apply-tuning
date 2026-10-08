@@ -427,9 +427,17 @@ if [ -n "$PRISMA_MANAGEMENT_TABLE" ]; then
 else
   on=0
 fi
-$SYSCTL -q -w net.ipv4.tcp_l3mdev_accept=$on >/dev/null 2>&1
-$SYSCTL -q -w net.ipv4.udp_l3mdev_accept=$on >/dev/null 2>&1
+# l3mdev accept, so the listeners answer on the VRF; nonlocal bind, so one
+# that names the management address can bind it once that address is the
+# VRF's (snmpd's agentAddress, sshd's ListenAddress); and IPv6 keeping its
+# addresses when the VTY moves the card into the VRF, which cycles it. The
+# reasons, measured, are at doors.MGMT_SYSCTLS; the last is only turned on.
+for key in net.ipv4.tcp_l3mdev_accept net.ipv4.udp_l3mdev_accept \
+           net.ipv4.ip_nonlocal_bind net.ipv6.ip_nonlocal_bind; do
+  $SYSCTL -q -w "$key=$on" >/dev/null 2>&1
+done
 if [ -n "$PRISMA_MANAGEMENT_TABLE" ]; then
+  $SYSCTL -q -w net.ipv6.conf.all.keep_addr_on_down=1 >/dev/null 2>&1
   for fam in "" -6; do
     # shellcheck disable=SC2086
     $IP $fam rule add pref 31000 iif lo lookup main suppress_prefixlength 0

@@ -628,6 +628,13 @@ host | grep -qx "sysctl -q -w net.ipv4.tcp_l3mdev_accept=1" \
   && host | grep -qx "sysctl -q -w net.ipv4.udp_l3mdev_accept=1" \
   && ok "  and the main table's listeners answer on the VRF" \
   || bad "the l3mdev sysctls were not set: $(host)"
+host | grep -qx "sysctl -q -w net.ipv4.ip_nonlocal_bind=1" \
+  && host | grep -qx "sysctl -q -w net.ipv6.ip_nonlocal_bind=1" \
+  && ok "  and a listener naming the management address can bind it" \
+  || bad "nonlocal bind was not set: $(host)"
+host | grep -qx "sysctl -q -w net.ipv6.conf.all.keep_addr_on_down=1" \
+  && ok "  and IPv6 keeps the card's address when it moves into the VRF" \
+  || bad "keep_addr_on_down was not set: $(host)"
 [ "$(host | grep -n 'rule del pref 31001$' | head -1 | cut -d: -f1)" -lt \
   "$(host | grep -n 'rule add pref 31001' | head -1 | cut -d: -f1)" ] \
   && ok "  the old rules removed first, so a reboot does not stack them" \
@@ -642,6 +649,10 @@ host | grep -qx "sysctl -q -w net.ipv4.tcp_l3mdev_accept=0" \
   && host | grep -qx "ip rule del pref 31001" \
   && ok "  and a box taken out of it loses the rules and the sysctls" \
   || bad "turning it off left something behind: $(host)"
+host | grep -qx "sysctl -q -w net.ipv4.ip_nonlocal_bind=0" \
+  && ! host | grep -q "keep_addr_on_down" \
+  && ok "  nonlocal bind off; keep_addr_on_down left as the kernel has it" \
+  || bad "off touched keep_addr_on_down or left nonlocal bind: $(host)"
 run PRISMA_MANAGEMENT_TABLE=254
 said "REFUSED PRISMA_MANAGEMENT_TABLE, in tune.env" \
   && said "It is a VRF's table" && said "management in the main table" \

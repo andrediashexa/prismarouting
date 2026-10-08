@@ -59,8 +59,30 @@ SOCKET = "/run/prisma-routing/doors.sock"
 #: VRF's table. Below the main table's own rule (32766) and above nothing
 #: of the box's: prisma-bp's l3mdev rule is at 1000.
 MGMT_RULE_MAIN, MGMT_RULE_VRF = "31000", "31001"
-#: The sysctls that let the main table's listeners answer on a VRF.
-MGMT_SYSCTLS = ("net.ipv4.tcp_l3mdev_accept", "net.ipv4.udp_l3mdev_accept")
+#: The sysctls management in its own VRF turns on, and off again (#580):
+#: - tcp/udp_l3mdev_accept, so the main table's listeners answer a
+#:   connection that arrives on a VRF (net.ipv4's, and IPv6's too);
+#: - ip_nonlocal_bind, v4 and v6, so a listener NAMING the management
+#:   address can bind it. Once the card is in the VRF its address is local in
+#:   the VRF's table and not in the main one, and bind() answered EADDRNOTAVAIL
+#:   - measured on Debian's 6.1 with snmpd 5.9.3 on `agentAddress
+#:   udp:<addr>:161,udp6:[<addr>]:161`: "Error opening specified endpoint",
+#:   snmpd exiting 1. sshd's ListenAddress is the same bind; the API's socket
+#:   unit already says FreeBind=yes;
+#: - IPv6's keep_addr_on_down, so the card's IPv6 address survives its move
+#:   into the VRF. Enslaving a device cycles it, and IPv6 drops its addresses
+#:   on the way down unless told to keep them - measured on the same kernel:
+#:   10.40.200.166/24 stayed and 2001:db8::166/64 was gone, while the
+#:   dataplane, which put it there, still had it.
+MGMT_KEEP_ADDR = "net.ipv6.conf.all.keep_addr_on_down"
+MGMT_SYSCTLS = ("net.ipv4.tcp_l3mdev_accept", "net.ipv4.udp_l3mdev_accept",
+                "net.ipv4.ip_nonlocal_bind", "net.ipv6.ip_nonlocal_bind",
+                MGMT_KEEP_ADDR)
+#: What `show system management` asks of the host (#580): the rules and the
+#: sysctls above, read. The management container has no network of its own
+#: to read them in, and they are what any account reads with `ip rule`.
+MGMT_RULES_READ = (("ip", "rule", "show"), ("ip", "-6", "rule", "show"))
+MGMT_SYSCTLS_READ = ("sysctl", "-n") + MGMT_SYSCTLS
 
 
 def mgmt_table_ok(table) -> bool:
@@ -84,6 +106,12 @@ def management_argvs(table):
         for pref in (MGMT_RULE_MAIN, MGMT_RULE_VRF):
             out.append((("ip",) + fam + ("rule", "del", "pref", pref), True))
     for key in MGMT_SYSCTLS:
+        # keep_addr_on_down is only ever turned ON: management leaving the
+        # VRF moves the card out again, the same cycle, and its IPv6
+        # address must survive that one too - `commit confirmed` taking a
+        # VRF back is exactly this path. The next boot has the kernel's 0.
+        if key == MGMT_KEEP_ADDR and not table:
+            continue
         out.append((("sysctl", "-q", "-w", f"{key}={on}"), False))
     if table:
         for fam in ((), ("-6",)):
@@ -327,6 +355,10 @@ QUERIES = {
     # whoever asks: the container has no network to list them in. What any
     # account on the host reads with `ip link`.
     LINKS_ARGV: "list the Linux interfaces, VRFs and members",
+    # Management in its own VRF, in effect (#580).
+    MGMT_RULES_READ[0]: "read the routing rules",
+    MGMT_RULES_READ[1]: "read the IPv6 routing rules",
+    MGMT_SYSCTLS_READ: "read management's kernel settings",
 }
 
 def query_of(argv):

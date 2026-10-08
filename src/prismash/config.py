@@ -247,6 +247,26 @@ def management_vrf_error(cfg):
     return None
 
 
+def management_members_error(cfg):
+    """
+    Why `cfg`'s `management vrf` would strand the box's own traffic, as
+    (verdict, prose), or None (#580): a VRF no interface is in. The rules
+    send what the box originates to the VRF's table, and zebra gives every
+    VRF table an unreachable default - so it would go nowhere, the replies
+    to a session opened on the main table with it. Asked of a commit that
+    changes the setting, never of a boot: a card missing at boot (#575) is
+    a box that comes up without it, not one that refuses its file.
+    """
+    table = management_table(cfg)
+    if table and table not in set(getattr(cfg, "vrfs", {}).values()):
+        name = cfg.management["vrf"]
+        return (f"management vrf {name}: no interface is in it",
+                f"the management interface goes in with 'vrf {table}', in "
+                f"this commit or an earlier one; the box's own traffic "
+                f"would otherwise go to a table with no way out")
+    return None
+
+
 #: The levels under `system` that are tune.env settings: each one's keys and
 #: the rule its values are read by. One table, so the file, the prompt, the
 #: readback and the commit cannot each know a different list.
