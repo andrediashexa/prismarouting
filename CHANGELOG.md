@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.152.7 - a card changes VRF with no addresses on it
+
+### Fixed
+
 * **A VRF taken away and given back could come back without its IPv6
   default, until FRR restarted: zebra left the card's connected route
   inactive.** ([#595](https://github.com/andrediashexa/hexarouting/issues/595))
