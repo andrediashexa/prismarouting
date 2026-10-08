@@ -309,7 +309,7 @@ O `router static` é só a tabela principal. Rota estática de uma VRF vai no bl
 
 Faça com `commit confirmed 10` e confirme com `commit` depois de entrar de novo pelo endereço de gerência, por IPv4 e por IPv6. Se a sessão cair, ninguém confirma e o rollback desfaz tudo: a VRF, as regras e os ajustes do kernel. A caixa volta a responder pela tabela principal.
 
-Até a 0.152.5, logo depois de a placa entrar na VRF o endereço IPv6 dela podia ficar sem resposta por mais de 20 segundos, às vezes até a caixa falar primeiro com o gateway: o dataplane descartava as solicitações de vizinho que chegavam por multicast para uma interface movida de tabela. A partir da 0.152.6 ele responde já à primeira, nessa VRF e em qualquer outra ([#594](https://github.com/andrediashexa/hexarouting/issues/594)).
+Até a 0.152.5, logo depois de a placa entrar na VRF o endereço IPv6 dela podia ficar sem resposta por mais de 20 segundos, às vezes até a caixa falar primeiro com o gateway: o dataplane descartava as solicitações de vizinho que chegavam por multicast para uma interface movida de tabela. A partir da 0.152.6 ele responde já à primeira, nessa VRF e em qualquer outra.
 
 | O quê | Por onde vai |
 |-------|--------------|
