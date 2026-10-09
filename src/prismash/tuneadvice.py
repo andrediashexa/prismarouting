@@ -40,6 +40,8 @@ import re
 import statistics
 import textwrap
 
+from system import is_number
+
 WIDTH = 79
 
 # -------------------------------------------------------------- thresholds
@@ -152,7 +154,7 @@ def cpu_parse(spec):
     # "2-7\n" read as a list of nothing was every CPU isolated read as none.
     for part in "".join((spec or "").split()).split(","):
         a, _, b = part.partition("-")
-        if a.isdigit() and (not b or b.isdigit()):
+        if is_number(a) and (not b or is_number(b)):
             out += list(range(int(a), int(b) + 1)) if b else [int(a)]
     return sorted(set(out))
 
@@ -313,7 +315,7 @@ def parse_proc_stat(text):
         m = re.match(r"^cpu(\d+)\s+(.*)$", line)
         if not m:
             continue
-        v = [int(x) for x in m.group(2).split() if x.isdigit()]
+        v = [int(x) for x in m.group(2).split() if is_number(x)]
         if len(v) < 8:
             continue
         # user nice system idle iowait irq softirq steal [guest guest_nice]:
@@ -344,7 +346,7 @@ def meminfo(text):
     for line in (text or "").splitlines():
         k, _, v = line.partition(":")
         w = v.split()
-        if w and w[0].isdigit():
+        if w and is_number(w[0]):
             out[k.strip()] = int(w[0])
     return out
 
@@ -402,7 +404,7 @@ def parse_host_topology(text):
         if len(w) == 1 and re.fullmatch(r"-?\d+", w[0]):
             nic = int(w[0]) if int(w[0]) >= 0 else None
             continue
-        if len(w) >= 4 and w[0].isdigit():
+        if len(w) >= 4 and is_number(w[0]):
             node = 0 if w[1] == "-" else w[1]
             try:
                 cpus[int(w[0])] = (int(node), int(w[2]), int(w[3]))
