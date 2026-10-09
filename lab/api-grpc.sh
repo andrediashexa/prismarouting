@@ -1,12 +1,14 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 233
+# OFF-RED-AT-LEAST: 240
 # (195, and #588's thirteen ListEvents and GetSystem checks: measured
 # 2026-10-06, 208 red in the off run, each of the thirteen among them; and
 # #590's eight ListTransceivers checks: 216, measured the same day; and
 # #588 phase 2's three - ListEvents' kind, a kind refused, a settings
 # event's subject: 219, measured 2026-10-07; and #588 phase 3's eight -
 # WatchEvents and system logging through the API: 227, measured the same
-# day; and #596's six GetTuningAdvice checks: 233, measured 2026-10-08.)
+# day; and #596's six GetTuningAdvice checks: 233, measured 2026-10-08;
+# and #598's seven GetSystem CPU and GetHistory cpus checks: 240, measured
+# 2026-10-09.)
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -655,6 +657,11 @@ printf '%s\n' "$T13" | sed 's/^/  /'
 echo "=========== #596: GetTuningAdvice ==========="
 T14=$(python3 lab/api_phase14_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
 printf '%s\n' "$T14" | sed 's/^/  /'
+# #598: each CPU's place and usage, from the sampler (one a second here),
+# in GetSystem and in GetHistory.
+echo "=========== #598: GetSystem's CPUs, GetHistory cpus ==========="
+T15=$(python3 lab/api_phase15_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
+printf '%s\n' "$T15" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -932,6 +939,14 @@ expect "  its text is the screen of the same reading: the same worker CPUs" t14 
 expect "  the sizing table, 4 to 32 vCPUs, from the tuner's plan" t14 tuning-sizing
 expect "  the host's pasted topology fills the hookscript in, on a VM; none on bare metal" t14 tuning-snippets
 expect "  a window past 60 s: INVALID_ARGUMENT" t14 tuning-refused
+t15() { printf '%s\n' "$T15" | grep -q "^RESULT $1 ok"; }
+expect "#598: GetSystem's CPU topology is this machine's: its CPUs, its model" t15 cpu-topology
+expect "  the workers' CPUs are workers, numbered as worker_load; main's is main" t15 cpu-planes
+expect "  each CPU's usage from the sampler, the workers polling" t15 cpu-usage
+expect "  the sampler's last window, ended seconds ago" t15 cpu-usage-recent
+expect "  cpu_cores_text is show system cpu cores, a row per CPU, 79 wide" t15 cpu-text
+expect "  GetHistory cpus: every CPU in each sample, the workers polling" t15 history-cpus
+expect "  and only when asked: a bare request carries none" t15 history-cpus-asked
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

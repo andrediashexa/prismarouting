@@ -196,12 +196,20 @@ def cpu_topology(tune, root="/", online=None):
 
 def cpu_planes(topology, layout):
     """
-    {cpu: "worker" | "main" | "control-plane"}: which plane each online CPU
-    serves this boot, from cpu_topology() and the layout (`show threads`
-    and the control plane's fence) - the per-CPU plane #598 asks GetSystem
-    for, and the roles guest_roles() pins by.
+    {cpu: "worker" | "main" | "control-plane" | "none"}: which plane each
+    online CPU serves this boot, from cpu_topology() and the layout (`show
+    threads` and the control plane's fence) - the per-CPU plane GetSystem
+    carries (#598), and the roles guest_roles() pins by.
+
+    "none" is a CPU no plane runs on (#598): isolated at boot with no VPP
+    thread on it - the HT sibling the tuner takes off a worker's core - or
+    outside the control plane's fence. Called the control plane's, it read
+    as an idle control-plane CPU and dragged that plane's average down.
     """
-    out = {c: "control-plane" for c in topology.get("online") or []}
+    iso = set(layout.get("isolated") or [])
+    fence = set(layout.get("control_plane") or [])
+    out = {c: "none" if c in iso or (fence and c not in fence)
+           else "control-plane" for c in topology.get("online") or []}
     if layout.get("main") is not None:
         out[layout["main"]] = "main"
     for c in layout.get("workers") or []:
@@ -275,6 +283,21 @@ def parse_runtime(text):
     return out
 
 
+def runtime_lcores(text):
+    """
+    {"main" | worker: lcore}: the CPU each VPP thread is pinned to, as `show
+    runtime`'s `Thread <n> vpp_wk_<w> (lcore <c>)` headers say it (#598) -
+    VPP's own word, where startup.conf may name none (`workers 2` with no
+    corelist, as the labs start it) and a worker's number is not its CPU.
+    """
+    out = {}
+    for m in re.finditer(r"^Thread \d+ vpp_(main|wk_(\d+)) \(lcore (\d+)\)",
+                         text or "", re.M):
+        out["main" if m.group(1) == "main" else int(m.group(2))] = \
+            int(m.group(3))
+    return out
+
+
 def thread_rates(before, after, seconds):
     """
     {"main" | worker: {"loops_per_second", "vectors_per_call"}} between two
@@ -294,6 +317,58 @@ def thread_rates(before, after, seconds):
             vpc = (a["vectors"] - b["vectors"]) / dc if dc else 0.0
         out[key] = {"loops_per_second": round(loops, 1),
                     "vectors_per_call": round(max(0.0, vpc), 2)}
+    return out
+
+
+def runtime_clocks(text):
+    """
+    Each worker's clocks out of `show runtime`: {worker: {"active", "all"}}
+    - the clocks its graph nodes took (state `active`: they run only with
+    packets) and every node's, the input nodes' polling included. A row's
+    Clocks column is per vector when the node had vectors, per call when it
+    had none, so a node's clocks are the column times the one it is per.
+    The API's BusyMeter's since #533, here since #598 so the VTY's per-CPU
+    screen reads a worker's busy ratio with the same parser.
+    """
+    out, cur = {}, None
+    for line in text.splitlines():
+        m = re.match(r"^Thread \d+ vpp_wk_(\d+)", line)
+        if m:
+            cur = out.setdefault(int(m.group(1)),
+                                 {"active": 0.0, "all": 0.0})
+            continue
+        if line.startswith("Thread "):
+            cur = None
+            continue
+        r = _RT_ROW.match(line) if cur is not None else None
+        if not r or r.group(1).strip() in ("Name", ""):
+            continue
+        head = r.group(1).rstrip()
+        state = head.rsplit('"', 2)[1] if head.endswith('"') \
+            else head.split()[-1]
+        calls, vectors = int(r.group(2)), int(r.group(3))
+        clocks = float(r.group(5)) * (vectors if vectors else calls)
+        cur["all"] += clocks
+        if state == "active":
+            cur["active"] += clocks
+    return out
+
+
+def busy_between(before, after):
+    """
+    The share of each worker's node time that went to its graph between two
+    runtime_clocks() readings: its packets past the input node, 0 to 1.
+    Not the receive in the input node itself, which is counted with the
+    polling it shares a node with, so a worker that cannot keep up reads
+    below 1 - the lab's worker saturated by a packet generator read 0.49.
+    """
+    out = {}
+    for w, a in after.items():
+        b = before.get(w, {"active": 0.0, "all": 0.0})
+        total = a["all"] - b["all"]
+        work = a["active"] - b["active"]
+        out[w] = round(min(1.0, max(0.0, work / total)), 4) \
+            if total > 0 else 0.0
     return out
 
 
@@ -586,13 +661,56 @@ def find_steal(f):
         "arrives meanwhile; the cure is on the host, not here."), None
 
 
+def card_idle(cfg, name):
+    """
+    Why the card `name` forwards nothing a worker would poll, by the
+    running configuration `cfg` - "the management card, in VRF <vrf>",
+    "administratively down", "no address and no CGNAT side" - or None for a
+    card that may forward (#599).
+
+    10.40.200.166 (0.152.8) warned "fewer queues than workers" for enp6s18,
+    the management card in `system management vrf mgmt` since #580, and for
+    enp6s19, down and unconfigured: a virtio queue each, and two remedies -
+    more queues on the host, a dataplane restart - that gain nothing on a
+    card with no subscriber on it. A queue per worker matters on a card the
+    dataplane forwards through. What carries a card's traffic counts as the
+    card's: a sub-interface of it (`<card>.<n>`), and a bundle it is a
+    member of, with that bundle's sub-interfaces - an LACP member has no
+    address of its own and forwards everything its bundle does.
+    """
+    mgmt = (getattr(cfg, "management", None) or {}).get("vrf", "")
+    table = int((getattr(cfg, "vrf_devices", None) or {}).get(mgmt, 0)) \
+        if mgmt else 0
+    vrfs = getattr(cfg, "vrfs", None) or {}
+    if table and int(vrfs.get(name, 0) or 0) == table:
+        return f"the management card, in VRF {mgmt}"
+    if name in (getattr(cfg, "admin_down", None) or ()):
+        return "administratively down"
+    heads = {name} | {b for b, spec in
+                      (getattr(cfg, "bundles", None) or {}).items()
+                      if name in (spec.get("members") or [])}
+    addresses = getattr(cfg, "addresses", None) or {}
+    sides = getattr(cfg, "interfaces", None) or {}
+    for n in set(addresses) | set(sides):
+        if n.split(".", 1)[0] in heads and (addresses.get(n) or n in sides):
+            return None
+    return "no address and no CGNAT side"
+
+
 def find_queues(f):
     """The queue findings, and what was checked."""
     lay = f.get("layout") or {}
     workers = len(lay.get("workers") or [])
+    idle = f.get("idle_cards") or {}
     found, ok = [], []
     for c in f.get("cards") or []:
         q = c["rx_queues"] or 0
+        # A card the workers have nothing to forward on is no queue
+        # question (#599): said as checked, with the reason, and no
+        # finding - so no host queues and no dataplane restart for it.
+        if c["name"] in idle:
+            ok.append(f"queues: {c['name']} not judged, {idle[c['name']]}")
+            continue
         on = set(c["placement"].values())
         if workers and "main" in on:
             found.append(_finding(

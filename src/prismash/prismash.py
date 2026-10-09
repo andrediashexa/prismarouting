@@ -81,6 +81,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
 import doors
+import cpuview
 import tuneadvice
 import events
 import eventfwd
@@ -2268,7 +2269,10 @@ SHOW = {
                "applied; named, what each term matched; route <prefix>, "
                "which decided it", "[<policy> | route <prefix>]"),
     "system": ("this machine", {
-        "cpu": ("which cores do what: configured, and in effect", None),
+        # #598: `cores`, each logical CPU - its socket, core, NUMA node,
+        # siblings, plane, and how busy it is.
+        "cpu": ("which cores do what: configured, and in effect; cores, "
+                "each CPU and how busy it is", "[cores]"),
         "memory": ("the RAM by role: configured, and in effect", None),
         "hardware": ("the card drivers' settings: configured, and in effect",
                      None),
@@ -19918,6 +19922,126 @@ class Shell:
         except OSError:
             return ""
 
+    def cpu_layout(self, topology):
+        """
+        The layout this boot runs (#596): {"control_plane", "main",
+        "main_dedicated", "workers", "isolated"} - VPP's threads from `show
+        threads`, the kernel's isolated CPUs, and the control plane as the
+        fence the kernel applies, or with none read, every online CPU that
+        is not a worker or an isolated main thread. One reading for the
+        tuning advice and `show system cpu cores` (#598).
+        """
+        rc, out = self.dp.run("show threads")
+        thr = tuneadvice.parse_threads(out if rc == 0 else "")
+        workers = [thr["workers"][k] for k in sorted(thr["workers"])]
+        isolated = tuneadvice.cpu_parse(self.read_text(self.CPU_ISOLATED))
+        fence = tuneadvice.cpu_parse(self.read_text(self.CPU_FENCE))
+        main = thr["main"]
+        if fence and fence != topology["online"]:
+            cp = fence
+        else:
+            cp = [c for c in topology["online"]
+                  if c not in workers and (c != main or c not in isolated)]
+        return {"control_plane": cp, "main": main,
+                "main_dedicated": main is not None and main not in cp,
+                "workers": workers, "isolated": isolated}
+
+    #: cpu_topology() readings by (root, online CPUs): /sys's topology does
+    #: not move while the box runs, and GetSystem asks for it every few
+    #: seconds (#598). A CPU brought online or taken off is another key.
+    _TOPOLOGY = {}
+
+    def cpu_facts(self):
+        """
+        The CPUs as GetSystem's CpuTopology says them (#598): the topology
+        through tuneadvice.cpu_topology() - the reader the tuning advice
+        judges, read once a boot - each CPU's plane by cpu_planes() from
+        this boot's layout, and the model from /proc/cpuinfo. {"topology":
+        cpuview.topology_fields(), "layout": cpu_layout()}.
+        """
+        root = os.path.dirname(os.path.dirname(self.SYS_DEVICES.rstrip("/")))
+        online = tuneadvice.cpu_parse(self.read_text(self.CPU_ONLINE))
+        key = (root or "/", tuple(online))
+        topology = Shell._TOPOLOGY.get(key)
+        if topology is None:
+            topology = Shell._TOPOLOGY[key] = tuneadvice.cpu_topology(
+                tuneadvice.load_tuner(), root or "/", online)
+        layout = self.cpu_layout(topology)
+        return {"topology": cpuview.topology_fields(
+                    topology, tuneadvice.cpu_planes(topology, layout),
+                    cpuview.cpu_model(self.read_text(self.CPUINFO)),
+                    layout["workers"]),
+                "layout": layout}
+
+    def cpu_usage_window(self, layout, seconds=1.0, sleep=time.sleep,
+                         clock=time.monotonic):
+        """
+        Each CPU's usage over a window of `seconds` (#598), for `show system
+        cpu cores` at the prompt: /proc/stat and `show runtime` read at its
+        two ends, nothing cleared. A worker polls when its loop runs over
+        tuneadvice.SLEEPING_LOOPS a second, and the main thread too when
+        there is no worker; a worker's busy ratio is
+        BusyMeter's, by the same parser (tuneadvice.runtime_clocks). The
+        API does not call this: its sampler has the reading already.
+        """
+        stat0 = tuneadvice.parse_proc_stat(self.read_text(PROC_STAT))
+        rc0, rt0 = self.dp.run("show runtime")
+        t0 = clock()
+        sleep(seconds)
+        rc1, rt1 = self.dp.run("show runtime")
+        t1 = clock()
+        stat1 = tuneadvice.parse_proc_stat(self.read_text(PROC_STAT))
+        threads = {}
+        if rc0 == 0 and rc1 == 0:
+            rates = tuneadvice.thread_rates(tuneadvice.parse_runtime(rt0),
+                                            tuneadvice.parse_runtime(rt1),
+                                            t1 - t0)
+            busy = tuneadvice.busy_between(tuneadvice.runtime_clocks(rt0),
+                                           tuneadvice.runtime_clocks(rt1))
+            wcpus = layout.get("workers") or []
+            for k, r in rates.items():
+                cpu = layout.get("main") if k == "main" else (
+                    wcpus[k] if k < len(wcpus) else None)
+                if cpu is None:
+                    continue
+                # The main thread polls the cards only with no workers
+                # (apiserver.dataplane_threads() has the measurement).
+                polls = r["loops_per_second"] >= tuneadvice.SLEEPING_LOOPS \
+                    and (k != "main" or not wcpus)
+                threads[cpu] = {"polling": polls,
+                                "busy_ratio": busy.get(k, 0.0)
+                                if polls and k != "main" else 0.0}
+        return cpuview.usage_rows(tuneadvice.cpu_window(stat0, stat1),
+                                  int((t1 - t0) * 1000), threads)
+
+    def cpu_cores_facts(self, usage=None):
+        """
+        What `show system cpu cores` draws (#598): cpu_facts() and the
+        usage - `usage` {"rows", "said"} when the API's sampler hands its
+        reading over, a one-second window measured here otherwise.
+        """
+        f = self.cpu_facts()
+        if usage is None:
+            rows = self.cpu_usage_window(f["layout"])
+            ms = rows[0]["window_ms"] if rows else 0
+            usage = {"rows": rows, "said": f"usage measured over "
+                                           f"{ms / 1000:.1f} s"}
+        return {"topology": f["topology"], "usage": usage["rows"],
+                "said": usage["said"]}
+
+    def show_system_cpu_cores(self, facts=None):
+        """
+        `show system cpu cores` (#598): the CPU's model and topology, then a
+        row per logical CPU - socket, core, NUMA node, HT siblings, the plane
+        it serves this boot, its busy and steal, and for a polling VPP
+        thread, that it polls and a worker's own busy ratio. `facts` is a
+        reading cpu_cores_facts() took, so GetSystem's text is drawn from
+        the numbers its fields carry.
+        """
+        for line in cpuview.render(facts if facts is not None
+                                   else self.cpu_cores_facts()):
+            print(line)
+
     def tuning_advice_facts(self, seconds=tuneadvice.WINDOW_DEFAULT,
                             sleep=time.sleep, clock=time.monotonic):
         """
@@ -19950,22 +20074,21 @@ class Shell:
             if booted.get("hugepages"):
                 memory["effect"], memory["effect_said"] = tune._rb_hugepages(
                     root or "/", booted["hugepages"], booted)
-        rc, out = self.dp.run("show threads")
-        thr = tuneadvice.parse_threads(out if rc == 0 else "")
-        workers = [thr["workers"][k] for k in sorted(thr["workers"])]
-        isolated = tuneadvice.cpu_parse(self.read_text(self.CPU_ISOLATED))
-        fence = tuneadvice.cpu_parse(self.read_text(self.CPU_FENCE))
-        main = thr["main"]
-        if fence and fence != topology["online"]:
-            cp = fence
-        else:
-            cp = [c for c in topology["online"]
-                  if c not in workers and (c != main or c not in isolated)]
+        layout = self.cpu_layout(topology)
         rc, hw = self.dp.run("show hardware-interfaces")
         cards = tuneadvice.parse_hardware(hw) if rc == 0 else None
+        idle = {}
         try:
+            cfg = self.running_config()
             mss = {n: (p.tcp_mss or "not set")
-                   for n, p in self.running_config().pools.items()}
+                   for n, p in cfg.pools.items()}
+            # The cards the workers have nothing to forward on (#599): the
+            # management card, a card down, a card with no address and no
+            # CGNAT side. No queue finding is made for them.
+            for c in cards or []:
+                why = tuneadvice.card_idle(cfg, c["name"])
+                if why:
+                    idle[c["name"]] = why
         except Exception:        # noqa: BLE001 - a fact, not the screen
             mss = {}
         # THE WINDOW: two readings, nothing cleared. /proc/stat outside the
@@ -19985,16 +20108,14 @@ class Shell:
         return {"topology": topology,
                 "virt": {"kind": virt[0], "source": virt[1]},
                 "memory": memory,
-                "layout": {"control_plane": cp, "main": main,
-                           "main_dedicated": main is not None
-                           and main not in cp,
-                           "workers": workers, "isolated": isolated},
+                "layout": layout,
                 "configured": {
                     "control_plane": self.read_tune_key(
                         "PRISMA_CONTROL_PLANE_CORES"),
                     "main_thread": self.read_tune_key("PRISMA_MAIN_THREAD"),
                     "workers": self.read_tune_key("PRISMA_MAX_WORKERS")},
-                "cards": cards, "mtu": self.box_default_mtu(),
+                "cards": cards, "idle_cards": idle,
+                "mtu": self.box_default_mtu(),
                 "tcp_mss": mss,
                 # The seconds asked, which the screen says, and the time the
                 # two readings were really apart, which the rates are over:
@@ -21180,6 +21301,12 @@ class Shell:
             return
         if line == "show system cpu":
             self.show_system_cpu()
+            return
+        # #598: per logical CPU, and measured - a command of its own, so
+        # `show system cpu` stays the instant, unchanging screen it is
+        # (install-iso compares it, host against container, byte for byte).
+        if line == "show system cpu cores":
+            self.show_system_cpu_cores()
             return
         # The bundles' LACP state (#455), in the dataplane's own words: each
         # member's actor and partner state and its mux state, which is what

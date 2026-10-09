@@ -931,6 +931,8 @@ with tempfile.NamedTemporaryFile("w", delete=False) as f:
     f.write("cpu {\n  main-core 2\n  corelist-workers 3-7\n}\n")
 check(A.startup_worker_cpus(f.name) == "3-7" and A.startup_worker_cpus("/none") == "",
       "the workers' cores from startup.conf")
+check(A.startup_main_cpu(f.name) == 2 and A.startup_main_cpu("/none") is None,
+      "#598: startup_main_cpu: the main thread's core from startup.conf, None unnamed")
 os.unlink(f.name)
 WS = {"/sys/num_worker_threads": 2, "/sys/vector_rate_per_worker": [[0, 12, 3]],
       "/sys/loops_per_worker": [[0, 3000000, 6000000]]}
@@ -988,6 +990,9 @@ B1 = BM.busy()
 # graph, out of 300000 more node time - all of it.
 check(_slept == [1.0] and B1 == {0: (1.0, 1000), 1: (0.0, 1000)},
       f"a first reading waits a window for the second: {B1} slept {_slept}")
+check(BM.main_loops == 423047.02 and BM.lcores == {"main": 12, 0: 1, 1: 2},
+      f"#598: and keeps the main thread's own loops/sec, whether it polls, and each "
+      f"thread's CPU: {BM.main_loops} {BM.lcores}")
 _t[0] += 30
 B2 = BM.busy()
 check(_slept == [1.0] and B2[0] == (0.0, 30000),
@@ -1067,6 +1072,90 @@ A.take_sample(H4, {}, "", meminfo="/none", now=10.0)
 s10 = list(H4.samples())[-1]
 check(s10["interfaces"] == [] and s10["cgnat"] is None and s10["memory_used_bytes"] is None,
       "a dataplane that answers nothing is a sample of nothing, not of zeros")
+
+print("=== #598: each CPU's usage, in the sampler ===")
+_wl = [{"worker": 0, "cpu": 3, "busy_ratio": 0.25, "loops_per_second": 3e6},
+       {"worker": 1, "cpu": 4, "busy_ratio": 0.0, "loops_per_second": 98.0}]
+DT = A.dataplane_threads(_wl, 2, 245000.0)
+check(DT == {2: {"polling": False, "busy_ratio": 0.0},
+             3: {"polling": True, "busy_ratio": 0.25},
+             4: {"polling": False, "busy_ratio": 0.0}},
+      f"dataplane_threads: a worker at 3M loops/s polls, one at 98 waits for "
+      f"interrupts, and the main thread beside workers does not poll the cards: {DT}")
+check(A.dataplane_threads([], 0, 245000.0) == {0: {"polling": True, "busy_ratio": 0.0}}
+      and A.dataplane_threads([], 0, 98.0)[0]["polling"] is False,
+      "  with no workers the main thread polls them, at 245k loops/s; at 98 it does not")
+DL = A.dataplane_threads(_wl, None, 245000.0, {"main": 0, 0: 1, 1: 2})
+check(sorted(DL) == [0, 1, 2] and DL[1]["busy_ratio"] == 0.25,
+      f"  each thread on the CPU show runtime says, not startup.conf's or its number: {DL}")
+check(A.dataplane_threads(_wl, 2, None).get(2) is None
+      and A.dataplane_threads([], None, 5e5) == {},
+      "  a main thread with no loop rate read, or no core named, is not said")
+
+
+def _stat(t):
+    """/proc/stat after `t` seconds of 100 jiffies a second: cpu0 idle but 10%,
+    cpu1 polling, 2% of it stolen."""
+    return (f"cpu  0 0 0 0 0 0 0 0 0 0\n"
+            f"cpu0 {10 * t} 0 0 {90 * t} 0 0 0 0 0 0\n"
+            f"cpu1 {98 * t} 0 0 0 0 0 0 {2 * t} 0 0\n")
+
+
+CU = A.CpuUsage()
+check(CU.latest() == (None, []) and CU.observe(_stat(0), 1000.0) == [],
+      "CpuUsage: nothing before a window, and the first reading is none")
+R = CU.observe(_stat(60), 1060.0, {1: {"polling": True, "busy_ratio": 0.4}})
+check(R == [{"cpu": 0, "busy_percent": 10.0, "steal_percent": 0.0, "polling": False,
+             "busy_ratio": 0.0, "window_ms": 60000},
+            {"cpu": 1, "busy_percent": 98.0, "steal_percent": 2.0, "polling": True,
+             "busy_ratio": 0.4, "window_ms": 60000}]
+      and CU.latest() == (1060.0, R),
+      f"  observe: busy and steal apart over the window, the polling worker's own ratio: {R}")
+check(CU.observe(_stat(60), 1060.0) == [] and CU.latest() == (1060.0, R),
+      "  a reading at the same instant is no window, and keeps the last one")
+check(A.cpu_usage_said(1060.0, R, now=1075.0)
+      == "usage over the API's last sample: 60 s, ended 15 s ago"
+      and "none yet" in A.cpu_usage_said(None, []),
+      "cpu_usage_said: the window and its age, or that there is none yet")
+_pb = type("PB", (), {k: staticmethod(lambda **kw: kw) for k in
+                      ("CpuTopology", "CpuSocket", "LogicalCpu")})
+_tp = A.cpu_topology_pb(_pb, {"model": "m", "sockets": 1, "physical_cores": 2,
+                              "threads_per_core": 1, "numa_nodes": 1, "logical_cpus": 2,
+                              "socket_cores": [{"socket": 0, "physical_cores": 2,
+                                                "logical_cpus": 2}],
+                              "cpus": [{"cpu": 0, "plane": "main"}]})
+check(_tp["socket_cores"] == [{"socket": 0, "physical_cores": 2, "logical_cpus": 2}]
+      and _tp["cpus"] == [{"cpu": 0, "plane": "main"}] and _tp["model"] == "m",
+      f"cpu_topology_pb: each field, the sockets and CPUs as their messages: {_tp}")
+H5 = A.History(keep=3)
+H5.add(1.0, cpus=R)
+H5.add(2.0)
+_c = list(H5.samples(cpus=True))
+check(_c[0]["cpus"] == R and _c[1]["cpus"] == [],
+      f"History: each CPU's usage per sample, none where none was read: {_c[0]['cpus']}")
+check(next(H5.samples())["cpus"] == [] and next(H5.samples(workers=False, cpus=True))["cpus"],
+      "  only when asked: a bare samples() is what 0.150's clients got")
+check(A.history_key("cpu\t12\tbusy_percent") == ("cpu", 12, "busy_percent"),
+      "  a CPU's series key read back with its number a number")
+H6 = A.History(keep=3)
+check(H6.load(H5.dump(), now=3.0, interval=60) and next(H6.samples(cpus=True))["cpus"] == R,
+      "  and dump() and load() carry it across a restart")
+H7, CU7 = A.History(), A.CpuUsage()
+CU7.observe(_stat(0), 8.0)
+with tempfile.NamedTemporaryFile("w", delete=False) as f:
+    f.write(_stat(1))
+_ps = A.PROC_STAT
+A.PROC_STAT = f.name
+A.take_sample(H7, WS, "3-4", meminfo="/none", now=9.0, cpus=CU7, main_cpu=1,
+              meter=type("M", (), {"busy": lambda self: {0: (0.25, 60000)},
+                                   "main_loops": 245000.0})())
+A.PROC_STAT = _ps
+os.unlink(f.name)
+s7 = next(H7.samples(cpus=True))["cpus"]
+check([(c["cpu"], c["busy_percent"], c["polling"], c["window_ms"]) for c in s7]
+      == [(0, 10.0, False, 1000), (1, 98.0, False, 1000)],
+      f"take_sample: /proc/stat read beside the rest; the main thread on cpu 1, beside "
+      f"two workers, not polling: {s7}")
 
 print("=== #533: grpc.health.v1 ===")
 check(A.health_status("", True) == "SERVING"

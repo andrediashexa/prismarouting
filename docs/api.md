@@ -108,7 +108,7 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `ListEvents` | `show log` (#588, 0.151.14): the box's record of what happened on it - commits, rollbacks, confirm expiries, restarts asked and the starts they caused, upgrades, boots - oldest first and newest last, with `show log`'s filters (`last`, `since`, `severity`, `source`, and `kind` since 0.152.0) and its screen in `text`. Since 0.152.0 (phase 2) also what the box sees happen - links, modules, BGP and BFD sessions, CGNAT pools out of blocks, the log exporter's collector, logins, the SNMP and API settings, the dataplane given up on - each with its `subject` and `reason`. INVALID_ARGUMENT, in the VTY's words, for a filter the VTY refuses. See [docs/logging-events.md](logging-events.md) |
 | | `Ping`, `Traceroute`, `Mtr` | `ping`, `traceroute`, `mtr` (#558, phase 7), streamed: a `ProbeEvent` per line the tool prints, with its reply, hop or report row read, then `end`. See [The probes](#the-probes) |
 | TelemetryService | `Subscribe` | interface counters from the statistics segment at an interval, CGNAT totals, configuration events - each `Event` with the `revision` it left and the commit's `comment` (#533) - and, with `logging_events`, the log export's `log-...` events (#555) |
-| | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; streamed, a sample a message |
+| | `GetHistory` | the counters the server sampled, a minute apart, for the last 24 hours (#533): interfaces, CGNAT totals, workers, memory; each CPU's usage when `cpus` asks (#598); streamed, a sample a message |
 | | `WatchLogging` | `monitor cgnat logging` (#558, phase 5): each block event the box exports, as a stream of `LogEvent`, with the monitor's filters and its delivery lines |
 | RouteService | `ListRoutes` | FRR's RIB as `show ip route` reads it (#533): every VRF and both families, a page at a time from one snapshot, filtered by VRF, family, prefix (and what is inside it), protocol and selected |
 | | `GetRouteSummary` | `show ip route vrf all summary`: per VRF, family and protocol, the routes in the RIB and in the FIB |
@@ -148,6 +148,30 @@ A first measure of busy as one less the loop rate over the idle loop rate was
 refuted in the lab: a worker's idle rate depends on what it polls (6.7 million
 loops a second polling nothing, 750 thousand polling one packet generator), so
 no single idle figure holds.
+
+### Each CPU, and how busy it is
+
+`GetSystem` carries the box's processors since 0.152.9 (#598).
+`cpu_topology` is the model, sockets, physical cores (in total and per socket
+in `socket_cores`), threads a core and NUMA nodes, and per online CPU its
+socket, core, node, HT siblings and the plane it serves this boot:
+`control-plane`, `main`, `worker` (with `worker`, its number) or `none` - an
+isolated CPU no VPP thread runs on, such as the HT sibling the tuner keeps off
+a worker's core. It is `tuneadvice.cpu_topology()` and `cpu_planes()`, the
+reading `show system tuning advice` judges, read once a boot.
+
+`cpu_usage` is each CPU's `busy_percent` (user, nice, system, irq and softirq)
+and `steal_percent`, from `/proc/stat`, over the window between the API
+sampler's last two readings - the sampler behind `GetHistory`, once a minute -
+ending at `cpu_usage_at`. A request reads that window; it never starts one.
+Where a VPP thread polls, `polling` is true: that CPU reads ~100% busy whatever
+it forwards, so a worker's figure is its `busy_ratio` (as in `WorkerLoad`), and
+the main thread - which polls the cards only on a box with no workers - has
+none. Each thread's CPU is the `lcore` `show runtime`
+names, so a dataplane started with no core list is still placed right.
+`GetHistory` adds the same rows to each sample when `cpus` asks for them, and
+only then. `cpu_cores_text` is `show system cpu cores`, drawn from those
+fields; at the prompt that command measures a second of its own.
 
 ### The routing table
 

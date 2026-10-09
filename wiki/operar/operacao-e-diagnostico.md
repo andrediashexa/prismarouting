@@ -477,6 +477,7 @@ flowchart TD
 | "a trilha de configuração foi adulterada?" | `show cgnat history verify` |
 | "quais placas a caixa tem, e qual ela tomou?" | `show hardware` |
 | "quais núcleos fazem o quê?" | `show system cpu` |
+| "quanto cada núcleo está ocupado? tem steal?" | `show system cpu cores` |
 | "como a memória está dividida?" | `show system memory` |
 | "o agregado LACP está inteiro?" | `show lacp` |
 | "a caixa alcança esse destino?" | `ping`, `traceroute` ou `mtr` |

@@ -179,7 +179,7 @@ reachable in the phase their note names.
 | `show snmp zabbix-template` | typed | OperationalService.GetSnmpFile (KIND_ZABBIX_TEMPLATE) | every account | the JSON Zabbix 7.0 imports |
 | `show lacp` | typed | OperationalService.ListBundles | every account |  |
 | `show policy [<policy> | route <prefix>]` | typed | OperationalService.ListPolicies / GetPolicyCounters / TestPolicy | every account |  |
-| `show system cpu` | typed | OperationalService.GetSystem | every account | worker_load per worker; per-core figures are text (phase 7) |
+| `show system cpu [cores]` | typed | OperationalService.GetSystem | every account | worker_load per worker; `cores`: cpu_topology, cpu_usage per CPU and cpu_cores_text, GetHistory cpus (#598) |
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
 | `show system management` | typed | OperationalService.GetSystem | every account | management: the VRF configured and in effect; management_text (#580) |

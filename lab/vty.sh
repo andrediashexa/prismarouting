@@ -1287,4 +1287,31 @@ expect_in "and says how to get out of it" "rollback 0" "$NAV_BAD"
 expect_not_in "and neither half left the word in the running configuration" \
   "frobnicate" "$NAV_AFTER"
 
+# #598: `show system cpu cores` - each CPU of this machine, its plane and
+# its usage measured over a second - beside `show system cpu`, which stays
+# the screen it was.
+CORES=$($HX -c "show system cpu cores" 2>&1)
+printf '%s\n' "$CORES" | sed 's/^/  | /'
+CPU_SCREEN=$($HX -c "show system cpu" 2>&1)
+ONLINE_N=$(python3 -c "
+s = open('/sys/devices/system/cpu/online').read().strip()
+print(sum(int(b) - int(a) + 1 if b else 1
+          for a, _, b in (p.partition('-') for p in s.split(','))))")
+# The table's rows, indented: "2 socket(s), ..." starts with a number too.
+CORE_ROWS=$(printf '%s\n' "$CORES" | grep -cE '^ +[0-9]+ ')
+MODEL=$(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)
+MAIN_CPU=$(vc show threads | awk '$2 == "vpp_main" {print $(NF-2)}')
+MAIN_ROW=$(printf '%s\n' "$CORES" | awk -v c="$MAIN_CPU" '$1 == c')
+CORES_WIDE=$(printf '%s\n' "$CORES" | awk 'length > 79' | head -1)
+expect "#598: show system cpu cores has a row for each online CPU ($ONLINE_N)" \
+  test "$CORE_ROWS" = "$ONLINE_N"
+expect_in "  its first line is the model /proc/cpuinfo names" \
+  "${MODEL:-CPU model not reported}" "$(printf '%s\n' "$CORES" | head -1)"
+expect_in "  VPP's main thread on the CPU show threads names" "main thread" \
+  "$MAIN_ROW"
+expect_in "  measured over a second, said" "usage measured over 1." "$CORES"
+expect "  every row fits 79 columns" test -z "$CORES_WIDE"
+expect_in "  and show system cpu is still the layout screen" "this boot:" \
+  "$CPU_SCREEN"
+
 verdict

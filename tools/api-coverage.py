@@ -107,7 +107,8 @@ OPERATIONAL_RULES = [
     (["show", "system", "management"], "typed", "OperationalService.GetSystem",
      "management: the VRF configured and in effect; management_text (#580)"),
     (["show", "system", "cpu"], "typed", "OperationalService.GetSystem",
-     "worker_load per worker; per-core figures are text (phase 7)"),
+     "worker_load per worker; `cores`: cpu_topology, cpu_usage per CPU "
+     "and cpu_cores_text, GetHistory cpus (#598)"),
     # #596: the box's own tuning, judged, with the host's pinning.
     (["show", "system", "tuning"], "typed",
      "OperationalService.GetTuningAdvice",

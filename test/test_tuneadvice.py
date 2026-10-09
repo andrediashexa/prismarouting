@@ -253,6 +253,10 @@ check(sorted(rt, key=str) == [0, 1, 2, 3, 4, "main"]
       and rt[3]["calls"] == int(2.41e6 * 3600) and rt[3]["polling"]
       and rt["main"]["loops_hdr"] == MAIN,
       "parse_runtime: each thread's polling calls and the header's rate")
+check(T.runtime_lcores(runtime_text(BEFORE)) == {"main": 2, 0: 3, 1: 4, 2: 5,
+                                                3: 6, 4: 7}
+      and T.runtime_lcores("") == {},
+      "runtime_lcores (#598): each thread's CPU, from show runtime's headers")
 check(rt[0]["calls"] != 12,
       "  and an active node's calls (ethernet-input's 12) are not the loop")
 one = T.parse_runtime("Time 1.0, 10 sec internal node vector rate 0.00 "
@@ -384,6 +388,100 @@ check([x["key"] for x in q] == ["queues-uneven:TenGigabitEthernet1/0/0"]
 q, ok = T.find_queues(fa)
 check(q == [] and ok == ["queues: TenGigabitEthernet1/0/0 5 for 5 worker(s)"],
       f"  and 5 for 5 is fine: {ok}")
+
+# #599: 10.40.200.166 on 0.152.8 warned "fewer queues than workers" for
+# enp6s18 - the management card, in `system management vrf mgmt` since
+# #580 - and enp6s19, down and unconfigured: Red Hat Virtio, one rx queue
+# each, beside the X520. Its cards as `show hardware-interfaces` prints
+# them, and its running configuration's say on each.
+HW166 = HW + """\
+enp6s18                            3     up   enp6s18
+  Link speed: unknown
+  RX Queues:
+    queue thread         mode
+    0     vpp_wk_0 (1)   polling
+  Ethernet address bc:24:11:5e:1a:02
+  Red Hat Virtio
+    carrier up full duplex max-frame-size 1518
+    rx: queues 1 (max 1), desc 256 (min 0 max 65535 align 1)
+    tx: queues 6 (max 1), desc 256 (min 0 max 65535 align 1)
+    pci: device 1af4:1000 subsystem 1af4:0001 address 0000:06:12.00 numa 0
+enp6s19                            4    down  enp6s19
+  Link speed: unknown
+  RX Queues:
+    queue thread         mode
+    0     vpp_wk_1 (2)   polling
+  Ethernet address bc:24:11:5e:1a:03
+  Red Hat Virtio
+    carrier down
+    rx: queues 1 (max 1), desc 256 (min 0 max 65535 align 1)
+    tx: queues 6 (max 1), desc 256 (min 0 max 65535 align 1)
+    pci: device 1af4:1000 subsystem 1af4:0001 address 0000:06:13.00 numa 0
+"""
+import config as _cfg  # noqa: E402
+CFG166 = _cfg.Config.parse("""\
+vrf mgmt table 100
+interface TenGigabitEthernet1/0/0
+ ipv4 address 100.64.0.1/22
+ cgnat inside
+!
+interface enp6s18
+ vrf 100
+ ipv4 address 10.40.200.166/24
+!
+interface enp6s19
+ shutdown
+!
+system
+ management
+  vrf mgmt
+""")
+check(CFG166.unknown == [], "  (the .166's configuration parses whole)")
+check(T.card_idle(CFG166, "enp6s18") == "the management card, in VRF mgmt"
+      and T.card_idle(CFG166, "enp6s19") == "administratively down"
+      and T.card_idle(CFG166, "TenGigabitEthernet1/0/0") is None,
+      "card_idle: the .166's management card, its down card, and the X520 "
+      "that forwards")
+_bare = _cfg.Config.parse("interface enp6s20\n description spare\n!\n")
+check(T.card_idle(_bare, "enp6s20") == "no address and no CGNAT side",
+      "  a card with no address and no CGNAT side, up, is idle too")
+_sub = _cfg.Config.parse("interface enp1s0.100\n ipv4 address 10.1.0.1/24\n"
+                         "!\ninterface ae0\n member enp2s0\n!\n"
+                         "interface ae0.20\n cgnat outside\n!\n")
+check(T.card_idle(_sub, "enp1s0") is None
+      and T.card_idle(_sub, "enp2s0") is None,
+      "  and a card whose sub-interface, or whose bundle's, forwards is not")
+_nomgmt = _cfg.Config.parse("vrf mgmt table 100\ninterface enp6s18\n vrf 100\n"
+                            " ipv4 address 10.40.200.166/24\n!\n")
+check(T.card_idle(_nomgmt, "enp6s18") is None,
+      "  a card in a VRF the box does not manage itself in forwards")
+f = facts(AFTER, AFTER_STEAL)
+f["cards"] = T.parse_hardware(HW166)
+f["idle_cards"] = {c["name"]: T.card_idle(CFG166, c["name"])
+                   for c in f["cards"] if T.card_idle(CFG166, c["name"])}
+f["cards"][0]["rx_queues"] = 4
+f["cards"][0]["placement"] = {i: i for i in range(4)}
+q, ok = T.find_queues(f)
+check([x["key"] for x in q] == ["queues:TenGigabitEthernet1/0/0"]
+      and "queues: enp6s18 not judged, the management card, in VRF mgmt"
+      in ok and "queues: enp6s19 not judged, administratively down" in ok,
+      f"find_queues (#599): the .166's management and down cards are checked "
+      f"and fine, the X520 short of queues still warns: {ok}")
+a = T.advise(f)
+check([r["evidence"] for r in a["box"]] == ["queues:TenGigabitEthernet1/0/0"]
+      and not any("enp6s1" in r["evidence"] for r in a["hypervisor"]),
+      "  and no virtio queues or dataplane restart for either: "
+      f"{[r['evidence'] for r in a['box'] + a['hypervisor']]}")
+_lines = T.render(f, a)
+check(not any("enp6s18: fewer queues" in x or "enp6s19: fewer queues" in x
+              for x in _lines)
+      and any("enp6s18 not judged, the management card" in x for x in _lines),
+      "  the screen says so under checked and fine")
+del f["idle_cards"]
+q, ok = T.find_queues(f)
+check(sorted(x["key"] for x in q) == ["queues:TenGigabitEthernet1/0/0",
+                                      "queues:enp6s18", "queues:enp6s19"],
+      "  (with no idle cards read, the three warn: 0.152.8's screen)")
 f = facts(AFTER, AFTER_STEAL)
 f["topology"]["node_of"] = {c: (1 if c >= 6 else 0) for c in range(8)}
 n, ok = T.find_numa(f)
@@ -754,6 +852,10 @@ check(got["memory"]["effect"] == "in-effect"
       f"  hugepages by the tuner's readback: {got['memory']['effect_said']}")
 check(got["tcp_mss"] == {"cgnat": "auto"} and got["mtu"] == 1500,
       "  the MTU and each pool's tcp-mss")
+check(got["idle_cards"] == {"TenGigabitEthernet1/0/0":
+                            "no address and no CGNAT side"},
+      f"  and the cards the configuration gives nothing to forward (#599): "
+      f"here one that names no address: {got['idle_cards']}")
 check([round(got["window"]["threads"][i]["loops_per_second"] / 1e4)
        for i in range(5)] == [298, 329, 323, 241, 323]
       and got["window"]["cpus"][3]["steal"] == 7.7,
