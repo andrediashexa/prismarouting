@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.8 - the box suggests its own tuning
+
+### Added
+
 * **`show system tuning advice`: the box suggests its own tuning, and, on a
   virtual machine, how its host should pin it.**
   ([#596](https://github.com/andrediashexa/hexarouting/issues/596)) What
@@ -108,8 +114,6 @@ version has a chance of seeing it.
   a pasted `numastat -p` says where the memory is now (sv01's VM 102: 16.1
   GB on node 1, none on node 0, local by first touch only). Read only. The
   API carries it typed: `OperationalService.GetTuningAdvice`.
-
-### Fixed
 
 ## 0.152.7 - a card changes VRF with no addresses on it
 
