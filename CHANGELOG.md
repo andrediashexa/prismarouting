@@ -77,7 +77,44 @@ version has a chance of seeing it.
 
 ### Added
 
+* **GetSystem says the box's CPUs one by one, and how busy each is - now and
+  for the last day - and `show system cpu cores` says the same at the
+  prompt.** ([#598](https://github.com/andrediashexa/hexarouting/issues/598))
+  Asked by prisma-web: `SystemInfo.cpu_topology` carries the CPU model, the
+  sockets, the physical cores in total and per socket, the threads a core and
+  the NUMA nodes, and for each logical CPU its socket, core, node, HT
+  siblings and the plane it serves this boot - `control-plane`, `main`,
+  `worker` (with its number) or `none`, an isolated sibling no VPP thread
+  runs on. It is the reader `show system tuning advice` judges (#596), read
+  once a boot, so the two cannot disagree. `SystemInfo.cpu_usage` carries,
+  per CPU, busy (user, nice, system, irq, softirq) and steal apart, from
+  `/proc/stat`, over the API sampler's last window - read by the sampler
+  that already keeps GetHistory (#533), never by a request - with `polling`
+  set where a VPP thread polls, because that CPU reads ~100% whatever it
+  forwards, and a worker's VPP busy ratio beside it. Each thread's CPU is
+  `show runtime`'s own `lcore`, not a worker's number when startup.conf
+  names no core list. `GetHistoryRequest.cpus` adds the same rows to each
+  sample; a request that does not ask carries none, as before.
+  `show system cpu cores` measures a one-second window of its own;
+  GetSystem's `cpu_cores_text` is that screen drawn from the sampler's
+  reading. `show system cpu` is unchanged. Additive in the contract.
+
 ### Fixed
+
+* **`show system tuning advice` no longer tells an operator to restart the
+  dataplane for the management card's queues, or a card that is down.**
+  ([#599](https://github.com/andrediashexa/hexarouting/issues/599)) On
+  10.40.200.166 it warned "fewer queues than workers" for enp6s18 - the
+  management card, in `system management vrf mgmt` since #580 - and
+  enp6s19, administratively down and unconfigured, each with two remedies
+  that gain nothing: more virtio queues on the host and a dataplane restart.
+  A queue per worker matters on a card the dataplane forwards through. A
+  card in the management VRF, a card shut down, and a card with no address
+  and no CGNAT side - counting its sub-interfaces and the bundle it is a
+  member of - get no queue finding now, and are listed under "checked and
+  fine" with the reason (`queues: enp6s18 not judged, the management card,
+  in VRF mgmt`). A forwarding card short of queues, the X520 on .166, still
+  warns.
 
 ## 0.152.8 - the box suggests its own tuning
 

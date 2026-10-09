@@ -57,6 +57,8 @@ import opshow  # noqa: E402 - the rest of the screens, typed (#558, phase 7)
 import typedcfg  # noqa: E402 - typed configuration (#558, phase 2)
 import transceiver  # noqa: E402 - a module's EEPROM, decoded (#590)
 import tuneadvice  # noqa: E402 - the box's own tuning, judged (#596)
+import cpuview  # noqa: E402 - the CPUs one by one (#598)
+from tuneadvice import busy_between, runtime_clocks  # noqa: E402,F401 - #598
 
 #: Where the server listens inside the management container: the backplane
 #: address the host forwards the management address to (#448's bp0).
@@ -119,6 +121,9 @@ MISSING = 2 ** 64 - 1
 SLEEPING_LOOPS = 1000
 #: The shortest window a busy ratio is measured over.
 BUSY_WINDOW = 1.0
+#: /proc/stat, which the sampler reads each CPU's usage from (#598): the
+#: kernel's, whatever namespace reads it - the container sees the host's CPUs.
+PROC_STAT = os.environ.get("PRISMA_PROC_STAT", "/proc/stat")
 
 DIAG = re.compile(r"^(error|warning|note): ?(.*)$")
 
@@ -1024,7 +1029,35 @@ READERS = {
         lambda f: sh.show_transceivers(a or [], f)),
     # #596: `show system tuning advice`; `a` is {"seconds", "host_topology"}.
     "tuning_advice": lambda sh, a: tuning_advice_read(sh, a or {}),
+    # #598: the CPUs' topology and `show system cpu cores`, drawn from it and
+    # from the sampler's usage `a` ({"rows", "said"}) - nothing measured.
+    "cpu_cores": lambda sh, a: facts_screen(
+        sh, lambda: sh.cpu_cores_facts(a), sh.show_system_cpu_cores),
 }
+
+
+def cpu_usage_said(at, rows, now=None):
+    """
+    Where GetSystem's per-CPU usage is from, as `show system cpu cores`
+    says it (#598): the sampler's last window, its length and its age; or
+    that the sampler has not taken one yet.
+    """
+    if at is None or not rows:
+        return ("usage: none yet - the API samples it once a minute, and the "
+                "first window ends a minute after the server starts")
+    ago = max(0, int((now if now is not None else time.time()) - at))
+    return (f"usage over the API's last sample: {rows[0]['window_ms'] / 1000:.0f}"
+            f" s, ended {ago} s ago")
+
+
+def cpu_topology_pb(pb, t):
+    """CpuTopology from cpuview.topology_fields() (#598)."""
+    return pb.CpuTopology(
+        model=t["model"], sockets=t["sockets"], physical_cores=t["physical_cores"],
+        threads_per_core=t["threads_per_core"], numa_nodes=t["numa_nodes"],
+        logical_cpus=t["logical_cpus"],
+        socket_cores=[pb.CpuSocket(**s) for s in t["socket_cores"]],
+        cpus=[pb.LogicalCpu(**c) for c in t["cpus"]])
 
 
 def tuning_advice_read(sh, a):
@@ -2433,18 +2466,26 @@ def cpu_list(spec):
     return out
 
 
-def startup_worker_cpus(path=None):
-    """The `corelist-workers` of the dataplane's startup.conf, or ''."""
+def startup_worker_cpus(path=None, key="corelist-workers"):
+    """The `corelist-workers` of the dataplane's startup.conf, or ''; or
+    another `key`'s value - `main-core` for startup_main_cpu() (#598)."""
     try:
         with open(path or os.environ.get("PRISMA_STARTUP_CONF",
                                          "/etc/vpp/startup.conf")) as f:
             for raw in f:
                 w = raw.split()
-                if w[:1] == ["corelist-workers"] and len(w) > 1:
+                if w[:1] == [key] and len(w) > 1:
                     return w[1]
     except OSError:
         pass
     return ""
+
+
+def startup_main_cpu(path=None):
+    """The CPU VPP's main thread is pinned to, from startup.conf's
+    `main-core`; None when it names none (#598)."""
+    v = startup_worker_cpus(path, "main-core")
+    return int(v) if is_number(v) else None
 
 
 def per_worker(stats, name, workers):
@@ -2462,54 +2503,10 @@ def per_worker(stats, name, workers):
     return [float(v or 0) for v in vals] + [0.0] * (workers - len(vals))
 
 
-RUNTIME_ROW = re.compile(r"^(.*?)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+(?:e[-+]?\d+)?)\s+([\d.]+)\s*$")
-
-
-def runtime_clocks(text):
-    """
-    Each worker's clocks out of `show runtime`: {worker: {"active", "all"}}
-    - the clocks its graph nodes took (state `active`: they run only with
-    packets) and every node's, the input nodes' polling included. A row's
-    Clocks column is per vector when the node had vectors, per call when it
-    had none, so a node's clocks are the column times the one it is per.
-    """
-    out, cur = {}, None
-    for line in text.splitlines():
-        m = re.match(r"^Thread \d+ vpp_wk_(\d+)", line)
-        if m:
-            cur = out.setdefault(int(m.group(1)), {"active": 0.0, "all": 0.0})
-            continue
-        if line.startswith("Thread "):
-            cur = None
-            continue
-        r = RUNTIME_ROW.match(line) if cur is not None else None
-        if not r or r.group(1).strip() in ("Name", ""):
-            continue
-        head = r.group(1).rstrip()
-        state = head.rsplit('"', 2)[1] if head.endswith('"') else head.split()[-1]
-        calls, vectors = int(r.group(2)), int(r.group(3))
-        clocks = float(r.group(5)) * (vectors if vectors else calls)
-        cur["all"] += clocks
-        if state == "active":
-            cur["active"] += clocks
-    return out
-
-
-def busy_between(before, after):
-    """
-    The share of each worker's node time that went to its graph between two
-    runtime_clocks() readings: its packets past the input node, 0 to 1.
-    Not the receive in the input node itself, which is counted with the
-    polling it shares a node with, so a worker that cannot keep up reads
-    below 1 - the lab's worker saturated by a packet generator read 0.49.
-    """
-    out = {}
-    for w, a in after.items():
-        b = before.get(w, {"active": 0.0, "all": 0.0})
-        total = a["all"] - b["all"]
-        work = a["active"] - b["active"]
-        out[w] = round(min(1.0, max(0.0, work / total)), 4) if total > 0 else 0.0
-    return out
+# runtime_clocks() and busy_between() are tuneadvice's since #598: the VTY's
+# `show system cpu cores` measures a worker's busy ratio the way BusyMeter
+# does, and two copies of one parser are two answers the first time VPP's
+# `show runtime` changes.
 
 
 def vpp_runtime():
@@ -2573,6 +2570,12 @@ class BusyMeter:
         self.read, self.clock, self.sleep = read, clock, sleep
         self.prev = None     # (when, runtime_clocks)
         self.lock = threading.Lock()
+        # The main thread's loops a second in the last reading, VPP's own
+        # header figure (#598): whether it polls. The statistics segment's
+        # /sys/loops_per_worker has none for it - the lab read its 0.
+        self.main_loops = None
+        # Each thread's CPU, from the same reading's headers (#598).
+        self.lcores = {}
 
     def busy(self):
         """{worker: (busy ratio, window in ms)}; {} when there is no reading."""
@@ -2581,8 +2584,12 @@ class BusyMeter:
                 if self.prev is None:
                     self.prev = (self.clock(), runtime_clocks(self.read()))
                 self.sleep(max(0.0, BUSY_WINDOW - (self.clock() - self.prev[0])))
-            now = (self.clock(), runtime_clocks(self.read()))
+            text = self.read()
+            now = (self.clock(), runtime_clocks(text))
             before, self.prev = self.prev, now
+            self.main_loops = (tuneadvice.parse_runtime(text).get("main")
+                               or {}).get("loops_hdr")
+            self.lcores = tuneadvice.runtime_lcores(text)
         ms = int((now[0] - before[0]) * 1000)
         return {w: (r, ms) for w, r in busy_between(before[1], now[1]).items()}
 
@@ -2614,7 +2621,76 @@ def worker_load(stats, worker_cpus="", busy=None):
     return out
 
 
+def dataplane_threads(workers, main_cpu=None, main_loops=None, lcores=None):
+    """
+    {cpu: {"polling", "busy_ratio"}} for the CPUs VPP's threads run on
+    (#598): each worker_load() row's - polling unless it runs under
+    SLEEPING_LOOPS, as worker_load() judges it - and the main thread's, by
+    its loop rate (BusyMeter.main_loops) on a dataplane with no workers, with
+    no busy ratio: VPP measures the main thread's graph as nobody's load.
+    With workers the main thread does not poll the cards and sleeps between
+    its loops: lab/api-grpc.sh's read 15% busy on its CPU at well over
+    SLEEPING_LOOPS a second, where lab/vty.sh's, with no workers, read
+    100%. Each thread's CPU is `lcores`
+    (BusyMeter.lcores, `show runtime`'s own) where it says, and startup.conf's
+    otherwise: a dataplane started with `workers 2` and no corelist, as the
+    labs start it, has worker_load() say a worker's number for its CPU.
+    """
+    lcores = lcores or {}
+    out = {}
+    main_cpu = lcores.get("main", main_cpu)
+    if main_cpu is not None and main_loops is not None:
+        out[main_cpu] = {"polling": not workers and main_loops >= SLEEPING_LOOPS,
+                         "busy_ratio": 0.0}
+    for w in workers or ():
+        out[int(lcores.get(int(w["worker"]), w["cpu"]))] = {
+            "polling": w["loops_per_second"] >= SLEEPING_LOOPS,
+            "busy_ratio": float(w["busy_ratio"])}
+    return out
+
+
+class CpuUsage:
+    """
+    Each CPU's usage between the sampler's last two readings of /proc/stat
+    (#598): what GetSystem's cpu_usage says and GetHistory keeps. Read in
+    the sampler, once a HISTORY_INTERVAL, and never for a request - a
+    client polling GetSystem every few seconds reads the last window, it
+    does not start one.
+    """
+
+    def __init__(self):
+        self.prev = None        # (when, parse_proc_stat())
+        self.last = (None, [])  # (when the window ended, usage rows)
+        self.lock = threading.Lock()
+
+    def observe(self, text, now, threads=None):
+        """
+        A /proc/stat reading taken at `now` (epoch seconds): the usage rows
+        since the one before, kept as the latest; [] for the first.
+        """
+        cur = (now, tuneadvice.parse_proc_stat(text))
+        with self.lock:
+            before, self.prev = self.prev, cur
+            if before is None or now <= before[0]:
+                return []
+            rows = cpuview.usage_rows(
+                tuneadvice.cpu_window(before[1], cur[1]),
+                int((now - before[0]) * 1000), threads)
+            self.last = (now, rows)
+        return rows
+
+    def latest(self):
+        """(when, rows) of the last window; (None, []) before there is one."""
+        with self.lock:
+            return self.last
+
+
 # ------------------------------------------------------ counter history (#533)
+
+#: The figures of a CpuUsage row the history keeps a series of (#598).
+CPU_FIELDS = ("busy_percent", "steal_percent", "polling", "busy_ratio",
+              "window_ms")
+
 
 class History:
     """
@@ -2640,7 +2716,8 @@ class History:
                                          * (len(self.times) - 1))
         a.append(value)
 
-    def add(self, at, interfaces=(), cgnat=None, workers=(), memory_used=None):
+    def add(self, at, interfaces=(), cgnat=None, workers=(), memory_used=None,
+            cpus=()):
         """One sample: what was read at `at`; what was not, missing."""
         with self.lock:
             self.times.append(at)
@@ -2659,6 +2736,12 @@ class History:
                     self._put(self.gauges, "d", ("wk", int(w["worker"]), f), float(w[f]))
             if memory_used is not None:
                 self._put(self.counters, "Q", ("mem",), int(memory_used))
+            # Each CPU's usage (#598), a gauge per figure: 5 x 8 bytes x 1440
+            # samples is 58 KB a CPU, 3.7 MB for 64.
+            for c in cpus:
+                for f in CPU_FIELDS:
+                    self._put(self.gauges, "d", ("cpu", int(c["cpu"]), f),
+                              float(c[f]))
             n = len(self.times)
             for table, gap in ((self.counters, MISSING), (self.gauges, float("nan"))):
                 for a in table.values():
@@ -2672,7 +2755,7 @@ class History:
                         del a[:drop]
 
     def samples(self, since=0.0, interfaces=(), counters=True, cgnat=True,
-                workers=True, memory=True):
+                workers=True, memory=True, cpus=False):
         """
         The samples after `since`, oldest first, as GetHistory sends them:
         copied out under the lock, then built one at a time.
@@ -2683,18 +2766,20 @@ class History:
             cs = {k: a[first:] for k, a in self.counters.items()
                   if (k[0] == "if" and counters and (not interfaces or k[1] in interfaces))
                   or (k[0] == "cgnat" and cgnat) or (k[0] == "mem" and memory)}
-            gs = {k: a[first:] for k, a in self.gauges.items() if workers}
-        per_if, per_wk = {}, {}
+            gs = {k: a[first:] for k, a in self.gauges.items()
+                  if (k[0] == "wk" and workers) or (k[0] == "cpu" and cpus)}
+        per_if, per_wk, per_cpu = {}, {}, {}
         for k, a in cs.items():
             if k[0] == "if":
                 per_if.setdefault(k[1], []).append((k[2], a))
         for k, a in gs.items():
-            per_wk.setdefault(k[1], []).append((k[2], a))
+            (per_cpu if k[0] == "cpu" else per_wk).setdefault(
+                k[1], []).append((k[2], a))
         tots = [(k[1], a) for k, a in cs.items() if k[0] == "cgnat"]
         mem = cs.get(("mem",))
         for i, at in enumerate(times):
             out = {"at": at, "interfaces": [], "cgnat": None, "workers": [],
-                   "memory_used_bytes": None}
+                   "memory_used_bytes": None, "cpus": []}
             for name in sorted(per_if):
                 row = {f: a[i] for f, a in per_if[name]}
                 if MISSING not in row.values():
@@ -2710,6 +2795,12 @@ class History:
                     out["workers"].append(row)
             if mem is not None and mem[i] != MISSING:
                 out["memory_used_bytes"] = mem[i]
+            for c in sorted(per_cpu):
+                row = {f: a[i] for f, a in per_cpu[c]}
+                if len(row) == len(CPU_FIELDS) and all(v == v for v in row.values()):
+                    row["cpu"], row["polling"] = c, bool(row["polling"])
+                    row["window_ms"] = int(row["window_ms"])
+                    out["cpus"].append(row)
             yield out
 
     def dump(self):
@@ -2765,15 +2856,18 @@ class History:
 def history_key(text):
     """A series' key as dump() wrote it ("if\tpg0\trx_bytes"), as a tuple."""
     parts = text.split("\t")
-    return tuple(int(p) if parts[0] == "wk" and j == 1 and is_number(p) else p
-                 for j, p in enumerate(parts))
+    return tuple(int(p) if parts[0] in ("wk", "cpu") and j == 1 and is_number(p)
+                 else p for j, p in enumerate(parts))
 
 
-def take_sample(history, stats, worker_cpus="", meminfo=None, now=None, meter=None):
+def take_sample(history, stats, worker_cpus="", meminfo=None, now=None, meter=None,
+                cpus=None, stat=None, main_cpu=None):
     """
     One sample of everything the history keeps, read from the statistics
     segment and meminfo; a part that cannot be read is missing from it, not
-    zero.
+    zero. With `cpus` (a CpuUsage), each CPU's usage too (#598): /proc/stat
+    (`stat`, its text; read here when not given) against the last sample's,
+    with what the dataplane's threads on them do.
     """
     try:
         ifs = interface_samples(stats)
@@ -2788,7 +2882,19 @@ def take_sample(history, stats, worker_cpus="", meminfo=None, now=None, meter=No
     except Exception:  # noqa: BLE001
         wk = []
     mem = memory_of(meminfo)["memory_used_bytes"] or None
-    history.add(now or time.time(), ifs, cg, wk, mem)
+    now = now or time.time()
+    use = []
+    if cpus is not None:
+        if stat is None:
+            try:
+                with open(PROC_STAT) as f:
+                    stat = f.read()
+            except OSError:
+                stat = ""
+        use = cpus.observe(stat, now, dataplane_threads(
+            wk, main_cpu, getattr(meter, "main_loops", None),
+            getattr(meter, "lcores", None)))
+    history.add(now, ifs, cg, wk, mem, use)
 
 
 #: The health service's name for the CGNAT log export (#555). A name of its
@@ -3248,7 +3354,7 @@ def progress_pb(pb, st, started=None, output=""):
 # not a unit: builds the gRPC servicers around the core above; it needs grpc
 # and the generated stubs, and lab/api-grpc.sh drives every rpc through it.
 def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
-          meter=None, logwatch=None):
+          meter=None, logwatch=None, cpus=None):
     """
     The servicers, bound to `sessions`, a statistics reader factory and the
     counter history: prisma.v1's five, and grpc.health.v1's when its
@@ -3257,6 +3363,7 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
     from google.protobuf.timestamp_pb2 import Timestamp
     history = history if history is not None else History()
     meter = meter if meter is not None else BusyMeter()
+    cpus = cpus if cpus is not None else CpuUsage()
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.
     def account(context):
@@ -3673,7 +3780,20 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 load = worker_load(stats_factory(), c["worker_cpus"], meter.busy())
             except Exception:  # noqa: BLE001 - no dataplane, no workers to say
                 pass
+            # #598: the topology read once a boot, the usage the sampler's last
+            # window - nothing measured for this call - and the screen drawn
+            # from both.
+            at, rows = cpus.latest()
+            cores = self._ask(context, "cpu_cores",
+                              {"rows": rows, "said": cpu_usage_said(at, rows)})
+            extra = {}
+            if at is not None:
+                extra["cpu_usage_at"] = ts(at)
             return pb.SystemInfo(hostname=self._ask(context, "hostname"),
+                                 cpu_topology=cpu_topology_pb(
+                                     pb, cores["facts"]["topology"]),
+                                 cpu_usage=[pb.CpuUsage(**r) for r in rows],
+                                 cpu_cores_text=cores["text"], **extra,
                                  uptime_seconds=up, cpu_text=cpu, memory_text=mem,
                                  hardware_text=hw,
                                  logging=lg, logging_text=lg_text,
@@ -4240,10 +4360,13 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             account(context)
             since = req.since.seconds + req.since.nanos / 1e9 if req.HasField("since") else 0.0
             # None of the four asked is all four: a bare request is the day.
+            # Each CPU's usage (#598) only when asked: a day of 64 CPUs is
+            # 92,160 rows, and a bare request is what 0.150's clients send.
             want = (req.interface_counters, req.cgnat_totals, req.workers, req.memory)
-            if not any(want):
+            if not any(want) and not req.cpus:
                 want = (True, True, True, True)
-            for smp in history.samples(since, list(req.interfaces), *want):
+            for smp in history.samples(since, list(req.interfaces), *want,
+                                       cpus=req.cpus):
                 at = Timestamp()
                 at.FromNanoseconds(int(smp["at"] * 1e9))
                 out = pb.HistorySample(
@@ -4251,7 +4374,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                     interfaces=[pb.InterfaceSample(name=i["name"],
                                                    counters=pb.InterfaceCounters(**i["counters"]))
                                 for i in smp["interfaces"]],
-                    workers=[pb.WorkerLoad(**w) for w in smp["workers"]])
+                    workers=[pb.WorkerLoad(**w) for w in smp["workers"]],
+                    cpus=[pb.CpuUsage(**c) for c in smp["cpus"]])
                 if smp["cgnat"] is not None:
                     out.cgnat.CopyFrom(pb.CgnatTotals(**smp["cgnat"]))
                 if smp["memory_used_bytes"] is not None:
@@ -4533,14 +4657,22 @@ def stats_ok(stats_factory):
 # not a unit: the sampler's thread body - take_sample() is what it does each
 # time and is tested; lab/api-grpc.sh runs this with a one-second interval.
 def sampler(history, stats_factory, stop, meter, path=HISTORY_PATH,
-            interval=HISTORY_INTERVAL):
+            interval=HISTORY_INTERVAL, cpus=None):
     """Sample every `interval` seconds, keep the file current, until `stop`."""
     stats, n = None, 0
+    if cpus is not None:
+        # The first reading now, so the first sample has a window (#598).
+        try:
+            with open(PROC_STAT) as f:
+                cpus.observe(f.read(), time.time())
+        except OSError:
+            pass
     while not stop.wait(interval):
         try:
             if stats is None:
                 stats = stats_factory()
-            take_sample(history, stats, startup_worker_cpus(), meter=meter)
+            take_sample(history, stats, startup_worker_cpus(), meter=meter,
+                        cpus=cpus, main_cpu=startup_main_cpu())
         except Exception:  # noqa: BLE001 - reconnect at the next tick
             stats = None
             history.add(time.time())
@@ -4604,12 +4736,14 @@ def main(argv):
         print(f"apiserver: history read back, {len(history.times)} samples", flush=True)
     stop = threading.Event()
     meter = BusyMeter()
+    cpus = CpuUsage()
     threading.Thread(target=sampler, args=(history, stats_factory, stop, meter),
-                     daemon=True).start()
+                     kwargs={"cpus": cpus}, daemon=True).start()
     logwatch = logstate.LogWatch()
     threading.Thread(target=log_watcher, args=(logwatch, stop), daemon=True).start()
     cfg, ops, tel, routes, session, system, health = build(
-        sessions, stats_factory, pb, rpc, grpc, history, (hpb, hrpc), meter, logwatch)
+        sessions, stats_factory, pb, rpc, grpc, history, (hpb, hrpc), meter, logwatch,
+        cpus)
     # NO SO_REUSEPORT, which gRPC turns on by default: with it a second server
     # binds the same port beside the first, and the X520 bench (0.148.4) was
     # found with two listeners on 128.0.0.2:50051 after restarts. Without it

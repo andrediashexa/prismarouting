@@ -27,6 +27,54 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.9 - each CPU, its place and its load
+
+* **Contract:** additive (`prisma.proto` sha256 `066493334a290520b93dce0e1ceb9aeafac7466067a1c601dfe6309d75df63ad`).
+  #598: `SystemInfo` gains `cpu_topology` (31, `CpuTopology`), `cpu_usage`
+  (32, repeated `CpuUsage`), `cpu_cores_text` (33) and `cpu_usage_at` (34);
+  `GetHistoryRequest` gains `cpus` (7) and `HistorySample` gains `cpus` (6,
+  repeated `CpuUsage`). New messages: `CpuTopology`, `CpuSocket`,
+  `LogicalCpu`, `CpuUsage`. Nothing existing changes.
+* **The topology** is read once a boot, through the reader `show system
+  tuning advice` uses. `threads_per_core` is the largest HT sibling group
+  (1 on a guest whose vCPUs are presented as cores); `socket_cores` gives
+  each socket's physical cores and CPUs. Per `LogicalCpu`: `socket`, `core`
+  (its number within the socket) and `numa_node` are -1 where /sys does not
+  say; `siblings` are the other threads of its core, itself excluded;
+  `plane` is a word - `control-plane`, `main`, `worker`, `none` (isolated at
+  boot with no VPP thread on it: the sibling the tuner keeps off a worker's
+  core) - and `worker` is the worker's number, -1 for any other plane. The
+  CPUs are the online ones, by number. `model` is `""` on a kernel that
+  names none (ARM).
+* **The usage is the API sampler's last window, not measured for the call.**
+  The sampler runs once a minute (the same one GetHistory's samples come
+  from), so `cpu_usage` is a gauge over about 60 s, ending at
+  `cpu_usage_at`; poll GetSystem as often as you like, it does not start a
+  measurement. `cpu_usage` is empty and `cpu_usage_at` unset until the first
+  window ends, a minute after the API starts (an upgrade restarts it).
+  Per `CpuUsage`: `busy_percent` (user + nice + system + irq + softirq,
+  0-100) and `steal_percent` (0-100, 0 on bare metal) are percent of
+  `window_ms`. **`polling` true means a VPP thread polls on that CPU: its
+  busy_percent is ~100 whatever it forwards and is not its load.** For a
+  worker CPU the load is `busy_ratio` (0-1, the same figure as
+  `WorkerLoad.busy_ratio`, measured at the sample). The main thread's CPU
+  is `polling` only on a box with no workers, and has no busy ratio (0):
+  beside workers it sleeps between loops (15% busy measured in the lab). Join on `cpu` with
+  `cpu_topology.cpus` for the plane.
+* **GetHistory**: `cpus=true` adds every CPU's `CpuUsage` to each sample,
+  aligned like `workers`; a CPU missing from a sample was not read then
+  (the sampler restarted). A request that sets none of the flags still
+  returns the four it always did and **no** CPU rows - ask for them, a day
+  of 64 CPUs is 92,160 rows. Asking only `cpus` returns only CPUs. The rows
+  survive a restart of the API with the rest of the history.
+* **`cpu_cores_text`** is `show system cpu cores`, drawn from the same
+  fields; `cpu_text` (`show system cpu`) is unchanged.
+* **Also in this release, not in the contract (#599):** GetTuningAdvice no
+  longer has a `queues:<card>` finding, nor its recommendations, for the
+  management card, a card shut down, or a card with no address and no
+  CGNAT side; `checked` says `queues: <card> not judged, <reason>` for
+  each instead.
+
 ## 0.152.8 - the box suggests its own tuning
 
 * **Contract:** additive (`prisma.proto` sha256 `9cca693d617b3febafa0b99427966e8769dcf6623e6968152cd871c92abee317`).

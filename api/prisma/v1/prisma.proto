@@ -2772,6 +2772,83 @@ message SystemInfo {
   // as configured and as the host has it; the screen in management_text.
   ManagementState management = 29;
   string management_text = 30;
+  // The CPUs one by one (#598, 0.152.9): the model, sockets, cores and
+  // threads, and each logical CPU's place and plane - the reading `show
+  // system tuning advice` judges, read once a boot.
+  CpuTopology cpu_topology = 31;
+  // Each online CPU's usage over the API's last sample window (once a
+  // minute), not measured for this call; empty until the server's first
+  // window has ended, a minute after it starts.
+  repeated CpuUsage cpu_usage = 32;
+  // `show system cpu cores`, drawn from the two fields above.
+  string cpu_cores_text = 33;
+  // When the cpu_usage window ended; unset while cpu_usage is empty.
+  google.protobuf.Timestamp cpu_usage_at = 34;
+}
+
+// The box's processors (#598), as /sys and /proc/cpuinfo describe them.
+message CpuTopology {
+  // /proc/cpuinfo's model name; "" when the kernel reports none (ARM).
+  string model = 1;
+  // Physical processors (packages).
+  uint32 sockets = 2;
+  // Physical cores in total; each socket's are in socket_cores.
+  uint32 physical_cores = 3;
+  // SMT threads a core: 2 with Hyper-Threading visible, 1 without - a
+  // guest whose vCPUs are presented as cores reads 1.
+  uint32 threads_per_core = 4;
+  uint32 numa_nodes = 5;
+  // CPUs online.
+  uint32 logical_cpus = 6;
+  repeated CpuSocket socket_cores = 7;
+  // Each online CPU, by number.
+  repeated LogicalCpu cpus = 8;
+}
+
+message CpuSocket {
+  uint32 socket = 1;
+  uint32 physical_cores = 2;
+  uint32 logical_cpus = 3;
+}
+
+message LogicalCpu {
+  // The kernel's CPU number.
+  uint32 cpu = 1;
+  // Its socket, core (the core's number within the socket) and NUMA node;
+  // -1 where /sys does not say.
+  int32 socket = 2;
+  int32 core = 3;
+  int32 numa_node = 4;
+  // The other hardware threads of its core; empty without SMT.
+  repeated uint32 siblings = 5;
+  // What it serves this boot: "control-plane" (the routing daemons, the
+  // VTY, the host), "main" (VPP's main thread), "worker", or "none" -
+  // isolated at boot with no VPP thread on it, such as the HT sibling the
+  // tuner keeps off a worker's core.
+  string plane = 6;
+  // The worker's number when plane is "worker" (0 is vpp_wk_0); else -1.
+  int32 worker = 7;
+}
+
+// One CPU's usage over a window (#598), from /proc/stat.
+message CpuUsage {
+  uint32 cpu = 1;
+  // user + nice + system + irq + softirq, in percent of the window: not
+  // idle or iowait, and not steal.
+  double busy_percent = 2;
+  // Time the hypervisor ran something else on this vCPU's host thread, in
+  // percent of the window; 0 on bare metal.
+  double steal_percent = 3;
+  // A VPP thread polls on this CPU: it reads ~100% busy_percent whatever it
+  // forwards, and busy_percent says nothing about its load. For a worker,
+  // busy_ratio does. The main thread polls only on a box with no workers,
+  // and has no such figure.
+  bool polling = 4;
+  // A polling worker's VPP busy ratio, 0 to 1, as WorkerLoad.busy_ratio;
+  // 0 for any other CPU.
+  double busy_ratio = 5;
+  // The window, in milliseconds.
+  uint32 window_ms = 6;
 }
 
 // Management in a VRF of its own (#580): `system` > `management` > `vrf
@@ -3397,6 +3474,9 @@ message GetHistoryRequest {
   bool cgnat_totals = 4;
   bool workers = 5;
   bool memory = 6;
+  // Each CPU's usage (#598). Only when asked: a request that asks nothing
+  // is the four above, as before.
+  bool cpus = 7;
 }
 
 // One minute's sample. Counters are the dataplane's running totals, as
@@ -3408,6 +3488,9 @@ message HistorySample {
   CgnatTotals cgnat = 3;
   repeated WorkerLoad workers = 4;
   uint64 memory_used_bytes = 5;
+  // Each CPU's usage over the sample interval before `at` (#598), when
+  // GetHistoryRequest.cpus asked for it.
+  repeated CpuUsage cpus = 6;
 }
 
 // ---------------------------------------------------------------- routes

@@ -2,8 +2,8 @@
 # `show system tuning advice` (#596) against a real dataplane: the facts the
 # advice is built from, read back from VPP itself.
 #
-#   sh tools/lab.sh tuning-advice       two workers, two DPDK null ports of
-#                                       two rx queues each
+#   sh tools/lab.sh tuning-advice       three workers, three DPDK null ports
+#                                       of two rx queues each
 #   sh tools/lab.sh tuning-advice off   the same dataplane with no workers:
 #                                       every check on what the workers do
 #                                       MUST fail
@@ -25,12 +25,25 @@
 # its shape - the host's CPUs filled in from a pasted topology - and its
 # mapping against the .166's own is the unit suite's.
 #
-# OFF-RED-AT-LEAST: 7
+# THE CARDS THAT FORWARD NOTHING (#599). Three workers over two queues a
+# card puts every card short of queues, as 10.40.200.166's virtio cards were
+# (one queue, five workers). Ethernet0 is given an address - a card the
+# dataplane forwards through, whose finding stays; Ethernet1 is shut down;
+# Ethernet2 is the management card, in `system management vrf mgmt`. On
+# 0.152.8 all three warned, and the two idle ones each drew a dataplane
+# restart; here they are checked and fine, with the reason, and nothing is
+# recommended for them.
+#
+# OFF-RED-AT-LEAST: 9
 #
 # A FLOOR, measured on the off run (#596, 2026-10-08): the checks on the
 # workers - that there are two, their CPUs on the screen, their rows, their
 # loop rates, the queues on them and the hookscript's worker lines - red
-# with no worker to read, 7 of 14. Green in that run and rightly: the
+# with no worker to read, 7 of 14. #599 added two more red with no worker,
+# measured 2026-10-09 at 9 of 21: Ethernet0's queue finding and the one
+# dataplane restart for it - with no worker there is no queue question.
+# Green off, and rightly: the two idle cards' "not judged" lines and their
+# absence from the findings, which hold with or without workers. Green in that run and rightly: the
 # window's length, no counter cleared, the screen's width, the refusal and
 # the sizing table, none of which needs a worker.
 # See lab/bypass.sh for why it is a floor and not a target.
@@ -53,19 +66,32 @@ sed 's/^ *plugin dpdk_plugin.so { disable }//' "$(startup_conf test)" \
   > /tmp/startup-tune.conf
 printf 'dpdk {\n  no-hugetlb\n  no-pci\n  dev default {\n    num-rx-queues 2\n  }\n' \
   >> /tmp/startup-tune.conf
-for n in 0 1; do printf '  vdev net_null%s\n' "$n" >> /tmp/startup-tune.conf; done
+for n in 0 1 2; do printf '  vdev net_null%s\n' "$n" >> /tmp/startup-tune.conf; done
 printf '}\n' >> /tmp/startup-tune.conf
 if [ "$MODE" = off ]; then
   echo "  MODE=off: no workers. Every check on what the workers do MUST fail."
 else
-  printf 'cpu {\n  workers 2\n}\n' >> /tmp/startup-tune.conf
+  printf 'cpu {\n  workers 3\n}\n' >> /tmp/startup-tune.conf
 fi
 export PRISMA_STARTUP_CONF=/tmp/startup-tune.conf
 vpp -c /tmp/startup-tune.conf > /tmp/vpp.log 2>&1 &
 wait_vpp
 use_binary_api
-for n in 0 1; do vppctl set interface state Ethernet$n up; done
+for n in 0 1 2; do vppctl set interface state Ethernet$n up; done
 sleep 2
+# #599: a forwarding card, a card shut down, and the management card.
+IDLE=$($HX -c configure -c "vrf mgmt table 100" \
+    -c "interface Ethernet0" -c "ipv4 address 192.0.2.1/24" -c exit \
+    -c "interface Ethernet1" -c shutdown -c exit \
+    -c "interface Ethernet2" -c "vrf 100" -c "ipv4 address 10.200.0.1/24" \
+    -c exit -c system -c management -c "vrf mgmt" -c exit -c exit \
+    -c commit 2>&1)
+printf '%s\n' "$IDLE" | tail -3 | sed 's/^/  commit: /'
+# VPP's header loops/sec, which worker 0's rate is held to below, is a
+# 10 s average, and the commit changed what the workers do with the null
+# ports' packets: the first run after this phase, read at once, had worker 0
+# at 17k against a header still at 50k. Two of its windows, and it settles.
+sleep 20
 
 echo "=========== 1. VPP, asked directly ==========="
 THREADS=$(vc show threads)
@@ -109,6 +135,14 @@ near() { [ "${1:-0}" -gt 0 ] && [ "${2:-0}" -gt 0 ] \
          && [ "$1" -le $(( $2 * 2 )) ] && [ "$2" -le $(( $1 * 2 )) ]; }
 
 echo
+# #599: what the screen says of each card's queues, and what it recommends.
+FINDINGS=$(printf '%s\n' "$SCREEN" | sed -n '/^findings/,/^checked and fine/p')
+CHECKED=$(printf '%s\n' "$SCREEN" | sed -n '/^checked and fine/,/^on the box/p')
+ONBOX=$(printf '%s\n' "$SCREEN" | sed -n '/^on the box/,/^$/p')
+REOPEN0=$(printf '%s\n' "$ONBOX" | grep -c 'reopen Ethernet0')
+REOPEN12=$(printf '%s\n' "$ONBOX" | grep -c 'reopen Ethernet[12]')
+
+echo
 echo "=========== 3. the host's topology, pasted ==========="
 # A host of two nodes, four cores a node with HT, the NIC on node 1.
 PASTE=$(python3 -c "
@@ -128,10 +162,15 @@ HOSTLEFT=$(printf '%s\n' "$MAP" | grep -c 'HOST_')
 
 echo
 echo "=========== VERDICT ==========="
-expect "the dataplane has two workers to read" test -n "$WCPUS"
+expect "the dataplane has three workers to read" \
+  test "$(printf '%s' "$WCPUS" | wc -w)" = 3
+# The CPU list as cpu_spec() folds it: runs of consecutive CPUs as a-b.
+SPEC=$(printf '%s' "$WCPUS" | awk '{ out = ""; i = 1
+  while (i <= NF) { j = i; while (j < NF && $(j + 1) == $j + 1) j++
+    out = out (out ? "," : "") (j > i ? $i "-" $j : $i); i = j + 1 }
+  print out }')
 expect_said "the screen names the workers' CPUs, as show threads does" \
-  "workers $(printf '%s' "$WCPUS" | awk '{ if (NF == 2 && $2 == $1 + 1) print $1 "-" $2; else { gsub(" ", ","); print } }' | grep . || echo '<none read>')" \
-  "$SCREEN"
+  "workers ${SPEC:-<none read>}" "$SCREEN"
 expect "  and a row for each worker, on its CPU" \
   sh -c "[ -n \"$W0\" ] && [ -n \"$W1\" ] \
          && [ \"$(printf '%s' "$W0" | awk '{print $3}')\" = \"$(printf '%s' "$WCPUS" | awk '{print $1}')\" ]"
@@ -154,4 +193,16 @@ expect_said "the host's kernel line isolates the VM's CPUs, on the pasted host" 
   'isolcpus=$CPUS' "$HOOK"
 expect_in "a window past 60 s is refused" "a whole number from 1 to 60" "$REFUSED"
 expect "every row fits 79 columns" test -z "$WIDE"
+expect_in "#599: the commit took the three cards' statements" "commit complete" "$IDLE"
+expect_said "  Ethernet0, which forwards, short of queues: the finding stays" \
+  "[warn] Ethernet0: fewer queues than workers: 2 rx queue(s)" \
+  "$FINDINGS"
+expect_said "  Ethernet1, shut down: checked and fine, and why" \
+  "queues: Ethernet1 not judged, administratively down" "$CHECKED"
+expect_said "  Ethernet2, the management card: checked and fine, and why" \
+  "queues: Ethernet2 not judged, the management card, in VRF mgmt" "$CHECKED"
+expect_not_in "  neither is a queue finding" "Ethernet1: fewer queues" "$FINDINGS"
+expect_not_in "  nor the management card" "Ethernet2: fewer queues" "$FINDINGS"
+expect "  and only Ethernet0 is reopened: one dataplane restart, for it" \
+  test "${REOPEN0:-0}" = 1 -a "${REOPEN12:-1}" = 0
 verdict
