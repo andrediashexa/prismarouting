@@ -1565,6 +1565,14 @@ service OperationalService {
   // the module over I2C: poll it in minutes, not seconds (the dataplane
   // answers a second ask within 2 s from its last read). Any account.
   rpc ListTransceivers(ListTransceiversRequest) returns (Transceivers);
+  // #596: `show system tuning advice` - what the box has, what it measured
+  // over a window, what it finds wrong (each finding with its measurement
+  // and threshold), what to change on the box and, on a virtual machine,
+  // how the host should pin it, with the snippets as text. Read only:
+  // nothing on the box changes. The call takes the window - `seconds` - to
+  // answer, so a deadline is set above it. INVALID_ARGUMENT for seconds
+  // above 60. Any account.
+  rpc GetTuningAdvice(GetTuningAdviceRequest) returns (TuningAdvice);
 }
 
 // ------------------------------------------- the box's record of events (#588)
@@ -1752,6 +1760,168 @@ message Transceivers {
   repeated string missing = 3;
   // `show interface transceiver` (or `<name> transceiver`), verbatim.
   string text = 4;
+}
+
+// ------------------------------------------- the box's own tuning (#596)
+
+message GetTuningAdviceRequest {
+  // The measurement window, 1-60 seconds; 0 is the VTY's default, 5.
+  uint32 seconds = 1;
+  // The host's `lscpu -e=CPU,NODE,SOCKET,CORE`, and a line `nic-node <n>`
+  // with the NIC's NUMA node, as pasted at `show system tuning advice
+  // host-topology`. With it the snippets carry host CPU numbers; "" leaves
+  // them as HOST_* placeholders.
+  string host_topology = 2;
+}
+
+// One dataplane card, from `show hardware-interfaces`.
+message TuningCard {
+  string name = 1;
+  // The driver's own name for the card: "Intel 82599", "Red Hat Virtio".
+  string driver = 2;
+  string pci = 3;
+  // The card's NUMA node as the dataplane sees it; -1 when it declares none.
+  int32 numa_node = 4;
+  uint32 rx_queues = 5;
+  // The thread polling each rx queue, in queue order: the worker's number,
+  // -1 for the main thread.
+  repeated int32 queue_threads = 6;
+}
+
+// One dataplane thread over the window.
+message TuningThread {
+  // The worker's number; -1 is the main thread.
+  int32 worker = 1;
+  // The CPU it runs on (`show threads`' lcore); -1 when not read.
+  int32 cpu = 2;
+  // The polling input nodes' calls over the window, a second: the loop
+  // rate, measured from two readings of `show runtime` (no counter cleared).
+  double loops_per_second = 3;
+  // Packets per poll over the window.
+  double vectors_per_call = 4;
+  // The share of the window the hypervisor ran something else on the CPU's
+  // host thread, in percent (/proc/stat's steal). 0 on bare metal.
+  double steal_percent = 5;
+}
+
+message TuningFacts {
+  uint32 cpus_online = 1;
+  uint32 sockets = 2;
+  uint32 physical_cores = 3;
+  uint32 numa_nodes = 4;
+  // Whether this box can see HT siblings; a guest whose vCPUs are presented
+  // as cores cannot.
+  bool smt_visible = 5;
+  // systemd-detect-virt's word ("kvm", "vmware", ...), "none" for bare
+  // metal, "hypervisor" when only the CPUID flag says so, "" unknown.
+  string virtualization = 6;
+  // Which reading said it: "systemd-detect-virt", "DMI" or "CPUID".
+  string virtualization_source = 7;
+  uint64 memory_total_bytes = 8;
+  uint64 hugepage_size_bytes = 9;
+  uint32 hugepages_reserved = 10;
+  // The tuner's readback of the kernel command line's hugepage ask, in its
+  // words; "" when none is asked.
+  string hugepages_readback = 11;
+  // The layout this boot runs, as CPU lists ("0-1").
+  string control_plane_cpus = 12;
+  int32 main_cpu = 13;
+  bool main_dedicated = 14;
+  string worker_cpus = 15;
+  // An interface's MTU when it names none.
+  uint32 default_mtu = 16;
+  // Each CGNAT pool's tcp-mss, "<pool> <value>, ...".
+  string tcp_mss = 17;
+  // The window the threads and the steal were measured over.
+  uint32 window_ms = 18;
+  // Steal over the window on the dataplane's CPUs (workers, and the main
+  // thread's when it has one of its own) and on the control plane's.
+  double steal_dataplane_percent = 19;
+  double steal_control_plane_percent = 20;
+  repeated TuningCard cards = 21;
+  repeated TuningThread threads = 22;
+}
+
+message TuningFinding {
+  // Stable, for a client to key on: "uneven-workers", "steal", "hugepages",
+  // "ht-siblings", "main-idle", "main-busy", "isolation", "vm-memory" (the
+  // VM's memory by host node, from a pasted `numastat -p`),
+  // "queues:<card>", "queues-main:<card>", "queues-uneven:<card>",
+  // "numa:<card>".
+  string key = 1;
+  // "warn" or "info".
+  string severity = 2;
+  string title = 3;
+  // What was measured, the threshold it was held to, and why it matters,
+  // in the box's words.
+  string measured = 4;
+  string threshold = 5;
+  string why = 6;
+}
+
+message TuningRecommendation {
+  // "box": lines to type at the VTY; "hypervisor": to do on the host.
+  string side = 1;
+  string title = 2;
+  // The VTY lines, in order; empty for a hypervisor step (the snippets
+  // carry those).
+  repeated string lines = 3;
+  // What applying it takes: "none", "dataplane" (a restart of it) or
+  // "reboot" for the box; "host-reboot" or "vm-restart" for a hypervisor
+  // step.
+  string restart = 4;
+  // The finding's key it answers: nothing is recommended without one.
+  string evidence = 5;
+}
+
+message TuningSnippets {
+  string principle = 1;
+  // The Proxmox hookscript, /var/lib/vz/snippets/prisma-pin.sh.
+  string proxmox_hookscript = 2;
+  // The `qm set` lines.
+  string proxmox_qm = 3;
+  // The libvirt domain's <cputune>, <numatune> and <memoryBacking>.
+  string libvirt_cputune = 4;
+  // True when host_topology was read and the host CPUs are filled in;
+  // false leaves them as HOST_* placeholders.
+  bool host_topology_used = 5;
+  repeated string notes = 6;
+  // The host's kernel command line for this VM: its CPUs isolated
+  // (isolcpus, nohz_full, rcu_nocbs) and 1G hugepages reserved on the
+  // NIC's node, as the lines to run on a Proxmox host; HOST_* without the
+  // host's topology. Takes a reboot of the host.
+  string host_kernel = 7;
+  // Why, in the box's words: the isolation, and the memory bound to the
+  // NIC's node.
+  string isolation = 8;
+  string memory_binding = 9;
+}
+
+// One row of the sizing table: what the tuner makes of a VM of that size.
+message TuningSizingRow {
+  uint32 vcpus = 1;
+  uint32 control_plane = 2;
+  // "shared" or "dedicated".
+  string main_thread = 3;
+  uint32 workers = 4;
+  // The host threads to set aside, pinned: two per worker and two for the
+  // main thread's core, whose sibling carries the control plane.
+  uint32 host_threads = 5;
+  bool this_box = 6;
+}
+
+message TuningAdvice {
+  TuningFacts facts = 1;
+  // The problems, warnings first.
+  repeated TuningFinding findings = 2;
+  // What was checked and found fine, a sentence each.
+  repeated string checked = 3;
+  repeated TuningRecommendation recommendations = 4;
+  // Unset on bare metal, or when the dataplane's layout could not be read.
+  TuningSnippets snippets = 5;
+  repeated TuningSizingRow sizing = 6;
+  // `show system tuning advice`, verbatim.
+  string text = 7;
 }
 
 // ------------------------------------------------- the CGNAT's reads (#558)

@@ -83,6 +83,7 @@ python3 test/test_prismash_igp.py
 python3 test/test_prismash_bfd.py
 python3 test/test_transceiver.py
 python3 test/test_prismash_transceiver.py
+python3 test/test_tuneadvice.py
 python3 test/test_prismash_bgp.py
 python3 test/test_prismash_policy.py
 sh test/test_prismash_login.sh

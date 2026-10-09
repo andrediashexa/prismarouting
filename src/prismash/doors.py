@@ -365,6 +365,10 @@ QUERIES = {
     MGMT_RULES_READ[0]: "read the routing rules",
     MGMT_RULES_READ[1]: "read the IPv6 routing rules",
     MGMT_SYSCTLS_READ: "read management's kernel settings",
+    # Whether the box is a virtual machine, and whose (#596): `show system
+    # tuning advice` writes the host's pinning only for one. The container
+    # has no systemd to ask, and would answer "docker" if it had.
+    ("systemd-detect-virt", "--vm"): "ask whether the box is a virtual machine",
 }
 
 def query_of(argv):

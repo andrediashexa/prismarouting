@@ -32,6 +32,10 @@ RUN apt-get update -qq \
     && apt-get purge -y curl gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 COPY src/prismash/ /usr/lib/prisma-routing/
+# The tuner beside the VTY's modules (#596): `show system tuning advice`
+# loads it to size a box by its own plan() and read back the hugepages the
+# way it does - a second copy of either rule in the VTY could disagree.
+COPY appliance/prisma-routing-tune /usr/lib/prisma-routing/prisma-routing-tune
 # THE MANAGEMENT API (#532): gRPC, prisma.v1. Debian's python3-grpcio and
 # python3-protobuf to run it, and - for this one step only - the protoc and
 # grpc plugin of the same Debian, which generate its stubs from the contract

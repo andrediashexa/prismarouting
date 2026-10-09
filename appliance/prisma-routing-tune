@@ -236,6 +236,32 @@ class Topology:
         self.nodes = {}     # node -> [cpus]
         self._load()
 
+    @classmethod
+    def given(cls, cores, threads=1, nodes=1):
+        """
+        A box that is described rather than read: `nodes` NUMA nodes of
+        `cores` physical cores each, `threads` per core, with no card, no
+        RAM and no hugepages to read - its root is a directory that does not
+        exist. `show system tuning advice` plans one per row of its sizing
+        table with plan() itself, so the table is this program's answer for
+        a box of that size and not a second copy of its rules (#596).
+        """
+        t = cls.__new__(cls)
+        t.root = "/nonexistent/prisma-routing-tune/given"
+        t.cpus, t.nodes = {}, {}
+        for n in range(nodes):
+            first = n * cores
+            t.nodes[n] = []
+            for c in range(cores):
+                # Linux's numbering: the first thread of every core, then
+                # the second of every core.
+                sib = [first + c + k * cores * nodes for k in range(threads)]
+                for cpu in sib:
+                    t.cpus[cpu] = (n, c, sib)
+                t.nodes[n] += sib
+            t.nodes[n].sort()
+        return t
+
     def p(self, *parts):
         return os.path.join(self.root, *parts)
 

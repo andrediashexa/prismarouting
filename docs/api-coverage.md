@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 776 |
+| typed | 777 |
 | text | 1 |
 | n/a | 55 |
 
@@ -184,6 +184,7 @@ reachable in the phase their note names.
 | `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
 | `show system management` | typed | OperationalService.GetSystem | every account | management: the VRF configured and in effect; management_text (#580) |
 | `show system uptime` | typed | OperationalService.GetSystem | every account | boot, dataplane, control-plane and VTY start times, and why each started (#588) |
+| `show system tuning advice [seconds <1-60>] [host-topology]` | typed | OperationalService.GetTuningAdvice | every account | facts, findings, recommendations, snippets and sizing; host_topology is the paste (#596) |
 | `show system logging` | typed | OperationalService.GetSystem | every account | logging: each destination and whether it is reached; logging_text (#588 phase 3) |
 | `show log [last <n>] [since <time>] [severity <level>] [source <name>] [kind <kind>]` | typed | OperationalService.ListEvents | every account | the same filters, `kind` too, with each event's subject and reason; the restart causes are also in GetSystem (#588) |
 | `show logging` | typed | OperationalService.GetRoutingLogging | every account | FRR's logging per daemon |

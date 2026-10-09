@@ -56,6 +56,7 @@ import logstate  # noqa: E402 - the CGNAT log export's state (#555)
 import opshow  # noqa: E402 - the rest of the screens, typed (#558, phase 7)
 import typedcfg  # noqa: E402 - typed configuration (#558, phase 2)
 import transceiver  # noqa: E402 - a module's EEPROM, decoded (#590)
+import tuneadvice  # noqa: E402 - the box's own tuning, judged (#596)
 
 #: Where the server listens inside the management container: the backplane
 #: address the host forwards the management address to (#448's bp0).
@@ -1021,7 +1022,25 @@ READERS = {
     "transceivers": lambda sh, a: facts_screen(
         sh, lambda: sh.transceiver_facts(a or []),
         lambda f: sh.show_transceivers(a or [], f)),
+    # #596: `show system tuning advice`; `a` is {"seconds", "host_topology"}.
+    "tuning_advice": lambda sh, a: tuning_advice_read(sh, a or {}),
 }
+
+
+def tuning_advice_read(sh, a):
+    """
+    GetTuningAdvice's reading (#596): the Shell's one window of facts and the
+    advice decided from it, the screen drawn from that pair and the fields
+    from the same pair - so the text and the fields cannot disagree, and the
+    window is measured once.
+    """
+    seconds = int(a.get("seconds") or tuneadvice.WINDOW_DEFAULT)
+    f, adv = sh.tuning_advice(seconds, a.get("host_topology") or "")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        sh.show_system_tuning_advice([], f, adv)
+    return {"fields": tuneadvice.advice_fields(f, adv),
+            "text": buf.getvalue()}
 
 
 # ------------------------------------------------------------- who am I (#533)
@@ -3948,6 +3967,32 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 text=got["text"],
                 transceivers=[pb.Transceiver(**transceiver.transceiver_fields(m))
                               for m in f["modules"]])
+
+        # not a unit: an rpc, driven by lab/api-grpc.sh's phase for #596;
+        # tuning_advice_read() and tuneadvice.advice_fields() are what it
+        # converts, and are tested.
+        def GetTuningAdvice(self, req, context):
+            if req.seconds > tuneadvice.WINDOW_MAX:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                              f"seconds: {tuneadvice.WINDOW_MIN} to "
+                              f"{tuneadvice.WINDOW_MAX}, not {req.seconds}")
+            got = self._ask(context, "tuning_advice", {
+                "seconds": req.seconds, "host_topology": req.host_topology})
+            f = got["fields"]
+            facts = dict(f["facts"])
+            cards = [pb.TuningCard(**c) for c in facts.pop("cards")]
+            threads = [pb.TuningThread(**t) for t in facts.pop("threads")]
+            out = pb.TuningAdvice(
+                facts=pb.TuningFacts(cards=cards, threads=threads, **facts),
+                findings=[pb.TuningFinding(**x) for x in f["findings"]],
+                checked=f["checked"],
+                recommendations=[pb.TuningRecommendation(**r)
+                                 for r in f["recommendations"]],
+                sizing=[pb.TuningSizingRow(**r) for r in f["sizing"]],
+                text=got["text"])
+            if f["snippets"]:
+                out.snippets.CopyFrom(pb.TuningSnippets(**f["snippets"]))
+            return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh's eleventh phase;
         # events_filters(), events_read() and event_pb_fields() are what it

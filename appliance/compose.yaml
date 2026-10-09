@@ -305,6 +305,11 @@ services:
       # The kernel's boot time, for show system uptime (#534).
       - PRISMA_PROC_STAT=/host/proc/stat
       - PRISMA_PROC_CMDLINE=/host/proc/cmdline
+      # The CPUs, the NUMA nodes and the hugepage pools, the machine's DMI
+      # identity and the CPUs' flags, for show system tuning advice (#596).
+      - PRISMA_SYS_DEVICES=/host/sys/devices
+      - PRISMA_DMI=/host/sys/class/dmi/id
+      - PRISMA_CPUINFO=/host/proc/cpuinfo
       # AND WHAT ACTS ON THE HOST, OR ASKS IT, GOES THROUGH ITS DOORS (#448):
       # the probes (this network ends at the backplane), which unit runs the
       # dataplane, the ssh host keys' origin, the driver DPDK would get.

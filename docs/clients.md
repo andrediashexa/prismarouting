@@ -27,6 +27,49 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.8 - the box suggests its own tuning
+
+* **Contract:** additive (`prisma.proto` sha256 `9cca693d617b3febafa0b99427966e8769dcf6623e6968152cd871c92abee317`).
+  #596: `OperationalService.GetTuningAdvice(GetTuningAdviceRequest)` returns
+  `TuningAdvice` - `show system tuning advice` typed, with the screen in
+  `text`. New messages: `GetTuningAdviceRequest`, `TuningAdvice`,
+  `TuningFacts`, `TuningCard`, `TuningThread`, `TuningFinding`,
+  `TuningRecommendation`, `TuningSnippets`, `TuningSizingRow`. Nothing
+  existing changes.
+* **It takes its window to answer.** `seconds` is 1-60 (0 is 5); the call
+  answers after that many seconds, so a client sets its deadline above it.
+  Over 60 is INVALID_ARGUMENT before anything is measured. Any account.
+  Not a call to poll: each measures afresh.
+* **Units and sentinels.** `TuningThread.loops_per_second` is the polling
+  input nodes' calls over the window, per second (measured from two
+  `show runtime` readings - the box never clears a counter for it);
+  `vectors_per_call` packets per poll; `steal_percent` percent of the window.
+  `worker` -1 is the main thread; `cpu`, `main_cpu` and
+  `TuningCard.numa_node` are -1 when not read or not declared;
+  `queue_threads[i]` is the worker polling queue i, -1 the main thread.
+  CPU lists (`worker_cpus`, `control_plane_cpus`) are strings like `3-7`.
+* **Findings** carry a stable `key` to key on (`uneven-workers`, `steal`,
+  `hugepages`, `ht-siblings`, `main-idle`, `main-busy`, `isolation`,
+  `queues:<card>`, `queues-main:<card>`, `queues-uneven:<card>`,
+  `numa:<card>`), a `severity` (`warn` or `info`) and the box's words for
+  what was measured, the threshold and why. A healthy box has no finding;
+  `checked` lists what was looked at. Each `TuningRecommendation` names the
+  finding it answers in `evidence`, its `side` (`box` or `hypervisor`), and
+  `restart` (`none`, `dataplane` or `reboot`).
+* **`snippets` is unset on bare metal**, or when the dataplane's threads
+  could not be read. On a VM it carries a Proxmox hookscript, the `qm set`
+  lines and a libvirt block as text; host CPUs are `HOST_*` placeholders
+  unless `host_topology` (the host's `lscpu -e=CPU,NODE,SOCKET,CORE` and a
+  `nic-node <n>` line) was given, which `host_topology_used` says.
+  `host_kernel` is the Proxmox host's kernel command line for the VM
+  (isolcpus, nohz_full and rcu_nocbs on its host CPUs, 1G hugepages on the
+  NIC's node), `isolation` and `memory_binding` the box's reasons. A
+  hypervisor step's `restart` is `host-reboot` or `vm-restart`.
+* **`host_topology` may also carry `numastat -p <the VM's qemu pid>`**: the
+  VM's memory by host node then becomes a `vm-memory` finding - `warn` when
+  some of it is on another node than the NIC's, `info` when it is local but
+  only by first touch.
+
 ## 0.152.7 - a VRF given back keeps its IPv6 default
 
 * **Contract:** unchanged since 0.152.4 (`prisma.proto` sha256 `b74cba12f9a5fb0887c465adc56a72dbb90b595d1a7ca72ef0b73b77566ae55b`).

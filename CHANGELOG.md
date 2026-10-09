@@ -77,6 +77,38 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show system tuning advice`: the box suggests its own tuning, and, on a
+  virtual machine, how its host should pin it.**
+  ([#596](https://github.com/andrediashexa/hexarouting/issues/596)) What
+  the box has (CPU topology, virtualization, memory and hugepages, each
+  dataplane card's driver, queues, their workers and NUMA node, the layout,
+  MTU and tcp-mss), a window of `seconds <1-60>` (5 by default) measured
+  from two readings of `/proc/stat` and `show runtime` - nothing cleared -
+  and what it finds wrong, each with the measurement, its threshold and why:
+  uneven workers (more than 15% below the median loops/s at low load),
+  steal over 1% on the dataplane's CPUs, queues not matching workers, a
+  worker off its card's NUMA node, hugepages short (the tuner's own
+  readback), two workers on HT siblings, a dedicated main thread an idle box
+  does not need or a shared one a busy control plane holds up. Then the VTY
+  lines to type, each with whether it takes a dataplane restart or a reboot;
+  on a VM, a Proxmox hookscript, the `qm set` lines and a libvirt
+  `<cputune>` generated from the box's own vCPU roles - host CPUs as
+  `HOST_*` placeholders, or filled in from the host's
+  `lscpu -e=CPU,NODE,SOCKET,CORE` pasted with `host-topology`; and a sizing
+  table from 4 to 32 vCPUs made by the tuner's own `plan()`. Built from
+  10.40.200.166: its "before" numbers (workers 2.41M-3.29M loops/s, 7.7%
+  steal) raise both findings and its "after" (2.86M-3.30M, steal only on
+  the control plane) raises none, and the hookscript generated from sv01's
+  topology pins every vCPU where the hand-written one did. On the host
+  side it also gives the kernel command line that isolates the VM's host
+  CPUs (`isolcpus`, `nohz_full`, `rcu_nocbs`, so no other guest, host
+  service or kernel thread lands there; a host reboot, static) and reserves
+  1G hugepages on the NIC's node, with `numa0 ... hostnodes=<node>,
+  policy=bind` binding the VM's memory there - `numa: 1` alone does not;
+  a pasted `numastat -p` says where the memory is now (sv01's VM 102: 16.1
+  GB on node 1, none on node 0, local by first touch only). Read only. The
+  API carries it typed: `OperationalService.GetTuningAdvice`.
+
 ### Fixed
 
 ## 0.152.7 - a card changes VRF with no addresses on it
