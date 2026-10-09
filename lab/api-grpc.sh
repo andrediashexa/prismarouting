@@ -1,12 +1,12 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 227
+# OFF-RED-AT-LEAST: 233
 # (195, and #588's thirteen ListEvents and GetSystem checks: measured
 # 2026-10-06, 208 red in the off run, each of the thirteen among them; and
 # #590's eight ListTransceivers checks: 216, measured the same day; and
 # #588 phase 2's three - ListEvents' kind, a kind refused, a settings
 # event's subject: 219, measured 2026-10-07; and #588 phase 3's eight -
 # WatchEvents and system logging through the API: 227, measured the same
-# day.)
+# day; and #596's six GetTuningAdvice checks: 233, measured 2026-10-08.)
 # The management API over gRPC (#532), the way the web interface's backend
 # will speak it: mutual TLS, a client certificate whose Common Name is the box
 # account the call acts as, the VTY's own model underneath.
@@ -650,6 +650,11 @@ printf '%s\n' "$T12" | sed 's/^/  /'
 echo "=========== #588 phase 3: WatchEvents, system logging ==========="
 T13=$(python3 lab/api_phase13_check.py /tmp/apistubs $C 127.0.0.1:50556 "$HX" 2>&1)
 printf '%s\n' "$T13" | sed 's/^/  /'
+# #596: show system tuning advice through the API, on this lab's two
+# workers: the reading is this dataplane's, the text is its screen.
+echo "=========== #596: GetTuningAdvice ==========="
+T14=$(python3 lab/api_phase14_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
+printf '%s\n' "$T14" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -920,6 +925,13 @@ expect "  system logging set with Edit, read back typed in log_destinations" t13
 expect "  the VTY's running configuration has it" t13 logging-vty
 expect "  GetSystem: the destination, the watcher not heard, show system logging's text" t13 logging-system
 expect "  a name, not an address: INVALID_ARGUMENT" t13 logging-refused
+t14() { printf '%s\n' "$T14" | grep -q "^RESULT $1 ok"; }
+expect "#596: GetTuningAdvice reads the lab's two workers, each on a CPU, polling" t14 tuning-workers
+expect "  over the window asked, 2 s, and took it" t14 tuning-window
+expect "  its text is the screen of the same reading: the same worker CPUs" t14 tuning-text-same
+expect "  the sizing table, 4 to 32 vCPUs, from the tuner's plan" t14 tuning-sizing
+expect "  the host's pasted topology fills the hookscript in, on a VM; none on bare metal" t14 tuning-snippets
+expect "  a window past 60 s: INVALID_ARGUMENT" t14 tuning-refused
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"

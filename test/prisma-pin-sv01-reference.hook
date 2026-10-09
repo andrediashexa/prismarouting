@@ -1,0 +1,25 @@
+#!/bin/sh
+# Proxmox hookscript for the Prisma VM (102), also run by hand: pins each
+# vCPU thread to one host CPU on the socket the X520 sits on (NUMA node 1),
+# one physical core per dataplane worker. Written 2026-10-08.
+#   vCPU 2 (VPP main thread)      -> 1
+#   vCPU 3..7 (VPP workers)       -> 3 5 7 9 11   (physical cores)
+#   vCPU 0,1 (control plane)      -> 13 13        (the HT sibling of the main
+#     thread's core, which idles; on 15, beside worker 0, the control plane's
+#     ~18% cut that worker from 3.0M to 2.1M loops/s - measured)
+#   QEMU's other threads + vhost  -> 17 19 21 23  (remaining siblings)
+vmid=${1:-102}; phase=${2:-post-start}
+[ "$phase" = post-start ] || exit 0
+sleep 2
+pid=$(cat /var/run/qemu-server/$vmid.pid) || exit 0
+map() { case "$1" in 0) echo 13;; 1) echo 13;; 2) echo 1;; 3) echo 3;; 4) echo 5;; 5) echo 7;; 6) echo 9;; 7) echo 11;; esac; }
+for t in /proc/$pid/task/*; do
+  tid=${t##*/}; name=$(cat $t/comm)
+  case "$name" in
+    "CPU "*"/KVM") n=${name#CPU }; n=${n%%/KVM}; c=$(map $n);
+                   [ -n "$c" ] && taskset -pc "$c" "$tid" >/dev/null ;;
+    *) taskset -pc 17,19,21,23 "$tid" >/dev/null ;;
+  esac
+done
+for v in $(pgrep -f "^vhost-$pid"); do taskset -pc 17,19,21,23 "$v" >/dev/null; done
+exit 0

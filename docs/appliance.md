@@ -922,6 +922,79 @@ a stanza, a box whose `vpp-base.conf` carries one, and a dataplane that does
 not answer the question at all - because filling a real statistics segment
 means creating several thousand interfaces on the machine running the tests.
 
+## Tuning advice: what the box says about its own tuning (#596)
+
+The tuner above decides the layout from the hardware it can see. What it
+cannot see is what the box measures once it runs - and on a virtual machine,
+the host. On 10.40.200.166 (Proxmox VM 102, 8 vCPUs floating over the 12
+threads of the X520's NUMA node) the workers polled at 2.98M / 3.29M / 3.23M
+/ 2.41M / 3.23M loops/s with no traffic, two of them sharing a physical core
+through HT, and the guest measured ~7.7% steal. A hookscript written by hand
+pinned each vCPU to one host thread (main 1, workers 3 5 7 9 11, both
+control-plane vCPUs on 13, QEMU's other threads on 17-23) and the workers ran
+2.86M-3.30M, the steal left only on the control plane. Everything that fixed
+it was read off the host by hand; `show system tuning advice` is the box
+saying it itself.
+
+```
+prisma> show system tuning advice
+prisma> show system tuning advice seconds 10
+prisma> show system tuning advice host-topology
+```
+
+**What it reads, read only.** The CPU topology through the tuner's own
+`Topology`, whether the box is a VM (`systemd-detect-virt --vm` through the
+host's door, then DMI, then the CPUID flag), memory and hugepages (the
+tuner's own readback of the kernel command line's ask), each dataplane card's
+driver, rx queues, the worker on each and its NUMA node (`show
+hardware-interfaces`), the layout (`show threads` and the control plane's
+fence), the default MTU and each pool's `tcp-mss`. Then a window, 5 s by
+default: `/proc/stat` and `show runtime` read at both ends. **Nothing is
+cleared** - `clear runtime` would zero the counters every other reader is
+using - so a worker's loop rate is its polling input node's calls over the
+window.
+
+**What it judges, and against what.** Each finding prints what was measured,
+the threshold and why it matters; a healthy check is listed under "checked
+and fine".
+
+| Finding | Threshold | Why this number |
+|---|---|---|
+| uneven workers | a worker more than 15% below the median loops/s, every worker under 2 vectors/call | the .166's slow worker was 25% below, and pinned the slowest was 11% below |
+| steal | over 1% on a worker's CPU or the dedicated main thread's | the .166 measured 7.7% before and 0 on those CPUs after; steal on the control plane's vCPUs, which share a host thread by design, is reported and not a finding |
+| queues | fewer rx queues than workers, one on the main thread, or a count that does not divide | a worker with no queue forwards only what it is handed |
+| NUMA | a worker polling a card on another node, where the card declares one | the tuner's own rule |
+| hugepages | the kernel reserved fewer than the command line asks | the tuner's `_rb_hugepages`, the same words as the boot report |
+| HT siblings | two workers on one core, where the box can see HT | the tuner's one-thread-a-core rule |
+| main thread | dedicated with the control plane under 10% busy and fewer than 4 workers; shared with it 50% busy or more | the barrier the main thread takes once a second |
+| isolation | on bare metal, a worker's CPU the kernel does not isolate | the box between two plans (#486) |
+
+**What it recommends.** On the box, the exact VTY lines and what each takes -
+nothing, a dataplane restart, or a reboot (`system cpu` changes are kernel
+command line). On a VM, the principle, a Proxmox hookscript
+(`/var/lib/vz/snippets/prisma-pin.sh`), the `qm set` lines and a libvirt
+`<cputune>`, generated from the box's own vCPU roles. The host's CPU numbers
+are `HOST_*` placeholders - the hookscript refuses to run until they are
+filled in - unless the host's `lscpu -e=CPU,NODE,SOCKET,CORE` and a
+`nic-node <n>` line are pasted after `host-topology`; then the box places the
+main thread on the first physical core of the NIC's node, every other
+control-plane vCPU on that core's HT sibling, each worker on a core of its
+own, QEMU's threads on the last four siblings left, and the other guests on
+the other node. From sv01's topology that is the hand-written script's
+mapping exactly (`test/test_tuneadvice.py` holds it to
+`test/prisma-pin-sv01-reference.hook`).
+
+**The sizing table is the tuner's.** For 4 to 32 vCPUs it runs the tuner's
+own `plan()` on a box of that size (`Topology.given()`, one node, no SMT, as
+a guest is presented) with the split this advice recommends - the main
+thread its own from 6 vCPUs, two control-plane vCPUs from 8, three from 24 -
+and prints the workers that come out. The management container carries the
+tuner beside the VTY's modules for this, so the table cannot disagree with
+what the box would do at boot.
+
+The API carries the same reading typed: `OperationalService.GetTuningAdvice`
+([docs/clients.md](clients.md)).
+
 ## CPU requirement
 
 VPP's binary assumes **SSE4.2** and uses AVX where available. On a CPU without

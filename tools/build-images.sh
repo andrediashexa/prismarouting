@@ -84,6 +84,8 @@ cp "$REPO/appliance/systemd/vpp-stop-drain.conf" "$CTX/appliance/systemd/"
 mkdir -p "$CTX/src/prismash"
 cp "$REPO"/src/prismash/*.py "$CTX/src/prismash/"
 cp "$REPO/appliance/prismash-launcher" "$CTX/appliance/"
+# The tuner, which the VTY loads for show system tuning advice (#596).
+cp "$REPO/appliance/prisma-routing-tune" "$CTX/appliance/"
 # The management API's contract and the generator of its stubs (#532): the
 # image builds the stubs itself, with the protoc of its own Debian.
 mkdir -p "$CTX/api" "$CTX/tools"

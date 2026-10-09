@@ -254,6 +254,8 @@ this boot:
   control plane held to 0
 ```
 
+`show system tuning advice` diz se o layout que está rodando é o que a caixa deveria ter — workers desiguais, filas que não batem, thread principal sobrando ou faltando — com a linha da VTY que muda isso, e traz uma tabela de 4 a 32 vCPUs com a divisão recomendada e os workers que o ajuste da caixa tira de cada uma. Numa VM, traz também a fixação de CPUs para o hipervisor: veja [Rodar o Prisma Routing numa máquina virtual](/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5).
+
 ## Memória por papel: plano de controle, CGNAT e buffers
 
 A RAM da caixa se divide em dois lados. As **hugepages** são do dataplane: a memória do CGNAT (sessões e assinantes), os buffers de pacote e uma folga. O **resto** é do plano de controle: o sistema, o roteamento, o SSH, a VTY e os containers. Uma hugepage nunca é devolvida para ninguém, então o que o plano de controle tem garantido é exatamente a RAM que não virou hugepage.

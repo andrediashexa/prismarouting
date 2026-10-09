@@ -110,7 +110,9 @@ want = {
                            # #588: show log; phase 3, monitor log.
                            "ListEvents", "WatchEvents",
                            # #590: show interface transceiver.
-                           "ListTransceivers"],
+                           "ListTransceivers",
+                           # #596: show system tuning advice.
+                           "GetTuningAdvice"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

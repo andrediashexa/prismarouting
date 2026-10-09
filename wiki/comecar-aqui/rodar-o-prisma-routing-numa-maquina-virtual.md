@@ -120,6 +120,29 @@ system shutdown
 system reboot
 ```
 
+# A caixa sugere a própria afinação, e a do hipervisor
+
+Numa VM, cada vCPU é uma thread do hipervisor, e um worker do dataplane nunca solta a CPU dele. Se dois vCPUs de workers caem no mesmo núcleo físico (dois irmãos de HT), ou se outra VM divide a thread com um deles, esse worker gira mais devagar que os outros, e o tempo que o hipervisor tira da VM aparece como *steal*. Foi o que aconteceu numa caixa de laboratório: com tráfego quase zero, os cinco workers giravam entre 2,41 e 3,29 milhões de voltas por segundo, com 7,7% de steal. Fixando cada vCPU numa thread do host, no nó NUMA da placa, um núcleo físico por worker, eles passaram a 3,21–3,30 milhões, e o steal ficou só no plano de controle.
+
+A caixa diz isso sozinha:
+
+```
+prisma> show system tuning advice
+prisma> show system tuning advice seconds 10
+```
+
+Ela mostra o que tem (CPUs, se é VM e de quem, memória e hugepages, cada placa do dataplane com suas filas e o worker de cada uma, o layout, MTU e `tcp-mss`), mede uma janela de alguns segundos (5 por padrão) sem zerar nenhum contador, e diz o que está errado, sempre com o número medido, o limite e o porquê: workers desiguais (um worker mais de 15% abaixo da mediana, sem tráfego), steal acima de 1% nas CPUs do dataplane, filas que não batem com os workers, worker fora do nó NUMA da placa, hugepages a menos do que a caixa pediu, thread principal dedicada numa caixa ociosa ou compartilhada com um plano de controle ocupado. Nada é alterado: aplicar é com você.
+
+O que fazer vem em duas partes. **Na caixa**, as linhas exatas da VTY e se cada uma pede reinício do dataplane ou reboot. **No hipervisor**, quando é uma VM: o princípio, um *hookscript* do Proxmox (`/var/lib/vz/snippets/prisma-pin.sh`), as linhas `qm set` e um bloco `<cputune>` do libvirt, gerados a partir do papel de cada vCPU desta caixa. Os números das CPUs do host vêm como `HOST_*` — o script se recusa a rodar enquanto sobrar um — a menos que você cole a topologia do host:
+
+```
+prisma> show system tuning advice host-topology
+```
+
+Cole a saída de `lscpu -e=CPU,NODE,SOCKET,CORE` do host e, numa linha à parte, `nic-node <n>` com o nó NUMA da placa (`cat /sys/bus/pci/devices/<pci>/numa_node`); termine com uma linha vazia. A caixa então põe a thread principal no primeiro núcleo físico do nó da placa, o plano de controle no irmão de HT desse núcleo (a thread principal fica quase sempre parada, então é o lugar mais quieto do nó), cada worker num núcleo só dele, as outras threads do QEMU nos últimos irmãos que sobram, e as outras VMs no outro nó.
+
+No fim vem uma tabela de dimensionamento: para VMs de 4 a 32 vCPUs, quantos ficam com o plano de controle, se a thread principal é dedicada, quantos workers isso dá — calculada pelo próprio ajuste da caixa — e quantas threads do host reservar. É o número para decidir quantos vCPUs dar a uma VM nova.
+
 # Medir desempenho numa VM
 
 Um número de vazão medido numa VM mede o **caminho do switch virtual do hipervisor**, não a caixa. O custo do dataplane é por pacote, e numa VM o que acaba primeiro é a quantidade de pacotes por segundo que o hipervisor entrega à placa virtual.

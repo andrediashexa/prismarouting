@@ -81,6 +81,7 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
                     vrrp_statement, vrrp_remove, vrrp_pair_findings)
 import doors
+import tuneadvice
 import events
 import eventfwd
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
@@ -2276,6 +2277,11 @@ SHOW = {
                        "and in effect", None),
         "uptime": ("since when the box, the dataplane and the routing run",
                    None),
+        # #596: the box's own tuning, judged from what it has and measures.
+        "tuning": ("this box's tuning, judged from what it has and measures",
+                   {"advice": ("what to change, on the box and on its host, "
+                               "each with the measurement behind it",
+                               "[seconds <1-60>] [host-topology]")}),
         # #588 phase 3: where the record of events goes, and whether it is
         # getting there.
         "logging": ("the remote syslog destinations of the box's events, and "
@@ -19894,6 +19900,189 @@ class Shell:
             fence = ""
         print(f"  control plane held to {fence or '(not held)'}")
 
+    # ------------------------------------------- show system tuning advice
+
+    #: The host's facts `show system tuning advice` reads (#596): /sys's
+    #: devices - whose parent is the root the tuner's own Topology and
+    #: hugepage readback read from - DMI's identity of the machine, and the
+    #: CPUs' flags.
+    SYS_DEVICES = os.environ.get("PRISMA_SYS_DEVICES", "/sys/devices")
+    DMI = os.environ.get("PRISMA_DMI", "/sys/class/dmi/id")
+    CPUINFO = os.environ.get("PRISMA_CPUINFO", "/proc/cpuinfo")
+
+    def read_text(self, path):
+        """A whole file, or "" when it cannot be read."""
+        try:
+            with open(path) as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def tuning_advice_facts(self, seconds=tuneadvice.WINDOW_DEFAULT,
+                            sleep=time.sleep, clock=time.monotonic):
+        """
+        What `show system tuning advice` reads (#596), as data: the CPUs as
+        this box sees them (through the tuner's own Topology), whether it is
+        a virtual machine and by what, the memory and the hugepages (the
+        tuner's readback of what the kernel did with what it was asked), each
+        dataplane card, the layout this boot runs, the MTU and tcp-mss, and
+        a window of `seconds`: /proc/stat and `show runtime` read at its two
+        ends. Nothing is written, and no counter is cleared.
+        """
+        tune = tuneadvice.load_tuner()
+        root = os.path.dirname(os.path.dirname(self.SYS_DEVICES.rstrip("/")))
+        topo = None
+        if tune is not None:
+            try:
+                topo = tune.Topology(root or "/")
+            except (SystemExit, OSError, ValueError):
+                topo = None
+        online = tuneadvice.cpu_parse(self.read_text(self.CPU_ONLINE))
+        cpus = topo.cpus if topo else {}
+        topology = {
+            "online": online or sorted(cpus),
+            "sockets": len({v[0] for v in cpus.values()}),
+            "cores": len({(v[0], v[1]) for v in cpus.values()}),
+            "nodes": len(topo.nodes) if topo else 0,
+            "smt": any(len(v[2]) > 1 for v in cpus.values()),
+            "node_of": {c: n for n, cs in (topo.nodes.items() if topo
+                                           else ()) for c in cs},
+            "siblings": {c: v[2] for c, v in cpus.items()}}
+        rc, out = self.host_run(["systemd-detect-virt", "--vm"])
+        virt = tuneadvice.detect_virt(
+            out if rc in (0, 1) else "",
+            self.read_text(os.path.join(self.DMI, "sys_vendor")).strip(),
+            self.read_text(os.path.join(self.DMI, "product_name")).strip(),
+            self.read_text(self.CPUINFO))
+        info = tuneadvice.meminfo(self.read_text(self.MEMINFO))
+        memory = {"total_kb": info.get("MemTotal", 0),
+                  "hugepage_kb": info.get("Hugepagesize", 0),
+                  "hugepages_total": info.get("HugePages_Total", 0),
+                  "effect": None, "effect_said": ""}
+        if tune is not None:
+            booted = tune.cmdline_params(self.read_text(self.PROC_CMDLINE))
+            if booted.get("hugepages"):
+                memory["effect"], memory["effect_said"] = tune._rb_hugepages(
+                    root or "/", booted["hugepages"], booted)
+        rc, out = self.dp.run("show threads")
+        thr = tuneadvice.parse_threads(out if rc == 0 else "")
+        workers = [thr["workers"][k] for k in sorted(thr["workers"])]
+        isolated = tuneadvice.cpu_parse(self.read_text(self.CPU_ISOLATED))
+        fence = tuneadvice.cpu_parse(self.read_text(self.CPU_FENCE))
+        main = thr["main"]
+        if fence and fence != topology["online"]:
+            cp = fence
+        else:
+            cp = [c for c in topology["online"]
+                  if c not in workers and (c != main or c not in isolated)]
+        rc, hw = self.dp.run("show hardware-interfaces")
+        cards = tuneadvice.parse_hardware(hw) if rc == 0 else None
+        try:
+            mss = {n: (p.tcp_mss or "not set")
+                   for n, p in self.running_config().pools.items()}
+        except Exception:        # noqa: BLE001 - a fact, not the screen
+            mss = {}
+        # THE WINDOW: two readings, nothing cleared. /proc/stat outside the
+        # two `show runtime`s, so the CPUs' window holds the dataplane's.
+        stat0 = tuneadvice.parse_proc_stat(self.read_text(PROC_STAT))
+        rc0, rt0 = self.dp.run("show runtime")
+        t0 = clock()
+        sleep(seconds)
+        rc1, rt1 = self.dp.run("show runtime")
+        t1 = clock()
+        stat1 = tuneadvice.parse_proc_stat(self.read_text(PROC_STAT))
+        rates = {}
+        if rc0 == 0 and rc1 == 0:
+            rates = tuneadvice.thread_rates(tuneadvice.parse_runtime(rt0),
+                                            tuneadvice.parse_runtime(rt1),
+                                            t1 - t0)
+        return {"topology": topology,
+                "virt": {"kind": virt[0], "source": virt[1]},
+                "memory": memory,
+                "layout": {"control_plane": cp, "main": main,
+                           "main_dedicated": main is not None
+                           and main not in cp,
+                           "workers": workers, "isolated": isolated},
+                "configured": {
+                    "control_plane": self.read_tune_key(
+                        "PRISMA_CONTROL_PLANE_CORES"),
+                    "main_thread": self.read_tune_key("PRISMA_MAIN_THREAD"),
+                    "workers": self.read_tune_key("PRISMA_MAX_WORKERS")},
+                "cards": cards, "mtu": self.box_default_mtu(),
+                "tcp_mss": mss,
+                # The seconds asked, which the screen says, and the time the
+                # two readings were really apart, which the rates are over:
+                # the second `show runtime` itself takes a few milliseconds,
+                # and "measured over 3.01 s" was the lab's off run saying so.
+                "window": {"seconds": seconds,
+                           "elapsed": round(t1 - t0, 3), "threads": rates,
+                           "cpus": tuneadvice.cpu_window(stat0, stat1)}}
+
+    def tuning_advice(self, seconds=tuneadvice.WINDOW_DEFAULT, host_text="",
+                      facts=None):
+        """(facts, advice): the reading and what is decided from it - the
+        one pair the screen and OperationalService.GetTuningAdvice draw."""
+        f = self.tuning_advice_facts(seconds) if facts is None else facts
+        return f, tuneadvice.advise(f, tuneadvice.load_tuner(), host_text)
+
+    def read_host_topology(self):
+        """
+        The host's `lscpu -e=CPU,NODE,SOCKET,CORE` and its NIC's node,
+        pasted at the prompt, up to an empty line or `end` (#596).
+        """
+        print("Paste the host's `lscpu -e=CPU,NODE,SOCKET,CORE`, then the "
+              "NIC's NUMA")
+        print("node as `nic-node <n>` (cat /sys/bus/pci/devices/<pci>/"
+              "numa_node).")
+        print("End with an empty line.")
+        lines = []
+        while True:
+            try:
+                line = input()
+            except EOFError:
+                break
+            if not line.strip() or line.strip() == "end":
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
+    def show_system_tuning_advice(self, args, facts=None, advice=None):
+        """
+        `show system tuning advice [seconds <n>] [host-topology]` (#596):
+        what this box has, what it measures as wrong over a window, what to
+        type on the box and, on a virtual machine, how the host should pin
+        it - every recommendation beside the measurement behind it. Read
+        only: applying any of it is the operator's commit.
+
+        `facts` and `advice` are a reading tuning_advice() already took, so
+        the API's text is drawn from the numbers its fields carry.
+        """
+        if facts is None:
+            seconds, host, rest = tuneadvice.WINDOW_DEFAULT, False, list(args)
+            while rest:
+                w = rest.pop(0)
+                if w == "seconds" and rest:
+                    v = rest.pop(0)
+                    if not is_number(v) or not (
+                            tuneadvice.WINDOW_MIN <= int(v)
+                            <= tuneadvice.WINDOW_MAX):
+                        # The window's bounds, not the value: a value
+                        # quoted back is as wide as whatever was typed.
+                        self.err("seconds: a whole number from 1 to 60")
+                        return
+                    seconds = int(v)
+                elif w == "host-topology":
+                    host = True
+                else:
+                    self.err("show system tuning advice: takes "
+                             "'seconds <1-60>' and 'host-topology'")
+                    return
+            text = self.read_host_topology() if host else ""
+            print(f"measuring for {seconds} s ...")
+            facts, advice = self.tuning_advice(seconds, text)
+        for line in tuneadvice.render(facts, advice):
+            print(line)
+
     def policy_in_view(self):
         """
         The policy source this screen is about: the candidate's in
@@ -21028,6 +21217,9 @@ class Shell:
             return
         if line == "show system uptime":
             self.show_system_uptime()
+            return
+        if line.split()[:4] == ["show", "system", "tuning", "advice"]:
+            self.show_system_tuning_advice(line.split()[4:])
             return
         # The box's own record (#588), and not FRR's `show logging`, which
         # stays what it was: each routing daemon's logging configuration.

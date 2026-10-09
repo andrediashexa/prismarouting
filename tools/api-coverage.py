@@ -108,6 +108,11 @@ OPERATIONAL_RULES = [
      "management: the VRF configured and in effect; management_text (#580)"),
     (["show", "system", "cpu"], "typed", "OperationalService.GetSystem",
      "worker_load per worker; per-core figures are text (phase 7)"),
+    # #596: the box's own tuning, judged, with the host's pinning.
+    (["show", "system", "tuning"], "typed",
+     "OperationalService.GetTuningAdvice",
+     "facts, findings, recommendations, snippets and sizing; "
+     "host_topology is the paste (#596)"),
     # #590: each port's module and its optical levels.
     (["show", "interface", "transceiver"], "typed",
      "OperationalService.ListTransceivers",
