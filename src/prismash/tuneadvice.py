@@ -159,6 +159,56 @@ def cpu_parse(spec):
     return sorted(set(out))
 
 
+def cpu_topology(tune, root="/", online=None):
+    """
+    The CPUs as this box sees them, read once and the one reader of them
+    (#596; GetSystem's CPU topology, #598, is to be built on this and not
+    beside it): {"online", "sockets", "cores", "nodes", "smt", "node_of":
+    {cpu: node}, "siblings": {cpu: [cpus]}, "cpus": {cpu: {"socket",
+    "core", "node", "siblings"}}}.
+
+    Through the tuner's own Topology rooted at `root` (/host in the
+    management container), so the box and its boot-time plan see the same
+    cores. `online` is /sys's online list when it was read; the topology's
+    CPUs otherwise. A tuner that could not be loaded, or a /sys with no
+    topology, is a box of `online` CPUs and nothing else known.
+    """
+    topo = None
+    if tune is not None:
+        try:
+            topo = tune.Topology(root or "/")
+        except (SystemExit, OSError, ValueError):
+            topo = None
+    cpus = topo.cpus if topo else {}
+    node_of = {c: n for n, cs in (topo.nodes.items() if topo else ())
+               for c in cs}
+    return {"online": list(online or sorted(cpus)),
+            "sockets": len({v[0] for v in cpus.values()}),
+            "cores": len({(v[0], v[1]) for v in cpus.values()}),
+            "nodes": len(topo.nodes) if topo else 0,
+            "smt": any(len(v[2]) > 1 for v in cpus.values()),
+            "node_of": node_of,
+            "siblings": {c: v[2] for c, v in cpus.items()},
+            "cpus": {c: {"socket": v[0], "core": v[1],
+                         "node": node_of.get(c), "siblings": v[2]}
+                     for c, v in sorted(cpus.items())}}
+
+
+def cpu_planes(topology, layout):
+    """
+    {cpu: "worker" | "main" | "control-plane"}: which plane each online CPU
+    serves this boot, from cpu_topology() and the layout (`show threads`
+    and the control plane's fence) - the per-CPU plane #598 asks GetSystem
+    for, and the roles guest_roles() pins by.
+    """
+    out = {c: "control-plane" for c in topology.get("online") or []}
+    if layout.get("main") is not None:
+        out[layout["main"]] = "main"
+    for c in layout.get("workers") or []:
+        out[c] = "worker"
+    return dict(sorted(out.items()))
+
+
 _THREAD = re.compile(r"^\s*(\d+)\s+(vpp_main|vpp_wk_(\d+))\s.*?\(\d+\)\s+"
                      r"(\d+)\s+(\d+)\s+(\d+)")
 
@@ -762,15 +812,13 @@ def guest_roles(f):
     it is where the scheduler runs everything not pinned.
     """
     lay = f.get("layout") or {}
-    online = (f.get("topology") or {}).get("online") or []
-    roles = {c: ("cp",) for c in online}
+    planes = cpu_planes(f.get("topology") or {}, lay)
     for c in lay.get("control_plane") or []:
-        roles[c] = ("cp",)
-    if lay.get("main") is not None:
-        roles[lay["main"]] = ("main",)
-    for i, c in enumerate(lay.get("workers") or []):
-        roles[c] = ("worker", i)
-    return dict(sorted(roles.items()))
+        planes.setdefault(c, "control-plane")
+    wid = {c: i for i, c in enumerate(lay.get("workers") or [])}
+    return {c: ("worker", wid[c]) if p == "worker" else
+            ("main",) if p == "main" else ("cp",)
+            for c, p in sorted(planes.items())}
 
 
 def host_cores(host, node):

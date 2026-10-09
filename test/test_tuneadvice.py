@@ -721,6 +721,18 @@ with contextlib.redirect_stdout(io.StringIO()):
     pasted = sh.read_host_topology()
 sys.stdin = _old
 check(pasted == "0 0 0 0", f"read_host_topology: stops at `end`: {pasted!r}")
+topo = T.cpu_topology(tune, _root, [0, 1, 2, 3, 4, 5, 6, 7])
+check(topo["sockets"] == 1 and topo["cores"] == 8 and topo["nodes"] == 1
+      and not topo["smt"] and topo["cpus"][5] == {"socket": 0, "core": 5,
+                                                  "node": 0, "siblings": [5]},
+      f"cpu_topology: the tuner's Topology, per CPU too: {topo['cpus'][5]}")
+check(T.cpu_topology(None, "/nonexistent", [0, 1])["online"] == [0, 1]
+      and T.cpu_topology(tune, "/nonexistent")["cpus"] == {},
+      "  and with no tuner or no /sys, the online CPUs and nothing else")
+check(T.cpu_planes(topo, fb["layout"]) == {
+          0: "control-plane", 1: "control-plane", 2: "main", 3: "worker",
+          4: "worker", 5: "worker", 6: "worker", 7: "worker"},
+      "cpu_planes: each CPU's plane this boot, the .166's layout")
 check(sh.read_text("/nonexistent/x") == "" and "QEMU" in _real_read(
     os.path.join(_root, "sys/class/dmi/id/sys_vendor")),
       "read_text: a file, or '' when it cannot be read")

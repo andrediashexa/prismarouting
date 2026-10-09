@@ -19931,23 +19931,9 @@ class Shell:
         """
         tune = tuneadvice.load_tuner()
         root = os.path.dirname(os.path.dirname(self.SYS_DEVICES.rstrip("/")))
-        topo = None
-        if tune is not None:
-            try:
-                topo = tune.Topology(root or "/")
-            except (SystemExit, OSError, ValueError):
-                topo = None
-        online = tuneadvice.cpu_parse(self.read_text(self.CPU_ONLINE))
-        cpus = topo.cpus if topo else {}
-        topology = {
-            "online": online or sorted(cpus),
-            "sockets": len({v[0] for v in cpus.values()}),
-            "cores": len({(v[0], v[1]) for v in cpus.values()}),
-            "nodes": len(topo.nodes) if topo else 0,
-            "smt": any(len(v[2]) > 1 for v in cpus.values()),
-            "node_of": {c: n for n, cs in (topo.nodes.items() if topo
-                                           else ()) for c in cs},
-            "siblings": {c: v[2] for c, v in cpus.items()}}
+        topology = tuneadvice.cpu_topology(
+            tune, root or "/",
+            tuneadvice.cpu_parse(self.read_text(self.CPU_ONLINE)))
         rc, out = self.host_run(["systemd-detect-virt", "--vm"])
         virt = tuneadvice.detect_virt(
             out if rc in (0, 1) else "",
