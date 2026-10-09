@@ -548,6 +548,10 @@ a `linux_cp` TAP **MUST NOT** be the shape, whatever else is: `linux_cp` and the
 pppoe plugin both claim ethertypes 0x8863 and 0x8864 box-wide and the pppoe
 plugin has to win or no session can be created.
 
+| Item | Why | Effort |
+|---|---|---|
+| **PPPoE subscriber authentication (BNG phase 1), in a container of its own** - [#597](https://github.com/andrediashexa/hexarouting/issues/597), open | Asked by the operator on 2026-10-08, opening the scope that section 3.4 and #170 had kept to CGNAT. accel-ppp-ng and RADIUS in a `prisma-bng` container, not `mgmt` (recreated on every VTY upgrade) or `vpp`. Phase 1: PAP/CHAP against RADIUS, accounting retained and joined to the BPA trail, IPv4 via IPCP, CGNAT per session, after the O(N²) attach fix and a stats segment sized per session (docs/bng.md). | L |
+
 ## 4. Deliberately out of scope
 
 * **Carrier-grade NAT for IPv6-to-IPv6 (NPTv6)** — no demand in the target
