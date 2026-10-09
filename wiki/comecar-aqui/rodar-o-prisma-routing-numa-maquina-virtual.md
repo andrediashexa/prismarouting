@@ -141,6 +141,10 @@ prisma> show system tuning advice host-topology
 
 Cole a saída de `lscpu -e=CPU,NODE,SOCKET,CORE` do host e, numa linha à parte, `nic-node <n>` com o nó NUMA da placa (`cat /sys/bus/pci/devices/<pci>/numa_node`); termine com uma linha vazia. A caixa então põe a thread principal no primeiro núcleo físico do nó da placa, o plano de controle no irmão de HT desse núcleo (a thread principal fica quase sempre parada, então é o lugar mais quieto do nó), cada worker num núcleo só dele, as outras threads do QEMU nos últimos irmãos que sobram, e as outras VMs no outro nó.
 
+Fixar não basta para manter o resto longe dessas CPUs, então vem também a **linha de comando do kernel do host**: `isolcpus`, `nohz_full` e `rcu_nocbs` em todas as CPUs do host que a VM recebe. Com `isolcpus`, o escalonador do host nunca põe ali outra VM, um serviço do host ou uma thread do kernel, a não ser que esteja fixado ali, então não há mais nada a configurar; os outros dois tiram o tick do timer e os callbacks de RCU desses núcleos. Exige reiniciar o host e é estático. (Uma partição de cpuset do cgroup faz o mesmo em tempo de execução, mas não é gerida pelo Proxmox.)
+
+A mesma linha reserva a memória da VM em páginas de 1 GB no nó da placa (`hugepagesz=1G hugepages=<nó>:<GB>`), e as linhas `qm set` amarram a memória ali: `numa0: cpus=0-<n-1>,hostnodes=<nó>,memory=<MB>,policy=bind` com `hugepages: 1024`. Os buffers do dataplane e o DMA da placa vivem nessa memória, e memória no outro soquete custa latência e vazão em cada pacote; `numa: 1` sozinho não amarra nada. Na caixa de laboratório, a VM tinha 16,1 GB no nó 1 e nada no nó 0 — local por sorte do primeiro toque, não por amarração. Cole também a saída de `numastat -p <pid do qemu da VM>` depois da topologia e a caixa diz onde a memória está agora.
+
 No fim vem uma tabela de dimensionamento: para VMs de 4 a 32 vCPUs, quantos ficam com o plano de controle, se a thread principal é dedicada, quantos workers isso dá — calculada pelo próprio ajuste da caixa — e quantas threads do host reservar. É o número para decidir quantos vCPUs dar a uma VM nova.
 
 # Medir desempenho numa VM

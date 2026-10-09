@@ -150,6 +150,8 @@ expect "  and took them (3 s or more)" test $(( S1 - S0 )) -ge 3
 expect "no counter was cleared: show runtime's Time grew across the window" \
   sh -c "awk -v a='${T_BEFORE:-0}' -v b='${T_AFTER:-0}' 'BEGIN { exit !(b > a + 3) }'"
 expect_in "the sizing table is the tuner's plan" "sizing: what the tuner makes" "$SCREEN"
+expect_said "the host's kernel line isolates the VM's CPUs, on the pasted host" \
+  'isolcpus=$CPUS' "$HOOK"
 expect_in "a window past 60 s is refused" "a whole number from 1 to 60" "$REFUSED"
 expect "every row fits 79 columns" test -z "$WIDE"
 verdict

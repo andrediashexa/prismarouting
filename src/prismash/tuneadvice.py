@@ -442,12 +442,31 @@ def parse_host_topology(text):
     The NIC's node is a line of its own - `nic-node 1`, `numa_node 1`, or
     the bare number `cat .../numa_node` prints. -1 (none declared) is None.
     A row lscpu prints with `-` for the node (a host with no NUMA) is node 0.
+    `numastat -p <pid>` of the VM's QEMU may follow: "vm_memory_mb" is its
+    Total row, {node: MB}, {} when none was pasted.
     """
-    cpus, nic, errors = {}, None, []
+    cpus, nic, errors, mem, cols = {}, None, [], {}, []
     for raw in (text or "").splitlines():
         s = raw.strip()
         if not s or s.upper().startswith("CPU"):
             continue
+        # `numastat -p <the VM's qemu pid>`, pasted too (#596): the header
+        # names the node columns, the Total row is the VM's memory by node
+        # in MB. The rows between are the same split by kind, not needed.
+        if s.startswith("Per-node") or set(s) <= set("- "):
+            continue
+        if s.startswith("Node "):
+            cols = [int(n) for n in re.findall(r"Node (\d+)", s)]
+            continue
+        w = s.split()
+        if cols and w[0] in ("Huge", "Heap", "Stack", "Private"):
+            continue
+        if cols and w[0] == "Total" and len(w) == len(cols) + 2:
+            try:
+                mem = {n: float(v) for n, v in zip(cols, w[1:])}
+                continue
+            except ValueError:
+                pass
         w = s.replace(":", " ").split()
         if len(w) == 2 and w[0] in ("nic-node", "numa_node", "nic"):
             w = w[1:]
@@ -462,7 +481,8 @@ def parse_host_topology(text):
             except ValueError:
                 pass
         errors.append(s)
-    return {"cpus": cpus, "nic_node": nic, "errors": errors}
+    return {"cpus": cpus, "nic_node": nic, "errors": errors,
+            "vm_memory_mb": mem}
 
 
 # ----------------------------------------------------------- the findings
@@ -1018,6 +1038,8 @@ def qm_lines(roles, pin, f):
             f"  --numa0 cpus=0-{n - 1},hostnodes={node},"
             f"memory=<VM-MEMORY-MB>,policy=bind",
             "qm set <vmid> --hugepages 1024 --keephugepages 1",
+            "# numa0's hostnodes and policy=bind are what bind the memory;",
+            "# --numa 1 alone does not. Both take a stop and start of the VM.",
             "# <VM-MEMORY-MB>: the VM's memory as the host has it configured",
             f"# (this box sees {kb / 1048576:.1f} GB)",
             "# and every other guest on this host, off these CPUs:"]
@@ -1046,6 +1068,95 @@ def libvirt_cputune(roles, pin, f):
             "</numatune>", "<memoryBacking>", "  <hugepages/>",
             "</memoryBacking>"]
     return "\n".join(out) + "\n"
+
+
+def host_cpus(pin):
+    """The host CPUs the VM is given - every vCPU's and QEMU's own - from
+    host_pinning(): what the host isolates for it."""
+    return sorted(set((pin or {}).get("map", {}).values())
+                  | set((pin or {}).get("emulator") or []))
+
+
+def vm_memory_gb(f):
+    """The VM's memory in whole GB, from what the guest sees: MemTotal is a
+    little under what the host gave it, so rounded up."""
+    kb = (f.get("memory") or {}).get("total_kb") or 0
+    return max(1, -(-kb // 1048576))
+
+
+def host_kernel_lines(pin, f):
+    """
+    The Proxmox host's kernel command line for this VM, as the lines to run
+    on the host: its CPUs isolated (isolcpus, nohz_full, rcu_nocbs) and its
+    memory reserved as 1G pages on the NIC's node, per node at boot
+    (`hugepages=<node>:<n>`, Linux 5.16 and later; Proxmox's 6.x kernels).
+    HOST_* placeholders without the host's topology.
+    """
+    cpus = host_cpus(pin)
+    node = str(pin["node"]) if cpus else "HOST_NODE"
+    out = ["# On the Proxmox host. A GRUB host; one booting with",
+           "# proxmox-boot-tool (ZFS root) takes the same words in",
+           "# /etc/kernel/cmdline and `proxmox-boot-tool refresh`."]
+    out += fold_assign("CPUS", cpus) if cpus else ["CPUS=HOST_CPUS"]
+    out += ["cat > /etc/default/grub.d/prisma-host.cfg <<EOF",
+            'GRUB_CMDLINE_LINUX="\\$GRUB_CMDLINE_LINUX isolcpus=$CPUS"',
+            'GRUB_CMDLINE_LINUX="\\$GRUB_CMDLINE_LINUX nohz_full=$CPUS"',
+            'GRUB_CMDLINE_LINUX="\\$GRUB_CMDLINE_LINUX rcu_nocbs=$CPUS"',
+            f'GRUB_CMDLINE_LINUX="\\$GRUB_CMDLINE_LINUX hugepagesz=1G '
+            f'hugepages={node}:{vm_memory_gb(f)}"',
+            "EOF",
+            "update-grub",
+            "# then reboot the HOST: every guest on it stops. Static: a",
+            "# change is another edit and another host reboot.",
+            "# Or, without the per-node syntax, at every boot before the VMs:",
+            f"# echo {vm_memory_gb(f)} > /sys/devices/system/node/node{node}"
+            "/hugepages/",
+            "#   hugepages-1048576kB/nr_hugepages"]
+    return out
+
+
+ISOLATION = (
+    "Isolate the VM's host CPUs on the host's kernel command line: with "
+    "isolcpus the host's scheduler never places another VM, a host service "
+    "or a kernel thread on them unless it is pinned there, so nothing else "
+    "has to be configured - the hookscript pins this VM's threads onto them "
+    "and nothing else lands there. nohz_full and rcu_nocbs take the timer "
+    "tick and the RCU callbacks off those cores as well, which is jitter a "
+    "poll-mode worker feels as burst loss. It takes a reboot of the host "
+    "and is static. A cgroup cpuset partition does the same at run time, "
+    "but is not managed by Proxmox.")
+
+MEMORY = (
+    "Bind the VM's memory to the NIC's NUMA node: numa0 with "
+    "hostnodes=<node> and policy=bind, backed by 1G hugepages reserved on "
+    "that node at the host's boot. The dataplane's packet buffers and the "
+    "NIC's DMA live in that memory, and memory on the other socket costs "
+    "latency and throughput on every packet. `numa: 1` alone gives the "
+    "guest a NUMA topology; it does not bind where the host puts the "
+    "memory, and memory that happens to be local is local by first touch, "
+    "which a restart of the VM does not promise again.")
+
+
+def find_vm_memory(host, pin, f):
+    """The VM's memory by host node, when `numastat -p` was pasted: a
+    finding whose evidence is the paste and whose answer is the binding."""
+    mem = (host or {}).get("vm_memory_mb") or {}
+    if not mem or not pin:
+        return None
+    node = pin["node"]
+    said = ", ".join(f"{v / 1024:.1f} GB on node {n}"
+                     for n, v in sorted(mem.items(), key=lambda x: x[0] != node))
+    remote = sum(v for n, v in mem.items() if n != node)
+    total = sum(mem.values()) or 1
+    if remote / total > 0.01:
+        return _finding(
+            "vm-memory", SEVERITY_WARN, "the VM's memory is partly remote",
+            f"{said} (numastat -p, pasted); the NIC is on node {node}",
+            "all of it on the NIC's node, bound", MEMORY)
+    return _finding(
+        "vm-memory", SEVERITY_INFO, "the VM's memory is local, not bound",
+        f"{said} (numastat -p, pasted): on the NIC's node {node} by first "
+        f"touch", "bound to the NIC's node, not placed there by luck", MEMORY)
 
 
 PRINCIPLE = (
@@ -1118,6 +1229,9 @@ def advise(f, tune=None, host_text=""):
     # vCPU as the control plane's would be a guess written as a measurement.
     if virt and roles and (f.get("layout") or {}).get("main") is not None:
         snippets = {"principle": PRINCIPLE,
+                    "isolation": ISOLATION, "memory": MEMORY,
+                    "host_kernel": "\n".join(host_kernel_lines(pin, f))
+                    + "\n",
                     "proxmox_hookscript": proxmox_hookscript(roles, pin),
                     "proxmox_qm": "\n".join(qm_lines(roles, pin, f)) + "\n",
                     "libvirt_cputune": libvirt_cputune(roles, pin, f),
@@ -1127,8 +1241,27 @@ def advise(f, tune=None, host_text=""):
                         f"read, the first: {host['errors'][0]}"]
                        if host and host["errors"] else [])}
     hyp = []
+    vm_mem = find_vm_memory(host, pin, f) if virt and snippets else None
+    if vm_mem:
+        found = found + [vm_mem]
+        found.sort(key=lambda x: x["severity"] != SEVERITY_WARN)
     keys = {x["key"] for x in found}
     if virt:
+        # The host's kernel line answers what pinning alone does not keep
+        # away: other guests, the host's services and its kernel threads.
+        for k in ("steal", "uneven-workers"):
+            if k in keys:
+                hyp.append({"title": "isolate the VM's host CPUs on the "
+                                     "host's kernel line: the host kernel "
+                                     "block below",
+                            "lines": [], "restart": "host-reboot",
+                            "evidence": k})
+                break
+        if vm_mem:
+            hyp.append({"title": "bind the VM's memory to the NIC's node: "
+                                 "numa0 hostnodes and hugepages, below",
+                        "lines": [], "restart": "vm-restart",
+                        "evidence": "vm-memory"})
         for k, t in (("steal", "pin the vCPUs: the hookscript below"),
                      ("uneven-workers", "pin the vCPUs, one physical core "
                                         "per worker: the hookscript below")):
@@ -1279,19 +1412,25 @@ def render(f, a):
         out.append("")
         out.append(f"on the hypervisor ({(f.get('virt') or {}).get('kind')})")
         for r in a["hypervisor"]:
-            out += _wrap(f"{r['title']} (because: {r['evidence']})",
+            took = {"host-reboot": "; takes a reboot of the host",
+                    "vm-restart": "; takes a stop and start of the VM"}.get(
+                r["restart"], "")
+            out += _wrap(f"{r['title']} (because: {r['evidence']}{took})",
                          indent="    ", first="  - ")
         if not a["hypervisor"]:
             out += _wrap("no steal or unevenness was measured; the pinning "
                          "below is what this layout wants, should it be "
                          "needed.", indent="  ")
         out += _wrap(sn["principle"], indent="  ")
+        out += [""] + _wrap(sn["isolation"], indent="  ")
+        out += [""] + _wrap(sn["memory"], indent="  ")
         for n in sn["notes"]:
             out += _wrap(n, indent="    ", first="  note: ")
         for title, key in (
                 ("Proxmox hookscript, /var/lib/vz/snippets/prisma-pin.sh",
                  "proxmox_hookscript"),
                 ("Proxmox, on the host", "proxmox_qm"),
+                ("Proxmox host, kernel command line", "host_kernel"),
                 ("libvirt, in the domain's XML", "libvirt_cputune")):
             out.append(f"  --- {title} " + "-" * max(
                 0, WIDTH - 7 - len(title)))
@@ -1381,6 +1520,9 @@ def advice_fields(f, a):
                      "proxmox_hookscript": sn["proxmox_hookscript"],
                      "proxmox_qm": sn["proxmox_qm"],
                      "libvirt_cputune": sn["libvirt_cputune"],
+                     "host_kernel": sn["host_kernel"],
+                     "isolation": sn["isolation"],
+                     "memory_binding": sn["memory"],
                      "host_topology_used": bool(sn["host_topology_used"]),
                      "notes": list(sn["notes"])} if sn else None,
         "sizing": [{"vcpus": r["vcpus"], "control_plane": r["control_plane"],

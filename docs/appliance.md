@@ -984,6 +984,30 @@ the other node. From sv01's topology that is the hand-written script's
 mapping exactly (`test/test_tuneadvice.py` holds it to
 `test/prisma-pin-sv01-reference.hook`).
 
+**Isolating the VM's host CPUs, and binding its memory.** Pinning puts
+this VM's threads on its host CPUs; it does not keep anything else off them.
+So the advice also gives the Proxmox host's kernel command line, as a
+`/etc/default/grub.d/prisma-host.cfg` written on the host followed by
+`update-grub` and a host reboot (`/etc/kernel/cmdline` on a
+`proxmox-boot-tool` host): `isolcpus`, `nohz_full` and `rcu_nocbs` on every
+host CPU the VM is given - with `isolcpus` the host's scheduler places no
+other guest, host service or kernel thread there unless it is pinned, so
+nothing else needs configuring, and the other two take the timer tick and
+the RCU callbacks off the polling cores. It is static: a change is another
+edit and another host reboot. A cgroup cpuset partition does the same at
+run time and is not managed by Proxmox, so it is only named. The same line
+reserves the VM's memory as 1G pages on the NIC's node
+(`hugepagesz=1G hugepages=<node>:<GB>`, or the node's
+`nr_hugepages` in sysfs at boot), and the `qm set` lines bind it there:
+`numa0: cpus=0-<n-1>,hostnodes=<node>,memory=<MB>,policy=bind` with
+`hugepages: 1024`. The dataplane's buffers and the NIC's DMA live in that
+memory; `numa: 1` alone gives the guest a topology and binds nothing.
+Measured on sv01 on 2026-10-08: VM 102 had 16.1 GB on node 1 and 0.0 GB on
+node 0, local by first touch and not by any binding. Pasting `numastat -p
+<the VM's qemu pid>` after `host-topology` makes that a finding
+(`vm-memory`): a warning when some of the memory is on another node, a
+note when it is local only by luck.
+
 **The sizing table is the tuner's.** For 4 to 32 vCPUs it runs the tuner's
 own `plan()` on a box of that size (`Topology.given()`, one node, no SMT, as
 a guest is presented) with the split this advice recommends - the main

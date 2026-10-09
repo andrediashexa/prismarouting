@@ -29,7 +29,7 @@ generated from the VTY's grammar.
 
 ## 0.152.8 - the box suggests its own tuning
 
-* **Contract:** additive (`prisma.proto` sha256 `059d04f4acf1d84e76f4883011e39a3f46aefb2f7325af020c004d6f7111516e`).
+* **Contract:** additive (`prisma.proto` sha256 `9cca693d617b3febafa0b99427966e8769dcf6623e6968152cd871c92abee317`).
   #596: `OperationalService.GetTuningAdvice(GetTuningAdviceRequest)` returns
   `TuningAdvice` - `show system tuning advice` typed, with the screen in
   `text`. New messages: `GetTuningAdviceRequest`, `TuningAdvice`,
@@ -61,6 +61,14 @@ generated from the VTY's grammar.
   lines and a libvirt block as text; host CPUs are `HOST_*` placeholders
   unless `host_topology` (the host's `lscpu -e=CPU,NODE,SOCKET,CORE` and a
   `nic-node <n>` line) was given, which `host_topology_used` says.
+  `host_kernel` is the Proxmox host's kernel command line for the VM
+  (isolcpus, nohz_full and rcu_nocbs on its host CPUs, 1G hugepages on the
+  NIC's node), `isolation` and `memory_binding` the box's reasons. A
+  hypervisor step's `restart` is `host-reboot` or `vm-restart`.
+* **`host_topology` may also carry `numastat -p <the VM's qemu pid>`**: the
+  VM's memory by host node then becomes a `vm-memory` finding - `warn` when
+  some of it is on another node than the NIC's, `info` when it is local but
+  only by first touch.
 
 ## 0.152.7 - a VRF given back keeps its IPv6 default
 

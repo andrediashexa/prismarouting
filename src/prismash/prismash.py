@@ -20020,7 +20020,8 @@ class Shell:
               "NIC's NUMA")
         print("node as `nic-node <n>` (cat /sys/bus/pci/devices/<pci>/"
               "numa_node).")
-        print("End with an empty line.")
+        print("Optionally `numastat -p <the VM's qemu pid>` too. End with an "
+              "empty line.")
         lines = []
         while True:
             try:

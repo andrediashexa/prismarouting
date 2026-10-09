@@ -1844,7 +1844,8 @@ message TuningFacts {
 
 message TuningFinding {
   // Stable, for a client to key on: "uneven-workers", "steal", "hugepages",
-  // "ht-siblings", "main-idle", "main-busy", "isolation",
+  // "ht-siblings", "main-idle", "main-busy", "isolation", "vm-memory" (the
+  // VM's memory by host node, from a pasted `numastat -p`),
   // "queues:<card>", "queues-main:<card>", "queues-uneven:<card>",
   // "numa:<card>".
   string key = 1;
@@ -1866,7 +1867,8 @@ message TuningRecommendation {
   // carry those).
   repeated string lines = 3;
   // What applying it takes: "none", "dataplane" (a restart of it) or
-  // "reboot".
+  // "reboot" for the box; "host-reboot" or "vm-restart" for a hypervisor
+  // step.
   string restart = 4;
   // The finding's key it answers: nothing is recommended without one.
   string evidence = 5;
@@ -1884,6 +1886,15 @@ message TuningSnippets {
   // false leaves them as HOST_* placeholders.
   bool host_topology_used = 5;
   repeated string notes = 6;
+  // The host's kernel command line for this VM: its CPUs isolated
+  // (isolcpus, nohz_full, rcu_nocbs) and 1G hugepages reserved on the
+  // NIC's node, as the lines to run on a Proxmox host; HOST_* without the
+  // host's topology. Takes a reboot of the host.
+  string host_kernel = 7;
+  // Why, in the box's words: the isolation, and the memory bound to the
+  // NIC's node.
+  string isolation = 8;
+  string memory_binding = 9;
 }
 
 // One row of the sizing table: what the tuner makes of a VM of that size.

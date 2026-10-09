@@ -188,6 +188,20 @@ SV01 = "CPU NODE SOCKET CORE\n" + "\n".join(
     f"{c:>3} {c % 2:>4} {c % 2:>6} {(c % 12) // 2 + 6 * (c % 2):>4}"
     for c in range(24)) + "\nnic-node 1\n"
 
+# `numastat -p` of VM 102's QEMU on sv01, measured 2026-10-08: 16.1 GB on
+# node 1 and none on node 0 - local, by first touch, with nothing binding it.
+NUMASTAT = """
+Per-node process memory usage (in MBs) for PID 4021 (kvm)
+                           Node 0          Node 1           Total
+                  --------------- --------------- ---------------
+Huge                         0.00            0.00            0.00
+Heap                         0.02            0.00            0.02
+Stack                        0.01            0.00            0.01
+Private                      2.10        16484.00        16486.10
+----------------  --------------- --------------- ---------------
+Total                        2.13        16484.00        16486.13
+"""
+
 REFERENCE = os.path.join(HERE, "prisma-pin-sv01-reference.hook")
 
 
@@ -297,8 +311,14 @@ check(len(host["cpus"]) == 24 and host["cpus"][13] == (1, 1, 6)
       and host["nic_node"] == 1 and host["errors"] == ["garbage line"],
       f"parse_host_topology: lscpu's rows, the NIC's node, what it could not "
       f"read: {host['cpus'][13]} {host['errors']}")
+hm = T.parse_host_topology(SV01 + NUMASTAT)
+check(hm["vm_memory_mb"] == {0: 2.13, 1: 16484.0} and hm["errors"] == []
+      and len(hm["cpus"]) == 24,
+      f"  and a pasted numastat -p: the VM's memory by node: "
+      f"{hm['vm_memory_mb']}")
 check(T.parse_host_topology("0 - 0 0\n-1\n") == {
-          "cpus": {0: (0, 0, 0)}, "nic_node": None, "errors": []},
+          "cpus": {0: (0, 0, 0)}, "nic_node": None, "errors": [],
+          "vm_memory_mb": {}},
       "  a host with no NUMA is node 0, and -1 is no node declared")
 
 # ---------------------------------------------------- the reference case
@@ -504,6 +524,66 @@ check("<vcpupin vcpu='2' cpuset='1'/>" in lv
 check("cpuset='HOST_W0'" in T.libvirt_cputune(roles, None, fb),
       "  and placeholders without the host")
 
+# ------------------------------------------- the host's kernel and memory
+print("\n=== the host: its CPUs isolated, the VM's memory on the NIC's node ===")
+check(T.host_cpus(pin) == [1, 3, 5, 7, 9, 11, 13, 17, 19, 21, 23]
+      and T.host_cpus(None) == [],
+      "host_cpus: every vCPU's host CPU and QEMU's, what the host isolates")
+check(T.vm_memory_gb(fb) == 16 and T.vm_memory_gb({}) == 1,
+      "vm_memory_gb: the guest's MemTotal, rounded up to the VM's 16 GB")
+hk = "\n".join(T.host_kernel_lines(pin, fb))
+check("CPUS=1,3,5,7,9,11,13,17,19,21,23" in hk
+      and 'isolcpus=$CPUS"' in hk and 'nohz_full=$CPUS"' in hk
+      and 'rcu_nocbs=$CPUS"' in hk and "hugepagesz=1G hugepages=1:16" in hk
+      and "update-grub" in hk and "reboot the HOST" in hk
+      and "node1/hugepages/" in hk,
+      "host_kernel_lines: isolcpus, nohz_full, rcu_nocbs on the VM's CPUs, "
+      "16 1G pages on node 1, update-grub and a host reboot")
+with tempfile.TemporaryDirectory() as d:
+    r = subprocess.run(["sh", "-c", hk.replace("/etc/default/grub.d/",
+                                               d + "/").replace(
+        "update-grub", ":")], capture_output=True, text=True)
+    cfg = open(os.path.join(d, "prisma-host.cfg")).read()
+check(r.returncode == 0 and 'GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX '
+      'isolcpus=1,3,5,7,9,11,13,17,19,21,23"' in cfg
+      and "hugepages=1:16" in cfg,
+      f"  and run, it writes a grub.d file that keeps the line before it: "
+      f"{cfg.splitlines()[0]}")
+hp = "\n".join(T.host_kernel_lines(None, fb))
+check("CPUS=HOST_CPUS" in hp and "hugepages=HOST_NODE:16" in hp,
+      "  without the host's topology, placeholders")
+vm = T.find_vm_memory(hm, pin, fb)
+check(vm is not None and vm["severity"] == "info"
+      and "16.1 GB on node 1, 0.0 GB on node 0" in vm["measured"]
+      and "first touch" in vm["measured"] and "numa: 1" in vm["why"],
+      f"find_vm_memory: sv01's 16.1 GB on node 1 is local by luck, not "
+      f"bound: {vm and vm['measured']}")
+remote = dict(hm, vm_memory_mb={0: 8000.0, 1: 8484.0})
+check(T.find_vm_memory(remote, pin, fb)["severity"] == "warn",
+      "  and memory on the other node is a warning")
+check(T.find_vm_memory(host, pin, fb) is None
+      and T.find_vm_memory(hm, None, fb) is None,
+      "  and nothing without the paste or the host's topology")
+am = T.advise(fb, tune, SV01 + NUMASTAT)
+check("vm-memory" in [x["key"] for x in am["findings"]]
+      and any(h["evidence"] == "vm-memory" and h["restart"] == "vm-restart"
+              for h in am["hypervisor"])
+      and "isolcpus=$CPUS" in am["snippets"]["host_kernel"]
+      and "never places another VM" in am["snippets"]["isolation"]
+      and "not managed by Proxmox" in am["snippets"]["isolation"]
+      and "does not bind" in am["snippets"]["memory"],
+      "advise: the memory finding and its step, the host kernel block, "
+      "and why each")
+sm = "\n".join(T.render(fb, am))
+check("--- Proxmox host, kernel command line" in sm
+      and "takes a reboot of the host" in sm
+      and "takes a stop and start of the VM" in sm
+      and all(len(x) <= 79 for x in sm.splitlines()),
+      "render: the host kernel block, what each step takes, 79 wide")
+check("policy=bind" in "\n".join(T.qm_lines(roles, pin, fb))
+      and "--numa 1 alone does not" in "\n".join(T.qm_lines(roles, pin, fb)),
+      "qm_lines: numa0 binds; --numa 1 alone does not, said")
+
 # ----------------------------------------------------------------- sizing
 print("\n=== the sizing table: the tuner's own plan() ===")
 check(tune is not None, "load_tuner: the tuner loads from the source tree")
@@ -531,8 +611,9 @@ check(sorted(g.nodes) == [0, 1] and len(g.cpus) == 24
 print("\n=== advise, render, the API's fields ===")
 ab = T.advise(fb, tune, "")
 check([x["key"] for x in ab["findings"]] == ["uneven-workers", "steal"]
-      and [h["evidence"] for h in ab["hypervisor"]] == ["steal",
-                                                         "uneven-workers"]
+      and [h["evidence"] for h in ab["hypervisor"]] == [
+          "steal", "steal", "uneven-workers"]
+      and ab["hypervisor"][0]["restart"] == "host-reboot"
       and ab["snippets"]["host_topology_used"] is False and ab["box"] == [],
       "advise: before - the two findings, the host's steps, placeholders")
 ah = T.advise(fb, tune, SV01)
@@ -570,6 +651,8 @@ check(af["facts"]["worker_cpus"] == "3-7" and af["facts"]["main_cpu"] == 2
       and af["facts"]["threads"][4]["steal_percent"] == 7.7
       and af["sizing"][0]["main_thread"] == "shared"
       and af["snippets"]["host_topology_used"]
+      and "isolcpus" in af["snippets"]["host_kernel"]
+      and af["snippets"]["memory_binding"].startswith("Bind the VM's")
       and {r["side"] for r in af["recommendations"]} == {"hypervisor"},
       "advice_fields: the proto's names, from the same pair")
 check(T.advice_fields(fb, dict(ab, snippets=None))["snippets"] is None,
