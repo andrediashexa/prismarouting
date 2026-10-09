@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.9 - each CPU's place and load, through the API
+
+### Added
+
 * **GetSystem says the box's CPUs one by one, and how busy each is - now and
   for the last day - and `show system cpu cores` says the same at the
   prompt.** ([#598](https://github.com/andrediashexa/hexarouting/issues/598))
