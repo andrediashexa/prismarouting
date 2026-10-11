@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.10 - the ports' modules and sensors over SNMP
+
+### Added
+
 * **The box answers ENTITY-MIB and ENTITY-SENSOR-MIB: its ports, the module
   in each cage, and each module's diagnostics as sensors, with the module's
   own thresholds.** ([#496](https://github.com/andrediashexa/hexarouting/issues/496),
@@ -111,8 +117,6 @@ version has a chance of seeing it.
   could be measured - and the cards as entities. PRISMA-ROUTING-MIB now
   imports ENTITY-MIB: an NMS loading it needs that module, which every NMS
   ships. docs/snmp-mib.md has the tree, every object, and why.
-
-### Fixed
 
 ## 0.152.9 - each CPU's place and load, through the API
 
