@@ -469,6 +469,13 @@ _xm = [_XT.decode(_XT.parse_dump(_XF.dump(n, "dpdk", t, d))[n])
 for _o, _t, _v in agent.xcvr_rows("1.3.6.1.4.1.99999.1", _xm, {"a": 1, "b": 2},
                                   _XT.mw_to_dbm):
     _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
+# prSensor (#496 phase 5) is the `--entity` process's: the thresholds of the
+# same two modules' sensors, each column among them.
+for _o, _t, _v in agent.entity_rows(
+        agent.entities(_xm, {"a": 1, "b": 2}, {}), "1.3.6.1.4.1.99999.1",
+        0, 0, 30000):
+    if _o.startswith("1.3.6.1.4.1.99999."):
+        _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
 _SYN["Integer32"] = "integer"
 _objs = {}
 for _o, _t in _served.items():
@@ -1372,6 +1379,251 @@ check(agent.linux_dump((_echo, "p", "read", "eno1"), ask=lambda a: None)
       and agent.linux_dump((_echo, "p", "read", "eno1"),
                            ask=lambda a: (126, "refused")) != "",
       "#590: with no door, or an older one, the reader is run here")
+
+print("\n=== ENTITY-MIB and ENTITY-SENSOR-MIB: the ports' modules (#496) ===")
+E = "1.3.6.1.2.1.47"
+ES = "1.3.6.1.2.1.99.1.1.1"
+PT = "1.3.6.1.4.1.67033.1.21.1.1"
+_dmi = os.path.join(BOX, "dmi")
+w(f"{_dmi}/sys_vendor", "QEMU\n")
+w(f"{_dmi}/product_name", "Standard PC (Q35 + ICH9, 2009)\n")
+w(f"{_dmi}/bios_version", "rel-1.16.0\n")
+w(f"{BOX}/ent-version", "0.153.0 2026-10-11\n")
+_ch = agent.chassis_identity(_dmi, f"{BOX}/ent-version")
+check(_ch == {"vendor": "QEMU", "model": "Standard PC (Q35 + ICH9, 2009)",
+              "firmware": "rel-1.16.0", "serial": "", "release": "0.153.0"},
+      f"#496: the chassis as DMI names it; the serial, root's alone, is "
+      f"empty: {_ch}")
+check(agent.chassis_identity(os.path.join(BOX, "nodmi"),
+                             os.path.join(BOX, "nover"))
+      == {"vendor": "", "model": "", "firmware": "", "serial": "",
+          "release": ""}, "#496: no DMI (a container): nothing invented")
+
+# The real box: 10.40.200.166's X520 with its fibre down, and two virtio
+# cards whose driver cannot read a module.
+_real = [XT.decode(r) for r in agent.xcvr_readings(XT, XF.X520_166, [],
+                                                   set(), _xask)]
+check([m["name"] for m in _real] == ["enp1s0", "enp6s18", "enp6s19"],
+      f"#496: the X520 and the virtio cards, not the TAPs: "
+      f"{[m['name'] for m in _real]}")
+_ri = {"enp1s0": 1, "enp6s18": 2, "enp6s19": 3}
+ents = agent.entities(_real, _ri, _ch, XT.connector_words)
+check([e["index"] for e in ents] == [1, 1000, 1001, 1002, 1003, 1011, 1012,
+                                     1013],
+      f"#496: chassis, the X520's port, its module, five sensors - and "
+      f"nothing for a virtio card: {[e['index'] for e in ents]}")
+er = agent.entity_rows(ents, "1.3.6.1.4.1.67033.1", 4242, 0, 30000)
+g = {o: v for o, _t, v in er}
+gt = {o: t for o, t, _v in er}
+P = f"{E}.1.1.1.1"
+check(g.get(f"{P}.5.1") == 3 and g.get(f"{P}.4.1") == 0
+      and g.get(f"{P}.6.1") == -1 and g.get(f"{P}.12.1") == "QEMU"
+      and g.get(f"{P}.10.1") == "0.153.0"
+      and g.get(f"{P}.2.1") == "Prisma Routing on QEMU Standard PC (Q35 + "
+                               "ICH9, 2009)",
+      "#496: the chassis: class chassis(3), in nothing, the release as its "
+      "software")
+check(g.get(f"{P}.5.1000") == 10 and g.get(f"{P}.4.1000") == 1
+      and g.get(f"{P}.7.1000") == "enp1s0"
+      and g.get(f"{P}.2.1000") == "port enp1s0, PCI 0000:01:00.0"
+      and g.get(f"{P}.16.1000") == 2,
+      "#496: the port: class port(10), in the chassis, named as ifName")
+check(g.get(f"{E}.1.3.2.1.2.1000.0") == ".1.3.6.1.2.1.2.2.1.1.1"
+      and gt[f"{E}.1.3.2.1.2.1000.0"] == "objectid",
+      "#496: entAliasMappingIdentifier points the port at its ifIndex")
+check(g.get(f"{P}.5.1001") == 9 and g.get(f"{P}.4.1001") == 1000
+      and g.get(f"{P}.12.1001") == "Rei do SFP"
+      and g.get(f"{P}.13.1001") == "RSMPP8510GL-03D"
+      and g.get(f"{P}.11.1001") == "FP23H150378"
+      and g.get(f"{P}.8.1001") == "2.1" and g.get(f"{P}.16.1001") == 1
+      and g.get(f"{P}.2.1001") == "transceiver: SFP/SFP+/SFP28, LC "
+                                  "connector, 850 nm",
+      "#496: the module: class module(9), in the port, its vendor, part, "
+      "serial and revision, field-replaceable")
+check(g.get(f"{P}.17.1001") == "07 E7 08 0F 00 00 00 00"
+      and gt[f"{P}.17.1001"] == "octet" and f"{P}.17.1000" not in g,
+      "#496: its date code as a DateAndTime; none for the port")
+check(g.get(f"{P}.3.1001") == ".0.0" and g.get(f"{P}.19.1001") == ""
+      and f"{P}.18.1001" not in g,
+      "#496: vendor type zeroDotZero, no UUID, no URIs")
+want = {1002: (8, 9, 2, 3376, "C"), 1003: (4, 9, 4, 32355, "V"),
+        1011: (5, 8, 3, 6552, "mA"), 1012: (6, 7, 1, 6309, "uW"),
+        1013: (6, 7, 1, 1, "uW")}
+got_s = {i: tuple(g.get(f"{ES}.{c}.{i}") for c in (1, 2, 3, 4, 6))
+         for i in want}
+check(got_s == want,
+      f"#496: the box's own module as five sensors, in RFC 3433's units: "
+      f"33.76 C, 3.2355 V, 6.552 mA, 630.9 uW out and 0.1 uW in: {got_s}")
+check(all(g.get(f"{ES}.5.{i}") == 1 and g.get(f"{ES}.7.{i}") == 4242
+          and g.get(f"{ES}.8.{i}") == 30000 and g.get(f"{P}.4.{i}") == 1001
+          and g.get(f"{P}.5.{i}") == 8 for i in want),
+      "#496: each sensor ok, read at the given sysUpTime, every 30 s, in "
+      "the module")
+check(g.get(f"{P}.7.1013") == "enp1s0 RX power"
+      and g.get(f"{P}.7.1002") == "enp1s0 temperature"
+      and g.get(f"{P}.6.1002") == 1 and g.get(f"{P}.6.1013") == 12,
+      "#496: the sensors named for their port and placed in order")
+check([g.get(f"{PT}.{c}.1013") for c in (1, 2, 3, 4, 5)]
+      == [12589, 10000, 501, 316, 5],
+      "#496: the RX power's own thresholds, in its units (1.2589 mW high "
+      "alarm ... 0.0316 mW low alarm), and the level lowAlarm(5)")
+check([g.get(f"{PT}.{c}.1002") for c in (1, 2, 3, 4, 5)]
+      == [9000, 8000, -4000, -4500, 1],
+      "#496: the temperature's, negative ones signed, normal(1)")
+check(g.get(f"{E}.1.3.3.1.1.1.1000") == 1000
+      and g.get(f"{E}.1.3.3.1.1.1000.1001") == 1001
+      and g.get(f"{E}.1.3.3.1.1.1001.1013") == 1013
+      and not any(o.startswith(f"{E}.1.3.3.1.1.0.") for o in g),
+      "#496: entPhysicalContainsTable: chassis > port > module > sensor")
+check(g.get(f"{E}.1.4.1.0") == 0 and gt[f"{E}.1.4.1.0"] == "timeticks",
+      "#496: entLastChangeTime")
+check(not any(o.startswith(f"{P}.") and o.split(".")[-1] in ("2000", "3000")
+              for o in g),
+      "#496: a virtio card has no port row: there is no cage to say")
+check(len(er) == len({o for o, _t, _v in er}), "#496: no OID twice")
+check(not [o for o, _t, _v in agent.entity_rows(ents, None, 0, 0, 1)
+           if o.startswith("1.3.6.1.4.1.")],
+      "#496: no number set: the two standard MIBs, no thresholds")
+
+# The fixture modules: an SFP past its warning, a QSFP's four lanes, an
+# empty cage, an af_packet port's module; and one without DDM, a DAC, a
+# module that carries no thresholds and a flat-memory QSFP.
+_more = mods + [XT.decode(XT.parse_dump(XF.dump(n, "dpdk", t, d))[n])
+                for n, t, d in (("nd0", "sff-8079", XF.sfp_no_ddm()),
+                                ("dac0", "sff-8079", XF.sfp_dac()),
+                                ("nt0", "sff-8472", XF.sfp_no_thresholds()),
+                                ("fq0", "sff-8636", XF.qsfp28(flat=True)))]
+_mi = dict(idx, nd0=5, dac0=6, nt0=7, fq0=8)
+ents2 = agent.entities(_more, _mi, {}, XT.connector_words)
+ix2 = {e["index"]: e for e in ents2}
+g2 = {o: v for o, _t, v in agent.entity_rows(ents2, "1.3.6.1.4.1.67033.1",
+                                             1, 0, 30000)}
+check(2000 in ix2 and 2001 not in ix2 and ix2[2000]["class"] == 10,
+      "#496: an empty cage is a port with no module and no sensor")
+check(ix2[1].get("descr") == "Prisma Routing" and ix2[1]["mfg"] == "",
+      "#496: a chassis DMI does not name is the product, and no maker")
+check(sorted(i for i in ix2 if 4000 < i < 5000)
+      == [4001, 4002, 4003] + [4000 + 10 * ln + p for ln in (1, 2, 3, 4)
+                               for p in (1, 2, 3)]
+      and ix2[4043]["name"] == "hu0 lane 4 RX power"
+      and g2.get(f"{PT}.5.4043") == 3 and g2.get(f"{PT}.5.4013") == 1,
+      "#496: the QSFP: temperature, voltage and three per lane, lane 4's RX "
+      "power lowWarning(3), lane 1's normal")
+check(5001 in ix2 and 5002 not in ix2 and ix2[5001]["model"] == "SFP-10G-LR-ND"
+      and 6001 in ix2 and 6002 not in ix2 and ix2[6001]["mfg"] == "Amphenol",
+      "#496: a module without DDM, and a DAC: their identity, no sensor")
+check(7002 in ix2 and 7013 in ix2
+      and not any(o.startswith(PT) and o.split(".")[-1].startswith("7")
+                  and len(o.split(".")[-1]) == 4 for o in g2),
+      "#496: a module with no thresholds: its sensors, and no threshold row "
+      "rather than one of zeros")
+check(8002 in ix2 and 8043 in ix2 and f"{PT}.1.8043" not in g2,
+      "#496: a flat-memory QSFP: its levels, without thresholds")
+check(g2.get(f"{ES}.4.1013") == 126 and g2.get(f"{PT}.3.1013") == 158,
+      "#496: the SFP's RX power past its warning, 12.6 uW against 15.8")
+check(ix2[3001]["mfg"] == "FINISAR CORP." and ix2[3002]["sensor"]["value"]
+      == 3650, "#496: the externally calibrated module, through its constants")
+check(agent.entities(mods, {}, {}) == agent.entities([], {}, {})
+      and len(agent.entities([], {}, {})) == 1,
+      "#496: a port with no ifIndex has no row; the chassis is always there")
+_unr = dict(mods[0], status="unreadable", vendor="", part="", serial="")
+check([e["class"] for e in agent.entities([_unr], {"enp1s0": 1}, {})]
+      == [3, 10, 9]
+      and [e["class"] for e in agent.entities(
+          [dict(_unr, type="")], {"enp1s0": 1}, {})] == [3],
+      "#496: a module whose map the cage gave and whose identity could not "
+      "be read is there; a card that read nothing is not")
+
+check(agent.entity_index(1) == 1000 and agent.entity_index(3, 0, 1) == 3001
+      and agent.entity_index(4, 4, 3) == 4043
+      and agent.entity_index(2147482) == 2147482000
+      and agent.entity_index(2147483) is None
+      and agent.entity_index(0) is None,
+      "#496: entPhysicalIndex from the ifIndex, inside PhysicalIndex's range")
+check(agent.module_present({"status": "ddm"})
+      and agent.module_present({"status": "copper"})
+      and agent.module_present({"status": "unreadable", "type": "sff-8472"})
+      and not agent.module_present({"status": "unreadable", "type": ""})
+      and not agent.module_present({"status": "absent", "type": "sff-8472"}),
+      "#496: what is a module in a cage")
+check(agent.date_octets("2024-03-01") == "07 E8 03 01 00 00 00 00"
+      and agent.date_octets("") == "" and agent.date_octets("2024-13-01") == ""
+      and agent.date_octets("ABCDEF") == "",
+      "#496: a date code as DateAndTime, nothing for one that is not a date")
+_e = agent._entity(5, "port", 1, 5, "x", "port x", ifindex=5)
+check(_e["class"] == 10 and _e["ifindex"] == 5 and _e["serial"] == ""
+      and _e["fru"] == 2, "#496: an entity record, unknown columns empty")
+check(agent._sensor(9, 8, 1, "s", "rx_power", {"value": None}) is None
+      and agent._sensor(9, 8, 1, "s", "voltage", None) is None,
+      "#496: a reading the module did not give is no sensor, not a 0")
+_s = agent._sensor(9, 8, 1, "s", "temperature",
+                   {"value": -5.5, "thresholds": None, "level": ""})
+check(_s["sensor"]["value"] == -550 and _s["sensor"]["thresholds"] is None
+      and _s["sensor"]["level"] == 6, "#496: a sensor with no thresholds")
+
+_proc = os.path.join(BOX, "proc")
+w(f"{_proc}/uptime", "1000.50 3000.00\n")
+w(f"{_proc}/77/stat", "77 (snmpd (x) y) S 1 77 77 0 -1 4194560 1 2 3 4 5 6 7 8 "
+                       "20 0 1 0 50000 1000 200\n")
+check(agent.snmpd_uptime(_proc, 77, 100) == 50050
+      and agent.snmpd_uptime(_proc, 78, 100) == 0,
+      "#496: sysUpTime as snmpd counts it, from its start; 0 unread")
+_en = agent.Entities()
+check(_en.rows == [] and _en.note(ents, 10) == 0 and _en.note(ents, 20) == 0,
+      "#496: entLastChangeTime 0 while the entities are the ones it began "
+      "with")
+_swap = [dict(_real[0], serial="NEW0001")] + _real[1:]
+check(_en.note(agent.entities(_swap, _ri, _ch), 30) == 30
+      and _en.note(agent.entities(_swap, _ri, _ch), 40) == 30,
+      "#496: a module swapped - a new serial in the cage - moves it, once")
+check(_en.note(agent.entities(_real[1:], _ri, _ch), 50) == 50,
+      "#496: and a module taken out")
+check(agent.entity_signature(ents) == agent.entity_signature(list(ents))
+      and agent.entity_signature(ents) != agent.entity_signature(ents[:2]),
+      "#496: the signature is the set of entities")
+
+# THE DOCUMENT AND THE AGENT AGREE: every ENTITY-MIB, ENTITY-SENSOR-MIB and
+# prSensor object served is in docs/snmp-mib.md's section on them, and
+# every one that section names is served.
+_mibdefs = {}
+for _f in ("ENTITY-MIB", "ENTITY-SENSOR-MIB"):
+    _t = open(os.path.join(HERE, "..", "test", "mibs", f"{_f}.txt")).read()
+    for _m in _re.finditer(r"^(\w+)[ \t]+(?:OBJECT-TYPE|OBJECT IDENTIFIER|"
+                           r"MODULE-IDENTITY)\b.*?::=\s*\{\s*(\S+)\s+(\d+)"
+                           r"\s*\}", _t, _re.S | _re.M):
+        _mibdefs[_m.group(1)] = (_m.group(2), _m.group(3))
+
+
+def _std_oid(name):
+    if name == "mib-2":
+        return "1.3.6.1.2.1"
+    par, n = _mibdefs[name]
+    return f"{_std_oid(par)}.{n}"
+
+
+_cols = {_std_oid(n): n for n in _mibdefs}
+_cols.update({f"1.3.6.1.4.1.67033.1.21.1.1.{c}": n for c, n in enumerate(
+    ("prSensorHighAlarm", "prSensorHighWarning", "prSensorLowWarning",
+     "prSensorLowAlarm", "prSensorLevel"), 1)})
+_names = set()
+for _o, _t, _v in er + agent.entity_rows(ents2, "1.3.6.1.4.1.67033.1", 1, 0,
+                                         1):
+    _parts = _o.split(".")
+    _k = next((".".join(_parts[:n]) for n in range(len(_parts), 0, -1)
+               if ".".join(_parts[:n]) in _cols), None)
+    check(_k is not None, f"#496: {_o} is served and no module defines it")
+    if _k:
+        _names.add(_cols[_k])
+_doc = open(os.path.join(HERE, "..", "docs", "snmp-mib.md")).read()
+_sec = _doc.split("## ENTITY-MIB and ENTITY-SENSOR-MIB")[1].split("\n## ")[0] \
+    if "## ENTITY-MIB and ENTITY-SENSOR-MIB" in _doc else ""
+# The objects the section's table rows are about: the first cell of each.
+_said = {n for _row in _re.findall(r"^\| ([^|]*)\|", _sec, _re.M)
+         for n in _re.findall(r"`(\w+)`", _row) if n in _cols.values()}
+check(_sec and _names == _said,
+      f"#496: docs/snmp-mib.md names every object served and serves every "
+      f"one it names: served and not said {sorted(_names - _said)}, said "
+      f"and not served {sorted(_said - _names)}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

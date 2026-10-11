@@ -25,6 +25,10 @@
 #     The plugin says `source stand-in` and the VTY "a stand-in", so the
 #     bytes cannot pass for a reading.
 #
+# ENTITY-MIB and ENTITY-SENSOR-MIB (#496) over the same modules: the
+# chassis, each port with a cage, its module and the module's sensors, and
+# the rows a card whose driver cannot read a module must NOT have.
+#
 # And a card Linux owns: an af_packet port on a veth, read through the host's
 # door with the ioctl `ethtool -m` sends. A veth has no module (EOPNOTSUPP),
 # which is what the box's management card on virtio says too.
@@ -33,11 +37,15 @@
 # X520 with a module in the cage is the only proof of the offsets' arithmetic
 # against ixgbe (see the #590 report).
 #
-# OFF-RED-AT-LEAST: 20
+# OFF-RED-AT-LEAST: 32
 #
 # A FLOOR, measured on the off run (#590, 2026-10-06): 20 of its 30 checks
 # red - every one about what a module says, at the VTY, in `show interface`'s
-# notes and through snmpd. Green in that run and rightly: the eight controls
+# notes and through snmpd. #496's ENTITY checks took it to 32 of 48
+# (2026-10-11): the twelve about a module's entities and sensors red, and
+# green the four controls (the registration, the chassis, no row for the
+# null PMD's port nor for the veth) and the swap, which with no stand-in
+# before it is a module inserted - entLastChangeTime moves either way. Green in that run and rightly: the eight controls
 # (the read reaching DPDK, the Linux card through the door, the refusals, 79
 # columns, snmpd's registration), Ethernet0 unreadable over SNMP, and "nothing
 # for the healthy module", which no stand-in is also true of. See
@@ -63,12 +71,12 @@ install -D -m 0644 /src/src/prismash/transceiver.py /usr/lib/prisma-routing/tran
 # test one with the dpdk plugin left enabled.
 sed 's/^ *plugin dpdk_plugin.so { disable }//' "$(startup_conf test)" > /tmp/startup-xcvr.conf
 printf 'dpdk {\n  no-hugetlb\n  no-pci\n' >> /tmp/startup-xcvr.conf
-for n in 0 1 2 3 4 5; do printf '  vdev net_null%s\n' "$n" >> /tmp/startup-xcvr.conf; done
+for n in 0 1 2 3 4 5 6; do printf '  vdev net_null%s\n' "$n" >> /tmp/startup-xcvr.conf; done
 printf '}\n' >> /tmp/startup-xcvr.conf
 vpp -c /tmp/startup-xcvr.conf > /tmp/vpp.log 2>&1 &
 wait_vpp
 use_binary_api
-for n in 0 1 2 3 4 5; do vppctl set interface state Ethernet$n up; done
+for n in 0 1 2 3 4 5 6; do vppctl set interface state Ethernet$n up; done
 # A card Linux owns, given to the dataplane through af_packet.
 ip link add vx0 type veth peer name vx1 2>/dev/null
 ip link set vx0 up; ip link set vx1 up
@@ -94,6 +102,9 @@ else
   vppctl bpa transceiver stand-in Ethernet3 type sff-8472 hex "$(hexof 'F.sfp_external()')"
   vppctl bpa transceiver stand-in Ethernet4 type sff-8079 hex "$(hexof 'F.sfp_no_ddm()')"
   vppctl bpa transceiver stand-in Ethernet5 type sff-8472 hex "$(hexof 'F.sfp_internal()')"
+  # #496: a cage whose EEPROM is blank - no module, as far as anything
+  # reading it can tell - for ENTITY-MIB's port with no module in it.
+  vppctl bpa transceiver stand-in Ethernet6 type sff-8472 hex "$(hexof 'bytes(512)')"
 fi
 BAD=$(vppctl bpa transceiver stand-in Ethernet1 type sff-9999 hex 00 2>&1)
 
@@ -140,6 +151,45 @@ echo "  ifIndex: Ethernet0 $I0, Ethernet1 $I1, Ethernet2 $I2, Ethernet3 $I3, Eth
 XC=$($W 1.3.6.1.4.1.67033.1.20 2>&1)
 printf '%s\n' "$XC" | head -60 | sed 's/^/  | /'
 v() { printf '%s\n' "$XC" | awk -v o=".1.3.6.1.4.1.67033.1.20.$1" '$1 == o { print $NF; exit }' | tr -d '"'; }
+
+echo
+echo "=========== 4. ENTITY-MIB and ENTITY-SENSOR-MIB through snmpd (#496) ==========="
+grep -- "--entity" /etc/snmp/snmpd.conf | sed 's/^/  |/'
+I5=$(ix Ethernet5); I6=$(ix Ethernet6)
+EW=$($W 1.3.6.1.2.1.47 2>&1)
+SW=$($W 1.3.6.1.2.1.99 2>&1)
+TW=$($W 1.3.6.1.4.1.67033.1.21 2>&1)
+printf '%s\n' "$EW" | head -40 | sed 's/^/  | /'
+printf '%s\n' "$SW" | head -16 | sed 's/^/  | /'
+printf '%s\n' "$TW" | head -10 | sed 's/^/  | /'
+ev() { printf '%s\n' "$EW" | awk -v o=".1.3.6.1.2.1.47.$1" '$1 == o { $1 = $2 = $3 = ""; sub(/^ +/, ""); print; exit }' | tr -d '"'; }
+sv() { printf '%s\n' "$SW" | awk -v o=".1.3.6.1.2.1.99.1.1.1.$1" '$1 == o { print $NF; exit }' | tr -d '"'; }
+tv() { printf '%s\n' "$TW" | awk -v o=".1.3.6.1.4.1.67033.1.21.1.1.$1" '$1 == o { print $NF; exit }'; }
+P1=$((${I1:-0} * 1000)); P2=$((${I2:-0} * 1000)); P4=$((${I4:-0} * 1000))
+P0=$((${I0:-0} * 1000)); PX=$((${IX:-0} * 1000)); P5=$((${I5:-0} * 1000))
+P6=$((${I6:-0} * 1000))
+echo "  entPhysicalIndex: Ethernet1 $P1, Ethernet2 $P2, Ethernet4 $P4, Ethernet6 $P6, Ethernet0 $P0, host-vx0 $PX"
+# By name, with the RFCs' own modules loaded (test/mibs) - and IF-MIB, which
+# entAliasMappingIdentifier points into: the OIDs served
+# are the objects the standard defines, and none is left a number.
+NAMED=$(snmpwalk -v2c -c hexro -t 20 -M /src/test/mibs:/usr/share/snmp/mibs \
+  -m ENTITY-MIB:ENTITY-SENSOR-MIB:IF-MIB 127.0.0.1 1.3.6.1.2.1.47 2>&1; \
+  snmpwalk -v2c -c hexro -t 20 -M /src/test/mibs:/usr/share/snmp/mibs \
+  -m ENTITY-MIB:ENTITY-SENSOR-MIB:IF-MIB 127.0.0.1 1.3.6.1.2.1.99 2>&1)
+printf '%s\n' "$NAMED" | grep -E "\.$((P1 + 13)) |\.$((P1 + 1)) " | head -12 | sed 's/^/  | /'
+SYSUP=$(snmpget -v2c -c hexro -Ovt 127.0.0.1 1.3.6.1.2.1.1.3.0 2>&1)
+STAMP=$(printf '%s\n' "$SW" | awk -v o=".1.3.6.1.2.1.99.1.1.1.7.$((P1 + 13))" '$1 == o { print $4; exit }' | tr -d '()')
+echo "  sysUpTime $SYSUP, Ethernet1's RX power read at $STAMP"
+STAMPOK=no
+[ "${STAMP:-0}" -gt 0 ] 2>/dev/null && [ "$STAMP" -le "${SYSUP:-0}" ] 2>/dev/null && STAMPOK=yes
+# A module swapped (#496): Ethernet5's for another serial, and the agent's
+# 30 s cache let go.
+LC0=$(snmpget -v2c -c hexro -Ovt 127.0.0.1 1.3.6.1.2.1.47.1.4.1.0 2>&1)
+vppctl bpa transceiver stand-in Ethernet5 type sff-8472 hex "$(hexof 'F.sfp_swapped()')"
+sleep 32
+LC1=$(snmpget -v2c -c hexro -Ovt 127.0.0.1 1.3.6.1.2.1.47.1.4.1.0 2>&1)
+SER5=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.47.1.1.1.1.11.$((P5 + 1)) 2>&1 | tr -d '"')
+echo "  entLastChangeTime $LC0, then $LC1 after the swap; Ethernet5's module now $SER5"
 
 echo
 echo "=========== VERDICT ==========="
@@ -197,4 +247,41 @@ expect "SNMP: the module without DDM is noDdm(2), with no levels" \
   test "$(v 1.1.3.$I4)" = 2 -a -z "$(v 1.1.8.$I4)"
 expect "SNMP: Ethernet0, whose driver cannot read a module, is unreadable(5)" \
   test "$(v 1.1.3.$I0)" = 5
+# ENTITY-MIB and ENTITY-SENSOR-MIB (#496). Controls first: the off run's.
+expect_in "control: snmpd carries ENTITY-MIB's registration" \
+  "pass_persist .1.3.6.1.2.1.47 /usr/lib/prisma-routing/snmp-agent --entity" \
+  "$(cat /etc/snmp/snmpd.conf 2>/dev/null)"
+expect "control: the chassis is entity 1, class chassis(3)" test "$(ev 1.1.1.1.5.1)" = 3
+expect "control: Ethernet0, whose driver cannot read a module (as virtio), has no row" \
+  test -z "$(ev 1.1.1.1.5.$P0)"
+expect "control: nor host-vx0, a veth" test -z "$(ev 1.1.1.1.5.$PX)"
+expect "ENTITY-MIB: Ethernet1 is a port(10) in the chassis, named as its interface" \
+  test "$(ev 1.1.1.1.5.$P1)" = 10 -a "$(ev 1.1.1.1.4.$P1)" = 1 -a "$(ev 1.1.1.1.7.$P1)" = Ethernet1
+expect "its module is a module(9) in it, with its part and serial" \
+  test "$(ev 1.1.1.1.5.$((P1 + 1)))" = 9 -a "$(ev 1.1.1.1.4.$((P1 + 1)))" = "$P1" \
+  -a "$(ev 1.1.1.1.13.$((P1 + 1)))" = RSMPP8510GL-03D -a "$(ev 1.1.1.1.11.$((P1 + 1)))" = FP23H150378
+expect_in "the port points at its ifIndex (entAliasMappingIdentifier)" \
+  ".1.3.6.1.2.1.2.2.1.1.$I1" "$(ev 1.3.2.1.2.$P1.0)"
+expect "ENTITY-SENSOR-MIB: its RX power, watts(6) micro(7) precision 1, 126 (12.6 uW)" \
+  test "$(sv 1.$((P1 + 13)))" = 6 -a "$(sv 2.$((P1 + 13)))" = 7 \
+  -a "$(sv 3.$((P1 + 13)))" = 1 -a "$(sv 4.$((P1 + 13)))" = 126
+expect "and its temperature, celsius(8), 3650 (36.50 C)" \
+  test "$(sv 1.$((P1 + 2)))" = 8 -a "$(sv 4.$((P1 + 2)))" = 3650
+expect "prSensor: its RX power's low warning, 158 (15.8 uW), and the level lowWarning(3)" \
+  test "$(tv 3.$((P1 + 13)))" = 158 -a "$(tv 5.$((P1 + 13)))" = 3
+expect "the QSFP's lane 4 RX power is a sensor, lowWarning(3)" \
+  test "$(sv 1.$((P2 + 43)))" = 6 -a "$(tv 5.$((P2 + 43)))" = 3
+expect "the module without DDM: a module, and no sensor" \
+  test "$(ev 1.1.1.1.5.$((P4 + 1)))" = 9 -a -z "$(sv 1.$((P4 + 2)))"
+expect "an empty cage: a port with no module" \
+  test "$(ev 1.1.1.1.5.$P6)" = 10 -a -z "$(ev 1.1.1.1.5.$((P6 + 1)))"
+expect_in "by name with RFC 6933's module loaded: the module's model" \
+  "ENTITY-MIB::entPhysicalModelName.$((P1 + 1)) = STRING:" "$NAMED"
+expect_in "and RFC 3433's: the RX power's type" \
+  "ENTITY-SENSOR-MIB::entPhySensorType.$((P1 + 13)) = INTEGER: watts(6)" "$NAMED"
+expect_not_in "and nothing walked is left a number" "mib-2." "$NAMED"
+expect "the reading's time stamp is snmpd's sysUpTime, not 0 nor ahead of it ($STAMP, $SYSUP)" \
+  test "$STAMPOK" = yes
+expect "a module swapped: its new serial, and entLastChangeTime moved ($LC0 to $LC1)" \
+  test "$SER5" = SWAP0001 -a "${LC1:-0}" -gt 0 -a "${LC0:-x}" = 0
 verdict

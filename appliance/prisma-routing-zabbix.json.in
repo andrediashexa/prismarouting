@@ -12,7 +12,7 @@
         "uuid": "aff0644b6b8a45d88c9d1e8534efef44",
         "template": "Prisma Routing by SNMP",
         "name": "Prisma Routing by SNMP",
-        "description": "Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, HA, LACP, BGP, OSPF and IS-IS, over SNMP v2c or v3 (v1 is refused). Print it with the box's enterprise number filled in: `show snmp zabbix-template`.",
+        "description": "Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, HA, LACP, BGP, OSPF and IS-IS, the ports' transceivers and modules, over SNMP v2c or v3 (v1 is refused). Print it with the box's enterprise number filled in: `show snmp zabbix-template`.",
         "vendor": {
           "name": "Prisma Routing",
           "version": "0.146"
@@ -1761,6 +1761,22 @@
             ]
           },
           {
+            "uuid": "97351f4b34724ef8b9e4e26efb9ab732",
+            "name": "Notification: entConfigChange",
+            "type": "SNMP_TRAP",
+            "key": "snmptrap[\"entConfigChange|1\\.3\\.6\\.1\\.2\\.1\\.47\\.2\\.0\\.1\\b\"]",
+            "history": "31d",
+            "trends": "0",
+            "value_type": "LOG",
+            "description": "Received through Zabbix's SNMP trap receiver; the box sends it to every `snmp trap-host`.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "notification"
+              }
+            ]
+          },
+          {
             "uuid": "ddd1750f80584d16a6bcaf4dfd4ee466",
             "name": "Notification: anything else",
             "type": "SNMP_TRAP",
@@ -3164,6 +3180,230 @@
             ]
           },
           {
+            "uuid": "12c0078906ff4b71bea222d3d00c0b75",
+            "name": "Module discovery (ENTITY-MIB)",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#ENTNAME},1.3.6.1.2.1.47.1.1.1.1.7,{#ENTCLASS},1.3.6.1.2.1.47.1.1.1.1.5]",
+            "key": "entity.module.discovery",
+            "delay": "1h",
+            "filter": {
+              "evaltype": "AND",
+              "conditions": [
+                {
+                  "macro": "{#ENTCLASS}",
+                  "value": "^9$",
+                  "formulaid": "A"
+                }
+              ]
+            },
+            "description": "ENTITY-MIB (RFC 6933): the pluggable modules, entPhysicalClass module(9) - a row per port with a module in its cage, entPhysicalIndex ifIndex x 1000 + 1.",
+            "item_prototypes": [
+              {
+                "uuid": "15150178bd5043abb0d6b312964129b1",
+                "name": "Module {#ENTNAME}: vendor",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.47.1.1.1.1.12.{#SNMPINDEX}",
+                "key": "entity.module.vendor[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "trends": "0",
+                "value_type": "CHAR",
+                "preprocessing": [
+                  {
+                    "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                    "parameters": [
+                      "1d"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "inventory"
+                  }
+                ]
+              },
+              {
+                "uuid": "f9a88cff81ed4d90b459946e56e5bd39",
+                "name": "Module {#ENTNAME}: model",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.47.1.1.1.1.13.{#SNMPINDEX}",
+                "key": "entity.module.model[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "trends": "0",
+                "value_type": "CHAR",
+                "preprocessing": [
+                  {
+                    "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                    "parameters": [
+                      "1d"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "inventory"
+                  }
+                ]
+              },
+              {
+                "uuid": "e0306af8c1a340b5b2310746e214a609",
+                "name": "Module {#ENTNAME}: revision",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.47.1.1.1.1.8.{#SNMPINDEX}",
+                "key": "entity.module.revision[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "trends": "0",
+                "value_type": "CHAR",
+                "preprocessing": [
+                  {
+                    "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                    "parameters": [
+                      "1d"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "inventory"
+                  }
+                ]
+              },
+              {
+                "uuid": "7a8a028187ee485ba0381519fbdacc74",
+                "name": "Module {#ENTNAME}: serial number",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.47.1.1.1.1.11.{#SNMPINDEX}",
+                "key": "entity.module.serial[{#SNMPINDEX}]",
+                "delay": "1h",
+                "history": "7d",
+                "trends": "0",
+                "value_type": "CHAR",
+                "description": "A new value is a module swapped in the cage.",
+                "preprocessing": [
+                  {
+                    "type": "DISCARD_UNCHANGED_HEARTBEAT",
+                    "parameters": [
+                      "1d"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "inventory"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "1d013c925a6946a78463ec1b8af1ecbb",
+                    "expression": "change(/Prisma Routing by SNMP/entity.module.serial[{#SNMPINDEX}])=1",
+                    "name": "Prisma Routing: module {#ENTNAME} was replaced",
+                    "priority": "INFO",
+                    "description": "Its serial number changed: a module swapped in the cage. Close it once the swap is known.",
+                    "manual_close": "YES",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "notice"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "10267e864734416fb43ae09f684c3c01",
+            "name": "Sensor discovery (ENTITY-SENSOR-MIB)",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#SENSORNAME},1.3.6.1.2.1.47.1.1.1.1.7,{#SENSORTYPE},1.3.6.1.2.1.99.1.1.1.1,{#SENSORPRECISION},1.3.6.1.2.1.99.1.1.1.3,{#SENSORUNITS},1.3.6.1.2.1.99.1.1.1.6]",
+            "key": "entity.sensor.discovery",
+            "delay": "1h",
+            "filter": {
+              "evaltype": "AND",
+              "conditions": [
+                {
+                  "macro": "{#SENSORTYPE}",
+                  "value": "^[0-9]+$",
+                  "formulaid": "A"
+                }
+              ]
+            },
+            "description": "ENTITY-SENSOR-MIB (RFC 3433): each module's temperature, voltage, bias, TX and RX power. The alarms are on the transceiver discoveries above, which read the same modules.",
+            "item_prototypes": [
+              {
+                "uuid": "e899075e2b8c48e09b6ad945127459c3",
+                "name": "Sensor {#SENSORNAME}",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.99.1.1.1.4.{#SNMPINDEX}",
+                "key": "entity.sensor.value[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "{#SENSORUNITS}",
+                "description": "entPhySensorValue over 10 to the entPhySensorPrecision, in entPhySensorUnitsDisplay's units: an optical power is in uW (RFC 3433 has no dBm).",
+                "preprocessing": [
+                  {
+                    "type": "JAVASCRIPT",
+                    "parameters": [
+                      "return value / Math.pow(10, {#SENSORPRECISION});"
+                    ]
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "sensor"
+                  }
+                ]
+              },
+              {
+                "uuid": "3cdce7c05b7a44079f2e3a70bc3ebcaa",
+                "name": "Sensor {#SENSORNAME}: status",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.2.1.99.1.1.1.5.{#SNMPINDEX}",
+                "key": "entity.sensor.status[{#SNMPINDEX}]",
+                "delay": "5m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "ENTITY-SENSOR-MIB::EntitySensorStatus"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "sensor"
+                  }
+                ]
+              },
+              {
+                "uuid": "41227847bbdf4d8ab13287205f799645",
+                "name": "Sensor {#SENSORNAME}: threshold level",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.21.1.1.5.{#SNMPINDEX}",
+                "key": "entity.sensor.level[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "description": "PRISMA-ROUTING-MIB's prSensorLevel: where the value stands against the module's own thresholds; absent when it carries none.",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prXcvrLaneLevel"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "sensor"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "uuid": "53cac0b5fb7d45d58a0e2f82dc4c7b66",
             "name": "NATV2 instance discovery",
             "type": "SNMP_AGENT",
@@ -4280,6 +4520,24 @@
               {
                 "value": "6",
                 "newvalue": "unknown"
+              }
+            ]
+          },
+          {
+            "uuid": "3472148913464096a9d8e3365e8ee017",
+            "name": "ENTITY-SENSOR-MIB::EntitySensorStatus",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "ok"
+              },
+              {
+                "value": "2",
+                "newvalue": "unavailable"
+              },
+              {
+                "value": "3",
+                "newvalue": "nonoperational"
               }
             ]
           },

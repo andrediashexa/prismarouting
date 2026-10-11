@@ -347,6 +347,18 @@ source is sshd's journal, which the SNMP agent's account cannot read, and a
 file of login counts would need the login path to write it; that is its own
 issue when somebody asks. The versions were already served (`prSystem`).
 
+Phase 5's hardware half (#496): ENTITY-MIB and ENTITY-SENSOR-MIB over the
+ports' modules - the chassis, each port with a cage, its module with vendor,
+part, serial, revision and date, and its DDM readings as sensors, with the
+module's own thresholds in PR-MIB's `prSensorThresholdTable` under the
+sensor's `entPhysicalIndex` - and `entConfigChange` when a module comes, goes
+or is swapped. Measured against 10.40.200.166's X520 (its real dump is a
+fixture of the suites) and walked through snmpd in `lab/transceiver.sh`.
+**Not served**: fans, power supplies and the board's temperatures, which
+need IPMI or hwmon on a physical box - .166 is a VM, with neither - and the
+cards as entities, whose serial is root's alone in the PCI VPD. Its HA half,
+VRRPV3-MIB, shipped in 0.144.3 (#513).
+
 ## Decisions for the maintainer
 
 1. **The PEN**: apply to IANA for the product's own enterprise number (free,
