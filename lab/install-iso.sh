@@ -2253,9 +2253,6 @@ drive_console() {
 #                                       starts for a console= serial port
 #   the VTY on tty1                     getty@tty1 and console=tty0, untouched
 #
-# The VTY wait comes LAST among the waits, so a medium with no console= at
-# all fails on the first thing it should have said and not after the longest
-# timeout in the section.
 echo
 echo "=========== THE MEDIUM, ON ITS OWN BOOT LOADER, OVER SERIAL ==========="
 MEDIUM_PROMPT="prisma> "
@@ -2275,18 +2272,18 @@ VM_DISPLAY="-display none -serial stdio -monitor none"
 boot_vm "${MEDIUM_SECS:-600}" -cdrom "$ISO" -boot d
 VM_DISPLAY=
 medium_session() {
-  # GRUB, before anything else. Its menu is drawn on whichever terminals
-  # grub.cfg named; the title is what is waited for because the version line
-  # above it says nothing about which configuration was read.
-  wait_for "Prisma Routing installer - start" 120 \
-    "GRUB to draw the medium's menu on the serial port" || return 1
+  # ONE WAIT, for the last thing the box prints: its VTY prompt. The menu and
+  # the self-test report come before it and are read off the whole log once
+  # the machine is stopped, below. Waiting for each in turn was measured
+  # wrong on a medium whose GRUB was on the screen alone: the menu wait
+  # timed out while the box went on booting, the self-test wait then matched
+  # with the prompt already printed and moved past it, and the prompt wait
+  # read nothing - so one missing menu turned every check red and named the
+  # wrong cause for five of them.
+  #
   # Nothing typed: the default entry is what an operator who presses nothing
   # gets, and what this boot is about.
-  #
-  # The self-test report, which appliance/selftest writes to /dev/console.
-  wait_for "boot self-test" 420 \
-    "the self-test report on the serial port, i.e. /dev/console" || return 1
-  wait_for "$MEDIUM_PROMPT" 240 \
+  wait_for "$MEDIUM_PROMPT" "${MEDIUM_VTY_SECS:-540}" \
     "the medium's autologin VTY on the serial port" || return 1
   MEDIUM_DRIVEN=1
   send "start shell"
