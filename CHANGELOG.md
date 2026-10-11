@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.0 - the installation medium speaks on the serial port
+
+### Fixed
+
 * **The installation medium speaks on the serial port: its kernel console,
   its self-test report and its VTY reach ttyS0 as well as the screen, and
   GRUB's menu can be chosen over serial.**
