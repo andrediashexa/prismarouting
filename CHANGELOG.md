@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.152.11 - the last screen through the API, and the record sees what it missed
+
+### Added
+
 * **The cards Linux holds are watched like the dataplane's ports: their
   links and their modules.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
   The host's watcher now reads every PCI card Linux still holds - the
