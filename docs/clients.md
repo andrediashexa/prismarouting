@@ -27,7 +27,7 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.152.10 - show cgnat ha peer through the API; Linux's cards and fast flaps in the record
+## 0.152.11 - show cgnat ha peer through the API; Linux's cards and fast flaps in the record
 
 * **Contract:** additive (`prisma.proto` sha256 `ae262f4a79d5e0636d3238ede79aa6426dee258035e461afc18f307c7248b31c`).
   #558: `GetHaStatusRequest` gains `peer_path` (1, string). Nothing else in
