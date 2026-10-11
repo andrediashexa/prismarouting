@@ -517,6 +517,19 @@ $HX -c "show cgnat alg" > $S6/alg 2>&1
 $HX -c "show cgnat forward" > $S6/forward 2>&1
 $HX -c "show cgnat forward v6" > $S6/forward-v6 2>&1
 $HX -c "show cgnat ha" > $S6/ha 2>&1
+# `show cgnat ha peer <file>` (#558): this box's own saved configuration as
+# the peer's copy, a device, and a root-only copy as netview's VTY sees it.
+# The running configuration as `save` writes it (Config.text()): this lab
+# never saves, so there is no PRISMA_CONFIG file to copy.
+python3 -c "import sys; sys.path.insert(0, '/src/src/prismash'); import prismash
+open('/tmp/ha-peer.conf', 'w').write(prismash.Shell().running_config().text())"
+chmod 0644 /tmp/ha-peer.conf
+cp /tmp/ha-peer.conf /tmp/ha-peer-secret.conf; chmod 0600 /tmp/ha-peer-secret.conf
+$HX -c "show cgnat ha peer /tmp/ha-peer.conf" > $S6/ha-peer 2>&1
+$HX -c "show cgnat ha peer /dev/zero" > $S6/ha-peer-zero 2>&1
+runuser -u netview -- $HX -c "show cgnat ha peer /tmp/ha-peer-secret.conf" \
+  > $S6/ha-peer-netview 2>&1
+sed 's/^/  vty: /' $S6/ha-peer | head -12
 # And what the VTY gives an account with no role, which the API's answer to
 # that account is held to.
 runuser -u netview -- $HX -c "show cgnat alg" > $S6/alg-netview 2>&1
@@ -842,6 +855,10 @@ expect "ListAlgs: each pool's ALGs as configured, the NAT64 pool's FTP64 on" t6 
 expect "ListForwards: the IPv4 forward and the NAT64 pool's to an IPv6 host, the screen" t6 forwards
 expect "  and one pool's alone" t6 forwards-pool
 expect "GetHaStatus: this box read, no peer copy said so, and no agreement claimed" t6 ha
+expect "GetHaStatus peer_path: show cgnat ha peer <file>, this box's own copy read, agreeing, the VTY's screen (#558)" t6 ha-peer-path
+expect "  a device is refused by name, never read, as at the prompt" t6 ha-peer-device
+expect "  a relative path: INVALID_ARGUMENT" t6 ha-peer-relative
+expect "  a root-only copy: read for root, and netview gets what its VTY session gets" t6 ha-peer-account
 expect "  an account with no role gets what the VTY gives it, screen or refusal" t6 netview-reads
 expect "#572: GetConfig's nat64 area reads the NAT64 pool, and pools does not" t6 nat64-read
 expect "#572: ListPools says each pool's level" t6 nat64-listpools

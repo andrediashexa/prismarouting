@@ -59,6 +59,7 @@ the same way. The record's own rotation (events.EVENTS_MAX) bounds the rest.
 """
 import json
 import os
+import re
 import struct
 import time
 
@@ -227,26 +228,131 @@ def flap_summaries(flaps, now):
 
 # ------------------------------------------------------------------- links
 
-def link_reading(ifaces, hardware):
+def link_reading(ifaces, hardware, counts=None):
     """
     The links of the interfaces an operator configured, from
     routes.parse_interfaces() (the admin state) and routes.parse_hardware()
-    (the link): {name: {"admin", "link", "parent"}}. A sub-interface's link
-    is its parent's (Shell.link_state says why), and `parent` names it.
+    (the link): {name: {"admin", "link", "parent", "ups", "downs"}}. A
+    sub-interface's link is its parent's (Shell.link_state says why), and
+    `parent` names it. `ups` and `downs` are the plugin's count of the
+    port's link changes (parse_link_changes(), #588), None for a port it
+    does not count or a plugin older than the count.
     """
     import routes
     out = {}
+    counts = counts or {}
     names = set(routes.operator_interfaces(ifaces))
     for name in sorted(names):
         parent = name.split(".")[0] if "." in name else ""
         row = hardware.get(name) or (hardware.get(parent) if parent else None)
+        n = counts.get(name) if not parent else None
         out[name] = {"admin": ifaces[name].get("state", "?"),
                      "link": row["link"] if row else "?",
-                     "parent": parent if parent in ifaces else ""}
+                     "parent": parent if parent in ifaces else "",
+                     "ups": n["ups"] if n else None,
+                     "downs": n["downs"] if n else None}
     return out
 
 
-def link_changes(prev, cur):
+#: `show bpa link-changes`' line (bpa_linkcount.c's format string, which
+#: test/test_eventwatch.py holds this to).
+_LINK_CHANGES = re.compile(r"^interface (\S+) link (up|down) ups (\d+) "
+                           r"downs (\d+)$")
+
+
+def parse_link_changes(text):
+    """
+    `show bpa link-changes` as {port: {"link", "ups", "downs"}}: how many
+    times each port's link came up and went down since the port was created
+    (#588). Empty for anything else - a plugin older than the command
+    answers "unknown input", and a reading with no count is compared by its
+    state alone, as before.
+    """
+    out = {}
+    for line in (text or "").splitlines():
+        m = _LINK_CHANGES.match(line.strip())
+        if m:
+            out[m.group(1)] = {"link": m.group(2), "ups": int(m.group(3)),
+                               "downs": int(m.group(4))}
+    return out
+
+
+def _sysfs_word(path):
+    """The first word of a sysfs attribute, or None when it cannot be read
+    (an attribute the kernel refuses - `carrier` of a card that is
+    administratively down answers EINVAL - or one this kernel has not)."""
+    try:
+        with open(path) as fh:
+            w = fh.read().split()
+        return w[0] if w else None
+    except OSError:
+        return None
+
+
+def _count(word):
+    """A sysfs count as an int - ASCII digits and nothing else, what the
+    kernel's %u prints - or None."""
+    return int(word) if word and re.fullmatch(r"[0-9]+", word) else None
+
+
+def linux_link_reading(names, sysdir="/sys/class/net"):
+    """
+    The links of the cards Linux holds (the management card, a spare port
+    the dataplane was not given), as link_reading() rows with `host` true
+    (#588): the administrative state from IFF_UP in `flags`, the link from
+    `carrier`, and the kernel's own count of the carrier's changes,
+    `carrier_up_count` and `carrier_down_count` (Linux 4.16+), so a flap
+    between two readings is seen as on a dataplane port. A card that is not
+    there is left out: it was not seen, which is not "down".
+    """
+    out = {}
+    for name in sorted(set(names)):
+        base = os.path.join(sysdir, name)
+        flags = _sysfs_word(os.path.join(base, "flags"))
+        if flags is None:
+            continue
+        try:
+            admin = "up" if int(flags, 16) & 0x1 else "down"
+        except ValueError:
+            continue
+        carrier = _sysfs_word(os.path.join(base, "carrier"))
+        ups = _sysfs_word(os.path.join(base, "carrier_up_count"))
+        downs = _sysfs_word(os.path.join(base, "carrier_down_count"))
+        out[name] = {"admin": admin,
+                     "link": "up" if carrier == "1" else "down",
+                     "parent": "", "host": True,
+                     "ups": _count(ups), "downs": _count(downs)}
+    return out
+
+
+def _link_what(name, c):
+    """How a sentence names a link_reading() row: a sub-interface, a
+    dataplane port, or a card Linux holds."""
+    if c.get("parent"):
+        return "sub-interface " + name
+    return f"interface {name}" + (" (held by Linux)" if c.get("host") else "")
+
+
+def link_transitions(p, c, restarted=False):
+    """
+    (ups, downs) between two readings of one port, from its counts, or None
+    when they do not say: a count missing on either side, one that went
+    backwards (the port deleted and made again, the plugin or the card's
+    driver reloaded), or a dataplane port read across a dataplane start,
+    whose counts began again (#588). A card Linux holds is not the
+    dataplane's: its counts survive a dataplane start.
+    """
+    if restarted and not c.get("host"):
+        return None
+    if None in (p.get("ups"), p.get("downs"), c.get("ups"), c.get("downs")):
+        return None
+    du, dd = c["ups"] - p["ups"], c["downs"] - p["downs"]
+    if du < 0 or dd < 0:
+        return None
+    return du, dd
+
+
+def link_changes(prev, cur, restarted=False):
     """
     What changed between two link_reading()s, as change dicts (see tick()).
 
@@ -257,11 +363,21 @@ def link_changes(prev, cur):
     an ISP's port carries hundreds - and a sub-interface says only its own
     administrative changes. An interface that appeared or went is a commit,
     already in the record.
+
+    A FLAP BETWEEN TWO READINGS (#588): a port whose link reads the same
+    twice but whose count of changes moved went down and came back (or up
+    and down again) in between - a reading every 10 s saw nothing, and that
+    is the flap an operator chasing a bad fibre needs. It is said with how
+    many times, as bgp_changes() says a session's; a change of state that
+    took more than one transition says how many. `restarted` is a reading
+    across a dataplane start, whose counts began again: states only, for
+    the dataplane's ports.
     """
     out = []
     for name in sorted(set(prev) & set(cur)):
         p, c = prev[name], cur[name]
-        what = ("sub-interface " if c["parent"] else "interface ") + name
+        what = _link_what(name, c)
+        src = "host" if c.get("host") else "dataplane"
         if p["admin"] != c["admin"] and "?" not in (p["admin"], c["admin"]):
             if c["admin"] == "down":
                 text = f"{what} is administratively down: shut down by " \
@@ -270,17 +386,37 @@ def link_changes(prev, cur):
                 text = f"{what} is administratively up" + (
                     "; its link is down: the wire or the far end"
                     if c["link"] == "down" else "")
-            out.append({"key": "link:" + name, "source": "dataplane",
+            out.append({"key": "link:" + name, "source": src,
                         "kind": "link", "subject": name,
                         "severity": "notice", "text": text,
                         "reason": "administrative", "what": what,
                         "state": "administratively " + c["admin"]})
             continue
-        if c["parent"] or c["admin"] != "up" or p["link"] == c["link"] \
+        if c["parent"] or c["admin"] != "up" \
                 or "?" in (p["link"], c["link"]):
             continue
+        moved = link_transitions(p, c, restarted)
         subs = sum(1 for n, s in cur.items()
                    if s["parent"] == name and s["admin"] == "up")
+        if p["link"] == c["link"]:
+            # The same state twice; the count says whether it stayed so.
+            n = (moved[1] if c["link"] == "up" else moved[0]) if moved else 0
+            if not n:
+                continue
+            if c["link"] == "up":
+                text = f"{what}: link went down and came back between two " \
+                       f"readings ({n} time(s)): the wire or the far end"
+            else:
+                text = f"{what}: link came up and went down again between " \
+                       f"two readings ({n} time(s)); it is down"
+            if subs:
+                text += f"; its {subs} sub-interface(s) with it"
+            out.append({"key": "link:" + name, "source": src,
+                        "kind": "link", "subject": name,
+                        "severity": "warning", "text": text,
+                        "reason": "flap", "what": what,
+                        "state": "link " + c["link"]})
+            continue
         if c["link"] == "down":
             text = f"{what}: link down, administratively up: the wire or " \
                    f"the far end"
@@ -292,7 +428,9 @@ def link_changes(prev, cur):
             if subs:
                 text += f", and its {subs} sub-interface(s) with it"
             sev, reason = "notice", "link"
-        out.append({"key": "link:" + name, "source": "dataplane",
+        if moved and sum(moved) > 1:
+            text += f" ({sum(moved)} changes since the last reading)"
+        out.append({"key": "link:" + name, "source": src,
                     "kind": "link", "subject": name, "severity": sev,
                     "text": text, "reason": reason, "what": what,
                     "state": "link " + c["link"]})
@@ -321,11 +459,15 @@ def _worst(quantities):
 
 def module_reading(modules):
     """
-    The modules of the dataplane's ports, from transceiver.decode() of each
-    reading of the plugin's `show bpa transceiver`: {port: {"present",
-    "module", "rx", "rx_dbm", "rx_bound", "temp", "temp_c", "temp_bound"}}.
-    A port whose module could not be read either way ("unreadable") is left
-    out: neither in nor out is known.
+    The modules of the box's ports, from transceiver.decode() of each
+    reading - the plugin's `show bpa transceiver` for a card the dataplane
+    drives through DPDK, the kernel's module EEPROM interface for a card
+    Linux holds (#588): {port: {"present", "module", "rx", "rx_dbm",
+    "rx_bound", "temp", "temp_c", "temp_bound", "host"}}, `host` true for
+    Linux's. A port whose module could not be read either way
+    ("unreadable": a virtio or veth card, whose driver has no module to
+    read, answers EOPNOTSUPP) is left out: neither in nor out is known, and
+    a card with no cage says nothing, ever.
     """
     import transceiver as xc
     out = {}
@@ -338,7 +480,8 @@ def module_reading(modules):
                                             m.get("part", "")) if x)
              + (f" (serial {m['serial']})" if m.get("serial") else ""),
              "rx": "", "rx_dbm": "", "rx_bound": "", "temp": "",
-             "temp_c": "", "temp_bound": ""}
+             "temp_c": "", "temp_bound": "",
+             "host": m.get("source") == "linux"}
         rx = _worst(ln.get("rx_power") for ln in m.get("lanes") or [])
         if rx:
             r["rx"] = rx["level"]
@@ -376,7 +519,11 @@ def module_changes(prev, cur):
     out = []
     for port in sorted(set(prev) & set(cur)):
         p, c = prev[port], cur[port]
-        base = {"key": "transceiver:" + port, "source": "dataplane",
+        # Linux's card when either reading says so: an empty cage's reading
+        # carries no bytes, and so no source, to tell it by.
+        base = {"key": "transceiver:" + port,
+                "source": "host" if c.get("host") or p.get("host")
+                else "dataplane",
                 "kind": "transceiver", "subject": port,
                 "what": f"the module in {port}"}
         if p["present"] != c["present"]:
@@ -714,11 +861,12 @@ def link_standing(cur):
             continue
         subs = sum(1 for s in cur.values()
                    if s["parent"] == name and s["admin"] == "up")
-        text = f"interface {name}: link down, administratively up: the " \
-               f"wire or the far end"
+        text = f"{_link_what(name, c)}: link down, administratively up: " \
+               f"the wire or the far end"
         if subs:
             text += f"; its {subs} sub-interface(s) with it"
-        out.append({"key": "link:" + name, "source": "dataplane",
+        out.append({"key": "link:" + name,
+                    "source": "host" if c.get("host") else "dataplane",
                     "kind": "link", "subject": name, "severity": "warning",
                     "text": text, "reason": "link"})
     return out
@@ -737,7 +885,8 @@ def module_standing(cur):
                 continue
             text, sev = level_text(port, c, q)
             out.append({"key": f"transceiver:{port}:{q}",
-                        "source": "dataplane", "kind": "transceiver",
+                        "source": "host" if c.get("host") else "dataplane",
+                        "kind": "transceiver",
                         "subject": port, "severity": sev, "text": text,
                         "reason": f"{_LEVELS[q][0]} {c[q]}"})
     return out
@@ -1010,7 +1159,7 @@ def login_changes(wtmp, btmp, open_logins, shell_of=None):
 # -------------------------------------------------------------------- tick
 
 #: Each kind's comparison, and whether it takes `restarted`.
-COMPARE = {"link": (link_changes, False), "transceiver": (module_changes,
+COMPARE = {"link": (link_changes, True), "transceiver": (module_changes,
                                                           False),
            "bgp": (bgp_changes, True), "bfd": (bfd_changes, True),
            "pool": (pool_changes, True), "collector": (collector_changes,

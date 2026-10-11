@@ -77,7 +77,54 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The cards Linux holds are watched like the dataplane's ports: their
+  links and their modules.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
+  The host's watcher now reads every PCI card Linux still holds - the
+  management card, a spare port - beside the dataplane's: its link
+  (`IFF_UP` and `carrier` in /sys), and its module through the kernel's
+  module EEPROM interface (SIOCETHTOOL, what `ethtool -m` sends), decoded by
+  the same `transceiver.decode()` as a DPDK port's. The same events and
+  standing conditions follow - a module inserted, removed or swapped, its RX
+  power or temperature past a threshold and back, a link down while
+  administratively up - named `interface <card> (held by Linux)`, source
+  `host`. The watcher reads them in its own process, as root on the host,
+  so no door call reaches the journal. A card whose driver has no module to
+  read (virtio, a veth: EOPNOTSUPP) says nothing at any reading, and a card
+  given to the dataplane is not "a module removed".
+* **A link that goes down and comes back between two readings is an event,
+  with how many times.** ([#588](https://github.com/andrediashexa/hexarouting/issues/588))
+  A reading every 10 s compared states, so such a flap read `up` twice and
+  was never said. The dataplane plugin now counts each port's link changes
+  (`vppctl show bpa link-changes`, from VPP's link up/down callback, reset
+  when a port is created), and the watcher reads Linux's
+  `carrier_up_count`/`carrier_down_count` for a card Linux holds: "interface
+  X: link went down and came back between two readings (N time(s))", and a
+  change of state that took more than one transition says how many. A count
+  that went backwards, or one read across a dataplane start, is a new
+  baseline; an older plugin's ports are compared by state alone, as before.
+  `show log` says it under `kind link`; docs/logging-events.md, the last
+  phase. lab/show-log-watch.sh flaps a memif and a veth between two passes.
+* **`GetHaStatus` answers `show cgnat ha peer <file>`: no VTY command is left
+  as text in the API.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  `GetHaStatusRequest.peer_path` (1) names the peer's copy to compare
+  against; empty is the default copy, as before. It is an absolute path
+  (INVALID_ARGUMENT otherwise), read by the account's own worker - with that
+  account's permissions, exactly as its VTY session reads it - and `text` is
+  the VTY's `show cgnat ha peer <file>` screen. docs/api-coverage.md now
+  counts 778 typed, 0 text, 0 none, and its summary prints the zeros.
+  Additive in the contract.
+
 ### Fixed
+
+* **`show cgnat ha peer <file>` no longer waits for ever on a FIFO, nor reads
+  a device.** ([#558](https://github.com/andrediashexa/hexarouting/issues/558))
+  The peer's copy was opened with a plain `open()`: a FIFO with no writer
+  held the VTY session (and, with the API taking the path, an account's
+  worker and every call behind it), and `/dev/zero` or `/dev/urandom` were
+  read until memory ran out. It is now opened without blocking and read only
+  when the descriptor is a regular file of at most 1 MiB; anything else is
+  refused by name ("/dev/zero is not a regular file"), at the prompt and
+  through GetHaStatus alike.
 
 ## 0.152.10 - the ports' modules and sensors over SNMP
 

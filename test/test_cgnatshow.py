@@ -360,6 +360,30 @@ sh.ha = {"dataplane": True, "fingerprint": "f1", "pools": ["nb"],
 got = A.ha_read(sh)
 check(sh.ha_path is None and got["facts"] is sh.ha and got["text"].startswith("ha screen []"),
       "ha_read: the default peer copy, one reading, the screen drawn from it")
+# `show cgnat ha peer <file>` through GetHaStatusRequest.peer_path (#558):
+# the facts read at that path, and the screen the VTY prints for those
+# words. Mutation shown red: ha_read() ignoring `path` (the default copy
+# read, and the screen of `show cgnat ha`).
+got = A.ha_read(sh, "/var/tmp/peer-copy.conf")
+check(sh.ha_path == "/var/tmp/peer-copy.conf"
+      and got["text"].startswith("ha screen ['peer', '/var/tmp/peer-copy.conf']"),
+      f"ha_read: a path is read there, and the screen is `peer <path>`'s: "
+      f"{sh.ha_path!r} {got['text'][:60]!r}")
+got = A.handle(sh, "ha", {"path": "/var/tmp/x.conf"})
+check(sh.ha_path == "/var/tmp/x.conf", "and the worker's `ha` passes it on")
+got = A.handle(sh, "ha", {"path": ""})
+check(sh.ha_path is None and got["text"].startswith("ha screen []"),
+      "an empty path is the default copy")
+check(A.ha_peer_path_error("") is None
+      and A.ha_peer_path_error("/etc/prisma-routing/peer.conf") is None,
+      "ha_peer_path_error: the default and an absolute path are taken")
+check("not an absolute path" in (A.ha_peer_path_error("peer.conf") or "")
+      and "not an absolute path" in (A.ha_peer_path_error("../etc/shadow") or ""),
+      "a relative path is refused: an API worker has no directory an "
+      "operator chose")
+check(A.ha_peer_path_error("/tmp/a\0b") == "peer_path: not a path"
+      and A.ha_peer_path_error("/" + "a" * 4096) == "peer_path: not a path",
+      "and a NUL, or longer than PATH_MAX")
 h = A.ha_fields(sh.ha)
 check(h["routers"] == [{"interface": "ens18", "vr_id": 10, "state": "master",
                         "addresses": ["200.150.0.1"],

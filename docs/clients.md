@@ -27,6 +27,44 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.11 - show cgnat ha peer through the API; Linux's cards and fast flaps in the record
+
+* **Contract:** additive (`prisma.proto` sha256 `ae262f4a79d5e0636d3238ede79aa6426dee258035e461afc18f307c7248b31c`).
+  #558: `GetHaStatusRequest` gains `peer_path` (1, string). Nothing else in
+  the contract changes; no message, field or number is moved.
+* **`GetHaStatus(peer_path)` is `show cgnat ha peer <file>`.** Empty
+  `peer_path` is the default peer copy, exactly as before. A non-empty one
+  MUST be an absolute path on the box (a relative one, a NUL, or one longer
+  than 4096 is `INVALID_ARGUMENT` before anything is read). It is read by the
+  calling account's own worker, with that account's file permissions - the
+  same reach its VTY session has - and only when it is a regular file of at
+  most 1 MiB. Everything that cannot be read is NOT an error status: the
+  call answers this box as before, with `peer_read` false and the reason in
+  `peer_unread` ("/dev/zero is not a regular file", "<path>: Permission
+  denied", "there is no peer configuration at <path>", "<path> names no
+  CGNAT pool"), and `agree` false. `peer_path` in the reply echoes the path
+  read. `text` is the VTY's `show cgnat ha peer <file>` screen.
+* **Coverage:** docs/api-coverage.md now reads typed 778, text 0, none 0,
+  n/a 55, and its Summary table always prints the `typed`, `text` and
+  `none` rows, a zero included (before, a zero row was left out). The
+  per-command tables and the "Entered with ..." lines are unchanged in
+  shape; `show cgnat ha peer <file>` is `typed`, API
+  `OperationalService.GetHaStatus`. `Show` still answers every screen as
+  text for a console.
+* **The record of events (#588), no contract change:** `ListEvents` and
+  `WatchEvents` carry two new kinds of sentence under the existing `kind`
+  values. `kind` `link`, `reason` `flap`, severity `warning`: "interface X:
+  link went down and came back between two readings (N time(s)): the wire or
+  the far end" (or "... came up and went down again ... ; it is down"); a
+  link down or up that took more than one transition ends "(N changes since
+  the last reading)". And the cards Linux holds (the management card, a
+  spare port): `kind` `link` and `transceiver`, `source` `host` (it was
+  only `dataplane` for these kinds), `subject` the Linux card's name,
+  sentences naming it "interface <card> (held by Linux)". A client that
+  filters link and module events by `source dataplane` misses these; filter
+  by `kind`.
+* **Lab box:** not upgraded by this release's preparation.
+
 ## 0.152.10 - the ports' modules and sensors over SNMP
 
 * **Contract:** unchanged (`prisma.proto` sha256 `066493334a290520b93dce0e1ceb9aeafac7466067a1c601dfe6309d75df63ad`, the same as 0.152.9). Nothing a client of `prisma.v1` sees changes.

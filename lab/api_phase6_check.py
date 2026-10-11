@@ -220,6 +220,47 @@ def ha():
            and r.fingerprint, f"pools {list(r.pools)}; peer: {r.peer_unread[:60]}")
 
 
+PEER = "/tmp/ha-peer.conf"          # this box's own saved configuration
+SECRET = "/tmp/ha-peer-secret.conf"  # the same, mode 600, root's
+
+
+def ha_peer():
+    # #558's last text row: `show cgnat ha peer <file>` as
+    # GetHaStatusRequest.peer_path. A copy of this box's own configuration,
+    # so the two must agree, and the text is the VTY's screen for the same
+    # words.
+    r = op.GetHaStatus(pb.GetHaStatusRequest(peer_path=PEER), timeout=T)
+    result("ha-peer-path", r.peer_read and r.peer_path == PEER and r.agree
+           and not r.divergences and set(r.peer_pools) == set(r.pools)
+           and same(r.text, "ha-peer"),
+           f"read={r.peer_read} path={r.peer_path} agree={r.agree} "
+           f"unread={r.peer_unread[:60]}")
+    # A device: refused by name, never read - by the VTY and the API alike.
+    r = op.GetHaStatus(pb.GetHaStatusRequest(peer_path="/dev/zero"), timeout=T)
+    result("ha-peer-device", not r.peer_read and not r.agree
+           and r.peer_unread == "/dev/zero is not a regular file"
+           and same(r.text, "ha-peer-zero"), f"unread={r.peer_unread!r}")
+    # A relative path: no worker directory an operator chose.
+    try:
+        op.GetHaStatus(pb.GetHaStatusRequest(peer_path="ha-peer.conf"),
+                       timeout=T)
+        result("ha-peer-relative", False, "a relative path was taken")
+    except grpc.RpcError as e:
+        result("ha-peer-relative",
+               e.code() == grpc.StatusCode.INVALID_ARGUMENT
+               and "not an absolute path" in e.details(),
+               f"{e.code().name} {e.details()[:80]}")
+    # A root-only file: root's call reads it; netview's gets what netview's
+    # VTY session gets for the same words - the account's own reach.
+    r = op.GetHaStatus(pb.GetHaStatusRequest(peer_path=SECRET), timeout=T)
+    o = rpc.OperationalServiceStub(channel("netview"))
+    n = o.GetHaStatus(pb.GetHaStatusRequest(peer_path=SECRET), timeout=T)
+    result("ha-peer-account", r.peer_read and not n.peer_read and not n.agree
+           and not n.peer_pools and same(n.text, "ha-peer-netview"),
+           f"root: read={r.peer_read}; netview: read={n.peer_read} "
+           f"dataplane={n.dataplane} unread={n.peer_unread[:60]!r}")
+
+
 def unprivileged():
     # An account with no role gets from the API what the VTY gives it: the
     # screen, when the VTY can read the dataplane for it, and a refusal when
@@ -299,6 +340,6 @@ for name, fn in (("translation", translation),
                  ("translation-refused", translation_refused), ("top", top), ("drops", drops),
                  ("memory", memory), ("blocks", blocks), ("identity", identity),
                  ("history", history), ("algs", algs), ("forwards", forwards),
-                 ("ha", ha), ("netview-reads", unprivileged),
+                 ("ha", ha), ("ha-peer", ha_peer), ("netview-reads", unprivileged),
                  ("nat64-area", nat64_area)):
     run(name, fn)

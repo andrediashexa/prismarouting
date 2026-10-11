@@ -731,16 +731,41 @@ def memory_fields(facts):
             "given_in_effect": bool(facts["given_in_effect"])}
 
 
-def ha_read(sh):
+def ha_read(sh, path=None):
     """
-    `show cgnat ha` in the worker: Shell.ha_facts() at the peer copy's
-    default path and the screen drawn from that one reading.
+    `show cgnat ha [peer <path>]` in the worker: Shell.ha_facts() at the
+    peer copy's default path, or at `path` (#558), and the screen drawn
+    from that one reading - the one `show cgnat ha peer <path>` prints.
+
+    The worker has become the account (become()), so the file is read with
+    that account's permissions, as its VTY session reads it; and
+    read_peer_config() reads only a regular file of PEER_CONFIG_MAX at
+    most, for the VTY and the API alike.
     """
-    f = sh.ha_facts(None)
+    f = sh.ha_facts(path or None)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        sh.show_ha([], f)
+        sh.show_ha(["peer", path] if path else [], f)
     return {"facts": f, "text": buf.getvalue()}
+
+
+def ha_peer_path_error(path):
+    """
+    Why GetHaStatusRequest.peer_path is refused before any worker reads it,
+    or None: empty (the default copy) and an absolute path are taken. A
+    relative one is not - the VTY resolves it against the session's own
+    directory, and an API worker has none an operator chose - nor a NUL,
+    which no path holds, nor one longer than PATH_MAX.
+    """
+    if not path:
+        return None
+    if "\0" in path or len(path) > 4096:
+        return "peer_path: not a path"
+    if not path.startswith("/"):
+        return (f"peer_path: {path!r} is not an absolute path; the copy is "
+                f"named by where it is on the box, e.g. "
+                f"/etc/prisma-routing/peer.conf")
+    return None
 
 
 def ha_fields(facts):
@@ -1001,7 +1026,7 @@ READERS = {
     # them; `a` is {"kind": ..., "args": {...}}.
     "cgnat": lambda sh, a: cgnat_read(sh, a["kind"], a.get("args")),
     "cgnat_memory": lambda sh, a: cgnat_memory_read(sh),
-    "ha": lambda sh, a: ha_read(sh),
+    "ha": lambda sh, a: ha_read(sh, (a or {}).get("path")),
     # #558, phase 7: the rest of the screens, each drawn from the facts the
     # rpc carries, or (show logging, FRR's own screen) read from its text.
     "ospf_interfaces": lambda sh, a: facts_screen(
@@ -4039,7 +4064,10 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
         # not a unit: an rpc, driven by lab/api-grpc.sh; ha_fields() is what
         # it does, and is tested.
         def GetHaStatus(self, req, context):
-            got = self._ask(context, "ha")
+            bad = ha_peer_path_error(req.peer_path)
+            if bad:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, bad)
+            got = self._ask(context, "ha", {"path": req.peer_path})
             f = ha_fields(got["facts"])
             routers, div = f.pop("routers"), f.pop("divergences")
             out = pb.HaStatus(text=got["text"],

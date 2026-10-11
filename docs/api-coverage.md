@@ -21,8 +21,9 @@
 
 | Class | Commands |
 |---|---|
-| typed | 777 |
-| text | 1 |
+| typed | 778 |
+| text | 0 |
+| none | 0 |
 | n/a | 55 |
 
 Configuration statements are counted one per grammar path. Every one
@@ -86,7 +87,8 @@ grouping rule (#533).
    pinned, lent), `GetIdentity`, `VerifyHistory`, `ListAlgs`,
    `ListForwards`, `GetHaStatus`. Each reads the VTY's own screen through
    the same Shell and carries it verbatim beside the fields. `show cgnat ha
-   peer <file>` - a path on the box's disk - stays text.
+   peer <file>` is `GetHaStatusRequest.peer_path` since #558's last phase:
+   an absolute path, read as the account, a regular file only.
 6. **Routing detail.** OSPF and IS-IS interfaces - *delivered as #558's
    seventh phase*: `ListOspfInterfaces` (both MTUs and the stall between
    them) and `ListIsisInterfaces` (the circuits and the dataplane's IS-IS
@@ -109,8 +111,9 @@ grouping rule (#533).
     with its reply or hop read, then `end`; the VTY's own validation, its
     count ceiling and its deadline. `Show` still answers them as text.
 
-Every row this table marks `text` is reachable today; `none` rows become
-reachable in the phase their note names.
+No VTY command is `text` or `none` since #558's last phase: each is an rpc
+with fields, or excluded on purpose (`n/a`). `Show` still answers every
+screen as text, for a console.
 
 ## Operational prompt
 
@@ -147,7 +150,7 @@ reachable in the phase their note names.
 | `show cgnat history verify` | typed | OperationalService.VerifyHistory | every account |  |
 | `show cgnat alg` | typed | OperationalService.ListAlgs | every account |  |
 | `show cgnat forward [<pool>]` | typed | OperationalService.ListForwards | every account |  |
-| `show cgnat ha peer <file>` | text | OperationalService.Show | every account | a file on the box's disk; GetHaStatus reads the peer copy at its default path |
+| `show cgnat ha peer <file>` | typed | OperationalService.GetHaStatus | every account | peer_path: an absolute path, read as the account, a regular file of 1 MiB at most |
 | `show nat64 pool` | typed | OperationalService.ListPools | every account | the pools whose level is nat64 (#572) |
 | `show nat64 subscriber <IPv6-address>` | typed | OperationalService.GetSubscriber | every account | an IPv6 address: the NAT64 subscriber (#572) |
 | `show nat64 translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | a NAT64 pool's public address answers its /56 (#572) |

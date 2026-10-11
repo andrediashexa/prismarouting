@@ -313,6 +313,38 @@ check(_cfg is None and _why, f"a directory must be refused with a reason: "
                              f"{_why!r}")
 print(f"  and a directory reads as: {_why}")
 
+# ONLY A REGULAR FILE OF A CONFIGURATION'S SIZE (#558): the path is typed at
+# the prompt and sent by an API client. A FIFO with no writer would hold the
+# reader for ever (open() blocks, then read() waits); a device is read until
+# memory runs out. Measured on the reader as 0.152.9 had it: open() of a FIFO
+# with no writer blocked and this case hung the suite, so it runs under an
+# alarm that fails it instead.
+import signal  # noqa: E402
+_fifo = os.path.join(WORK, "peer.fifo")
+os.mkfifo(_fifo)
+signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(
+    TimeoutError("read_peer_config waited on a FIFO")))
+signal.alarm(5)
+try:
+    _cfg, _why = prismash.read_peer_config(_fifo)
+except TimeoutError as e:
+    _cfg, _why = None, f"HUNG: {e}"
+signal.alarm(0)
+check(_cfg is None and _why == f"{_fifo} is not a regular file",
+      f"a FIFO is refused, never waited on: {_why!r}")
+_cfg, _why = prismash.read_peer_config("/dev/zero")
+check(_cfg is None and _why == "/dev/zero is not a regular file",
+      f"a device is refused, never read: {_why!r}")
+_big = peer_file(RUNNING + "#" * prismash.PEER_CONFIG_MAX, "big.conf")
+_cfg, _why = prismash.read_peer_config(_big)
+check(_cfg is None and "more than a configuration's" in (_why or ""),
+      f"a file past PEER_CONFIG_MAX is refused: {_why!r}")
+out = said(shell().show_ha, ["peer", "/dev/zero"])
+check("/dev/zero is not a regular file" in out
+      and "nothing here says the two boxes agree" in out,
+      f"and the screen says why, claiming nothing:\n{out}")
+print(f"  a FIFO, a device and {prismash.PEER_CONFIG_MAX + 1} bytes refused")
+
 print("\n=== a dataplane that is not answering never reads as a match ===")
 # Without this the empty configuration a dead dataplane produces is compared
 # as if it were the truth: a box with two pools reports both as "the peer has

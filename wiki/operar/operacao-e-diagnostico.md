@@ -499,6 +499,8 @@ flowchart TD
 | `show bgp` (ou `ospf`, ou `isis`) não responde | `show version` nomeia os daemons parados; um parado recebe configuração e não chega a lugar nenhum |
 | A caixa subiu, roteia e não encaminha; `show interface` sem as placas | o dataplane desistiu de subir: leia `/var/log/prisma-routing/why-the-dataplane-stopped` |
 | Sessão BGP caiu e voltou sem ninguém ver | `show log kind bgp`: cada queda com o motivo do FRR, e `went down and came back between two readings` quando caiu e voltou entre duas leituras |
+| Porta que caiu e voltou rápido demais para alguém ver | `show log kind link`: `went down and came back between two readings (N time(s))` — o dataplane conta cada queda de link da porta, e o Linux, as das placas que ficaram com ele; a queda é registrada mesmo que as duas leituras tenham visto o link em pé |
+| O módulo da placa de gerência (a que ficou com o Linux) | `show log kind transceiver`: módulo inserido, retirado, luz abaixo do aviso, com a placa nomeada `(held by Linux)` e origem `host`; uma placa virtio, que não tem módulo, não gera evento nenhum |
 | A caixa ficou sem placas depois de um reinício | `show log kind gave-up`: o dataplane abandonado, ou o `system dataplane restart` que não terminou, e por quê |
 | `show system uptime` diz `restarted after the boot` | `show log source dataplane` diz a causa: um `system dataplane restart` (de quem), uma atualização, ou `unexpected` — ninguém pediu, e `why-the-dataplane-stopped` costuma ter o motivo |
 | Sessões novas recusadas com a caixa de pé | `show cgnat memory`: a memória do CGNAT encheu, e a caixa recusa em vez de cair. `memory` em `nat` > `cgnat` dá mais, a partir do próximo boot |

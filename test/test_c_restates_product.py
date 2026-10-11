@@ -258,12 +258,12 @@ harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
 # #550 gave the block-event rings' shared segment one, and 33 since #485
 # gave NAT64's arithmetic one, and 34 since #485's phase 5 gave FTP64
 # one, and 35 since #590 gave a transceiver read's ranges and build-id
-# one. The number is written down so that a glob that stops
+# one, and 36 since #588 gave a port's count of link changes one. The number is written down so that a glob that stops
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 35,
-      f"{len(harnesses)} C harnesses found, not the 35 this repository has - "
+check(len(harnesses) == 36,
+      f"{len(harnesses)} C harnesses found, not the 36 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0

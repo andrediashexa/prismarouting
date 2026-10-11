@@ -55,10 +55,18 @@ check(by.get(("operational", "show hardware"), (0, 0, 0, ""))[3] == "typed",
 check(by.get(("operational", "ping"), (0, 0, 0, ""))[3] == "typed",
       "ping is typed, a stream (Ping, #558 phase 7)")
 _text = [" ".join(r[1]) for r in rows if r[3] == "text"]
-# `show bfd` is typed since BFD's phase 2 (#559): ListBfdSessions.
-check(_text == ["show cgnat ha peer"],
-      "and the one screen left as text is the peer copy named by a path on "
-      f"the box's disk: {_text}")
+# `show bfd` is typed since BFD's phase 2 (#559): ListBfdSessions; and the
+# last one, `show cgnat ha peer <file>`, since #558's last phase:
+# GetHaStatusRequest.peer_path.
+check(_text == [], f"no VTY command is left as text (#558): {_text}")
+check(by.get(("operational", "show cgnat ha peer"), (0, 0, 0, ""))[3] == "typed"
+      and "GetHaStatus" in by.get(("operational", "show cgnat ha peer"),
+                                  (0, 0, 0, "", ""))[4],
+      "show cgnat ha peer <file> is typed: GetHaStatus with peer_path (#558)")
+_doc = open(os.path.join(REPO, "docs", "api-coverage.md")).read()
+check("| text | 0 |" in _doc and "| none | 0 |" in _doc,
+      "and the summary says so, text 0 and none 0, rather than leaving the "
+      "rows out")
 check(by.get(("operational", "show bfd peers"), (0, 0, 0, ""))[3] == "typed",
       "show bfd peers is typed (ListBfdSessions, #559 phase 2)")
 check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "typed",
