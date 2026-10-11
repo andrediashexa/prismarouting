@@ -59,8 +59,12 @@ for k, v in (("PRISMA_CONFIG", "prisma-routing.conf"),
              # own snmpd is not the box's (test/test_bfdtraps.py).
              ("PRISMA_SNMPD_CONF", "snmpd.conf"),
              ("PRISMA_AGENTX_SOCKET", "agentx.sock"),
-             ("PRISMA_BFD_NOTIFY_STATE", "bfd-notifications")):
+             ("PRISMA_BFD_NOTIFY_STATE", "bfd-notifications"),
+             # The cards Linux holds (#588): this machine's own are not the
+             # box's; the tests that read some build a sysfs of their own.
+             ("PRISMA_SYS_CLASS_NET", "no-sys-class-net")):
     os.environ[k] = os.path.join(_root, v)
+os.environ.pop("PRISMA_WATCH_NETDEVS", None)
 
 import events  # noqa: E402
 import eventwatch as W  # noqa: E402
@@ -118,7 +122,8 @@ check(set(up) == {"GigabitEthernet0/8/0", "GigabitEthernet0/8/0.100",
       f"link_reading: the operator's interfaces, not local0 nor a TAP: "
       f"{sorted(up)}")
 check(up["GigabitEthernet0/8/0.100"] == {"admin": "up", "link": "up",
-                                         "parent": "GigabitEthernet0/8/0"},
+                                         "parent": "GigabitEthernet0/8/0",
+                                         "ups": None, "downs": None},
       "link_reading: a sub-interface's link is its parent's")
 check(down["GigabitEthernet0/8/0.100"]["link"] == "down",
       "link_reading: and goes down with it")
@@ -830,6 +835,239 @@ with contextlib.redirect_stderr(_err):
 check(_f1 == 0 and _f2 == 0 and _err.getvalue().count("forwarding failed")
       == 1, f"watch_forward: a pass that raised is no pass, said once: "
       f"{_err.getvalue()!r}")
+
+print("\n=== a flap between two readings, counted (#588) ===")
+# The plugin's count (bpa_linkcount.c) and Linux's carrier counts make a
+# link that went down and came back between two readings an event. Mutations
+# shown red: link_changes() skipping a port whose state did not move (the
+# flap said nothing); link_transitions() without the backwards check (a
+# memif made again said 3 flaps); link_transitions() ignoring `restarted`.
+_csrc = open(os.path.join(HERE, "..", "src", "plugins", "bpa",
+                          "bpa_linkcount.c")).read()
+check('"interface %v link %s ups %u downs %u"' in _csrc,
+      "parse_link_changes reads bpa_linkcount.c's own format string")
+LC = ("interface GigabitEthernet0/8/0 link up ups {u} downs {d}\n"
+      "interface GigabitEthernet0/9/0 link up ups 1 downs 0\n"
+      "interface tap4096 link up ups 1 downs 0\n")
+check(W.parse_link_changes(LC.format(u=4, d=3)) == {
+          "GigabitEthernet0/8/0": {"link": "up", "ups": 4, "downs": 3},
+          "GigabitEthernet0/9/0": {"link": "up", "ups": 1, "downs": 0},
+          "tap4096": {"link": "up", "ups": 1, "downs": 0}},
+      "parse_link_changes: each port's ups and downs")
+check(W.parse_link_changes("show bpa: unknown input `link-changes'") == {}
+      and W.parse_link_changes("") == {},
+      "a plugin older than the count is no count, not zeros")
+
+
+def clinks(a="up", u=1, d=0):
+    return W.link_reading(routes.parse_interfaces(IFACES),
+                          routes.parse_hardware(HW.format(a=a)),
+                          W.parse_link_changes(LC.format(u=u, d=d)))
+
+
+c0 = clinks()
+check(c0["GigabitEthernet0/8/0"]["downs"] == 0
+      and c0["GigabitEthernet0/8/0.100"]["downs"] is None,
+      "link_reading: a port carries its count; a sub-interface none of its own")
+ch = W.link_changes(c0, clinks("up", 4, 3))
+check(len(ch) == 1 and ch[0]["severity"] == "warning"
+      and ch[0]["reason"] == "flap"
+      and ch[0]["text"] == "interface GigabitEthernet0/8/0: link went down and "
+      "came back between two readings (3 time(s)): the wire or the far end; "
+      "its 2 sub-interface(s) with it",
+      f"link_changes: up twice, three downs between: {texts(ch)}")
+ch = W.link_changes(clinks("down", 1, 1), clinks("down", 3, 3))
+check(len(ch) == 1 and "came up and went down again between two readings "
+      "(2 time(s)); it is down" in ch[0]["text"],
+      f"down twice, two ups between: {texts(ch)}")
+ch = W.link_changes(c0, clinks("down", 2, 2))
+check(len(ch) == 1 and ch[0]["text"].startswith(
+          "interface GigabitEthernet0/8/0: link down, administratively up")
+      and ch[0]["text"].endswith("(3 changes since the last reading)"),
+      f"a change of state that took three: {texts(ch)}")
+ch = W.link_changes(c0, clinks("down", 1, 1))
+check(len(ch) == 1 and "changes since" not in ch[0]["text"],
+      "one that took one says no count")
+check(W.link_changes(c0, clinks()) == [], "nothing moved, nothing said")
+check(W.link_changes(clinks("up", 4, 3), clinks("up", 1, 0)) == [],
+      "a count that went backwards (the port made again) is a baseline")
+check(W.link_changes(c0, clinks("up", 4, 3), restarted=True) == [],
+      "and so is a reading across a dataplane start")
+check(W.link_changes(links("up"), clinks("up", 4, 3)) == [],
+      "a reading with no count (an older plugin) says by state alone")
+
+# The cards Linux holds: a sysfs of the attributes the reader opens.
+_sys = os.path.join(_root, "sysfs")
+
+
+def card(name, flags="0x1003", carrier="1", ups=1, downs=0, counts=True):
+    d = os.path.join(_sys, name)
+    os.makedirs(d, exist_ok=True)
+    for f in ("carrier", "carrier_up_count", "carrier_down_count"):
+        if os.path.exists(os.path.join(d, f)):
+            os.remove(os.path.join(d, f))
+    with open(os.path.join(d, "flags"), "w") as fh:
+        fh.write(flags + "\n")
+    if carrier is not None:
+        with open(os.path.join(d, "carrier"), "w") as fh:
+            fh.write(carrier + "\n")
+    if counts:
+        for f, v in (("carrier_up_count", ups), ("carrier_down_count", downs)):
+            with open(os.path.join(d, f), "w") as fh:
+                fh.write(f"{v}\n")
+
+
+card("eno1")
+card("eno2", flags="0x1002", carrier=None)        # down: carrier is EINVAL
+card("eno3", counts=False)                         # a kernel before 4.16
+h0 = W.linux_link_reading(["eno1", "eno2", "eno3", "gone0"], _sys)
+check(h0 == {"eno1": {"admin": "up", "link": "up", "parent": "", "host": True,
+                      "ups": 1, "downs": 0},
+             "eno2": {"admin": "down", "link": "down", "parent": "",
+                      "host": True, "ups": 1, "downs": 0},
+             "eno3": {"admin": "up", "link": "up", "parent": "", "host": True,
+                      "ups": None, "downs": None}},
+      f"linux_link_reading: IFF_UP, the carrier, the kernel's counts; a card "
+      f"not there left out: {h0}")
+card("eno1", ups=3, downs=2)
+h1 = W.linux_link_reading(["eno1", "eno2", "eno3"], _sys)
+ch = W.link_changes(h0, h1, restarted=True)
+check(len(ch) == 1 and ch[0]["source"] == "host" and ch[0]["text"] ==
+      "interface eno1 (held by Linux): link went down and came back between "
+      "two readings (2 time(s)): the wire or the far end",
+      f"a Linux card's flap, by the kernel's counts, across a dataplane "
+      f"start too: {texts(ch)}")
+card("eno1", carrier="0", ups=3, downs=3)
+h2 = W.linux_link_reading(["eno1"], _sys)
+st = W.link_standing(h2)
+check([c["text"] for c in st] == ["interface eno1 (held by Linux): link "
+                                  "down, administratively up: the wire or "
+                                  "the far end"]
+      and st[0]["source"] == "host",
+      f"and a Linux card down stands as a port does: {st}")
+
+check(W._sysfs_word(os.path.join(_sys, "eno1", "flags")) == "0x1003"
+      and W._sysfs_word(os.path.join(_sys, "eno2", "carrier")) is None,
+      "_sysfs_word: an attribute's word, None for one that cannot be read")
+check(W._count("12") == 12 and W._count("\u00b2") is None
+      and W._count(None) is None and W._count("-1") is None,
+      "_count: ASCII digits only")
+check(W._link_what("eno1", {"host": True}) == "interface eno1 (held by Linux)"
+      and W._link_what("ge0.7", {"parent": "ge0"}) == "sub-interface ge0.7"
+      and W._link_what("ge0", {"parent": ""}) == "interface ge0",
+      "_link_what: a Linux card, a sub-interface, a port")
+_a = {"ups": 1, "downs": 0}
+check(W.link_transitions(_a, {"ups": 3, "downs": 2}) == (2, 2)
+      and W.link_transitions(_a, {"ups": 0, "downs": 0}) is None
+      and W.link_transitions(_a, {"ups": None, "downs": None}) is None
+      and W.link_transitions(_a, {"ups": 3, "downs": 2}, True) is None
+      and W.link_transitions(_a, {"ups": 3, "downs": 2, "host": True},
+                             True) == (2, 2),
+      "link_transitions: the moves; none backwards, unknown, or across a "
+      "dataplane start for its own ports")
+
+print("\n=== the Shell reads both, and the modules of Linux's cards ===")
+os.environ["PRISMA_WATCH_NETDEVS"] = "eno1 GigabitEthernet0/9/0"
+sh = prismash.Shell()
+sh.SYS_CLASS_NET = _sys
+sh.host_nics = lambda: [{"name": "eno2"}]
+check(sh.watch_linux_cards({"GigabitEthernet0/9/0": {}}) == ["eno2", "eno1"],
+      "watch_linux_cards: the PCI cards and the named netdevs, less the "
+      "dataplane's")
+check(sh.watch_linux_cards({"host-eno2": {}}) == ["eno1",
+                                                  "GigabitEthernet0/9/0"],
+      "and less a card the dataplane holds as host-<card>")
+card("eno1", carrier="1", ups=3, downs=2)
+sh.dp = Dp(dict(ANSWERS, **{"show bpa link-changes": LC.format(u=1, d=0)}))
+sh.frr = frr()
+r0 = sh.watch_read("link")
+check(r0["GigabitEthernet0/8/0"]["ups"] == 1
+      and (r0.get("eno1") or {}).get("host")
+      and (r0.get("eno2") or {}).get("admin") == "down",
+      f"watch_read link: the plugin's counts and Linux's cards: "
+      f"{sorted(r0)}")
+sh.dp.answers["show bpa link-changes"] = LC.format(u=2, d=1)
+card("eno1", carrier="1", ups=4, downs=3)
+ch = W.link_changes(r0, sh.watch_read("link"))
+check(sorted(c["subject"] for c in ch) == ["GigabitEthernet0/8/0", "eno1"]
+      and all("between two readings (1 time(s))" in c["text"] for c in ch),
+      f"a flap of each between two of the watcher's readings: {texts(ch)}")
+sh.dp.answers["show bpa link-changes"] = "show bpa: unknown input `link-changes'"
+check(sh.watch_read("link")["GigabitEthernet0/8/0"]["ups"] is None,
+      "an older plugin: the ports by state alone")
+
+# A module on a card Linux holds, read in this process with the kernel's
+# ioctl - a stand-in here. Mutation shown red: watch_read() reading the
+# plugin's ports only (as before #588's last phase): eno1 never read.
+_mod = {"eno1": F.sfp_low_rx(), "eno2": None}
+
+
+def kioctl(dev, req):
+    import struct as _st
+    cmd = _st.unpack_from("=I", req)[0]
+    have = _mod.get(dev, "virtio")
+    if have == "virtio":
+        raise OSError(95, "Operation not supported")
+    if have is None:
+        raise OSError(5, "Input/output error")    # an empty cage (ixgbe)
+    if have == "gone":
+        raise OSError(19, "No such device")
+    if cmd == T.ETHTOOL_GMODULEINFO:
+        return _st.pack("=III32x", cmd, 2, 512)
+    _, _, off, n = _st.unpack_from("=IIII", req)
+    return req[:16] + have[off:off + n]
+
+
+sh.linux_module_ioctl = kioctl
+os.environ["PRISMA_WATCH_NETDEVS"] = "eno1 veth9"
+sh.dp = Dp(dict(ANSWERS))
+_doors = []
+prismash.doors.runner = lambda *a, **k: (
+    lambda argv, timeout=30: _doors.append(argv) or (1, ""))
+m0 = sh.watch_read("transceiver")
+_e1, _e2 = m0.get("eno1") or {}, m0.get("eno2") or {"present": True}
+check(_e1.get("present") and _e1.get("host") and _e1.get("rx")
+      == "low-warning" and not _e2["present"] and "veth9" not in m0
+      and m0["GigabitEthernet0/8/0"]["present"] and not _doors,
+      f"watch_read transceiver: the Linux cards' modules beside the DPDK "
+      f"port's, read here, no door; a virtio-like card left out: "
+      f"{sorted(m0)}")
+st = W.standing_changes("transceiver", m0)
+check([c["text"] for c in st] == ["standing at start: eno1: rx power "
+                                  "-19.00 dBm, below its low warning "
+                                  "(-18.01 dBm)"]
+      and st[0]["source"] == "host",
+      f"what stands on a Linux card is said as on a dataplane port: "
+      f"{[c['text'] for c in st]}")
+_mod.update(eno1=None, eno2=F.sfp_internal())
+m1 = sh.watch_read("transceiver")
+ch = W.module_changes(m0, m1)
+check(sorted(c["text"] for c in ch) == [
+          "module inserted in eno2: Rei do SFP RSMPP8510GL-03D (serial "
+          "FP23H150378)",
+          "module removed from eno1 (it was Rei do SFP RSMPP8510GL-03D "
+          "(serial FP23H150378))"]
+      and all(c["source"] == "host" for c in ch),
+      f"a module taken out of one Linux card and put in another: "
+      f"{[c['text'] for c in ch]}")
+_mod.update(eno1="gone")
+m2 = sh.watch_read("transceiver")
+check("eno1" not in m2 and W.module_changes(m1, m2) == [],
+      "a card that left Linux (handed to the dataplane) is not a module "
+      "removed")
+# A virtio card, read every minute for a day: nothing, ever.
+_mod.clear()
+os.environ["PRISMA_WATCH_NETDEVS"] = "ens18"
+sh.host_nics = lambda: []
+vst, vev = {}, []
+for i in range(3):
+    ev, vst = W.tick(vst, {"transceiver": sh.watch_read("transceiver")},
+                     {"dataplane": None, "routing": None, "boot": NOW - 900},
+                     NOW + 60 * i)
+    vev += ev
+check(not [e for e in vev if "ens18" in e["text"]],
+      f"a virtio card (EOPNOTSUPP) is quiet: {texts(vev)}")
+os.environ.pop("PRISMA_WATCH_NETDEVS", None)
 
 print("\n=== settings: applied and refused, by the commit's session ===")
 if os.path.exists(os.environ["PRISMA_EVENTS"]):

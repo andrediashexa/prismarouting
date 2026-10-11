@@ -100,6 +100,21 @@ vppctl set interface state memif1/0.100 up
 vppctl create memif socket id 3 filename /run/vpp/lab-memif-alone.sock
 vppctl create interface memif id 0 socket-id 3 master
 vppctl set interface state memif3/0 up
+# A second pair, flapped between two readings (#588): memif5/0 and its far
+# end memif6/0.
+vppctl create memif socket id 5 filename /run/vpp/lab-memif-flap.sock
+vppctl create interface memif id 0 socket-id 5 master
+vppctl create memif socket id 6 filename /run/vpp/lab-memif-flap.sock
+vppctl create interface memif id 0 socket-id 6 slave
+vppctl set interface state memif5/0 up
+vppctl set interface state memif6/0 up
+# A card Linux holds (#588): a veth pair, veth-c watched as the management
+# card is - named through PRISMA_WATCH_NETDEVS, since a veth is not PCI -
+# and veth-d its far end. A veth has no module: the kernel answers
+# EOPNOTSUPP, as a virtio card does.
+ip link add veth-c type veth peer name veth-d 2>/dev/null
+ip link set veth-c up; ip link set veth-d up
+export PRISMA_WATCH_NETDEVS=veth-c
 hexof() {   # hexof <fixture expression> - its bytes as one hex word
   python3 -c "import sys; sys.path.insert(0, '/src/test'); \
 import transceiver_fixtures as F; print(($1).hex())"
@@ -294,6 +309,32 @@ N_AFTER=$($HX -c "show log last 1000" 2>/dev/null | grep -c '^[0-9][0-9][0-9][0-
 echo "  events before and after three idle passes: $N_BEFORE $N_AFTER"
 
 echo
+echo "=========== 8b. a flap faster than a reading (#588) ==========="
+# Down and up again with NO pass in between: the state reads up at both
+# passes, and only the counts say it moved.
+link_is() { [ "$(link_of "$1")" = "$2" ]; }
+vppctl delete interface memif memif6/0
+wait_for 10 link_is memif5/0 down
+FAST_DOWN=$(link_of memif5/0)
+vppctl create interface memif id 0 socket-id 6 slave
+vppctl set interface state memif6/0 up
+wait_for 10 link_is memif5/0 up
+COUNTS=$(vppctl show bpa link-changes | tr -d '\r' | grep 'memif5/0')
+echo "  memif5/0 went $FAST_DOWN and came back; the plugin: $COUNTS"
+ip link set veth-d down; sleep 0.3; ip link set veth-d up; sleep 0.3
+VETH_COUNTS="up $(cat /sys/class/net/veth-c/carrier_up_count) down $(cat /sys/class/net/veth-c/carrier_down_count)"
+echo "  veth-c's carrier, as Linux counts it: $VETH_COUNTS"
+echo "  $(pass_)"
+# And a Linux card's link down, read as a state, then back.
+ip link set veth-d down; sleep 0.3
+echo "  $(pass_)"
+ip link set veth-d up; sleep 0.3
+echo "  $(pass_)"
+VETH_MODULE=$(python3 -c "import sys; sys.path.insert(0, '/src/src/prismash'); \
+import transceiver; print(transceiver.linux_read('veth-c')[0])")
+echo "  veth-c's module, as the kernel answers: $VETH_MODULE"
+
+echo
 echo "=========== 9. a link that flaps is held, not written each time ==========="
 for _ in 1 2 3 4 5 6; do
   vppctl delete interface memif memif2/0
@@ -353,6 +394,20 @@ expect_said "the failed login, the account typed and where from" \
 expect_said "the login, to the VTY" "noc logged in to the VTY (by noc, from ssh 127.0.0.1)" "$K_LOGIN"
 expect_said "the pool out of blocks" \
   "CGNAT pool small ran out of blocks: 1 request(s) for a block refused since the last reading, 4 of 4 blocks in use" "$ALL"
+# A flap faster than a reading (#588).
+expect_in "control: the plugin counted memif5/0 down once and up again" \
+  "interface memif5/0 link up ups 2 downs 1" "$COUNTS"
+expect_in "control: the kernel counted veth-c's carrier changes" "down" "$VETH_COUNTS"
+expect_said "a dataplane port's flap between two readings, with how many times" \
+  "interface memif5/0: link went down and came back between two readings (1 time(s)): the wire or the far end" "$K_LINK"
+expect_said "a Linux card's flap between two readings, by the kernel's counts" \
+  "interface veth-c (held by Linux): link went down and came back between two readings (1 time(s))" "$K_LINK"
+expect_said "a Linux card's link down, read as a state" \
+  "interface veth-c (held by Linux): link down, administratively up: the wire or the far end" "$K_LINK"
+expect_in "control: veth-c has no module, the kernel says so (as virtio does)" \
+  "-95" "$VETH_MODULE"
+expect "and a card with no module is quiet: no module event, nothing standing" \
+  sh -c "! grep -q 'module.*veth-c\|veth-c: rx\|veth-c: temperature' \"$PRISMA_EVENTS\" && [ -s \"$PRISMA_EVENTS\" ]"
 expect "the idle passes wrote nothing" \
   sh -c "[ \"$N_BEFORE\" -gt 0 ] && [ \"$N_BEFORE\" = \"$N_AFTER\" ]"
 expect "a flapping link is held: 4 changes one by one, not 14" \

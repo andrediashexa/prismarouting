@@ -34,10 +34,17 @@ and the API's streaming `WatchEvents`, and a pool with no block free and a
 module's level moving are SNMP notifications beside the links' and BGP's
 standard ones.
 
+Since #588's last phase the watcher also reads the **cards Linux holds** -
+the management card, a spare port - for their links and their modules (the
+kernel's module EEPROM interface, as `ethtool -m`), and a link that went
+**down and back between two readings** is still an event, with how many
+times: the dataplane counts each port's link changes (`show bpa
+link-changes`) and Linux counts each card's carrier changes.
+
 FRR's `show logging` is unchanged: each routing daemon's logging
 *configuration*, as before. Phase 1 is delivered in 0.151.14, phase 2 in
-0.152.0 and phase 3 in 0.152.2; what is left is at the end of phase 3's
-section.
+0.152.0, phase 3 in 0.152.2, and the cards Linux holds and the flap between
+two readings in 0.152.10 ([the last phase](#the-last-phase-linuxs-cards-and-a-flap-between-two-readings)).
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
@@ -61,7 +68,8 @@ section.
 |---|---|---|
 | **1** | The record itself, bounded and kept across reboots. Commits, rollbacks, `commit confirmed` confirmed and expired, with the account and where the session came from. Upgrades (asked, and done). Reboots and shutdowns asked from the VTY or the API. Dataplane and routing starts with their cause, the cause recorded before the action. `show log [last <n>] [since <time>] [severity <level>] [source <name>]`, and the box's `| match`. `ListEvents`, and the cause in `GetSystem`. | *delivered in 0.151.14* |
 | **2** | What the box sees happen rather than what it is told: interface and link up/down, administrative or not, ports and sub-interfaces; a module inserted, removed, swapped, and its RX power or temperature past a threshold and back (#590's levels); BGP and BFD sessions up/down with the reason (FRR's last reset, bfdd's diagnostic); a CGNAT pool out of blocks and with blocks again; the log exporter losing or reaching its collector (`logstate`'s readings); logins, failed logins and logouts (wtmp and btmp); SNMP and API settings applied or refused; the dataplane given up on (`watch-the-dataplane`, `prisma-hot-card`). Each from a watcher that compares a reading with the last one, as `observe_starts()` does - never from a log line. Flapping held and counted. `show log kind`; ListEvents' `kind`, `subject`, `reason`. | *delivered in 0.152.0* |
-| **3** | What stands when the watcher starts, said once a boot (the X520's RX below its warning on 10.40.200.166, never said). Where the record goes and how it is followed: `system` > `logging`, remote syslog destinations in Prisma's terms (address, port, UDP or TCP, a minimum severity, a source address or a VRF), sent by the watcher from events.log; `show system logging`; `monitor log`, a follow mode with `show log`'s filters, and a streaming `WatchEvents` in the API; SNMP notifications where PRISMA-ROUTING-MIB has an object (#507's machinery): a pool with no block free and a module's level moving, beside the standard linkDown/linkUp and bgpBackwardTransition already sent. | *delivered in 0.152.2*; left: a BFD notification (no MIB object), the modules of cards Linux holds, a link flap faster than a reading on a port with no counter of its own |
+| **3** | What stands when the watcher starts, said once a boot (the X520's RX below its warning on 10.40.200.166, never said). Where the record goes and how it is followed: `system` > `logging`, remote syslog destinations in Prisma's terms (address, port, UDP or TCP, a minimum severity, a source address or a VRF), sent by the watcher from events.log; `show system logging`; `monitor log`, a follow mode with `show log`'s filters, and a streaming `WatchEvents` in the API; SNMP notifications where PRISMA-ROUTING-MIB has an object (#507's machinery): a pool with no block free and a module's level moving, beside the standard linkDown/linkUp and bgpBackwardTransition already sent. | *delivered in 0.152.2*; the BFD notification in 0.152.3 (#559) |
+| **4** | What phases 2 and 3 left: the cards Linux holds - their links and their modules, the same events and standing conditions as a dataplane port's, read by the watcher in its own process (no door); and a link that went down and came back between two readings, from counts of the link's changes - the plugin's (`show bpa link-changes`) for a dataplane port, the kernel's carrier counts for a card Linux holds. | *delivered in 0.152.10* |
 
 ## How it is written
 
@@ -188,8 +196,8 @@ door call, a timer run or FRR's debug is not a reading.
 
 | Kind | Read from | Every | Source | What it says |
 |---|---|---|---|---|
-| `link` | `show interface` (admin) and `show hardware-interfaces brief` (link) | 10 s | dataplane | a port's link down or up, saying it is not administrative ("the wire or the far end") and counting the sub-interfaces it took with it; a port or a sub-interface administratively down or up. A sub-interface's link is its parent's, so it says only its own administrative changes: an ISP's port carries hundreds |
-| `transceiver` | the plugin's `show bpa transceiver`, `transceiver.decode()` | 60 s | dataplane | a module inserted (with what it is), removed, swapped; its RX power or temperature past its warning (warning) or alarm (error) threshold, with the level and the threshold, and back within them |
+| `link` | `show interface` (admin), `show hardware-interfaces brief` (link) and `show bpa link-changes` (each port's count of link changes); for a card Linux holds, `/sys/class/net/<card>`'s `flags`, `carrier`, `carrier_up_count` and `carrier_down_count` | 10 s | dataplane; host for a card Linux holds | a port's link down or up, saying it is not administrative ("the wire or the far end") and counting the sub-interfaces it took with it; a port or a sub-interface administratively down or up; a link that went down and came back between two readings, with how many times (#588's last phase). A sub-interface's link is its parent's, so it says only its own administrative changes: an ISP's port carries hundreds |
+| `transceiver` | the plugin's `show bpa transceiver` for a DPDK port; the kernel's module EEPROM interface (`ethtool -m`'s SIOCETHTOOL) for a card Linux holds, read by the watcher itself; `transceiver.decode()` for both | 60 s | dataplane; host for a card Linux holds | a module inserted (with what it is), removed, swapped; its RX power or temperature past its warning (warning) or alarm (error) threshold, with the level and the threshold, and back within them. A card whose driver has no module to read (virtio, a veth: EOPNOTSUPP) says nothing, ever |
 | `bgp` | `show bgp vrf all neighbors json` | 10 s | routing | a session Established, or leaving it with FRR's reason - `lastResetDueTo`, the NOTIFICATION's reason and the peer's shutdown message; and one that went down and came back between two readings, seen by FRR's `connectionsDropped` |
 | `bfd` | `show bfd peers [counters] json` | 10 s | routing | a session up, or down with bfdd's diagnostic; and down and back between two readings, by its down counter (at a 300 ms detect time a reading every 10 s sees the state only by luck) |
 | `pool` | `show bpa blocks` | 30 s | dataplane | a pool whose refusals grew: out of blocks, once, however long it goes on refusing; and with a block free again once it refuses nobody. A deterministic pool's reserve the same |
@@ -300,10 +308,11 @@ at boot is written, and so is the retry after the interfaces (#591).
   the VTY - the VTY has no password of its own, so "to the VTY" is read
   from the account's shell. A first reading starts at the end of each file:
   history is not news.
-* **Modules on the dataplane's ports only.** A card Linux holds (the
-  management card, an AF_XDP hot card) is read through a door, and a door
-  call every minute is the journal noise #588 removed. Left for phase 3,
-  with a reader that needs no door.
+* **Modules on the dataplane's ports only** (phase 2). A card Linux holds
+  (the management card, an AF_XDP hot card) was read through a door, and a
+  door call every minute is the journal noise #588 removed. The last phase
+  reads them in the watcher's own process, which is root on the host
+  already: no door, nothing in the journal.
 * **A UDP collector cannot be seen.** The box sees its sends fail, not a
   collector go away, so "lost" for IPFIX over UDP is LogWatch's stalled
   verdict, which a collector that silently drops what it is sent never
@@ -538,14 +547,108 @@ standing event says it.
 * **A 0.152.0 state file says what stands once**, although the boot did not
   change: its watcher never said it.
 
-### What is left
+### What was left, and where it went
 
-* **A BFD notification.** bfdd serves no SNMP and PRISMA-ROUTING-MIB has no
-  BFD object; it needs one (a session table) before a monitor can watch it.
-* **The modules of cards Linux holds** (phase 2's): read through a door
-  today, a call a minute the journal would carry.
-* **A link flap faster than a reading** on a port with no counter of its own
-  (phase 2's).
+* **A BFD notification**: BFD-STD-MIB's own pair, sent by this watcher, in
+  0.152.3 (#559).
+* **The modules of cards Linux holds** and **a link flap faster than a
+  reading**: #588's last phase, below.
+
+## The last phase: Linux's cards, and a flap between two readings
+
+### The cards Linux holds
+
+The watcher reads, beside the dataplane's ports, every PCI card Linux still
+holds - `show hardware`'s list less what the dataplane took: the management
+card, a spare port - for two things:
+
+* **Its link**: the administrative state from `IFF_UP` in
+  `/sys/class/net/<card>/flags`, the link from `carrier`. The same events
+  and standing condition as a dataplane port's, named `interface <card>
+  (held by Linux)`, source `host`.
+* **Its module**: the kernel's module EEPROM interface - SIOCETHTOOL with
+  `ETHTOOL_GMODULEINFO` and `ETHTOOL_GMODULEEEPROM`, what `ethtool -m` sends
+  - decoded by the same `transceiver.decode()` the dataplane's bytes go
+  through: a module inserted, removed or swapped, its RX power or
+  temperature past a threshold and back, and what stands at start, in the
+  words a dataplane port's are said in, source `host`.
+
+**Read here, not through a door.** The VTY and the API read a Linux card's
+module through the host's door, because they run as an account in the
+management container; the watcher is root on the host already, so it calls
+`transceiver.linux_read()` itself. A door call a minute was the journal noise
+phase 2 refused to add.
+
+**A card with no module is quiet.** A virtio or veth card's driver has no
+module to read and the kernel answers EOPNOTSUPP: `decode()` calls it
+unreadable, and an unreadable module is neither in nor out - no event, no
+standing condition, at any reading. A card that has left Linux (given to
+the dataplane at its restart) is not read at all, so it is never "a module
+removed". An empty cage on a card that can read one answers an I/O error
+and is an empty cage: its module going in is an event.
+
+### A flap between two readings
+
+A reading every 10 s compares states, so a link that went down and came
+back between two readings reads `up` twice and was never said - the flap an
+operator chasing a bad fibre most needs. Two counts make it visible:
+
+* **The dataplane's ports: the plugin counts.** VPP keeps no count of a
+  link's changes (`show hardware-interfaces` prints the state and nothing of
+  how it got there, VPP 26.06), but every driver's link change goes through
+  `vnet_hw_interface_set_flags()`, which calls the functions registered
+  with `VNET_HW_INTERFACE_LINK_UP_DOWN_FUNCTION`. The plugin registers one
+  (`src/plugins/bpa/bpa_linkcount.c`) and `show bpa link-changes` prints,
+  per port, its state and how many times its link came up and went down
+  since the port was created:
+
+  ```
+  interface memif5/0 link up ups 2 downs 1
+  ```
+
+  A port deleted and created again starts from zero, and the watcher takes
+  a count that went backwards - or one read across a dataplane start - as a
+  new baseline, never as a flap. A dataplane plugin older than the command
+  answers "unknown input", and its ports are compared by their state alone,
+  as before.
+* **A card Linux holds: the kernel counts.** `carrier_up_count` and
+  `carrier_down_count` (Linux 4.16 and later) beside `carrier`.
+
+A port whose link reads the same twice but whose count moved says so, with
+how many times - what `lab/show-log-watch.sh` read back (2026-10-11, the
+lab's container in UTC), a memif's far end and a veth's taken away and put
+back with no reading between:
+
+```
+2026-10-11 06:34:25  warning  dataplane  interface memif5/0: link went down and
+    came back between two readings (1 time(s)): the wire or the far end
+2026-10-11 06:34:25  warning  host       interface veth-c (held by Linux): link
+    went down and came back between two readings (1 time(s)): the wire or the
+    far end
+```
+
+and a change of state that took more than one transition says how many
+(`interface X: link down, administratively up: the wire or the far end (3
+changes since the last reading)`). The flap is held and counted like any
+other change of the subject (`flap_admit()`): a port flapping all day is one
+summary event a window, not one a reading.
+
+**What it cannot see**: a change the driver never reported. VPP's DPDK
+ports are polled for their link by VPP's dpdk process every few seconds,
+so a flap shorter than that poll is not a change VPP saw either - the card's
+own registers saw it, and nothing above them did.
+
+### Decisions taken here, conservatively, that nobody asked for
+
+* **Source `host` for a card Linux holds**, `dataplane` for the
+  dataplane's ports: `show log source host` reads the host's cards with its
+  logins. `kind` is `link` and `transceiver` for both.
+* **A flap between two readings is a warning**, as a link down is: the
+  link was down, for however short a time.
+* **One event for a reading's flaps**, with the count, not one per flap:
+  the count is what the reading knows; when each happened, it does not.
+* **The cards are the PCI ones**, as `show hardware` lists them; a lab's
+  veth is named by `PRISMA_WATCH_NETDEVS`, which a box never sets.
 
 ## Reading it
 
@@ -651,6 +754,16 @@ filter the VTY refuses.
 * `lab/api-grpc.sh`'s phase for #588 phase 3 - WatchEvents streaming what is
   recorded while it is open, `last` first, a kind refused; `system logging`
   set with Edit, read in GetConfig and GetSystem.
+* `test/test_bpa_linkcount.c` (the last phase) - the plugin's count of a
+  port's link changes: a repeated report counted once, a port made again
+  starting from zero.
+* `test/test_eventwatch.py` (the last phase) - `show bpa link-changes`
+  parsed against bpa_linkcount.c's own format string, a flap between two
+  readings said with its count, a count that went backwards or crossed a
+  dataplane start taken as a baseline, a sysfs of Linux cards read, and a
+  Linux card's module read through a stand-in ioctl: present with its light
+  low (standing), taken out, put in another card, a card that left Linux,
+  and a virtio card quiet over three readings.
 * `lab/snmp-traps.sh` (phase 3) - `poolExhausted` and
   `transceiverStateChange` received by snmptrapd.
 * `lab/show-log-watch.sh` (phases 2 and 3) - what stands at start: a port
@@ -661,7 +774,12 @@ filter the VTY refuses.
   killed, a wrong SSH password and a right one, a four-block pool given five
   subscribers, a link flapped 14 times, each read back from `show log` with
   its reason; idle passes write nothing. Its off run points the record at a
-  path nothing can write.
+  path nothing can write. Since the last phase it also takes a second
+  memif's far end away and puts it back with no pass between - the plugin
+  counts it, `show log` says the flap with its count - flaps a veth that
+  `PRISMA_WATCH_NETDEVS` names as a card Linux holds, reads its link going
+  down as a state, and finds nothing said of its module (the kernel answers
+  EOPNOTSUPP, as for a virtio card).
 
 ### The mutations, each shown red and put back
 
@@ -718,6 +836,16 @@ applying each to the tree, running the suite named, and restoring the file.
 | `frame()` sending TCP unframed | test_eventfwd.py |
 | `rfc5424()` not mapping the severity | test_eventfwd.py: 5 checks, every event daemon.info |
 | `read_new()` not reading the rotated file's rest | test_eventfwd.py: 2 checks, the events before a rotation lost |
+| `link_changes()` skipping a port whose state did not move (the last phase) | test_eventwatch.py: 4 checks, a flap between two readings said nothing |
+| `link_transitions()` without the check for a count that went backwards | test_eventwatch.py: a port made again said as a flap |
+| `link_transitions()` ignoring `restarted`; and ignoring it for Linux's cards too | test_eventwatch.py: a dataplane start's counts said as flaps; a Linux card's flap across one lost |
+| `linux_link_reading()` without the kernel's counts | test_eventwatch.py: 3 checks |
+| `watch_read("link")` without the plugin's counts; without Linux's cards | test_eventwatch.py: 2 checks each |
+| `watch_read("transceiver")` reading the plugin's ports only, as phase 2 did | test_eventwatch.py: 3 checks, the Linux card's module, its standing and its removal never read |
+| `transceiver_facts(local=True)` keeping a card that left Linux | test_eventwatch.py: a card given to the dataplane said "module removed" |
+| `module_changes()` naming a Linux card's module the dataplane's | test_eventwatch.py |
+| `module_reading()` taking an unreadable (virtio) module as an empty cage | test_eventwatch.py: 2 checks |
+| `bpa_linkcount_note()` counting a repeated report; `bpa_linkcount_reset()` keeping the history | test_bpa_linkcount.c: 2 checks each |
 | `wanted()` always true | test_eventfwd.py: 3 checks, a notice sent to a warning collector |
 | `parse_host()` taking a name | test_eventfwd.py: 3 checks |
 | a new destination starting at the record's start | test_eventfwd.py: 6 checks, history sent as news |

@@ -1487,9 +1487,9 @@ service OperationalService {
   rpc ListAlgs(ListAlgsRequest) returns (ListAlgsResponse);
   // `show cgnat forward [<pool>]`: the port forwards the dataplane holds.
   rpc ListForwards(ListForwardsRequest) returns (ListForwardsResponse);
-  // `show cgnat ha`: whether this box and its peer map subscribers the same
-  // way, from the peer's copy at its default path. `peer <file>` - a path
-  // on the box's own disk - stays a screen, through Show.
+  // `show cgnat ha [peer <file>]`: whether this box and its peer map
+  // subscribers the same way, from the peer's copy at its default path or
+  // at GetHaStatusRequest.peer_path (#558).
   rpc GetHaStatus(GetHaStatusRequest) returns (HaStatus);
 
   // #558, phase 7: the rest of the VTY's screens, typed. Same convention as
@@ -2245,7 +2245,16 @@ message ListForwardsResponse {
   string text = 2;
 }
 
-message GetHaStatusRequest {}
+message GetHaStatusRequest {
+  // `show cgnat ha peer <file>`: the peer's copy read from this path instead
+  // of the default one; empty is the default. An absolute path on the box's
+  // own disk (anything else is INVALID_ARGUMENT), read as the account the
+  // call acts for, as its VTY session would read it: a file it may not read
+  // is not read, and HaStatus.peer_unread says why. Only a regular file of
+  // at most 1 MiB is read, by the VTY and the API alike: a device, a FIFO
+  // or a directory is refused there, never read.
+  string peer_path = 1;
+}
 
 message HaRouter {
   string interface = 1;

@@ -155,9 +155,9 @@ OPERATIONAL_RULES = [
      "OperationalService.VerifyHistory", ""),
     (["show", "cgnat", "alg"], "typed", "OperationalService.ListAlgs", ""),
     (["show", "cgnat", "forward"], "typed", "OperationalService.ListForwards", ""),
-    (["show", "cgnat", "ha", "peer"], "text", "OperationalService.Show",
-     "a file on the box's disk; GetHaStatus reads the peer copy at its default "
-     "path"),
+    (["show", "cgnat", "ha", "peer"], "typed", "OperationalService.GetHaStatus",
+     "peer_path: an absolute path, read as the account, a regular file of 1 "
+     "MiB at most"),
     (["show", "cgnat", "ha"], "typed", "OperationalService.GetHaStatus",
      "the peer copy at its default path"),
     # #559 phase 2: the sessions typed, from the reading the screen prints;
@@ -598,7 +598,8 @@ grouping rule (#533).
    pinned, lent), `GetIdentity`, `VerifyHistory`, `ListAlgs`,
    `ListForwards`, `GetHaStatus`. Each reads the VTY's own screen through
    the same Shell and carries it verbatim beside the fields. `show cgnat ha
-   peer <file>` - a path on the box's disk - stays text.
+   peer <file>` is `GetHaStatusRequest.peer_path` since #558's last phase:
+   an absolute path, read as the account, a regular file only.
 6. **Routing detail.** OSPF and IS-IS interfaces - *delivered as #558's
    seventh phase*: `ListOspfInterfaces` (both MTUs and the stall between
    them) and `ListIsisInterfaces` (the circuits and the dataplane's IS-IS
@@ -621,8 +622,9 @@ grouping rule (#533).
     with its reply or hop read, then `end`; the VTY's own validation, its
     count ceiling and its deadline. `Show` still answers them as text.
 
-Every row this table marks `text` is reachable today; `none` rows become
-reachable in the phase their note names.
+No VTY command is `text` or `none` since #558's last phase: each is an rpc
+with fields, or excluded on purpose (`n/a`). `Show` still answers every
+screen as text, for a console.
 """
 
 
@@ -656,9 +658,11 @@ def render():
         "| Class | Commands |",
         "|---|---|",
     ]
+    # typed, text and none always, a zero included: #558's measure is that
+    # the last two read 0, and a row left out says nothing.
     for cls in ("typed", "text", "none", "n/a", "UNCLASSIFIED"):
-        if count.get(cls):
-            lines.append(f"| {cls} | {count[cls]} |")
+        if count.get(cls) or cls in ("typed", "text", "none"):
+            lines.append(f"| {cls} | {count.get(cls, 0)} |")
     lines += [
         "",
         "Configuration statements are counted one per grammar path. Every one",

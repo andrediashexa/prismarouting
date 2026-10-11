@@ -27,6 +27,7 @@ add_vpp_plugin(bpa
   bpa_ip6_bind.c
   bpa_stats.c
   bpa_transceiver.c
+  bpa_linkcount.c
 
   API_FILES
   bpa.api

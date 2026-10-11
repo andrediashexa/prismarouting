@@ -295,10 +295,17 @@ carries the screen, verbatim, in `text`.
   holds, when it read them and RADIUS accounting's counters - never an
   entry, which no screen prints either (#21). Its `read_at` is the
   dataplane's own clock as it prints it.
-* **`GetHaStatus`** compares against the peer's copy at its default path;
-  `agree` is true only when that copy was read and no pool diverges, never
-  on a question left unanswered. `show cgnat ha peer <file>`, a path on the
-  box's own disk, stays a screen through `Show`.
+* **`GetHaStatus`** compares against the peer's copy at its default path,
+  or at `GetHaStatusRequest.peer_path` - `show cgnat ha peer <file>`, its
+  `text` that screen (#558); `agree` is true only when that copy was read
+  and no pool diverges, never on a question left unanswered. `peer_path` is
+  an absolute path on the box's own disk (a relative one is
+  INVALID_ARGUMENT: the worker has no directory an operator chose), read as
+  the account the call acts for, exactly as its VTY session reads it - a
+  file the account may not read is `peer_read` false with the reason in
+  `peer_unread`, and the call still answers this box. The VTY and the API
+  read only a regular file of at most 1 MiB: a FIFO, a device or a
+  directory is refused by name, never read.
 * **Widths.** `show bpa top` and `show bpa drops` printed through vppinfra
   widths, which cut a value longer than its column: a pool of more than
   twelve letters, more than 99,999 ports, a counter of thirteen digits. The

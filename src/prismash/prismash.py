@@ -23,6 +23,7 @@ import ipaddress
 import json
 import os
 import socket
+import stat
 import re
 import shlex
 import shutil
@@ -155,6 +156,10 @@ CONFIRM_PATH = os.environ.get("PRISMA_CONFIRM",
 # match is the same silent agreement this check exists to remove.
 PEER_CONFIG_PATH = os.environ.get("PRISMA_PEER_CONFIG",
                                   "/etc/prisma-routing/peer.conf")
+#: The largest peer copy read_peer_config() reads, bytes. A box's whole
+#: configuration is tens of kilobytes (an ISP's 300 sub-interfaces, 40 KB);
+#: past a megabyte the file is not a configuration.
+PEER_CONFIG_MAX = 1 << 20
 # How many times the box may fail to put the old configuration back before it
 # stops trying and says so.
 #
@@ -3631,13 +3636,32 @@ def read_peer_config(path=None):
     path = path or PEER_CONFIG_PATH
     if not os.path.exists(path):
         return None, f"there is no peer configuration at {path}"
+    # ONLY A REGULAR FILE, AND NOT A HUGE ONE (#558): the path is typed at
+    # the prompt and, since GetHaStatus takes it, sent by a client. A FIFO
+    # or /dev/zero would hold the reader for ever - the VTY's session, or
+    # the API account's worker and every call queued behind it - and
+    # /dev/urandom would be read until memory ran out. So it is opened
+    # without blocking and checked on the descriptor it is read from, which
+    # no rename between a check and the open can change.
     try:
-        with open(path) as f:
-            text = f.read()
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
     except OSError as e:
         # The reason, not a traceback. This runs in front of somebody in a
         # maintenance window, the same argument RollbackUnavailable makes.
         return None, f"{path}: {e.strerror}"
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None, f"{path} is not a regular file"
+        if st.st_size > PEER_CONFIG_MAX:
+            return None, (f"{path} is {st.st_size} bytes, more than a "
+                          f"configuration's {PEER_CONFIG_MAX}")
+        with os.fdopen(os.dup(fd), errors="replace") as f:
+            text = f.read(PEER_CONFIG_MAX + 1)
+    except OSError as e:
+        return None, f"{path}: {e.strerror}"
+    finally:
+        os.close(fd)
     cfg = Config.parse(text)
     if cfg.unknown:
         first = cfg.unknown[0]
@@ -15881,19 +15905,27 @@ class Shell:
             rc2, hw = self.dp.run("show hardware-interfaces brief")
             if rc or rc2 or not out.strip():
                 return None
-            return eventwatch.link_reading(routes.parse_interfaces(out),
-                                           routes.parse_hardware(hw))
+            # Each port's count of link changes (#588), so a flap between
+            # two readings is seen; a plugin older than it answers "unknown
+            # input", and its ports are compared by their state alone.
+            rc3, lc = self.dp.run("show bpa link-changes")
+            ifaces = routes.parse_interfaces(out)
+            got = eventwatch.link_reading(
+                ifaces, routes.parse_hardware(hw),
+                eventwatch.parse_link_changes(lc) if rc3 == 0 else {})
+            got.update(eventwatch.linux_link_reading(
+                self.watch_linux_cards(ifaces), self.SYS_CLASS_NET))
+            return got
         if kind == "transceiver":
-            # The plugin's ports only: a card Linux owns is read through a
-            # door, and a door call every minute is the journal noise #588
+            # Every port with a cage: the plugin's for a DPDK port, and the
+            # kernel's module EEPROM interface for a card Linux holds, read
+            # here - the watcher is root on the host - rather than through
+            # the door, whose call a minute would be the journal noise #588
             # removed. A plugin older than #590 answers "unknown input".
-            rc, out = self.dp.run("show bpa transceiver")
-            if rc or transceiver.plugin_predates(out):
+            f = self.transceiver_facts(local=True)
+            if not f["dataplane"] or f["old_plugin"]:
                 return None
-            return eventwatch.module_reading(
-                [transceiver.decode(r)
-                 for r in transceiver.parse_dump(out).values()
-                 if r.get("unread") != "not-dpdk"])
+            return eventwatch.module_reading(f["modules"])
         if kind == "bgp":
             data = self.frr_json("show bgp vrf all neighbors json")
             return None if data is None else eventwatch.bgp_reading(data)
@@ -23702,15 +23734,39 @@ class Shell:
                 out += transceiver.crc_note(n, *counts[n])
         return out
 
-    def linux_transceiver(self, dev, shown=None):
+    #: How the watcher reads a module on a card Linux holds (#588):
+    #: transceiver.linux_read()'s `ioctl`, None for the kernel's. A test
+    #: hands in a stand-in, as test/test_transceiver.py does to linux_read.
+    linux_module_ioctl = None
+
+    def watch_linux_cards(self, dataplane=()):
+        """
+        The cards Linux holds that the watcher reads (#588): the box's PCI
+        cards as host_nics() has them, less the ones the dataplane names
+        among `dataplane` (an AF_XDP hot card keeps its Linux name; an
+        af_packet port is host-<card>), and the netdevs
+        PRISMA_WATCH_NETDEVS names - a lab's veth, which is not PCI.
+        """
+        extra = os.environ.get("PRISMA_WATCH_NETDEVS", "").split()
+        names = [n["name"] for n in self.host_nics()] + extra
+        return [n for n in dict.fromkeys(names)
+                if n not in dataplane and "host-" + n not in dataplane]
+
+    def linux_transceiver(self, dev, shown=None, local=False):
         """
         The module of the card `dev` as Linux has it - the dataplane's AF_XDP
         hot card, an af_packet port's card, the management card - read on
         the host through the door (transceiver.read_argv), as a
         parse_dump() reading named `shown` (the dataplane's name for it).
+        `local` reads it in this process instead (transceiver.linux_read):
+        the watcher's way, which is root on the host already (#588).
         """
-        rc, out = doors.runner()(list(transceiver.read_argv(dev)),
-                                 timeout=15)
+        if local:
+            rc, out = 0, "\n".join(transceiver.linux_read(
+                dev, self.linux_module_ioctl))
+        else:
+            rc, out = doors.runner()(list(transceiver.read_argv(dev)),
+                                     timeout=15)
         r = transceiver.parse_dump(out).get(dev)
         if rc != 0 or r is None:
             first = (out or "").strip().splitlines()[:1]
@@ -23724,7 +23780,7 @@ class Shell:
             r["device"] = dev
         return r
 
-    def transceiver_facts(self, names=()):
+    def transceiver_facts(self, names=(), local=False):
         """
         The modules of this box's ports, decoded (#590): {"dataplane",
         "modules", "missing"}. `dataplane` is whether the dataplane answered
@@ -23733,6 +23789,11 @@ class Shell:
         every card Linux owns, or the ones `names` names; `missing` the
         names that are neither. The one reading `show interface
         transceiver` prints and ListTransceivers carries.
+
+        `local` is the watcher's reading (#588): a card Linux holds is read
+        in this process (linux_transceiver), the cards are
+        watch_linux_cards()', and a card that is not there is left out - a
+        card handed to the dataplane is not a module taken out.
         """
         rc, out = self.dp.run("show bpa transceiver")
         # A dataplane that answers, with a plugin older than this VTY: an
@@ -23774,12 +23835,16 @@ class Shell:
                 if r["unread"] == "not-dpdk":
                     if not linux_name(n):
                         continue        # a TAP, a loopback: no cage
-                    r = self.linux_transceiver(linux_name(n), n)
+                    r = self.linux_transceiver(linux_name(n), n, local)
                 readings.append(r)
             seen = {r.get("device") for r in readings} | set(dp)
-            for nic in self.host_nics():
-                if nic["name"] not in seen:
-                    readings.append(self.linux_transceiver(nic["name"]))
+            cards = self.watch_linux_cards() if local else \
+                [nic["name"] for nic in self.host_nics()]
+            for card in cards:
+                if card not in seen:
+                    readings.append(self.linux_transceiver(card, None, local))
+            if local:
+                readings = [r for r in readings if r["unread"] != "no-device"]
         return {"dataplane": rc == 0 or old, "old_plugin": old,
                 "modules": [transceiver.decode(r) for r in readings],
                 "missing": missing}
