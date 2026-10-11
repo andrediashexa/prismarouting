@@ -16,8 +16,9 @@ show snmp mib
 ```
 
 Save it as `PRISMA-ROUTING-MIB.txt` and load it in the NMS beside the standard
-modules it imports (SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF), which every NMS
-already has.
+modules it imports (SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, and ENTITY-MIB for
+the sensors' thresholds since #496, which brings IANA-ENTITY-MIB and
+UUID-TC-MIB), which every NMS already has.
 
 **The root is the product's own IANA Private Enterprise Number, 67033**
 (#554), assigned on 2026-10-02. From 0.143.4 (#508) to 0.149.12 the MIB was
@@ -41,8 +42,10 @@ the CGNAT's totals, pools and workers, the connection records, HA, LACP, BGP,
 OSPF, OSPFv3, IS-IS, the FIB's size, the control plane's CPU, memory and
 disks, the box's own state - the tuning in effect, the boot self-test, the
 configuration's commits and confirm window, the configuration trail's head
-(#524) - the ports' transceivers (#590), and the box's notifications. The box prints it with its enterprise
-number filled in, the same way it prints the MIB:
+(#524) - the ports' transceivers (#590), the modules and their sensors in
+ENTITY-MIB and ENTITY-SENSOR-MIB (#496), and the box's notifications. The box
+prints it with its enterprise number filled in, the same way it prints the
+MIB:
 
 ```
 show snmp zabbix-template
@@ -81,7 +84,11 @@ three decisions:
 * **One alarm per event.** VRRP and the CGNAT are alarmed on the product's
   tables, which name the interface and the pool; the same routers and pools
   in VRRPV3-MIB and NATV2-MIB are collected without triggers. BGP is alarmed
-  on BGP4-MIB for IPv4 and on BGP4V2-MIB for IPv6 only.
+  on BGP4-MIB for IPv4 and on BGP4V2-MIB for IPv6 only. The optics are
+  alarmed on `prTransceiver`, whose rules carry the per-port macros; the
+  same modules' sensors in ENTITY-SENSOR-MIB are collected without triggers,
+  and ENTITY-MIB's module rule raises only "was replaced" (an information,
+  closed by hand), which nothing else says.
 * **A shut interface is not a down one.** "Link down" needs ifAdminStatus up,
   and ifAdminStatus is polled as often as ifOperStatus: polled every five
   minutes, it still said up when an operator had just shut an interface, and
@@ -103,9 +110,11 @@ v2c: every discovery rule found its rows and 106 of 107 items got values, the
 one left being `ipCidrRouteNumber`, since dropped. Taking pg0 down sent
 `linkDown`, `linkUp` and `vrrpStateChange` to Zabbix's trap receiver, each
 landing in its own item, and raised and cleared the VRRP triggers. Not
-verified against a live Zabbix: SNMPv3, and the routing tables, which that
+verified against a live Zabbix: SNMPv3; the routing tables, which that
 lab box has no daemon for - `lab/routing.sh` and `lab/igp.sh` read their
-OIDs from live daemons, and `test/test_zabbix_template.py` holds every OID in
+OIDs from live daemons; and the two ENTITY rules (#496), whose sensor value
+takes its units and its JavaScript divisor from LLD macros - the OIDs they
+walk are walked through snmpd by `lab/transceiver.sh`; and `test/test_zabbix_template.py` holds every OID in
 the template to the module that defines it and to the view snmpd.conf grants.
 `tools/zabbix-template.py` writes the file; it is regenerated, never edited.
 
@@ -130,6 +139,8 @@ AgentX. An NMS that knows these needs no template of ours.
 | OSPFv3 | OSPFV3-MIB | `.1.3.6.1.2.1.191` | ospf6d | 0.142.0 |
 | IS-IS adjacencies, circuits | ISIS-MIB | `.1.3.6.1.2.1.138` | isisd | 0.142.0 |
 | BGP peers of both families, IPv6 and unnumbered included | BGP4V2-MIB (draft-ietf-idr-bgp4-mibv2, experimental arc) | `.1.3.6.1.3.5.1` | bgpd | 0.144.5 |
+| the chassis, the ports with a cage, their modules: vendor, part, serial, revision, date | ENTITY-MIB (RFC 6933) | `.1.3.6.1.2.1.47` | the agent, from the modules' EEPROM | #496 |
+| each module's temperature, voltage, bias, TX and RX power | ENTITY-SENSOR-MIB (RFC 3433) | `.1.3.6.1.2.1.99` | the agent, the same readings | #496 |
 | the FIB's size (not the FIB), both families | IP-FORWARD-MIB `inetCidrRouteNumber` (`ipCidrRouteNumber` is in the view and answers noSuchObject on Debian's net-snmp) | `.1.3.6.1.2.1.4.24.6` | net-snmp | 0.142.1 |
 
 BGP4-MIB keys a peer on an IPv4 address, so an IPv6 session - and every
@@ -227,6 +238,123 @@ does not give), local0 and the linux_cp taps (the rule IF-MIB applies), and
 the rest of IP-MIB - the statistics and neighbour tables, which are Linux's
 and stay out of the view. `lab/snmp.sh` reads pg0's address under pg0's
 ifIndex with the module loaded, and Linux's loopback absent.
+
+## ENTITY-MIB and ENTITY-SENSOR-MIB - the box's ports and modules (#496)
+
+The box as an inventory any NMS reads without a template: the chassis, each
+port with a cage, the module in it, and the module's diagnostics (DDM) as
+sensors - ENTITY-MIB (RFC 6933) and ENTITY-SENSOR-MIB (RFC 3433), with the
+thresholds each module carries in PRISMA-ROUTING-MIB's
+`prSensorThresholdTable`. Served from the same readings as `prTransceiver`
+below and `show interface transceiver`, decoded by the same code, so the
+three cannot disagree about a module.
+
+**The tree, and its indexes.** `entPhysicalIndex` is derived from the port's
+IF-MIB ifIndex, which a reboot, a card added or a card handed over does not
+move, so neither does a sensor's row - an NMS keeps its history under it:
+
+| Entity | `entPhysicalIndex` | `entPhysicalClass` | In |
+|---|---|---|---|
+| the chassis | 1 | chassis(3) | nothing |
+| a port with a cage | ifIndex x 1000 | port(10) | the chassis |
+| the module in it | ifIndex x 1000 + 1 | module(9) | the port |
+| the module's temperature, voltage | + 2, + 3 | sensor(8) | the module |
+| lane *n*'s bias, TX power, RX power | + 10*n* + 1, + 2, + 3 | sensor(8) | the module |
+
+On 10.40.200.166, the X520's `enp1s0` is ifIndex 1: port 1000, module 1001,
+temperature 1002, voltage 1003, bias 1011, TX power 1012, RX power 1013. A
+QSFP's four lanes are 11 to 43.
+
+**What is a row, and what is not.** A port has a row when its cage answered:
+with a module (with diagnostics or without, or copper), or empty. A module
+has a row when it is in the cage, whether or not its identity could be read.
+A sensor has a row for each reading the module gave; a module without DDM,
+or copper, has none. **A card whose driver cannot read a module has no row
+at all** - virtio (the VM's cards on .166), a TAP, a card on AF_XDP whose
+Linux side the host cannot read: its port is IF-MIB's, and a row here would
+say a cage nobody can see. A dataplane that does not answer serves none of
+its ports, as `prTransceiver` does; the chassis and the cards Linux owns are
+still served.
+
+| Object | Served |
+|---|---|
+| `entPhysicalDescr` | the chassis: "Prisma Routing on" and the maker and model the firmware names (DMI); a port: `port <name>, PCI <address>`; a module: `transceiver:` and its form, connector and wavelength, as `show interface transceiver` heads it; a sensor: its name |
+| `entPhysicalVendorType` | `zeroDotZero`: the product registers no vendor types |
+| `entPhysicalContainedIn` | the tree above; 0 for the chassis |
+| `entPhysicalClass` | chassis(3), port(10), module(9), sensor(8) |
+| `entPhysicalParentRelPos` | a port: its ifIndex; the module: 1; a sensor: 1 and 2, then 10 per lane; the chassis: -1 |
+| `entPhysicalName` | the port's name, as `ifName`; `<port> transceiver`; `<port> temperature`, `<port> RX power`, `<port> lane 2 bias` |
+| `entPhysicalHardwareRev` | the module's revision |
+| `entPhysicalFirmwareRev` | the chassis' firmware (DMI `bios_version`) |
+| `entPhysicalSoftwareRev` | the chassis: the release the box runs |
+| `entPhysicalSerialNum` | the module's serial number. The chassis' is empty: DMI's is readable by root alone (0400) and the agent runs as Debian-snmp |
+| `entPhysicalMfgName`, `entPhysicalModelName` | the module's vendor and part number; the chassis' maker and model (DMI) |
+| `entPhysicalAlias`, `entPhysicalAssetID` | empty: read-only, as every object here, so nobody can set them |
+| `entPhysicalIsFRU` | true(1) for a module, false(2) for the rest |
+| `entPhysicalMfgDate` | the module's date code, at midnight; not instantiated when it has none, as the RFC says |
+| `entPhysicalUUID` | empty: the chassis' UUID is root's alone, as its serial |
+| `entAliasMappingIdentifier` | `.<port>.0`: the port's `ifIndex` in IF-MIB, the join from an entity to its interface |
+| `entPhysicalChildIndex` | `entPhysicalContainsTable`, the same tree from the top |
+| `entLastChangeTime` | 0 until the entities differ from the ones the agent started with, then the `sysUpTime` of the read that saw a module inserted, removed or swapped (a new serial in the cage) |
+| `entPhySensorType`, `entPhySensorScale`, `entPhySensorPrecision` | temperature celsius(8), units, 2; voltage voltsDC(4), units, 4; bias amperes(5), milli, 3; TX and RX power watts(6), micro, 1 - each precision the module's own resolution |
+| `entPhySensorValue` | the reading in those units: on .166, 3376 (33.76 C), 32355 (3.2355 V), 6552 (6.552 mA), 6309 (630.9 uW, -2.00 dBm) and 1 (0.1 uW: its fibre was down) |
+| `entPhySensorOperStatus` | ok(1): a reading the module did not give is no sensor rather than one marked unavailable |
+| `entPhySensorUnitsDisplay` | `C`, `V`, `mA`, `uW` |
+| `entPhySensorValueTimeStamp` | `sysUpTime` when the module was read |
+| `entPhySensorValueUpdateRate` | 30000: the agent reads the modules at most every 30 seconds |
+| `prSensorHighAlarm`, `prSensorHighWarning`, `prSensorLowWarning`, `prSensorLowAlarm` | `.1.21.1.1.1` to `.4` under the product's number, indexed by the sensor's `entPhysicalIndex`, in its `entPhySensorValue`'s units: the thresholds the module carries. No row when it carries none - not a row of zeros |
+| `prSensorLevel` | `.1.21.1.1.5`: where the value stands against them - normal(1), highWarning(2), lowWarning(3), highAlarm(4), lowAlarm(5) - strictly beyond, as the module's own flags are set |
+
+**Optical power in watts, not dBm.** RFC 3433's types end at
+`truthvalue(12)`: the `dBm(14)` an NMS may know is CISCO-ENTITY-SENSOR-MIB's,
+under Cisco's number. So a power is served as what it is in the standard's
+own units, watts at micro with one decimal - 0.1 uW, the module's
+resolution, exactly - which an NMS turns into dBm as 10 log10 of the value
+in mW. `prXcvrLane*` keeps hundredths of a dBm for whoever wants the
+switch's unit; a 0 mW reading, no light, is 0 here and -40.00 dBm there.
+
+**Thresholds in PRISMA-ROUTING-MIB, and why.** RFC 3433 defines no
+thresholds; its section 2.3 leaves them to a general mechanism, RMON's
+`alarmTable` (RFC 2819), in which the NMS writes a row per threshold. This
+box is read-only, and a module's thresholds are not the operator's to
+write: they are in its EEPROM. No IETF MIB carries a sensor's own
+thresholds (CISCO-ENTITY-SENSOR-MIB's `entSensorThresholdTable` does, under
+Cisco's number, which is not this product's to serve). So they are under
+the product's number, indexed by the sensor's own `entPhysicalIndex` and in
+its own units: an NMS joins the two tables on the index, with no map.
+
+**`entConfigChange`** (`.1.3.6.1.2.1.47.2.0.1`, ENTITY-MIB's own
+notification) is sent to every destination when `entLastChangeTime` moves -
+a module inserted, removed or swapped - polled once a minute, which keeps it
+inside the RFC's one per five seconds.
+
+**Compliance.** `entity4Compliance` in part: `entPhysicalTable` (with the
+version 4 columns `entPhysicalMfgDate` and `entPhysicalUUID`; `entPhysicalUris`
+is not instantiated, having nothing to say), `entPhysicalContainsTable`,
+`entLastChangeTime` and `entConfigChange`. No logical entities - the box
+models everything in one naming scope - so `entLogicalTable` and
+`entLPMappingTable` are not served; `entAliasMappingTable` is, with index 0
+("every logical entity"), because it is the one standard way from a port to
+its ifIndex. ENTITY-SENSOR-MIB in full.
+
+**Not served, and why.**
+
+* **Fans, power supplies and the board's temperatures.** They need the
+  chassis' own sensors - IPMI, or `/sys/class/hwmon` - and the only box with
+  hardware to test on, .166, is a VM: QEMU gives it no hwmon device and no
+  IPMI, so nothing could be read, and a sensor shipped without having been
+  read once on real hardware is a guess. They come with a physical box to
+  measure them on; until then their absence is the honest answer, not a
+  zero.
+* **The cards themselves** (the X520 as a module with its ports in it): a
+  card's serial is in its PCI VPD, readable by root alone, and its model
+  would be a name looked up from its PCI IDs. The port's description carries
+  its PCI address; `show hardware-interfaces` has the rest.
+* **The chassis' serial number and UUID**, root's alone in DMI (above).
+
+`lab/transceiver.sh` walks it through snmpd: the stand-in modules' tree, an
+empty cage, a card whose driver cannot read a module, and a module swapped.
+`lab/snmp-traps.sh` receives `entConfigChange`.
 
 ## PRISMA-ROUTING-MIB
 
@@ -398,14 +526,14 @@ The lane levels are normal(1), highWarning(2), lowWarning(3), highAlarm(4),
 lowAlarm(5), unknown(6): past a threshold is strictly beyond it, as SFF-8472
 sets its own flags.
 
-**Not ENTITY-SENSOR-MIB.** RFC 3433's `entPhySensorTable` is the standard
-home of a sensor and was the first choice. It does not fit three things this
-needs: its rows hang off ENTITY-MIB's `entPhysicalIndex`, so serving it means
-serving an `entPhysicalTable` - chassis, ports, modules, sensors - that the
-box does not model and an NMS would then trust; its units have watts and no
-dBm, the unit an optical level is read in and the one the switch at the
-other end prints; and it has no thresholds, which are what says whether
--14 dBm is fine.
+**And in ENTITY-SENSOR-MIB (#496).** #590 served the levels here alone:
+RFC 3433's `entPhySensorTable` hangs off an `entPhysicalTable` the box did
+not model, has no dBm and no thresholds. The box models it now - the same
+modules, as ENTITY-MIB's entities and ENTITY-SENSOR-MIB's sensors, with
+their thresholds in `prSensorThresholdTable` (`.1.21`); the section on those
+MIBs above says how each of the three was answered. This table stays: it is
+in dBm, the unit the switch at the other end prints, and the Zabbix
+template's optical alarms are on it.
 
 **What a read costs.** The agent answers this subtree from a process of its
 own (`--transceivers`), so a module read over I2C never delays the rest of
@@ -432,6 +560,13 @@ could not be written.
 header between two plans, the real self-test's counts against its console, a
 `commit confirmed` pending with its deadline and then confirmed, and the
 trail's state.
+
+### The sensors' thresholds - `.1.21` (#496)
+
+`prSensorThresholdTable`, indexed by ENTITY-MIB's `entPhysicalIndex`: the
+thresholds of the sensors ENTITY-SENSOR-MIB serves, in each sensor's units.
+Its columns are in the section on those MIBs above, beside the sensors they
+belong to.
 
 ## Notifications (#507)
 
@@ -469,6 +604,7 @@ sending there.
 | the configuration trail no longer verifies | `auditTrailDamaged` | a monitor on `prAuditState`, every five minutes (#524) |
 | a pool has no block free | `poolExhausted`, with the pool's name and utilisation | a monitor on `prPoolUtilisation` reaching 100 (#588) |
 | a module's RX power, temperature, voltage, bias or TX power goes past a threshold, or comes back | `transceiverStateChange`, with the port and its level | a monitor on `prXcvrState`, the change since the last poll (#588) |
+| a module is inserted, removed or swapped | `entConfigChange` (ENTITY-MIB) | a monitor on `entLastChangeTime`, sending the RFC's own notification (#496) |
 | a BFD session goes down, or comes up | `bfdSessDown`, `bfdSessUp` (BFD-STD-MIB, RFC 7331), with `bfdSessDiag` of the session's index | the host's watcher of events, over AgentX (#559) |
 | a disk, memory or load threshold | net-snmp's default monitors (`dskErrorFlag` and the rest) | net-snmp |
 
@@ -580,3 +716,6 @@ last one seen.
 | static forwards | `show cgnat forward` | not over SNMP |
 | notifications | traps or informs, per destination | served (#507) |
 | the ports' transceivers: identity, temperature, voltage, bias, TX and RX power, thresholds | PRISMA-ROUTING-MIB `prTransceiver` | served (#590) |
+| the chassis, ports and modules as an inventory, the modules' DDM as sensors with their thresholds | ENTITY-MIB, ENTITY-SENSOR-MIB, PRISMA-ROUTING-MIB `prSensor` | served (#496) |
+| fans, power supplies, the board's temperatures | ENTITY-SENSOR-MIB, from IPMI or hwmon | not served: no physical box to read them on yet (the ENTITY-MIB section says why) |
+| the cards as entities: model, firmware, serial | ENTITY-MIB | not served: a card's serial is in its PCI VPD, root's alone |

@@ -139,6 +139,8 @@ VALUEMAPS = {
     "PRISMA-ROUTING-MIB::prXcvrLaneLevel": [(1, "normal"), (2, "highWarning"),
                                             (3, "lowWarning"), (4, "highAlarm"),
                                             (5, "lowAlarm"), (6, "unknown")],
+    "ENTITY-SENSOR-MIB::EntitySensorStatus": [(1, "ok"), (2, "unavailable"),
+                                              (3, "nonoperational")],
     "UCD-SNMP-MIB::UCDErrorFlag": [(0, "noError"), (1, "error")],
     "Zabbix::SNMP availability": [(0, "not available"), (1, "available"), (2, "unknown")],
 }
@@ -391,6 +393,9 @@ def build():
         # events - bfdSessUp is { bfdNotifications 1 }, bfdSessDown 2.
         ("bfdSessDown", "bfdSessDown|1\\.3\\.6\\.1\\.2\\.1\\.222\\.0\\.2\\b"),
         ("bfdSessUp", "bfdSessUp|1\\.3\\.6\\.1\\.2\\.1\\.222\\.0\\.1\\b"),
+        # #496 phase 5: ENTITY-MIB's own, a module inserted, removed or
+        # swapped - entConfigChange is { entityMIBTrapPrefix 1 }.
+        ("entConfigChange", "entConfigChange|1\\.3\\.6\\.1\\.2\\.1\\.47\\.2\\.0\\.1\\b"),
     ]
     # A bfdSessDown raises a problem, cleared {$PRISMA.BFD.TRAP.HOLD} after
     # the last one or by hand (#559). Not paired with bfdSessUp: Zabbix
@@ -647,6 +652,53 @@ def build():
                                tags=[("scope", "performance")]),
                       ]))
 
+    # ------------------------------------------------ ENTITY-MIB (#496)
+    # The same modules as the transceiver rules above, in the standard MIBs:
+    # an inventory, and the sensors' values for graphs. Collected without
+    # triggers - one alarm per event, and the optical alarms are the
+    # transceiver rules', which carry the per-port macros - except a module
+    # swapped, which nothing above says.
+    E = "1.3.6.1.2.1.47.1.1.1.1"
+    ek = lambda s: f"entity.module.{s}[{{#SNMPINDEX}}]"
+    rules.append(rule("Module discovery (ENTITY-MIB)",
+                      f"discovery[{{#ENTNAME}},{E}.7,{{#ENTCLASS}},{E}.5]",
+                      "entity.module.discovery", [
+                          item("Module {#ENTNAME}: vendor", f"{E}.12.{{#SNMPINDEX}}", ek("vendor"),
+                               "CHAR", "1h", pre=[HEART], tags=[("component", "inventory")]),
+                          item("Module {#ENTNAME}: model", f"{E}.13.{{#SNMPINDEX}}", ek("model"),
+                               "CHAR", "1h", pre=[HEART], tags=[("component", "inventory")]),
+                          item("Module {#ENTNAME}: revision", f"{E}.8.{{#SNMPINDEX}}", ek("revision"),
+                               "CHAR", "1h", pre=[HEART], tags=[("component", "inventory")]),
+                          item("Module {#ENTNAME}: serial number", f"{E}.11.{{#SNMPINDEX}}", ek("serial"),
+                               "CHAR", "1h", pre=[HEART], tags=[("component", "inventory")],
+                               desc="A new value is a module swapped in the cage.", proto=True, triggers=[
+                                   trig(f"change({ref(ek('serial'))})=1",
+                                        "Prisma Routing: module {#ENTNAME} was replaced", "INFO",
+                                        "Its serial number changed: a module swapped in the cage. Close it once the swap is known.",
+                                        tags=[("scope", "notice")], manual=True)]),
+                      ], filt=[("{#ENTCLASS}", "^9$", None)],
+                      desc="ENTITY-MIB (RFC 6933): the pluggable modules, entPhysicalClass module(9) - a row per port with a module in its cage, entPhysicalIndex ifIndex x 1000 + 1."))
+    S = "1.3.6.1.2.1.99.1.1.1"
+    sk = lambda s: f"entity.sensor.{s}[{{#SNMPINDEX}}]"
+    rules.append(rule("Sensor discovery (ENTITY-SENSOR-MIB)",
+                      f"discovery[{{#SENSORNAME}},{E}.7,{{#SENSORTYPE}},{S}.1,"
+                      f"{{#SENSORPRECISION}},{S}.3,{{#SENSORUNITS}},{S}.6]",
+                      "entity.sensor.discovery", [
+                          item("Sensor {#SENSORNAME}", f"{S}.4.{{#SNMPINDEX}}", sk("value"), "FLOAT",
+                               units="{#SENSORUNITS}",
+                               pre=[("JAVASCRIPT", ["return value / Math.pow(10, {#SENSORPRECISION});"])],
+                               desc="entPhySensorValue over 10 to the entPhySensorPrecision, in entPhySensorUnitsDisplay's units: an optical power is in uW (RFC 3433 has no dBm).",
+                               tags=[("component", "sensor")]),
+                          item("Sensor {#SENSORNAME}: status", f"{S}.5.{{#SNMPINDEX}}", sk("status"),
+                               delay="5m", vmap="ENTITY-SENSOR-MIB::EntitySensorStatus",
+                               tags=[("component", "sensor")]),
+                          item("Sensor {#SENSORNAME}: threshold level", f"{P}.21.1.1.5.{{#SNMPINDEX}}",
+                               sk("level"), vmap="PRISMA-ROUTING-MIB::prXcvrLaneLevel",
+                               desc="PRISMA-ROUTING-MIB's prSensorLevel: where the value stands against the module's own thresholds; absent when it carries none.",
+                               tags=[("component", "sensor")]),
+                      ], filt=[("{#SENSORTYPE}", "^[0-9]+$", None)],
+                      desc="ENTITY-SENSOR-MIB (RFC 3433): each module's temperature, voltage, bias, TX and RX power. The alarms are on the transceiver discoveries above, which read the same modules."))
+
     # ------------------------------------------------ the IETF/IEEE tables
     rules.append(rule("NATV2 instance discovery", "discovery[{#NATV2ALIAS},1.3.6.1.2.1.234.2.1.1.2]",
                       "natv2.instance.discovery", [
@@ -756,7 +808,7 @@ def build():
         "template": T,
         "name": T,
         "description": ("Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, "
-                        "HA, LACP, BGP, OSPF and IS-IS, over SNMP v2c or v3 (v1 is refused). "
+                        "HA, LACP, BGP, OSPF and IS-IS, the ports' transceivers and modules, over SNMP v2c or v3 (v1 is refused). "
                         "Print it with the box's enterprise number filled in: `show snmp zabbix-template`."),
         "vendor": {"name": "Prisma Routing", "version": "0.146"},
         "groups": [{"name": "Templates/Network devices"}],

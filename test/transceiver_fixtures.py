@@ -161,6 +161,14 @@ def sfp_dark():
     return sfp_internal(levels={"rx": 0.0})
 
 
+def sfp_swapped():
+    """The same part with another serial number, SWAP0001, its receiver past
+    the low warning as sfp_low_rx()'s: the module in a cage swapped for
+    another, which ENTITY-MIB's entLastChangeTime says (#496)."""
+    return bytes(sfp_a0(serial="SWAP0001")
+                 + sfp_a2_internal(levels={"rx": 0.0126}))
+
+
 def sfp_external():
     """An externally calibrated module with the same levels, 512 bytes."""
     return bytes(sfp_a0(vendor="FINISAR CORP.", part="FTLX1471D3BCL",
@@ -256,3 +264,33 @@ def dump(name, source, type_name, data, ranges=None, extra=""):
 #: The ranges the plugin asks DPDK for on its first (static) read of an
 #: SFF-8472 module - bpa_xcvr_ranges(), as test/test_bpa_xcvr.c holds it.
 SFF8472_READ = [(0, 96), (256, 96), (352, 24)]
+
+
+#: `show bpa transceiver` on 10.40.200.166, read (and nothing else) on
+#: 2026-10-11 for #496's phase 5: the X520's port with its module - the Rei
+#: do SFP above, which is an 850 nm part, and its own thresholds, not the
+#: typical ones THRESHOLDS models - while its fibre was down, so its receiver
+#: read 0.0001 mW (-40.00 dBm, a low alarm); and the VM's two virtio cards,
+#: whose driver has no module operation and answers -95.
+X520_166 = """\
+interface enp1s0 source dpdk type sff-8472 length 512 port 0 device 0000:01:00.0 age 1.2
+  0000 03 04 07 08 00 00 00 00 00 06 00 03 67 00 00 00
+  0010 1e 1e 00 1e 52 65 69 20 64 6f 20 53 46 50 20 20
+  0020 20 20 20 20 00 00 00 00 52 53 4d 50 50 38 35 31
+  0030 30 47 4c 2d 30 33 44 20 32 2e 31 20 03 52 00 a9
+  0040 00 1a 00 00 46 50 32 33 48 31 35 30 33 37 38 20
+  0050 20 20 20 20 32 33 30 38 31 35 20 20 68 f0 03 03
+  0100 5a 00 d3 00 50 00 d8 00 8c a0 75 30 88 b8 79 18
+  0110 1d 4c 00 00 17 70 01 f4 31 2d 04 eb 27 10 06 31
+  0120 31 2d 01 3c 27 10 01 f5 ff ff ff ff ff ff ff ff
+  0130 ff ff ff ff ff ff ff ff 00 00 00 00 00 00 00 00
+  0140 00 00 00 00 3f 80 00 00 00 00 00 00 01 00 00 00
+  0150 01 00 00 00 01 00 00 00 01 00 00 00 00 00 00 12
+  0160 21 c3 7e 63 0c cc 18 a5 00 01 00 00 00 00 02 00
+  0170 00 40 00 00 00 40 00 00 -- -- -- -- -- -- -- --
+interface enp6s18 unread no-module the card answered -95 (Operation not supported) on DPDK port 1
+interface enp6s19 unread no-module the card answered -95 (Operation not supported) on DPDK port 2
+interface tap4096 unread not-dpdk not a DPDK port
+interface tap4097 unread not-dpdk not a DPDK port
+interface tap4098 unread not-dpdk not a DPDK port
+"""

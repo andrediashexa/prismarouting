@@ -2085,6 +2085,18 @@ def xcvr_readings(T, dump_text, linux, hot, ask=door_ask):
     return out
 
 
+# not a unit: runs vppctl, reads /sys and asks the doors on a live box; its
+# parts are xcvr_readings() and transceiver.decode(), each held by the suites,
+# and lab/transceiver.sh walks what both processes build from it.
+def read_modules(T):
+    """Every port's module as transceiver.decode() gives it, read now."""
+    alive = vppctl("show version")
+    dump_text = vppctl("show bpa transceiver") if alive else None
+    linux = [c["name"] for c in linux_cards()]
+    return [T.decode(r) for r in xcvr_readings(T, dump_text, linux,
+                                               hot_card_names())]
+
+
 class Transceivers:
     """The transceiver rows, read at most every XCVR_CACHE_SECONDS."""
 
@@ -2099,11 +2111,7 @@ class Transceivers:
         if self.rows and time.time() - self.at < XCVR_CACHE_SECONDS:
             return self.rows
         T = transceiver_module()
-        alive = vppctl("show version")
-        dump_text = vppctl("show bpa transceiver") if alive else None
-        linux = [c["name"] for c in linux_cards()]
-        mods = [T.decode(r) for r in xcvr_readings(T, dump_text, linux,
-                                                   hot_card_names())]
+        mods = read_modules(T)
         base = f"1.3.6.1.4.1.{ENTERPRISE}.1" if ENTERPRISE.isdigit() else None
         indexes = if_indexes([m["name"] for m in mods]) if base else {}
         self.rows = xcvr_rows(base, mods, indexes, T.mw_to_dbm) if base else []
@@ -2112,6 +2120,325 @@ class Transceivers:
 
 
 TRANSCEIVERS = Transceivers()
+
+
+# --- ENTITY-MIB and ENTITY-SENSOR-MIB: the ports and their modules (#496) ----
+#
+# Phase 5 of docs/snmp-plan.md: the box as an inventory an NMS already
+# understands - a chassis, its ports, the module in each cage, and each
+# module's diagnostics (DDM) as sensors - from the SAME readings prTransceiver
+# serves (read_modules(), decoded by transceiver.py), so the two views of a
+# module cannot disagree.
+#
+# #590 chose PRISMA-ROUTING-MIB over ENTITY-SENSOR-MIB for the levels, for
+# three reasons; each is answered here rather than ignored:
+#
+#   * "it needs an entPhysicalTable" - it is built below, chassis to sensor,
+#     under indexes that do not move (entity_index());
+#   * "it has no dBm" - true, RFC 3433's types end at truthvalue(12) (dBm(14)
+#     is CISCO-ENTITY-SENSOR-MIB's, under Cisco's number). An optical power
+#     is served as what it is in the standard's own units, watts(6) at
+#     micro(7) with one decimal: the module's resolution, 0.1 uW, exactly.
+#     prXcvrLane* keeps dBm for whoever wants the switch's unit;
+#   * "it has no thresholds" - RFC 3433 section 2.3 defers them to a general
+#     mechanism (RMON's alarmTable), which is an NMS writing a row per
+#     threshold: the box is read-only, and a module's levels are the
+#     module's, read off its EEPROM. So they are PRISMA-ROUTING-MIB's
+#     prSensorThresholdTable, INDEXED BY entPhysicalIndex - the sensor's own
+#     row number, in the sensor's own units, which an NMS joins without a map.
+#
+# ITS OWN PROCESS (`--entity`), registered on .47, .99 and prSensor, for the
+# reason prTransceiver has one: a module is read over I2C.
+ENTITY_MIB = "1.3.6.1.2.1.47"
+ENTITY_SENSOR_MIB = "1.3.6.1.2.1.99"
+SENSOR_TH = "21"
+PROC = os.environ.get("PRISMA_PROC", "/proc")
+CHASSIS = 1
+#: A port's entPhysicalIndex is its ifIndex times this; its module and
+#: sensors take the numbers after it (entity_index()).
+PORT_STRIDE = 1000
+#: entPhysicalClass (IANA-ENTITY-MIB's IANAPhysicalClass).
+ENT_CLASS = {"chassis": 3, "sensor": 8, "module": 9, "port": 10}
+#: Per quantity: entPhySensorType, Scale, Precision, UnitsDisplay, what the
+#: decoded value (degrees C, volts, mA, mW) is multiplied by to give
+#: entPhySensorValue, and the words its name says. Each precision is the
+#: module's own resolution (SFF-8472: 1/256 C, 100 uV, 2 uA, 0.1 uW), so no
+#: reading is rounded away: 3.2360 V is 32360, 0.6309 mW is 6309 (630.9 uW).
+SENSOR_KINDS = {
+    "temperature": (8, 9, 2, "C", 100, "temperature"),       # celsius, units
+    "voltage": (4, 9, 4, "V", 10000, "supply voltage"),       # voltsDC, units
+    "bias": (5, 8, 3, "mA", 1000, "laser bias"),             # amperes, milli
+    "tx_power": (6, 7, 1, "uW", 10000, "TX power"),          # watts, micro
+    "rx_power": (6, 7, 1, "uW", 10000, "RX power"),          # watts, micro
+}
+_TH_ORDER = ("high_alarm", "high_warning", "low_warning", "low_alarm")
+
+
+def entity_index(ifindex, lane=0, part=0):
+    """
+    The entPhysicalIndex of a port (`part` 0), its module (1), the module's
+    temperature (2) and voltage (3), or a lane's bias (1), TX power (2) and
+    RX power (3) with `lane` from 1: ifIndex x 1000, then the module, then
+    ten per lane. Derived from the ifIndex, which a reboot, a card added or
+    a card handed over does not move (if_indexes()), so neither does this -
+    RFC 6933 asks for that, and an NMS keeps a sensor's history under it.
+    None for an ifIndex too large to fit (above 2147482).
+    """
+    if not 0 < ifindex <= (2 ** 31 - 1) // PORT_STRIDE - 1:
+        return None
+    return ifindex * PORT_STRIDE + lane * 10 + part
+
+
+def chassis_identity(dmi=None, version_file=None):
+    """
+    The chassis as the firmware names it (/sys/class/dmi/id) and the release
+    it runs. The serial number is root's alone to read there (0400) and the
+    agent runs as Debian-snmp, so on a box it is "" - said, not invented.
+    """
+    d = dmi or os.path.join(SYSFS, "class", "dmi", "id")
+    rel = _read(version_file or VERSION_FILE).split()
+    return {"vendor": _read(os.path.join(d, "sys_vendor")),
+            "model": _read(os.path.join(d, "product_name")),
+            "firmware": _read(os.path.join(d, "bios_version")),
+            "serial": _read(os.path.join(d, "product_serial"))[:32],
+            "release": rel[0] if rel else ""}
+
+
+def module_present(m):
+    """
+    Whether the decoded `m` is a module in a cage: one whose identity was
+    read (with diagnostics, without, or copper), or one the cage answered
+    with a map type for and whose identity could not be read. NOT a card
+    whose driver cannot read a module at all (virtio, AF_XDP's Linux view,
+    a TAP) - it has no cage this agent can see - and not an empty cage.
+    """
+    if m.get("status") in ("ddm", "no-ddm", "copper"):
+        return True
+    return m.get("status") == "unreadable" and bool(m.get("type"))
+
+
+def date_octets(date):
+    """SFF's date code, as transceiver.py gives it ("2023-08-15"), as a
+    DateAndTime of eight octets at midnight; "" for anything else."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", date or "")
+    if not m:
+        return ""
+    y, mo, d = (int(x) for x in m.groups())
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return ""
+    return " ".join(f"{b:02X}" for b in (y >> 8, y & 0xFF, mo, d, 0, 0, 0, 0))
+
+
+def _entity(index, cls, parent, relpos, name, descr, **kw):
+    """One entPhysicalTable row as a record, the columns not given empty."""
+    e = {"index": index, "class": ENT_CLASS[cls], "parent": parent,
+         "relpos": relpos, "name": name, "descr": descr, "hw": "", "fw": "",
+         "sw": "", "serial": "", "mfg": "", "model": "", "fru": 2,
+         "date": "", "ifindex": None, "sensor": None}
+    e.update(kw)
+    return e
+
+
+def _sensor(index, parent, relpos, name, key, q):
+    """The sensor record for the quantity `q` ({"value", "thresholds",
+    "level"}) of kind `key`, or None when the module gave no value."""
+    if not q or q.get("value") is None:
+        return None
+    typ, scale, prec, units, mult, _w = SENSOR_KINDS[key]
+    th = q.get("thresholds")
+    return _entity(index, "sensor", parent, relpos, name, name, sensor={
+        "type": typ, "scale": scale, "precision": prec, "units": units,
+        "value": int(round(q["value"] * mult)),
+        "thresholds": {k: int(round(th[k] * mult)) for k in _TH_ORDER}
+        if th else None,
+        "level": XCVR_LEVEL.get(q.get("level") or "", 6)})
+
+
+def entities(modules, indexes, chassis, connector_words=lambda c: c or ""):
+    """
+    The physical entities, as records: the chassis; a port for each module
+    reading whose cage answered - a module in it or an empty one - under its
+    IF-MIB ifIndex (`indexes`); the module, when one is present; and, for a
+    module with diagnostics, a sensor per reading it gave. A card whose
+    driver cannot read a module (virtio) has no row at all: its port is
+    IF-MIB's, and a port row here would say a cage this agent cannot see.
+    """
+    what = " ".join(x for x in (chassis.get("vendor"), chassis.get("model")) if x)
+    out = [_entity(CHASSIS, "chassis", 0, -1, "chassis",
+                   f"Prisma Routing on {what}" if what else "Prisma Routing",
+                   fw=chassis.get("firmware", ""), sw=chassis.get("release", ""),
+                   serial=chassis.get("serial", ""),
+                   mfg=chassis.get("vendor", ""), model=chassis.get("model", ""))]
+    for m in modules:
+        n = m["name"]
+        present = module_present(m)
+        if not present and m.get("status") != "absent":
+            continue
+        port = entity_index(indexes.get(n) or 0)
+        if port is None:
+            continue
+        out.append(_entity(port, "port", CHASSIS, indexes[n], n,
+                           f"port {n}" + (f", PCI {m['device']}"
+                                          if m.get("device") else ""),
+                           ifindex=indexes[n]))
+        if not present:
+            continue
+        mod = port + 1
+        what = ", ".join(x for x in (
+            m.get("identifier"), connector_words(m.get("connector")),
+            f"{m['wavelength_nm']} nm" if m.get("wavelength_nm") else "") if x)
+        out.append(_entity(mod, "module", port, 1, f"{n} transceiver",
+                           f"transceiver: {what}" if what else "transceiver",
+                           hw=m.get("revision") or "",
+                           serial=(m.get("serial") or "")[:32],
+                           mfg=m.get("vendor") or "", model=m.get("part") or "",
+                           fru=1, date=date_octets(m.get("date"))))
+        if m.get("status") != "ddm":
+            continue
+        for part, key in ((2, "temperature"), (3, "voltage")):
+            s = _sensor(port + part, mod, part - 1,
+                        f"{n} {SENSOR_KINDS[key][5]}", key, m.get(key))
+            out += [s] if s else []
+        lanes = m.get("lanes") or []
+        for ln in lanes:
+            for part, key in ((1, "bias"), (2, "tx_power"), (3, "rx_power")):
+                i = port + ln["lane"] * 10 + part
+                where = f"{n} lane {ln['lane']}" if len(lanes) > 1 else n
+                s = _sensor(i, mod, i - mod,
+                            f"{where} {SENSOR_KINDS[key][5]}", key, ln.get(key))
+                out += [s] if s else []
+    return out
+
+
+def entity_signature(ents):
+    """What entLastChangeTime watches: which entities there are and who they
+    are - a module swapped is a new serial in the same place."""
+    return tuple((e["index"], e["class"], e["parent"], e["name"], e["serial"],
+                  e["model"], e["mfg"], e["hw"]) for e in ents)
+
+
+def entity_rows(ents, base, now, changed, rate_ms):
+    """
+    ENTITY-MIB's entPhysicalTable, entAliasMappingTable (a port to its
+    IF-MIB ifIndex), entPhysicalContainsTable and entLastChangeTime;
+    ENTITY-SENSOR-MIB's entPhySensorTable; and, under `base` (the product's
+    objects, None when no number is set), prSensorThresholdTable. `now` is
+    sysUpTime at the read, `changed` entLastChangeTime, both in hundredths,
+    and `rate_ms` entPhySensorValueUpdateRate. A sensor's thresholds have a
+    row only when its module carries some: no row, not a row of zeros.
+    """
+    p = f"{ENTITY_MIB}.1.1.1.1"
+    out = [(f"{ENTITY_MIB}.1.4.1.0", "timeticks", changed)]
+    for e in ents:
+        i = e["index"]
+        out += [(f"{p}.2.{i}", "string", e["descr"]),
+                (f"{p}.3.{i}", "objectid", ".0.0"),
+                (f"{p}.4.{i}", "integer", e["parent"]),
+                (f"{p}.5.{i}", "integer", e["class"]),
+                (f"{p}.6.{i}", "integer", e["relpos"]),
+                (f"{p}.7.{i}", "string", e["name"]),
+                (f"{p}.8.{i}", "string", e["hw"]),
+                (f"{p}.9.{i}", "string", e["fw"]),
+                (f"{p}.10.{i}", "string", e["sw"]),
+                (f"{p}.11.{i}", "string", e["serial"]),
+                (f"{p}.12.{i}", "string", e["mfg"]),
+                (f"{p}.13.{i}", "string", e["model"]),
+                (f"{p}.14.{i}", "string", ""),
+                (f"{p}.15.{i}", "string", ""),
+                (f"{p}.16.{i}", "integer", e["fru"]),
+                (f"{p}.19.{i}", "string", "")]
+        # entPhysicalMfgDate is not instantiated when unknown (RFC 6933).
+        if e["date"]:
+            out.append((f"{p}.17.{i}", "octet", e["date"]))
+        if e["ifindex"]:
+            out.append((f"{ENTITY_MIB}.1.3.2.1.2.{i}.0", "objectid",
+                        f".1.3.6.1.2.1.2.2.1.1.{e['ifindex']}"))
+        if e["parent"]:
+            out.append((f"{ENTITY_MIB}.1.3.3.1.1.{e['parent']}.{i}",
+                        "integer", i))
+        s = e["sensor"]
+        if not s:
+            continue
+        q = f"{ENTITY_SENSOR_MIB}.1.1.1"
+        out += [(f"{q}.1.{i}", "integer", s["type"]),
+                (f"{q}.2.{i}", "integer", s["scale"]),
+                (f"{q}.3.{i}", "integer", s["precision"]),
+                (f"{q}.4.{i}", "integer", s["value"]),
+                (f"{q}.5.{i}", "integer", 1),               # ok
+                (f"{q}.6.{i}", "string", s["units"]),
+                (f"{q}.7.{i}", "timeticks", now),
+                (f"{q}.8.{i}", "gauge", rate_ms)]
+        if base and s["thresholds"]:
+            t = f"{base}.{SENSOR_TH}.1.1"
+            out += [(f"{t}.{n + 1}.{i}", "integer", s["thresholds"][k])
+                    for n, k in enumerate(_TH_ORDER)]
+            out.append((f"{t}.5.{i}", "integer", s["level"]))
+    return out
+
+
+def snmpd_uptime(proc=None, pid=None, hz=None):
+    """
+    sysUpTime as snmpd answers it, in hundredths of a second: how long the
+    process that spawned this one - snmpd, whose start is what its sysUpTime
+    counts from - has been running, from its start in /proc/<pid>/stat and
+    the host's /proc/uptime. 0 when either cannot be read.
+    """
+    proc = proc or PROC
+    stat = _read(os.path.join(proc, str(pid or os.getppid()), "stat"))
+    up = _read(os.path.join(proc, "uptime")).split()
+    # The fields after the command's closing parenthesis: the command may
+    # hold spaces and parentheses of its own. starttime is field 22, the
+    # 20th after it.
+    rest = stat.rsplit(")", 1)[-1].split()
+    try:
+        start = int(rest[19]) / (hz or os.sysconf("SC_CLK_TCK"))
+        return max(int((float(up[0]) - start) * 100), 0)
+    except (IndexError, ValueError):
+        return 0
+
+
+class Entities:
+    """The ENTITY rows, read at most every XCVR_CACHE_SECONDS, and when the
+    entities last changed."""
+
+    def __init__(self):
+        self.at = 0.0
+        self.rows = []
+        self.seen = None
+        self.changed = 0
+
+    def note(self, ents, now):
+        """
+        entLastChangeTime for `ents` read at `now`: 0 until the set first
+        differs from the one this process started with - snmpd started
+        both, so "since the agent started" is all it can say - then the
+        sysUpTime of the read that saw it differ.
+        """
+        sig = entity_signature(ents)
+        if self.seen is not None and sig != self.seen:
+            self.changed = now
+        self.seen = sig
+        return self.changed
+
+    # not a unit: runs vppctl and the doors and reads /sys and /proc on a
+    # live box; what it builds is entities() and entity_rows(), each held by
+    # appliance/test_snmp_agent.py, and lab/transceiver.sh walks the result.
+    def refresh(self):
+        if self.rows and time.time() - self.at < XCVR_CACHE_SECONDS:
+            return self.rows
+        T = transceiver_module()
+        mods = read_modules(T)
+        indexes = if_indexes([m["name"] for m in mods])
+        ents = entities(mods, indexes, chassis_identity(), T.connector_words)
+        now = snmpd_uptime()
+        base = f"1.3.6.1.4.1.{ENTERPRISE}.1" if ENTERPRISE.isdigit() else None
+        self.rows = entity_rows(ents, base, now, self.note(ents, now),
+                                int(XCVR_CACHE_SECONDS * 1000))
+        self.at = time.time()
+        return self.rows
+
+
+ENTITIES = Entities()
 
 
 def oid_table():
@@ -2124,6 +2451,9 @@ def oid_table():
                       key=lambda r: [int(x) for x in r[0].split(".")])
     if "--transceivers" in sys.argv[1:]:
         return sorted(TRANSCEIVERS.refresh(),
+                      key=lambda r: [int(x) for x in r[0].split(".")])
+    if "--entity" in sys.argv[1:]:
+        return sorted(ENTITIES.refresh(),
                       key=lambda r: [int(x) for x in r[0].split(".")])
     d = VALUES.refresh()
     out = []

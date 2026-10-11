@@ -77,6 +77,41 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The box answers ENTITY-MIB and ENTITY-SENSOR-MIB: its ports, the module
+  in each cage, and each module's diagnostics as sensors, with the module's
+  own thresholds.** ([#496](https://github.com/andrediashexa/hexarouting/issues/496),
+  phase 5) An NMS that knows the standard MIBs now sees the box as an
+  inventory with no template of ours: `entPhysicalTable` holds the chassis
+  (maker and model from DMI, the release as its software), each port whose
+  cage answered, the module in it - vendor, part, serial, revision and date
+  code as `entPhysicalMfgName`, `ModelName`, `SerialNum`, `HardwareRev`,
+  `MfgDate` - and a sensor per DDM reading: temperature, voltage, and each
+  lane's bias, TX and RX power, in `entPhySensorTable` with RFC 3433's types,
+  scales and the module's own resolution as precision. `entPhysicalIndex` is
+  the port's IF-MIB ifIndex x 1000 (+1 the module, +2.. the sensors), so it
+  does not move across reboots, and `entAliasMappingIdentifier` points each
+  port at its ifIndex. The thresholds the module carries are
+  PRISMA-ROUTING-MIB's new `prSensorThresholdTable` (`.1.21`), indexed by the
+  sensor's `entPhysicalIndex` in its own units, with `prSensorLevel`: RFC 3433
+  has none and defers them to RMON's alarmTable, which the NMS writes and
+  this read-only box would not. Optical power is in watts (0.1 uW, exactly
+  the module's resolution), because RFC 3433 has no dBm; `prXcvrLane*` keeps
+  dBm. `entConfigChange`, ENTITY-MIB's own notification, is sent when a
+  module is inserted, removed or swapped. A card whose driver cannot read a
+  module (virtio), an empty cage (a port with no module), a module without
+  DDM (no sensors) and one without thresholds (no threshold row) each have
+  exactly the rows that are true of them. Measured against
+  10.40.200.166's X520 with its fibre down - its real `show bpa transceiver`
+  is a fixture - and walked through snmpd with the RFCs' modules loaded in
+  `lab/transceiver.sh`; `lab/snmp-traps.sh` receives `entConfigChange`. The
+  Zabbix template gains a module and a sensor discovery, collected without
+  optical triggers (those stay on `prTransceiver`), and a "module was
+  replaced" information. **Not served**: fans, power supplies and the
+  board's temperatures - .166 is a VM with no IPMI and no hwmon, so nothing
+  could be measured - and the cards as entities. PRISMA-ROUTING-MIB now
+  imports ENTITY-MIB: an NMS loading it needs that module, which every NMS
+  ships. docs/snmp-mib.md has the tree, every object, and why.
+
 ### Fixed
 
 ## 0.152.9 - each CPU's place and load, through the API

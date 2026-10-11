@@ -14,7 +14,9 @@ PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
 -- What the box also serves, from standard MIBs, and is not repeated here:
 -- IF-MIB (the dataplane's cards, 64-bit counters), BGP4-MIB, OSPF-MIB,
 -- OSPFV3-MIB, ISIS-MIB, the FIB's size in IP-FORWARD-MIB, NAT-MIB's default
--- timeouts, HOST-RESOURCES-MIB and UCD-SNMP-MIB. docs/snmp-mib.md lists them.
+-- timeouts, HOST-RESOURCES-MIB and UCD-SNMP-MIB, and ENTITY-MIB with
+-- ENTITY-SENSOR-MIB for the ports' modules (whose thresholds are here).
+-- docs/snmp-mib.md lists them.
 --
 
 IMPORTS
@@ -24,16 +26,22 @@ IMPORTS
     DisplayString, TruthValue
         FROM SNMPv2-TC
     MODULE-COMPLIANCE, OBJECT-GROUP
-        FROM SNMPv2-CONF;
+        FROM SNMPv2-CONF
+    entPhysicalIndex
+        FROM ENTITY-MIB;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202610060000Z"
+    LAST-UPDATED "202610110000Z"
     ORGANIZATION "NetConfig"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202610110000Z"
+    DESCRIPTION
+        "The thresholds of the sensors ENTITY-SENSOR-MIB serves for the
+        ports' modules, under the sensor's entPhysicalIndex (#496)."
     REVISION "202610060000Z"
     DESCRIPTION
         "The ports' transceivers: each module's identity and its optical
@@ -1440,6 +1448,91 @@ prXcvrLaneBiasLevel OBJECT-TYPE
     ::= { prXcvrLaneEntry 20 }
 
 --
+-- The sensors' thresholds (#496, phase 5).
+--
+-- ENTITY-SENSOR-MIB (RFC 3433) serves each module's diagnostics as a
+-- sensor, and has no thresholds: its section 2.3 leaves them to a general
+-- mechanism, RMON's alarmTable, in which the NMS writes each threshold as a
+-- row. This box is read-only, and a module's thresholds are the module's
+-- own, read from its EEPROM - so they are here, a row per sensor that has
+-- them, under the sensor's own entPhysicalIndex and in its own units.
+--
+
+prSensor OBJECT IDENTIFIER ::= { prObjects 21 }
+
+prSensorThresholdTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrSensorThresholdEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "The thresholds of the sensors in ENTITY-SENSOR-MIB's
+        entPhySensorTable that have them. A sensor whose module carries
+        no thresholds has no row."
+    ::= { prSensor 1 }
+
+prSensorThresholdEntry OBJECT-TYPE
+    SYNTAX      PrSensorThresholdEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "One sensor's thresholds, each in the units of its
+        entPhySensorValue: the same entPhySensorType, entPhySensorScale and
+        entPhySensorPrecision apply."
+    INDEX       { entPhysicalIndex }
+    ::= { prSensorThresholdTable 1 }
+
+PrSensorThresholdEntry ::= SEQUENCE {
+    prSensorHighAlarm    Integer32,
+    prSensorHighWarning  Integer32,
+    prSensorLowWarning   Integer32,
+    prSensorLowAlarm     Integer32,
+    prSensorLevel        INTEGER
+}
+
+prSensorHighAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The high alarm threshold of the sensor's value."
+    ::= { prSensorThresholdEntry 1 }
+
+prSensorHighWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The high warning threshold of the sensor's value."
+    ::= { prSensorThresholdEntry 2 }
+
+prSensorLowWarning OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The low warning threshold of the sensor's value."
+    ::= { prSensorThresholdEntry 3 }
+
+prSensorLowAlarm OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The low alarm threshold of the sensor's value."
+    ::= { prSensorThresholdEntry 4 }
+
+prSensorLevel OBJECT-TYPE
+    SYNTAX      INTEGER { normal(1), highWarning(2), lowWarning(3), highAlarm(4),
+                          lowAlarm(5), unknown(6) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Where the sensor's value stands against the thresholds above,
+        strictly beyond each as the module's own flags are set: a value at
+        a threshold is not past it."
+    ::= { prSensorThresholdEntry 5 }
+
+--
 -- Conformance.
 --
 
@@ -1556,6 +1649,13 @@ prTransceiverGroup OBJECT-GROUP
     DESCRIPTION "The ports' transceivers."
     ::= { prGroups 12 }
 
+prSensorGroup OBJECT-GROUP
+    OBJECTS { prSensorHighAlarm, prSensorHighWarning, prSensorLowWarning,
+              prSensorLowAlarm, prSensorLevel }
+    STATUS      current
+    DESCRIPTION "The sensors' thresholds."
+    ::= { prGroups 13 }
+
 prCompliance MODULE-COMPLIANCE
     STATUS      current
     DESCRIPTION "What every Prisma Routing box serves."
@@ -1564,7 +1664,7 @@ prCompliance MODULE-COMPLIANCE
                            prSystemGroup, prHaGroup, prLacpGroup,
                            prIdentityGroup, prTuningGroup, prSelfTestGroup,
                            prConfigGroup, prAuditGroup,
-                           prTransceiverGroup }
+                           prTransceiverGroup, prSensorGroup }
     ::= { prCompliances 1 }
 
 END

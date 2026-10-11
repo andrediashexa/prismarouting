@@ -767,6 +767,8 @@ check(body.splitlines()[1:] == [
     "view hexa included .1.3.6.1.2.1.207",
     "view hexa included .1.2.840.10006.300.43",
     "view hexa included .1.3.6.1.2.1.222",
+    "view hexa included .1.3.6.1.2.1.47",
+    "view hexa included .1.3.6.1.2.1.99",
     "view hexa included .1.3.6.1.2.1.4.1",
     "view hexa included .1.3.6.1.2.1.4.20",
     "view hexa included .1.3.6.1.2.1.4.25",
@@ -808,9 +810,15 @@ check(body.splitlines()[1:] == [
     "pass_persist .1.3.6.1.2.1.207 /x/agent",
     "pass_persist .1.2.840.10006.300.43 /x/agent",
     "pass_persist .1.3.6.1.2.1.222 /x/agent --bfd",
+    # ENTITY-MIB and ENTITY-SENSOR-MIB (#496 phase 5): one more process.
+    "pass_persist .1.3.6.1.2.1.47 /x/agent --entity --enterprise 70000",
+    "pass_persist .1.3.6.1.2.1.99 /x/agent --entity --enterprise 70000",
     "pass_persist .1.3.6.1.4.1.70000 /x/agent --enterprise 70000",
     # prTransceiver (#590): its own process on its subtree.
     "pass_persist .1.3.6.1.4.1.70000.1.20 /x/agent --transceivers "
+    "--enterprise 70000",
+    # and the sensors' thresholds (#496), from the ENTITY process.
+    "pass_persist .1.3.6.1.4.1.70000.1.21 /x/agent --entity "
     "--enterprise 70000"],
     f"address, both views, every community, users sorted, both agents: "
     f"{body.splitlines()}")
@@ -825,7 +833,9 @@ check("agentAddress udp:127.0.0.1:161" in body
           f"pass_persist .1.3.6.1.4.1.67033 {system.SNMP_AGENT} "
           f"--enterprise 67033",
           f"pass_persist .1.3.6.1.4.1.67033.1.20 {system.SNMP_AGENT} "
-          f"--transceivers --enterprise 67033"]
+          f"--transceivers --enterprise 67033",
+          f"pass_persist .1.3.6.1.4.1.67033.1.21 {system.SNMP_AGENT} "
+          f"--entity --enterprise 67033"]
       and "sysdescr Prisma Routing\n" in body
       and f"pass_persist .1.3.6.1.2.1.123 {system.SNMP_AGENT}" in body,
       f"defaults: loopback 161, the product's subtree, UCD's own, a sysDescr "
@@ -1588,6 +1598,18 @@ check("trap2sink 10.0.0.9 t1" in _body
       and "iquerySecName prismaInternal" in _body
       and "vrrpStateChange" in _body,
       f"a trap and an inform destination, and what is sent to them: {_body}")
+# ENTITY-MIB's own entConfigChange (#496 phase 5): the notification, by
+# number, and the monitor that sends it on entLastChangeTime moving - a
+# scalar (-I), the change since the last poll (-D). In the body only with a
+# destination, and with or without the product's number.
+_em = system.snmp_entity_monitors()
+check(_em == ["notificationEvent entConfigChange .1.3.6.1.2.1.47.2.0.1",
+              "monitor -r 60 -I -D -e entConfigChange entityChange "
+              ".1.3.6.1.2.1.47.1.4.1.0 != 0"]
+      and all(l in _body for l in _em)
+      and not any(l in system._snmpd_body(_st, ["c1"], {}, agent="/x/agent",
+                                          release="0.1") for l in _em),
+      f"entConfigChange, sent when a module comes, goes or is swapped: {_em}")
 _quiet = system._snmpd_body(_st, ["c1"], {}, agent="/x/agent", release="0.1")
 check("linkUpDown" not in _quiet and "monitor" not in _quiet
       and "iquerySecName" not in _quiet,

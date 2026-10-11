@@ -1,7 +1,8 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 15
+# OFF-RED-AT-LEAST: 16
 # (the floor: what the off run of 2026-10-07 measured red - 10 before #559's
-# five on bfdSessDown, bfdSessUp, their index and bfdNotificationsEnable)
+# five on bfdSessDown, bfdSessUp, their index and bfdNotificationsEnable -
+# and #496's entConfigChange, 16 on 2026-10-11)
 # SNMP notifications (#507): the box telling the NMS, rather than waiting to
 # be asked.
 #
@@ -16,6 +17,7 @@
 #   a pool with no block free       mteTriggerFired "poolExhausted" (#588)
 #   a module's light below its      mteTriggerFired "transceiverStateChange"
 #     warning                         (#588 phase 3), the port's stand-in
+#   the module swapped for another  entConfigChange (ENTITY-MIB, #496)
 #   a subscriber refused ports      mteTriggerFired "portsRefused"
 #   an older dataplane than the box mteTriggerFired "dataplaneNotCurrent"
 #   a boot self-test that failed    mteTriggerFired "selfTestFailed" (#524)
@@ -184,15 +186,24 @@ kill "$COLLECTOR" 2>/dev/null
 sleep 30
 vppctl set interface state pg0 down
 # The light past its low warning, a minute after the monitor's first
-# reading of it: -D fires on the change (#588 phase 3).
-vppctl bpa transceiver stand-in pg0 type sff-8472 hex "$(hexof 'F.sfp_low_rx()')"
+# reading of it: -D fires on the change (#588 phase 3). And a module of
+# ANOTHER serial number: the one in the cage swapped for one whose light is
+# low, so ENTITY-MIB's entLastChangeTime moves and entConfigChange is sent
+# (#496 phase 5) - after the agent's 30 s cache and the monitor's minute,
+# hence the longer wait.
+ENTBEFORE=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.47.1.4.1.0 2>&1)
+vppctl bpa transceiver stand-in pg0 type sff-8472 hex "$(hexof 'F.sfp_swapped()')"
 echo "  pg0's module: $(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.99999.1.20.1.1.18 2>&1 | head -1)"
-sleep 70
+sleep 100
+ENTAFTER=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.47.1.4.1.0 2>&1)
+echo "  entLastChangeTime: $ENTBEFORE before the swap, $ENTAFTER after"
 TRAPS=$(cat /tmp/traps.log 2>/dev/null)
 NAMES=$(printf '%s\n' "$TRAPS" | grep -oE 'STRING: "[A-Za-z]+"' | sort | uniq -c)
 printf '%s\n' "$NAMES" | sed 's/^/  /'
 LINKDOWN=$(printf '%s\n' "$TRAPS" | grep -c "OID: .1.3.6.1.6.3.1.1.5.3")
 echo "  linkDown notifications: $LINKDOWN"
+ENTCHANGE=$(printf '%s\n' "$TRAPS" | grep -c "OID: .1.3.6.1.2.1.47.2.0.1\b")
+echo "  entConfigChange notifications: $ENTCHANGE"
 
 echo
 echo "=========== 3. BFD: the neighbour's bfdd dies, and comes back (#559) ==========="
@@ -284,6 +295,8 @@ expect_in "a pool with every block held arrives as poolExhausted (#588)" \
   "poolExhausted" "$NAMES"
 expect_in "a module's light past its warning arrives as transceiverStateChange (#588)" \
   "transceiverStateChange" "$NAMES"
+expect "a module swapped arrives as ENTITY-MIB's own entConfigChange (#496)" \
+  test "${ENTCHANGE:-0}" -ge 1
 expect_in "a dataplane older than the release arrives as dataplaneNotCurrent" \
   "dataplaneNotCurrent" "$NAMES"
 expect_in "a records transport connecting and dropping arrives as recordsTransportChange" \

@@ -1505,6 +1505,11 @@ SNMP_VIEW = [".1.3.6.1.2.1.1",          # SNMPv2-MIB system: sysDescr, uptime
              # BFD-STD-MIB (#559): bfdd's sessions, served by the agent from
              # vtysh - FRR 10.7.1 has no bfdd_snmp to serve it over AgentX.
              ".1.3.6.1.2.1.222",
+             # ENTITY-MIB and ENTITY-SENSOR-MIB (#496 phase 5): the chassis,
+             # the ports with a cage, their modules and the modules' DDM as
+             # sensors - the agent's, from the readings prTransceiver serves.
+             ".1.3.6.1.2.1.47",
+             ".1.3.6.1.2.1.99",
              # IP-MIB (#522): the forwarding scalars and the address tables,
              # the agent's; the rest of IP-MIB is Linux's and stays out.
              *(f".1.3.6.1.2.1.4.{sub}" for sub in IP_MIB_SUBTREES),
@@ -1612,6 +1617,23 @@ def snmp_monitors(pen):
     ]
 
 
+#: prSensor, under prObjects: the sensors' thresholds (#496 phase 5).
+SNMP_SENSOR_TH = "21"
+
+
+def snmp_entity_monitors():
+    """
+    The two lines that send ENTITY-MIB's entConfigChange when
+    entLastChangeTime moves: a notificationEvent that is the notification
+    itself (.1.3.6.1.2.1.47.2.0.1, numeric, since the box carries no MIB
+    files), and the monitor that fires it - `-I` because the object is a
+    scalar, `-D` because what is tested is the change since the last poll.
+    """
+    return ["notificationEvent entConfigChange .1.3.6.1.2.1.47.2.0.1",
+            "monitor -r 60 -I -D -e entConfigChange entityChange "
+            ".1.3.6.1.2.1.47.1.4.1.0 != 0"]
+
+
 def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
                 trap_hosts=(), hostname=""):
     """The snmpd.conf this VTY owns. Every line is generated; none is copied."""
@@ -1687,6 +1709,14 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     # BFD-STD-MIB (#559), its own process: it reads bfdd, not the dataplane,
     # and answers while the dataplane does not.
     out.append(f"pass_persist .1.3.6.1.2.1.222 {agent} --bfd")
+    # ENTITY-MIB and ENTITY-SENSOR-MIB (#496 phase 5), and the sensors'
+    # thresholds under the product's number: one more process, as
+    # prTransceiver's, since it reads the same modules over I2C. The number
+    # on its command line for the thresholds' subtree; the two standard MIBs
+    # are served without one.
+    ent = f"{agent} --entity" + (f" --enterprise {pen}" if pen else "")
+    out.append(f"pass_persist .1.3.6.1.2.1.47 {ent}")
+    out.append(f"pass_persist .1.3.6.1.2.1.99 {ent}")
     if pen:
         # The number on the agent's own command line (#499): it runs as
         # Debian-snmp and cannot read this 0600 file to find it.
@@ -1696,6 +1726,9 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
         # wait on it. The more specific registration answers its subtree.
         out.append(f"pass_persist .1.3.6.1.4.1.{pen}.1.20 {agent} "
                    f"--transceivers --enterprise {pen}")
+        # prSensorThresholdTable (#496 phase 5), beside the sensors whose
+        # entPhysicalIndex it is indexed by: the same process serves both.
+        out.append(f"pass_persist .1.3.6.1.4.1.{pen}.1.{SNMP_SENSOR_TH} {ent}")
     if trap_hosts:
         # NOTIFICATIONS (#507). snmpd polls its own objects to decide what to
         # send - as the user named below, read-only on the same view - and
@@ -1712,6 +1745,12 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
         # net-snmp's own: the disks (the retention log's among them), memory,
         # load.
         out.append("defaultMonitors yes")
+        # ENTITY-MIB's own entConfigChange (#496 phase 5), the notification
+        # an NMS already knows, rather than an mteTriggerFired named for it:
+        # entLastChangeTime moves when a module is inserted, removed or
+        # swapped (a new serial in the same cage). RFC 6933 asks for no more
+        # than one in five seconds; this polls once a minute.
+        out += snmp_entity_monitors()
         if pen:
             out += snmp_monitors(pen)
     out.append("")

@@ -238,7 +238,10 @@ MEANT = {"net.if.in": "ifHCInOctets", "net.if.out": "ifHCOutOctets",
          "prisma.log.transport.connected": "prLogTransportConnected",
          "prisma.log.transport.dropped.rate": "prLogTransportDropped",
          "lag.port.attached": "dot3adAggPortAttachedAggID", "fib.routes": "inetCidrRouteNumber",
-         "vfs.fs.error": "dskErrorFlag", "bgp4v2.peer.state": "bgp4V2PeerState"}
+         "vfs.fs.error": "dskErrorFlag", "bgp4v2.peer.state": "bgp4V2PeerState",
+         "entity.module.serial": "entPhysicalSerialNum",
+         "entity.sensor.value": "entPhySensorValue",
+         "entity.sensor.level": "prSensorLevel"}
 wrong = []
 for key, col in polled:
     base = key.split("[")[0]

@@ -154,6 +154,26 @@ A partir da versão 0.145.1 as tabelas de endereços da **IP-MIB** (`ipAddrTable
 
 `ipForwarding` e `ipv6IpForwarding` respondem 1 (*forwarding*): a caixa é um roteador. Endereços link-local IPv6 ficam de fora.
 
+## O inventário e os sensores: ENTITY-MIB e ENTITY-SENSOR-MIB
+
+A caixa serve também a **ENTITY-MIB** (RFC 6933, `.1.3.6.1.2.1.47`) e a **ENTITY-SENSOR-MIB** (RFC 3433, `.1.3.6.1.2.1.99`), que toda NMS lê sem template: o chassi, cada porta que tem gaiola, o módulo dentro dela e o diagnóstico (DDM) do módulo como sensores. São as mesmas leituras de `prTransceiver` e de `show interface transceiver`, decodificadas pelo mesmo código.
+
+O índice (`entPhysicalIndex`) sai do **ifIndex da porta na IF-MIB**, que não muda com reboot nem com placa nova — então o histórico de um sensor na NMS também não se perde:
+
+| O quê | `entPhysicalIndex` |
+|-------|--------------------|
+| o chassi | 1 |
+| a porta | ifIndex × 1000 |
+| o módulo na porta | ifIndex × 1000 + 1 |
+| temperatura e tensão do módulo | + 2 e + 3 |
+| bias, TX e RX da faixa *n* | + 10*n* + 1, + 2 e + 3 |
+
+Numa porta de ifIndex 1, por exemplo: porta 1000, módulo 1001, temperatura 1002, tensão 1003, bias 1011, TX 1012 e RX 1013. O módulo traz fabricante, modelo (*part number*), número de série, revisão e data de fabricação (`entPhysicalMfgName`, `entPhysicalModelName`, `entPhysicalSerialNum`, `entPhysicalHardwareRev`, `entPhysicalMfgDate`), e `entAliasMappingIdentifier` liga cada porta ao seu ifIndex.
+
+Os sensores usam as unidades da RFC: temperatura em centésimos de grau, tensão em décimos de milivolt, bias em microampères, e **potência óptica em watts** — décimos de microwatt, a resolução do próprio módulo. A RFC 3433 não tem dBm (o `dBm` que algumas NMS conhecem é de uma MIB da Cisco); em dBm, a potência continua em `prXcvrLaneRxPower` e `prXcvrLaneTxPower`. Os **limites do próprio módulo** ficam na MIB do Prisma, em `prSensorThresholdTable` (`.1.21`), com o mesmo índice e a mesma unidade do sensor, e `prSensorLevel` diz onde a leitura está em relação a eles. A RFC 3433 não tem limites: ela manda a NMS gravar os seus, e esta caixa é somente leitura — e os limites são os gravados no módulo.
+
+**Uma placa que não lê módulo não aparece** — virtio, uma TAP: não há gaiola para mostrar. Uma gaiola vazia aparece como porta sem módulo, e um módulo sem DDM ou de cobre aparece sem sensores. Quando um módulo entra, sai ou é trocado (outro número de série na mesma gaiola), `entLastChangeTime` muda e a caixa envia o aviso `entConfigChange` da própria ENTITY-MIB.
+
 ## A MIB do Prisma: o CGNAT, os registros de conexão e a caixa
 
 O que **não tem OID padrão** — os pools do CGNAT, os descartes, o transporte dos registros de conexão, a versão que o dataplane está rodando — está na **PRISMA-ROUTING-MIB**, a MIB do próprio produto. A partir da versão 0.143.4 ela é servida sem nenhuma configuração além de ligar o SNMP, e a própria caixa entrega o arquivo pronto, com o número já preenchido:
@@ -264,7 +284,7 @@ A partir da versão 0.151.15, `prTransceiver` traz o módulo de cada porta — o
 | `prXcvrLaneRxPower`, `prXcvrLaneTxPower` | em centésimos de dBm, com os limites ao lado e o nível de cada uma (`prXcvrLaneRxLevel`). **Sem luz (0 mW) é -4000**, -40,00 dBm |
 | `prXcvrLaneBias` | a corrente do laser, em microampères |
 
-Um valor que o módulo não dá, e os limites de quem não tem limites, **não aparecem** — não aparecem zerados. Por que não a ENTITY-SENSOR-MIB: ela pendura cada sensor numa ENTITY-MIB que a caixa não serve, não tem dBm e não tem limites — e os limites são o que diz se -14 dBm está bem.
+Um valor que o módulo não dá, e os limites de quem não tem limites, **não aparecem** — não aparecem zerados. Os mesmos módulos estão também na ENTITY-MIB e na ENTITY-SENSOR-MIB, descritas acima; esta tabela fica, em dBm, a unidade que o switch do outro lado mostra, e é nela que estão os alarmes ópticos do template do Zabbix.
 
 ## Zabbix: o template pronto
 
@@ -283,7 +303,7 @@ Os módulos ópticos (0.151.15) têm os seus: potência de RX abaixo do aviso ba
 Três escolhas do template:
 
 * **Sem alarme de CPU.** Os núcleos dos workers do dataplane ficam em 100% o tempo todo, por projeto. A carga de cada núcleo é coletada, mas não gera alarme.
-* **Um alarme por evento.** O VRRP e os pools geram alarme pela MIB do Prisma, que dá o nome da interface e do pool. As mesmas informações na VRRPV3-MIB e na NATV2-MIB são só coletadas. O BGP gera alarme pela BGP4-MIB para vizinhos IPv4 e pela BGP4V2-MIB só para os IPv6.
+* **Um alarme por evento.** O VRRP e os pools geram alarme pela MIB do Prisma, que dá o nome da interface e do pool. As mesmas informações na VRRPV3-MIB e na NATV2-MIB são só coletadas, e o mesmo vale para os sensores da ENTITY-SENSOR-MIB: os alarmes ópticos são os de `prTransceiver`. Da ENTITY-MIB vem só um aviso informativo, de módulo trocado. O BGP gera alarme pela BGP4-MIB para vizinhos IPv4 e pela BGP4V2-MIB só para os IPv6.
 * **Porta desligada pelo operador não é porta caída.** O alarme de porta fora só dispara com a porta administrativamente ligada.
 
 Para receber os **avisos** no Zabbix, aponte a caixa para um servidor ou proxy com o receptor de traps do Zabbix: `snmp trap-host <endereço> community <comunidade>`. Cada aviso da tabela da seção seguinte cai no seu próprio item, e o que não for reconhecido cai em um item de sobra. A partir da 0.152.3, um `bfdSessDown` também abre um alarme, que fecha `{$PRISMA.BFD.TRAP.HOLD}` (10 minutos) depois do último `bfdSessDown` ou à mão. Ele não fecha com o `bfdSessUp`: o Zabbix não sabe de qual sessão é cada aviso, e a volta de uma sessão fecharia a queda de outra. Se a sessão voltou, o item do `bfdSessUp` e o `show bfd peers` da caixa dizem.
@@ -293,6 +313,8 @@ O template foi importado no Zabbix 7.0 e testado contra uma caixa de laboratóri
 ## O que não é servido
 
 * **Nada por assinante nem por sessão.** Isso significaria percorrer a tabela de sessões a cada consulta.
+* **Ventoinhas, fontes e as temperaturas da placa-mãe.** Precisam dos sensores do próprio chassi (IPMI ou `/sys/class/hwmon`), e a única caixa de teste com hardware é uma VM, que não tem nenhum deles: nada pôde ser lido. Ficam para quando houver uma caixa física para medir.
+* **As placas de rede como entidades** (modelo, firmware, número de série): o número de série da placa só é legível pelo root, e o agente SNMP não roda como root. A descrição da porta traz o endereço PCI.
 * **Se o par de HA concorda com esta caixa** sobre o mapeamento, os forwards e o resultado do self-test: a VTY mostra, em `show cgnat ha` e `show cgnat forward`, e o self-test fala no console a cada boot.
 
 
@@ -333,6 +355,7 @@ Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confi
 | a trilha de configuração deixou de conferir | `auditTrailDamaged` |
 | um pool fica sem nenhum bloco livre | `poolExhausted`, com o nome do pool (desde a 0.152.2) |
 | o RX, a temperatura, a tensão, o bias ou o TX de um módulo passa de um limiar, ou volta | `transceiverStateChange`, com a porta e o nível (desde a 0.152.2) |
+| um módulo entra, sai ou é trocado numa gaiola | `entConfigChange`, o aviso da própria ENTITY-MIB |
 | uma sessão BFD cai ou volta | `bfdSessDown`, `bfdSessUp` da BFD-STD-MIB, com o índice da sessão e o diagnóstico (desde a 0.152.3) |
 | disco, memória ou carga passam do limite | os avisos padrão do net-snmp |
 
