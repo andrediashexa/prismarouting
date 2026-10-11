@@ -1949,6 +1949,20 @@ what the operator saw was a wall of text ending in `=====` and no prompt, on a
 box that was working and waiting for input
 ([#93](https://github.com/andrediashexa/hexarouting/issues/93)).
 
+**Both consoles, on the medium as on the installed box.** Every GRUB entry on
+the installation medium boots with `console=tty0 console=ttyS0,115200` - the
+words `prisma-routing-install` writes for the installed box, in the same order
+- and GRUB draws its menu on the screen and on the serial port at 115200. The
+order is the point: the **last** `console=` is `/dev/console`, so the self-test
+report and an unattended install go to the serial port, while the screen keeps
+the kernel's messages and its own VTY on tty1. The medium had no `console=` at
+all until [#600](https://github.com/andrediashexa/hexarouting/issues/600): a
+box reached only by serial saw nothing for seven minutes, and every lab was
+green over it because every lab booted the medium with `-kernel` and a command
+line of its own. `lab/install-iso.sh` boots it through its own GRUB now, takes
+the default entry, and reads the VTY on the serial port and on tty1;
+`test/test_iso_console.sh` reads the entries.
+
 `getty@tty1` and `serial-getty@ttyS0` are therefore ordered after
 `prisma-routing-selftest.service` **and** after `prisma-routing-installer.service`,
 so that an unattended install owns the console rather than running behind a
@@ -2768,7 +2782,7 @@ somewhere other than its cause:
 |---|---|
 | The installer never ran | `After=prisma-routing-selftest.service` together with `WantedBy=multi-user.target` is an ordering cycle; systemd broke it by dropping the job |
 | GRUB reached a `grub>` prompt | The squashfs was built with `-e boot`, so the installed system had no kernel, no initrd and no GRUB modules. The bootloader installed correctly and had nothing to boot |
-| The installed system booted silently | The live ISO is handed `console=ttyS0` by the boot loader; an installed system configures its own. It was booting fine and saying nothing, which is indistinguishable from not booting |
+| The installed system booted silently | The lab handed the live ISO `console=ttyS0` on a command line of its own; an installed system configures its own. It was booting fine and saying nothing, which is indistinguishable from not booting. The medium itself carried no `console=` until [#600](https://github.com/andrediashexa/hexarouting/issues/600), and no lab could see that for the same reason |
 | VPP segfaulted in a restart loop | The tuner sized hugepages from the subscriber target alone, and the main heap was a fixed 2G. A pool smaller than the heap starts VPP on memory that is not there |
 
 The last one is the one to remember. `prisma-routing-tune` exists to prevent quiet

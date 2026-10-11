@@ -118,6 +118,7 @@ sh test/test_prisma_hot_card.sh
 python3 test/test_vty_broker.py
 python3 test/test_makefile_recipes.py
 sh test/test_iso_ready.sh
+sh test/test_iso_console.sh
 python3 test/test_changelog_landing.py
 sh test/test_apply_tuning.sh
 python3 test/test_selftest_daemons.py

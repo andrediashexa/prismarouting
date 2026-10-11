@@ -464,23 +464,49 @@ mksquashfs "$ROOT" "$WORK/iso/live/filesystem.squashfs" \
   -processors "${SQUASH_PROCS:-2}" -mem "${SQUASH_MEM:-768M}"
 
 say "bootloader"
+# THE MEDIUM SPEAKS ON THE SERIAL PORT, AND ON THE SCREEN (#600).
+#
+# Every entry used to be `linux /live/vmlinuz boot=live components quiet`,
+# with no console= at all, so the kernel console, the self-test and the
+# autologin VTY reached tty0 and nothing else. Found installing 0.152.0 on a
+# Proxmox VM driven over its serial port: ttyS0 stayed silent for seven
+# minutes, until the GRUB line was edited by hand. Nothing in this repository
+# had ever booted the medium through its own boot loader - every lab handed
+# qemu -kernel and an -append line carrying console=ttyS0 - so the defect
+# was invisible to all of them. lab/install-iso.sh now boots this file's
+# default entry as it stands and reads the VTY off the serial port.
+#
+# The kernel arguments are the installed box's, from prisma-routing-install,
+# in the same order: ttyS0 LAST, because the last console= is /dev/console,
+# and /dev/console is where the self-test report and an unattended install
+# write (appliance/selftest, appliance/install-from-cmdline). tty0 still gets
+# the kernel's messages and getty@tty1 its VTY, so a screen shows what it
+# always showed.
+#
+# GRUB itself on both as well, so the menu can be chosen without a screen.
+# Inside an `if`: on a machine with no UART `serial` fails, and the terminals
+# then stay the screen's instead of erroring on a port that is not there.
 cat > "$WORK/iso/boot/grub/grub.cfg" <<'EOF'
+if serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1; then
+    terminal_input console serial
+    terminal_output console serial
+fi
 set default=0
 set timeout=5
 menuentry "Prisma Routing installer - start, then type 'install'" {
-    linux /live/vmlinuz boot=live components quiet
+    linux /live/vmlinuz boot=live components quiet console=tty0 console=ttyS0,115200
     initrd /live/initrd
 }
 menuentry "Prisma Routing installer - go straight to the questions" {
-    linux /live/vmlinuz boot=live components prisma-routing.install
+    linux /live/vmlinuz boot=live components prisma-routing.install console=tty0 console=ttyS0,115200
     initrd /live/initrd
 }
 menuentry "Prisma Routing (shell instead of the VTY)" {
-    linux /live/vmlinuz boot=live components prismash=off
+    linux /live/vmlinuz boot=live components prismash=off console=tty0 console=ttyS0,115200
     initrd /live/initrd
 }
 menuentry "Prisma Routing (recovery: single user, shell)" {
-    linux /live/vmlinuz boot=live components single prismash=off
+    linux /live/vmlinuz boot=live components single prismash=off console=tty0 console=ttyS0,115200
     initrd /live/initrd
 }
 EOF
