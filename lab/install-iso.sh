@@ -574,6 +574,10 @@ fi
 mkdir -p /mnt/iso /tmp/bf
 mount -o loop,ro "$ISO" /mnt/iso
 cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
+# And the boot loader's own configuration, as the medium carries it, for the
+# boot below that goes through it (#600).
+cp /mnt/iso/boot/grub/grub.cfg /tmp/medium-grub.cfg 2>/dev/null \
+  || : > /tmp/medium-grub.cfg
 # The live image must carry no usable credentials. Read its /etc/shadow out of
 # the squashfs before anything else touches it - this is the file that used to
 # travel onto the disk with a published password in it.
@@ -1046,7 +1050,7 @@ boot_vm() {  # <seconds> <qemu arguments...>
   rm -f "$CONSOLE_IN"
   mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
   timeout "$_secs" qemu-system-x86_64 \
-    $ACCEL $IOMMU_DEV -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot "$@" \
+    $ACCEL $IOMMU_DEV -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" ${VM_DISPLAY:--nographic} -no-reboot "$@" \
     < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
   QEMU_PID=$!
   # Held open for the whole session: a writer that opens and closes the pipe
@@ -2213,6 +2217,184 @@ drive_console() {
     "the box to say whether anything is still pending" || return 1
   return 0
 }
+
+# =========================================================================
+# THE MEDIUM, BOOTED THE WAY IT IS HANDED OVER (#600)
+# =========================================================================
+#
+# Every other boot of the medium in this repository - phase 1 above, phase 5
+# of the mirror lab, lab/boot-iso.sh - hands qemu -kernel, -initrd and an
+# -append line of its own, and that line carries console=ttyS0. So nothing had
+# ever booted the medium through its OWN boot loader, and the medium's entries
+# carried no console= at all: a box reached only by its serial port saw
+# nothing for seven minutes, until somebody edited the GRUB line by hand
+# (0.152.0 on a Proxmox VM, 2026-10-09). Every lab was green over it, because
+# every lab was reading a command line the lab had written.
+#
+# This boot is the medium and nothing else: -cdrom, no -kernel, no -append,
+# nothing typed until the VTY answers. The BIOS boots the CD, GRUB reads the
+# grub.cfg on it and takes its default entry when the timeout runs out, and
+# the console this lab reads is the serial port - which is what a racked box
+# is reached by. Then it asks the box what it booted and whether the screen,
+# tty1, still shows the VTY: the serial console was added, not swapped in.
+#
+# Phase 1 keeps its -append on purpose: an unattended install needs its
+# answers on the kernel command line, and what THAT phase proves is the
+# install. This one proves the medium.
+#
+# What each check below needs, so a red one names its cause:
+#   GRUB's menu on the serial port      grub.cfg's serial/terminal_* lines
+#   the default entry's command line    `set default=0` and its linux line,
+#                                       booted by GRUB (BOOT_IMAGE= is only
+#                                       there when a boot loader passed it)
+#   the self-test report on the serial  console=ttyS0 LAST: the report goes
+#                                       to /dev/console, which is the last one
+#   the VTY on the serial port          serial-getty@ttyS0, which systemd
+#                                       starts for a console= serial port
+#   the VTY on tty1                     getty@tty1 and console=tty0, untouched
+#
+echo
+echo "=========== THE MEDIUM, ON ITS OWN BOOT LOADER, OVER SERIAL ==========="
+MEDIUM_PROMPT="prisma> "
+CONSOLE_LOG=/tmp/medium.log
+CONSOLE_CLEAN=/tmp/medium-clean.log
+MEDIUM_DRIVEN=0
+# NOT -nographic, and that is the difference between this proving GRUB is on
+# serial and proving nothing. With -nographic qemu tells SeaBIOS to copy the
+# VGA text screen to the serial port, so a GRUB drawing on the screen ALONE
+# shows its menu on this console anyway. Measured on 2026-10-11 with a medium
+# built from 0.152.9's build-iso.sh: its menu reached this console twice under
+# -nographic and never under -display none -serial stdio, which is the serial
+# port a real machine has - a UART and nothing copied onto it. The VGA card is
+# still there, so tty1 below is still a screen.
+VM_DISPLAY="-display none -serial stdio -monitor none"
+# shellcheck disable=SC2086
+boot_vm "${MEDIUM_SECS:-600}" -cdrom "$ISO" -boot d
+VM_DISPLAY=
+medium_session() {
+  # ONE WAIT, for the last thing the box prints: its VTY prompt. The menu and
+  # the self-test report come before it and are read off the whole log once
+  # the machine is stopped, below. Waiting for each in turn was measured
+  # wrong on a medium whose GRUB was on the screen alone: the menu wait
+  # timed out while the box went on booting, the self-test wait then matched
+  # with the prompt already printed and moved past it, and the prompt wait
+  # read nothing - so one missing menu turned every check red and named the
+  # wrong cause for five of them.
+  #
+  # Nothing typed: the default entry is what an operator who presses nothing
+  # gets, and what this boot is about.
+  wait_for "$MEDIUM_PROMPT" "${MEDIUM_VTY_SECS:-540}" \
+    "the medium's autologin VTY on the serial port" || return 1
+  MEDIUM_DRIVEN=1
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open on the medium" \
+    || return 1
+  send 'echo "HX""LAB m-cmdline=$(cat /proc/cmdline)"'
+  wait_for "HXLAB m-cmdline=" 30 "the medium to say what it booted" || return 1
+  send 'echo "HX""LAB m-consoles=$(cat /sys/class/tty/console/active)"'
+  wait_for "HXLAB m-consoles=" 30 "the medium to name its consoles" || return 1
+  send 'echo "HX""LAB m-gettys=$(systemctl is-active serial-getty@ttyS0.service getty@tty1.service | tr "\n" " ")"'
+  wait_for "HXLAB m-gettys=" 30 "systemd to say which gettys run" || return 1
+  # THE SCREEN, read off the screen. /dev/vcs1 is tty1's text as drawn - 80
+  # columns with no line ends - which is what a monitor on the VGA port shows.
+  # Waited for rather than read once: getty@tty1 is ordered after the
+  # self-test like the serial one, and the two are not ordered against each
+  # other.
+  send '_i=0; while [ $_i -lt 120 ] && ! grep -aq "prisma>" /dev/vcs1; do sleep 1; _i=$((_i+1)); done; echo "HX""LAB m-tty1=$(grep -ac "prisma>" /dev/vcs1) after ${_i}s"'
+  wait_for "HXLAB m-tty1=" 180 "the medium to read what tty1 shows" || return 1
+  # And the screen itself into the log, as the evidence.
+  send 'echo "HX""LAB m-screen-begin"; fold -w 80 /dev/vcs1 | sed "s/ *$//; /^$/d; s/^/  tty1| /"; echo "HX""LAB m-screen-end"'
+  wait_for "HXLAB m-screen-end" 30 "the medium to print tty1's screen" || return 1
+  return 0
+}
+medium_session || fail=1
+stop_vm 0
+M_CMDLINE=$(mfield "$CONSOLE_CLEAN" m-cmdline)
+M_CONSOLES=$(mfield "$CONSOLE_CLEAN" m-consoles)
+M_GETTYS=$(mfield "$CONSOLE_CLEAN" m-gettys)
+M_TTY1=$(mfield "$CONSOLE_CLEAN" m-tty1)
+
+# The menu, on the serial port.
+if grep -q "Prisma Routing installer - start" "$CONSOLE_CLEAN"; then
+  echo "  [ ok ] GRUB drew the medium's menu on the serial port"
+else
+  echo "  [FAIL] GRUB's menu never reached the serial port: grub.cfg on the"
+  echo "         medium does not put GRUB on serial, so an entry cannot be"
+  echo "         chosen without a screen"
+  fail=1
+fi
+
+# What the DEFAULT entry says, read off the medium's own grub.cfg rather than
+# written here, so this compares the box against the file and not against a
+# copy of it.
+M_DEFAULT=$(awk '/^set default=/ { split($0, a, "="); d = a[2] + 0 }
+                 /^[ \t]*linux / { if (n++ == d) { sub(/^[ \t]*linux[ \t]+/, "");
+                                                    print; exit } }' \
+              /tmp/medium-grub.cfg)
+M_WANT="BOOT_IMAGE=$M_DEFAULT"
+if [ -n "$M_DEFAULT" ] && [ "$M_CMDLINE" = "$M_WANT" ]; then
+  echo "  [ ok ] GRUB booted the default entry, and nothing else:"
+  echo "         $M_CMDLINE"
+else
+  echo "  [FAIL] the medium did not boot its default entry through GRUB"
+  echo "         default entry: '${M_DEFAULT:-<none in the medium's grub.cfg>}'"
+  echo "         booted with:   '${M_CMDLINE:-<the box never said>}'"
+  fail=1
+fi
+
+# console= in the order the installed box has: ttyS0 last.
+M_LAST=$(printf '%s\n' "$M_CMDLINE" | tr ' ' '\n' | sed -n 's/^console=//p' | tail -1)
+case " $M_CMDLINE " in
+  *" console=tty0 "*) M_HAS_TTY0=1 ;;
+  *) M_HAS_TTY0=0 ;;
+esac
+if [ "$M_LAST" = "ttyS0,115200" ] && [ "$M_HAS_TTY0" = 1 ]; then
+  echo "  [ ok ] the kernel console is on tty0 and ttyS0, ttyS0 last"
+  echo "         (active consoles: ${M_CONSOLES:-<unread>})"
+else
+  echo "  [FAIL] the medium's command line does not put the console on"
+  echo "         tty0 and ttyS0,115200 with ttyS0 last (last console=:"
+  echo "         '${M_LAST:-<none>}'). Without it a serial-only box sees"
+  echo "         nothing (#600)"
+  fail=1
+fi
+
+if [ "$MEDIUM_DRIVEN" = 1 ] && said_a_verdict "$CONSOLE_CLEAN"; then
+  echo "  [ ok ] the self-test report and the VTY came up on the serial port"
+else
+  echo "  [FAIL] the serial port never showed the medium's self-test verdict"
+  echo "         and its VTY - which is what a racked box is reached by"
+  fail=1
+fi
+
+case "$M_GETTYS" in
+  "active active "*|"active active")
+    echo "  [ ok ] serial-getty@ttyS0 and getty@tty1 are both running" ;;
+  *)
+    echo "  [FAIL] the gettys are '${M_GETTYS:-<the box never said>}'"
+    echo "         (serial-getty@ttyS0, getty@tty1): both must run"
+    fail=1 ;;
+esac
+
+case "$M_TTY1" in
+  [1-9]*)
+    echo "  [ ok ] and tty1, the screen, still shows the VTY ($M_TTY1)" ;;
+  "")
+    echo "  [FAIL] the box never said what tty1 shows: the serial session"
+    echo "         above did not get far enough to ask"
+    fail=1 ;;
+  *)
+    echo "  [FAIL] tty1 does not show the VTY prompt ('$M_TTY1'):"
+    echo "         the serial console was added at the cost of the screen"
+    fail=1 ;;
+esac
+sed -n '/^HXLAB m-screen-begin/,/^HXLAB m-screen-end/p' "$CONSOLE_CLEAN" \
+  | grep "^  tty1|" | head -30
+
+# Back to the console phase 2 reads.
+CONSOLE_LOG=/tmp/disk.log
+CONSOLE_POS=1
+: > "$CONSOLE_LOG"
 
 # =========================================================================
 # The records mirror, and the disk that dies under it (#83)

@@ -43,6 +43,8 @@ Type 'install' to install Prisma Routing onto a disk.
 prisma> install
 ```
 
+**Console serial ou monitor, tanto faz.** O menu do GRUB aparece no vídeo e na porta serial (ttyS0, 115200 8N1), e toda entrada dá boot com `console=tty0 console=ttyS0,115200` - as mesmas palavras que a caixa instalada recebe. O relatório do self-test e uma instalação não assistida saem na serial; o monitor continua mostrando as mensagens do kernel e a VTY em tty1. Até a 0.152.x a mídia não tinha `console=` nenhum, e uma máquina acessada só pela serial ficava muda até alguém editar a linha do GRUB à mão.
+
 O comando `install` existe na VTY **somente quando a máquina está rodando a partir do meio**. Em uma appliance já instalada ele não está na árvore de comandos e o instalador se recusa a rodar — um comando que sobrescreve o disco não deve ficar a um TAB de distância de `interface` num roteador em produção.
 
 ## Escolha do disco

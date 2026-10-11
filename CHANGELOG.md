@@ -79,6 +79,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The installation medium speaks on the serial port: its kernel console,
+  its self-test report and its VTY reach ttyS0 as well as the screen, and
+  GRUB's menu can be chosen over serial.**
+  ([#600](https://github.com/andrediashexa/hexarouting/issues/600)) Found
+  installing 0.152.0 on a Proxmox VM driven over its serial port: nothing
+  on ttyS0 for seven minutes, until the GRUB line was edited by hand. Every
+  entry in the medium's `grub.cfg` was `linux /live/vmlinuz boot=live
+  components ...` with no `console=`, so everything went to the screen
+  alone - on a product `docs/appliance.md` says is reached by serial
+  console or IPMI. Every entry now carries `console=tty0
+  console=ttyS0,115200`, the installed box's own words in its own order:
+  ttyS0 last, so `/dev/console` - where the self-test report and an
+  unattended install write - is the serial port, and the screen keeps the
+  kernel's messages and its VTY on tty1. GRUB opens the serial port at
+  115200 and draws its menu on both; on a machine with no serial port it
+  stays on the screen. Nothing caught it because nothing had ever booted
+  the medium through its own boot loader: every lab handed qemu `-kernel`
+  and a command line of its own that carried `console=ttyS0`.
+  `lab/install-iso.sh` now boots the medium as it is handed over - `-cdrom`,
+  no `-kernel`, nothing typed, and a bare serial port rather than
+  `-nographic`, under which SeaBIOS copies the screen onto the serial port
+  and the old medium's menu showed there too - and asserts that GRUB's menu is on the
+  serial port, that the box booted the default entry through GRUB, that
+  the self-test report and the VTY reached the serial port, and that tty1
+  still shows the VTY; built from the previous `build-iso.sh`, the same lab
+  goes red. `test/test_iso_console.sh` refuses, in a second, a menu entry
+  without the console words or a GRUB not on serial.
+
 ## 0.152.11 - the last screen through the API, and the record sees what it missed
 
 ### Added
