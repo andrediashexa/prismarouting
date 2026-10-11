@@ -161,12 +161,12 @@ A caixa serve também a **ENTITY-MIB** (RFC 6933, `.1.3.6.1.2.1.47`) e a **ENTIT
 O índice (`entPhysicalIndex`) sai do **ifIndex da porta na IF-MIB**, que não muda com reboot nem com placa nova — então o histórico de um sensor na NMS também não se perde:
 
 | O quê | `entPhysicalIndex` |
-|-------|--------------------|
-| o chassi | 1 |
-| a porta | ifIndex × 1000 |
+|-------|------------------|
+| o chassi | 1                |
+| a porta | ifIndex × 1000   |
 | o módulo na porta | ifIndex × 1000 + 1 |
-| temperatura e tensão do módulo | + 2 e + 3 |
-| bias, TX e RX da faixa *n* | + 10*n* + 1, + 2 e + 3 |
+| temperatura e tensão do módulo | \+ 2 e + 3       |
+| bias, TX e RX da faixa *n* | \+ 10*n* + 1, + 2 e + 3 |
 
 Numa porta de ifIndex 1, por exemplo: porta 1000, módulo 1001, temperatura 1002, tensão 1003, bias 1011, TX 1012 e RX 1013. O módulo traz fabricante, modelo (*part number*), número de série, revisão e data de fabricação (`entPhysicalMfgName`, `entPhysicalModelName`, `entPhysicalSerialNum`, `entPhysicalHardwareRev`, `entPhysicalMfgDate`), e `entAliasMappingIdentifier` liga cada porta ao seu ifIndex.
 
