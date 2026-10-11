@@ -2382,8 +2382,12 @@ esac
 case "$M_TTY1" in
   [1-9]*)
     echo "  [ ok ] and tty1, the screen, still shows the VTY ($M_TTY1)" ;;
+  "")
+    echo "  [FAIL] the box never said what tty1 shows: the serial session"
+    echo "         above did not get far enough to ask"
+    fail=1 ;;
   *)
-    echo "  [FAIL] tty1 does not show the VTY prompt ('${M_TTY1:-<unread>}'):"
+    echo "  [FAIL] tty1 does not show the VTY prompt ('$M_TTY1'):"
     echo "         the serial console was added at the cost of the screen"
     fail=1 ;;
 esac
