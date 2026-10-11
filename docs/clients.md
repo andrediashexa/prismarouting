@@ -27,6 +27,12 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.152.10 - the ports' modules and sensors over SNMP
+
+* **Contract:** unchanged (`prisma.proto` sha256 `066493334a290520b93dce0e1ceb9aeafac7466067a1c601dfe6309d75df63ad`, the same as 0.152.9). Nothing a client of `prisma.v1` sees changes.
+* **SNMP only** (#496 phase 5): the box now serves ENTITY-MIB and ENTITY-SENSOR-MIB for its ports and their pluggable modules, with each module's own warning and alarm levels in PRISMA-ROUTING-MIB's `prSensorThresholdTable`, and sends `entConfigChange` when a module is inserted, removed or swapped. A client reading the same data through the API keeps using `show interface <if> transceiver` / the transceiver fields it already reads.
+* **Lab box:** 10.40.200.166 takes 0.152.10 after the release; the API is gone for about a minute while the management container is recreated.
+
 ## 0.152.9 - each CPU, its place and its load
 
 * **Contract:** additive (`prisma.proto` sha256 `066493334a290520b93dce0e1ceb9aeafac7466067a1c601dfe6309d75df63ad`).
