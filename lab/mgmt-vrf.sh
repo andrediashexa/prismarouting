@@ -860,14 +860,17 @@ EOF
   # yet. 10.40.200.166 recorded "the SNMP settings were refused" at every
   # boot that way, then "applied once the interfaces were up", the same
   # file. Phases 4 to 7 never see it: management in its VRF turns nonlocal
-  # bind on. Two boots, after phase 8 left the card in vrf mgmt with no
+  # bind on. A boot after phase 8 left the card in vrf mgmt with no
   # management statement:
   #   11. the card still in the VRF: snmpd cannot bind its addresses from
   #       the main table, ever - a real refusal, recorded ONCE, after the
   #       retry (0.152.11 recorded it twice, the first before the retry);
-  #   12. the card on the main table: its addresses come up with the load,
-  #       and the record has the retry's notice alone (0.152.11: a refusal
-  #       first). Both red on the release before, measured 2026-10-11.
+  # The other half - an address that is only not up YET, the shape
+  # 10.40.200.166 shows at every boot - is not reproduced here: stopping
+  # and starting this lab's dataplane does not recreate the boot's order
+  # (the load's SNMP apply succeeded at once, or did not run, in two
+  # attempts on 2026-10-12). It is held by test_prismash_apply and proven
+  # on .166 itself after the release.
   boot11() {  # <phase>: a boot, snmpd started first, then --load
     $HX -c "save" 2>&1 | tail -1 | sed 's/^/  /'
     stop_box
@@ -891,25 +894,6 @@ EOF
   expect_not_in "real refusal: and nothing says it was applied" \
       "SNMP settings were applied" "$EVENTS11"
 
-  echo; echo "=== 12. a boot, management on the main table: SNMP before its address ==="
-  $HX -c "configure" -c "interface host-veth-mg" -c "vrf 0" -c "exit" \
-      -c "commit" > /tmp/c12.log 2>&1
-  grep -v "^entering" /tmp/c12.log | sed 's/^/  c12: /' | tail -3
-  boot11 12
-  echo "    vppmg0 after the load: $(ip -o link show vppmg0 2>&1 | grep -o 'master [^ ]*') $(ip -o addr show dev vppmg0 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
-  expect_in "boot: the load says which address SNMP waits for (#601)" \
-      "snmp: waiting for " "$(cat /tmp/load12.log)"
-  expect_not_in "boot: and it is no refusal, nor a warning" \
-      "warning: snmp" "$(cat /tmp/load12.log)"
-  expect_not_in "boot: the record has no refusal" \
-      "SNMP settings were refused" "$EVENTS11"
-  expect_in "boot: only the retry's notice" \
-      "SNMP settings were applied once the interfaces were up" "$EVENTS11"
-  sleep 2
-  expect_in "boot: and snmpd answers on the management address" "STRING:" \
-      "$(snmp_in 10.200.0.1 10.200.0.2)"
-  expect_in "boot: on IPv6 too" "STRING:" \
-      "$(snmp_in 2001:db8:200::1 2001:db8:200::2)"
 fi
 
 verdict
