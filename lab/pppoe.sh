@@ -45,7 +45,10 @@ MODE=${1:-on}
 set -u
 HX="python3 /src/src/prismash/prismash.py"
 L=/var/log/prisma-routing/bng
-mkdir -p /run/vpp /var/log/prisma-routing /etc/prisma-routing "$L" /etc/ppp/peers
+# NOT $L: an installed box has no /var/log/prisma-routing/bng until the
+# container makes it, and the first one did not (#597, 0.153.97).
+mkdir -p /run/vpp /var/log/prisma-routing /etc/prisma-routing /etc/ppp/peers
+rm -rf "$L"
 
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
@@ -71,6 +74,13 @@ mkdir -p /opt/shim
 ln -sf /src/lab/pppoe-shim /opt/shim/docker
 ln -sf /src/lab/pppoe-shim /opt/shim/docker-compose
 cp /src/appliance/compose.yaml /etc/prisma-routing/compose.yaml
+# The stack's environment as load-the-images writes it on a box - the
+# release's tag, never :latest - and nothing in the lab's own environment:
+# the host's prisma-bng has to find it where the box keeps it.
+mkdir -p /run/prisma-routing
+printf 'PRISMA_VERSION=%s\nPRISMA_VPP_GID=%s\n' "$(cat /src/VERSION)" \
+  "$(getent group vpp | cut -d: -f3)" > /run/prisma-routing/compose.env
+unset PRISMA_VERSION
 export PRISMA_COMPOSE=/opt/shim/docker-compose PRISMA_DOCKER=/opt/shim/docker
 export PRISMA_BNG_CTL=/src/appliance/prisma-bng
 
@@ -378,7 +388,7 @@ AFTER=$($HX -c "show pppoe sessions" 2>&1)
 NOW=$(echo "$AFTER" | awk '/^[0-9a-f]+  / && length($1) == 16 && $NF ~ /:/ {print $1}' | sort | tr '\n' ' ')
 echo "  sessions before: $BEFORE"
 echo "  sessions after:  $NOW"
-grep -c "== start" "$L/container.log" | sed 's/^/  container starts: /'
+grep -c "== start" /var/log/pppoe-shim.log | sed 's/^/  container starts: /'
 
 echo
 echo "=========== 11. no pppoe ==========="
@@ -412,6 +422,8 @@ expect "the others from the pool" \
 expect_in "the DNS servers reached the CPE" "primary   DNS address 8.8.8.8" \
   "$(cat /tmp/pppd1.log)"
 expect_in "the summary says the control plane runs" "running" "$SUMMARY"
+expect "  it made its own log directory, which a box does not have" \
+  test -s "$L/accel-ppp.log"
 expect_in "sub1 leaves on the block the model predicted" \
   "IP $PREDICTED > 200.150.0.2.53" "$CAP"
 expect_not_in "  and its private address is not on the wire" "IP $A1." "$CAP"

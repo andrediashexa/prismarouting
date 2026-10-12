@@ -28,6 +28,17 @@ RUN apt-get update -qq \
         libnl-3-200 libnl-route-3-200 libnl-genl-3-200 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /accel-root/usr/ /usr/
+# NO KERNEL MODULE IS LOADED FROM HERE, and accel-ppp asks anyway: its pppoe
+# module opens an AF_PPPOX socket at start and, when that fails, runs
+# `modprobe -q pppoe` - for the kernel's PPPoE, which a session terminated in
+# VPP never uses (it carries discovery on raw sockets on pppoe-cp). The image
+# has no modprobe, so every start printed "sh: modprobe: not found" (seen on
+# the first installed box). This stands in for it: it loads nothing, says so
+# in one line accel-ppp's own "failed to load pppoe kernel module" follows,
+# and fails, which is the truth.
+RUN printf '#!/bin/sh\necho "modprobe $*: not in the prisma-bng container; VPP carries PPPoE" >&2\nexit 1\n' \
+        > /usr/local/sbin/modprobe \
+    && chmod 0755 /usr/local/sbin/modprobe
 COPY appliance/prisma-bng-entrypoint /usr/local/bin/prisma-bng-entrypoint
 COPY appliance/prisma-bng-cli /usr/bin/prisma-bng-cli
 COPY appliance/prisma-bng-session /usr/lib/prisma-bng/session

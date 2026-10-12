@@ -32,14 +32,38 @@ DOCKER=${PRISMA_DOCKER:-docker}
 ETC=${PRISMA_ETC:-/etc/prisma-routing}
 RUN=${PRISMA_RUN:-/run/prisma-routing}
 CONF_DIR=$ETC/bng
+LOG=${PRISMA_LOG:-/var/log/prisma-routing}
 SERVICE=bng
 # The name compose gives it: the project is the directory compose.yaml is in.
 CONTAINER=${PRISMA_BNG_CONTAINER:-prisma-routing_bng_1}
 
 say() { echo "prisma-bng: $*" >&2; }
 
+# stack_env - the stack's environment from compose.env, as
+# prisma-routing-containers.service has it through EnvironmentFile=: the
+# images' tag (PRISMA_VERSION) and the box's vpp group (PRISMA_VPP_GID), both
+# written by load-the-images. A value already in the environment wins.
+#
+# MEASURED ON THE FIRST INSTALLED BOX (0.153.97, 2026-10-12): without it
+# compose resolved `prisma-bng:${PRISMA_VERSION:-latest}` to :latest, which no
+# installed box has - "pull access denied", the container never started - and
+# it proposed recreating vpp, whose service then read differently from the
+# one running. The GID is loaded for the same reason: the vpp service's
+# environment must read as it did when the stack was started.
+stack_env() {
+  [ -f "$RUN/compose.env" ] || return 0
+  for _k in PRISMA_VERSION PRISMA_VPP_GID; do
+    eval "_have=\${$_k:-}"
+    [ -n "$_have" ] && continue
+    _v=$(sed -n "s/^$_k=//p" "$RUN/compose.env" | tail -1)
+    [ -n "$_v" ] && eval "export $_k=\$_v"
+  done
+  return 0
+}
+
 # compose <args...> - docker-compose on the stack's files, bng's profile on
 compose() {
+  stack_env
   _dev=""
   [ -f "$RUN/compose-devices.yaml" ] && _dev="-f $RUN/compose-devices.yaml"
   # shellcheck disable=SC2086
@@ -89,6 +113,9 @@ main() {
         say "dataplane as systemd units; move it to the containers first"
         exit 4; }
       configured || { say "no generated configuration in $CONF_DIR"; exit 3; }
+      # Where accel-ppp logs, on the log volume the container mounts; the
+      # entrypoint makes it too, for a container started by `boot`.
+      install -d -m 0750 "$LOG/bng" 2>/dev/null
       if running; then
         # A restart, not a recreate, when the image is the same: the
         # configuration is a bind mount, read again at start.

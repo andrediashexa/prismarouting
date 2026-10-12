@@ -35,6 +35,7 @@ set -u
 
 CONF_DIR=${PRISMA_BNG_CONF:-/etc/prisma-routing/bng}
 RUN_DIR=${PRISMA_BNG_RUN:-/run/prisma-routing/bng}
+LOG_DIR=${PRISMA_BNG_LOG:-/var/log/prisma-routing/bng}
 VPPCTL=${PRISMA_VPPCTL:-vppctl}
 ACCEL=${PRISMA_ACCEL:-/usr/sbin/accel-pppd}
 IP=${PRISMA_IP:-ip}
@@ -168,9 +169,24 @@ stop_all() {
   exit 0
 }
 
+# log_dir - accel-ppp's log directory, made when it is missing; 0 or 1
+#
+# MEASURED ON THE FIRST INSTALLED BOX (0.153.97, 2026-10-12): nothing made
+# /var/log/prisma-routing/bng, accel-pppd exited at start on
+# "log:log_error:open: No such file or directory", and the container
+# restarted for ever without answering a PADI. The labs had the directory
+# because they made it. 0750 root, as the log volume's own directory is: the
+# log names subscribers.
+log_dir() {
+  [ -d "$LOG_DIR" ] || install -d -m 0750 "$LOG_DIR" || {
+    say "could not make $LOG_DIR"; return 1; }
+  return 0
+}
+
 # not a unit: the container's main loop, driven end to end by lab/pppoe.sh
 main() {
   mkdir -p "$RUN_DIR"
+  log_dir || exit 1
   [ -f "$CONF_DIR/accel-ppp.conf" ] || {
     say "no $CONF_DIR/accel-ppp.conf: PPPoE is not configured"; exit 1; }
   wait_vpp || { say "the dataplane did not answer in ${WAIT_VPP}s"; exit 1; }

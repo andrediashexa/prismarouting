@@ -34,6 +34,7 @@ mkdir -p "$T/bin" "$T/etc/bng" "$T/run"
 cat > "$T/bin/docker-compose" <<EOF
 #!/bin/sh
 echo "compose \$*" >> "$T/log"
+echo "env PRISMA_VERSION=\${PRISMA_VERSION:-} PRISMA_VPP_GID=\${PRISMA_VPP_GID:-}" >> "$T/log"
 EOF
 cat > "$T/bin/docker" <<EOF
 #!/bin/sh
@@ -45,7 +46,7 @@ esac
 EOF
 chmod +x "$T/bin/"*
 export PRISMA_COMPOSE="$T/bin/docker-compose" PRISMA_DOCKER="$T/bin/docker"
-export PRISMA_ETC="$T/etc" PRISMA_RUN="$T/run"
+export PRISMA_ETC="$T/etc" PRISMA_RUN="$T/run" PRISMA_LOG="$T/varlog"
 BNG="sh $REPO/appliance/prisma-bng"
 mkdir -p "$T/etc"
 mkdir -p "$T/etc/bng"
@@ -67,6 +68,20 @@ echo true > "$T/running"; : > "$T/log"
 out=$($BNG apply 2>&1)
 check "apply recreates a running one on the new files" \
   "[ '$out' = restarted ] && grep -q 'up -d --no-deps --force-recreate bng' '$T/log'"
+check "apply makes accel-ppp's log directory on the log volume" "[ -d '$T/varlog/bng' ]"
+echo false > "$T/running"; : > "$T/log"
+printf 'PRISMA_VERSION=0.154.0\nPRISMA_VPP_GID=997\n' > "$T/run/compose.env"
+$BNG apply > /dev/null 2>&1
+check "compose is given the stack's tag and vpp group from compose.env, as the unit gives them - an installed box has no :latest" \
+  "grep -q 'env PRISMA_VERSION=0.154.0 PRISMA_VPP_GID=997' '$T/log'"
+: > "$T/log"
+PRISMA_VERSION=0.155.0 $BNG apply > /dev/null 2>&1
+check "  and a tag already in the environment wins" \
+  "grep -q 'env PRISMA_VERSION=0.155.0 PRISMA_VPP_GID=997' '$T/log'"
+rm "$T/run/compose.env"; : > "$T/log"
+$BNG apply > /dev/null 2>&1
+check "  with no compose.env, nothing is invented" "grep -q 'env PRISMA_VERSION= ' '$T/log'"
+echo true > "$T/running"
 touch "$T/run/compose-devices.yaml"; : > "$T/log"
 $BNG apply > /dev/null 2>&1
 check "with the stack's device fragment beside it, as the unit runs compose" \
@@ -138,6 +153,9 @@ printf 'PARENT=ge0\nVLANS="0 100"\nMTU=1492\nTCP_MSS=1452\n' > "$T/etc/bng/acces
 PRISMA_BNG_SOURCE_ONLY=1 . "$REPO/appliance/prisma-bng-entrypoint"
 : > "$T/vlog"
 check "wait_vpp: the dataplane answers" "wait_vpp"
+PRISMA_BNG_LOG="$T/varlog2/bng"; LOG_DIR=$PRISMA_BNG_LOG; mkdir -p "$T/varlog2"
+check "log_dir: accel-ppp's log directory made where a box has none, 0750" \
+  "log_dir && [ \"\$(stat -c %a '$T/varlog2/bng')\" = 750 ]"
 check "hw_mac: the card's Ethernet address" "[ \"\$(hw_mac ge0)\" = 02:fe:00:00:00:01 ]"
 plumb; rc=$?
 check "plumb: laid" "[ $rc -eq 0 ]"

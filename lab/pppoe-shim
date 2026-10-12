@@ -18,7 +18,7 @@
 set -u
 PIDF=/run/pppoe-shim.pid
 STOPF=/run/pppoe-shim.stopped
-LOG=${PPPOE_SHIM_LOG:-/var/log/prisma-routing/bng/container.log}
+LOG=${PPPOE_SHIM_LOG:-/var/log/pppoe-shim.log}
 ENTRY=${PPPOE_SHIM_ENTRY:-/src/appliance/prisma-bng-entrypoint}
 
 alive() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; }
@@ -61,6 +61,15 @@ case "$role" in
     args=" $* "
     case "$args" in
       *" up "*)
+        # AN INSTALLED BOX HAS NO :latest. compose.yaml names
+        # prisma-bng:${PRISMA_VERSION:-latest}, load-the-images loads the
+        # images tagged with the release, and a `up` without the tag asks a
+        # registry and fails ("pull access denied") - measured on the first
+        # installed box, after this lab had passed. So the stand-in refuses
+        # what the box refused.
+        case "${PRISMA_VERSION:-latest}" in
+          latest) echo "pull access denied for prisma-bng:latest" >&2; exit 1 ;;
+        esac
         case "$args" in *" --force-recreate "*) stop 20 ;; esac
         start ;;
       *" stop "*) stop 20 ;;
