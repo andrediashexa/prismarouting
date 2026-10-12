@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.5 - a dynamic interleaved pool stays evenly spread after churn
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.4). Nothing a client of `prisma.v1` sees changes in shape.
+* **Which public address a new subscriber gets** (#603): on a dynamic pool with `policy interleaved`, an arriving subscriber now takes a free block on the public address with the fewest subscribers in the pool (lowest address on a tie) instead of the block the last leaver gave back. Readings a client shows - `show bpa subscriber`, the block records, pool usage - keep their form; only the address and port range a given arrival receives differ, and subscribers per address stay at the most even spread after churn. A client that predicted a subscriber's block from the order of arrivals MUST NOT: it never was a contract. `policy blocked` and deterministic pools are unchanged.
+
 ## 0.153.4 - latest/ offers an ISO; show hardware counts the cards the dataplane took
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.3). No message, field or number changes.

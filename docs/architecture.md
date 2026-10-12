@@ -342,7 +342,7 @@ before proposing the change.
 
 **The least-loaded choice
 ([#603](https://github.com/andrediashexa/hexarouting/issues/603)).** Since
-0.153.x an arriving subscriber on a dynamic `policy interleaved` pool takes a
+0.153.5 an arriving subscriber on a dynamic `policy interleaved` pool takes a
 free block of its worker's slice on the public address with the **fewest
 subscribers in the whole pool**, the lowest address on a tie, and on that
 address the block that has been free longest. `ref/bpa_model.py`
@@ -410,7 +410,17 @@ table is after both were removed.
 upgrades it to an artifact built from the tree, and `lab/bench3vm_check.py`
 now asserts the spread instead of printing it: fresh, full, and every churn
 round from the sixth within one subscriber per address of the most even
-spread possible. The runs are in the next paragraph.
+spread possible. Measured on 2026-10-12, twelve rounds each, the released
+0.153.0 medium in both:
+
+| Run | after rounds 1-12 (max/min) | verdict |
+|---|---|---|
+| upgraded to this change (`BENCH_UPGRADE`) | 1.091, 1.111, 1.125, 1.0, then **1.143 at every round from 5 to 12** - each the most even possible | `LAB PASSED` |
+| as released (the stack) | 1.444, 1.375, 1.429, 1.5, 1.5, 1.5, 1.5, 1.5, 1.333, 1.143, 1.8, 1.667 | 6 rounds red |
+| `off`, upgraded (the pool deterministic) | - | the five BPA checks red, as before |
+
+The upgraded box's per-address counts after round 12 were 8 8 8 8 8 7 7 7;
+the released box's were 6 7 8 7 8 8 7 10.
 
 **Throughput, as a sanity number and not a NIC benchmark.** Virtio through
 vhost on a shared build machine; what limits it is the host's packet copying

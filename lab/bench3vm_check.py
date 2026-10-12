@@ -439,7 +439,7 @@ def main():
               f" (even: {even(s['subscribers'], len(addrs))})")
     summary["spread"] = spreads
 
-    # THE SPREAD, ASSERTED (#603). Until 0.153.x these were readings: the
+    # THE SPREAD, ASSERTED (#603). Until 0.153.5 these were readings: the
     # free blocks of a slice were a stack, the spread after churn was
     # whatever the last leavers left, and this bench measured 1.67, 1.14,
     # 2.2 and 2.0 after six rounds where 1.14 was possible. A dynamic
