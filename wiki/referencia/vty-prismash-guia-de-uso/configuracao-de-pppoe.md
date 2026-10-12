@@ -16,14 +16,16 @@ prisma# [edit] commit
 
 O `commit` gera a configuração do plano de controle PPPoE a partir da candidata e o põe no ar. Como todo o resto, a mudança entra no `rollback`, no `commit confirmed` e na trilha de auditoria. Os arquivos que o plano de controle lê são gerados pela caixa e reescritos a cada commit; não se editam à mão.
 
+
 :::warning
 Toda mudança no bloco `pppoe` reinicia o plano de controle PPPoE: **todas as sessões caem** e os CPEs discam de novo. O encaminhamento dos outros assinantes, o roteamento e a VTY não são afetados.
+
 :::
 
 ## Declarações
 
 | Declaração | O que faz |
-|---|---|
+|------------|-----------|
 | `interface <nome>` | uma interface de acesso: a placa, ou uma sub-interface dela com **uma** tag VLAN (`vlan <id>` no bloco da sub-interface). Pode haver várias, todas da mesma placa |
 | `gateway <endereço>` | o endereço da caixa em cada sessão (o endereço local do IPCP). Obrigatório |
 | `address-pool <prefixo>` ou `<primeiro>-<último>` | endereços para quem o RADIUS não manda `Framed-IP-Address`. Até 16 |
@@ -45,7 +47,7 @@ O endereço de cada sessão vem do RADIUS (`Framed-IP-Address`) quando ele manda
 ## O que o commit recusa
 
 | Situação | Por quê |
-|---|---|
+|----------|---------|
 | sem `interface`, sem `gateway` | o plano de controle não teria onde atender nem que endereço usar |
 | sem servidor RADIUS e sem `local-user` | ninguém para autenticar |
 | sem `address-pool` e sem RADIUS | ninguém para dar endereço |
@@ -61,12 +63,12 @@ O segredo fica na configuração salva, para que um `rollback` consiga restaurá
 ## Sessões
 
 | Comando | O que mostra ou faz |
-|---|---|
+|---------|---------------------|
 | `show pppoe sessions` | uma linha por sessão: o id, o usuário, o endereço, o MAC do CPE e há quanto tempo está de pé; uma sessão ainda autenticando diz `start` no lugar do tempo |
 | `show pppoe summary` | se o plano de controle PPPoE está rodando, quantas sessões estão ativas, começando e terminando, e o resumo da configuração |
 | `clear pppoe session <id>` | encerra uma sessão; o id é o da primeira coluna de `show pppoe sessions`, o mesmo `Acct-Session-Id` que o RADIUS recebeu |
 | `clear pppoe session user <nome>` | encerra as sessões de um usuário |
-| `clear pppoe session all` | encerra todas |
+| `clear pppoe session all` | encerra todas       |
 
 Uma sessão encerrada manda PADT ao CPE e Accounting-Stop ao RADIUS; o CPE disca de novo. As interfaces que o dataplane cria para as sessões nunca entram na configuração: são assinantes discando, não algo que alguém configurou.
 
@@ -79,8 +81,10 @@ prisma> show pppoe sessions
 
 O resumo deve dizer `running` e contar as sessões ativas; cada assinante que discou aparece em `show pppoe sessions` com o endereço que recebeu. No seu RADIUS, cada sessão deixa um Accounting-Start, as atualizações intermediárias com os bytes da sessão e, ao cair, um Accounting-Stop.
 
+
 :::info
 Nesta versão o PPPoE é IPv4. IPv6, controle de banda por assinante, CoA/DM, QinQ e alta disponibilidade das sessões ainda não existem.
+
 :::
 
 ## Ver também

@@ -45,7 +45,7 @@ flowchart LR
 | Sistema | `prisma# [edit system] ` | `system`    | `exit`, `up` ou `top` |
 | Placa, núcleos e memória | `prisma# [edit system / dataplane] ` | `dataplane`, `cpu` ou `memory`, dentro de `system` | `exit` volta para `system` |
 | Política de roteamento | `prisma# [edit policy-options] ` | `policy-options` | `exit`, `up` ou `top` |
-| PPPoE | `prisma# [edit pppoe] ` | `pppoe` | `exit`, `up` ou `top` |
+| PPPoE | `prisma# [edit pppoe] ` | `pppoe`     | `exit`, `up` ou `top` |
 
 **O prompt nomeia o assunto, não só o tipo de bloco.** `[edit nat / cgnat / pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
 
