@@ -27,6 +27,13 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.8 - attaching an interface no longer walks the box; the statistics segment is sized per thread
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.7). Nothing in `prisma.v1` changes shape.
+* **Attaching or detaching the CGNAT on an interface is faster on a box with many interfaces** (#597): a `Commit` that attaches one no longer walks every interface the box holds. Measured single-threaded at 50,000 interfaces, 15 ms an attach before and 1.3 ms after; a box with a handful of interfaces sees no difference. Nothing a client reads changes.
+* **The statistics segment's size can change at the next boot** (#597): the tuner now sizes it per thread and counts the Linux end of each linux_cp pair, so a box with workers and several thousand configured interfaces is given a larger `statseg`. `show system tuning`'s `statistics segment` row (through `Show`) reads the new size after that boot; a box under the threshold keeps VPP's default and reads `VPP default, 32M` as before.
+* **Lab box:** not upgraded by this release's preparation.
+
 ## 0.153.7 - no false SNMP refusal at boot
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.6). Nothing in `prisma.v1` changes.
