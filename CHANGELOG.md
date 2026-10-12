@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.6 - the log rings' lab reader caught up, and a lab for the streams
+
+### Fixed
+
 * **`lab/ipfix.sh` reads the log rings' segment again; the box always
   could.** ([#606](https://github.com/andrediashexa/hexarouting/issues/606))
   The lab went red on three checks for every release since 0.150.0 - "another
