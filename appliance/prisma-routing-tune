@@ -613,8 +613,8 @@ STATSEG_THREAD_BYTES = 9 * 8 + 8 * 16
 #: What they COST, which is more than they weigh: every one of those vectors
 #: is grown by copying, so a growth needs the old copy and the new one inside
 #: the segment at once, and the box aborts at a growth rather than at a fill.
-#: #597 drove VPP's 32 MiB default to its abort in steps of 100 (the probe
-#: lab/statseg-scale.sh section 1 is), and divided:
+#: #597 drove VPP's 32 MiB default to its abort in steps of 100, as
+#: lab/statseg-scale.sh section 1 does, and divided:
 #:
 #:     interfaces          threads   survived   bytes each    / weight
 #:     loopback            1         6,600      5,084         1.92
@@ -638,7 +638,7 @@ STATSEG_THREAD_BYTES = 9 * 8 + 8 * 16
 STATSEG_GROWTH = 3
 
 #: The interface count VPP's default was measured holding, at worst, in the
-#: table above. What the report quotes when it says why no stanza is needed.
+#: table above: what the report quotes to a box with nothing to size for.
 STATSEG_MEASURED_INTERFACES = 3300
 
 #: Never more of the RAM the control plane keeps than this share of it. The

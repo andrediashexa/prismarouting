@@ -6,6 +6,13 @@
 #   sh tools/lab.sh statseg-scale 10000           10,000 only
 #   LAB_WORKERS=2 sh tools/lab.sh statseg-scale   the same, with two workers
 #   sh tools/lab.sh statseg-scale old 10000       and the size #288 gave too
+#   sh tools/lab.sh statseg-scale margin 10000    and how far past it it goes
+#
+# The suite runs the first line: the control, then the two sizes, about two
+# minutes. `margin` fills each sized segment again to its abort - the
+# "aborted at" column in docs/appliance.md - and `old` boots on #288's size
+# for the record of what #597 changed; neither is asserted, and together
+# they took the 50,000 run from two minutes to six.
 #
 # WHAT IT DEFENDS. VPP's statistics segment has a fixed size, every interface
 # costs it counters, and running out is not a refused interface: it is
@@ -43,8 +50,14 @@ cd /src
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
 
-OLD_TOO=""
-[ "${1:-}" = old ] && { OLD_TOO=1; shift; }
+OLD_TOO=""; MARGIN=""
+while :; do
+  case "${1:-}" in
+    old) OLD_TOO=1; shift ;;
+    margin) MARGIN=1; shift ;;
+    *) break ;;
+  esac
+done
 SCALES=${*:-10000 50000}
 STEP=100
 # Read off the box after the first boot (box_workers), never from the
@@ -136,7 +149,7 @@ for N in $SCALES; do
   # And how far past it, which is the margin the formula leaves - printed for
   # the documents, not asserted: it is what the formula costs, not whether it
   # works. A fresh dataplane on the same size, filled to its abort.
-  if [ "$ALIVE" = yes ]; then
+  if [ "$ALIVE" = yes ] && [ -n "$MARGIN" ]; then
     boot "$MB"
     MAXN=$(fill $((N * 3)))
     vppctl show version > /dev/null 2>&1 && _end="stopped at 3x" || _end="aborted"

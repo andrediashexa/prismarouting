@@ -791,7 +791,8 @@ said was good for 7,000 interfaces aborted at 3,300 on eight.
 
 What the formula was checked against, by `lab/statseg-scale.sh` booting VPP on
 the size the tuner's own function returns and creating that many
-sub-interfaces:
+sub-interfaces - with `margin` to fill it again to its abort, and
+`LAB_WORKERS` for the threads:
 
 | Sized for | Threads | Size | Held them | Aborted at |
 |---|---|---|---|---|
