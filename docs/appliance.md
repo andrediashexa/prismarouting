@@ -2874,7 +2874,7 @@ Through the API (`SystemService.Upgrade`) each of these rows is a `DOWNLOAD`
 message, the progress ones with `downloaded_bytes`, `total_bytes`,
 `bytes_per_second` and `seconds_left` set. The VTY's output is flushed line
 by line for that: the API reads it off a file while the upgrade runs, and
-before 0.153.4 a file received it a block at a time.
+before 0.153.3 a file received it a block at a time.
 
 The version the box runs, and any older one, are refused. Going back has costs
 of its own (#436 changed a spelling an older release does not read), and it

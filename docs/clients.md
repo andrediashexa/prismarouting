@@ -27,7 +27,7 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.153.4 - The upgrade's download says how far it is, and resumes
+## 0.153.3 - The upgrade's download says how far it is, and resumes
 
 * **Contract:** additive (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`).
   #602: `UpgradeProgress` gains `downloaded_bytes` (9, uint64),
