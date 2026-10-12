@@ -4405,8 +4405,14 @@ class Config:
         box accepts beyond what the segment was sized for is an abort of the
         whole dataplane, so a ceiling the BNG enforces belongs in this number
         and a number the BNG does not enforce does not.
+
+        `pppoe` > `session-limit` is that statement (#597): accel-ppp refuses
+        a session past it (`max-sessions`), so it is enforced, and it is the
+        number. A `pppoe` block with no limit enforces none, and adds
+        nothing here - the operator sets one to have the segment sized.
         """
-        return 0
+        limit = self.pppoe["settings"].get("session-limit", "0")
+        return int(limit) if is_number(limit) else 0
 
     def dataplane_interfaces(self) -> int:
         """

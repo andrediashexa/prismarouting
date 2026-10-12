@@ -179,6 +179,12 @@ check(a.delta_to(b)["pppoe_changed"] is False, "diff: the same block, unchanged"
 P.stage(b.pppoe, "pppoe dns 1.1.1.1".split())
 check(a.delta_to(b)["pppoe_changed"] is True, "diff: one resolver more, changed")
 
+check(Config.parse("pppoe\n session-limit 4000\n exit\n").runtime_interfaces()
+      == 4000 and Config.parse("pppoe\n mtu 1480\n exit\n")
+      .runtime_interfaces() == 0 and Config().runtime_interfaces() == 0,
+      "runtime_interfaces: the session limit the BNG enforces, which the "
+      "tuner sizes the statistics segment for; no limit, nothing")
+
 print("\n=== secrets: never on a screen ===")
 shown = P.redact(nested + ["pppoe radius server 192.0.2.1 secret s3cr3t!",
                            "pppoe local-user lab1 password pw1"])
