@@ -189,13 +189,27 @@ prefix needs a route back, as IPv4 subscribers behind a BNG do.
 
 **High availability.** The pair's mapping comparison covers a NAT64 pool:
 `subscriber-length` and `nat64-prefix` are mapping fields, so `show cgnat ha`
-and the commit refusal on a diverging pair see them. The failover does not
-carry the IPv6 side: the pair moves by VRRP and this box takes IPv4 virtual
-routers only, so an IPv6 subscriber's gateway is no virtual address that
-follows the master. `commit check` warns when a NAT64 pool is on a box in a
-VRRP pair; it does not refuse, because a pair whose IPv6 side follows the
-master by routing is a correct design this box cannot see. No lab measures a
-NAT64 failover.
+and the commit refusal on a diverging pair see them. The failover carries
+the IPv6 side (#485): an IPv6 address under a `vrrp <vrid>` on the
+subscribers' interface - its link-local `fe80::1` first, RFC 5798 section
+5.2.9, then the global address - builds that id's IPv6 virtual router with
+the IPv4 router's priority, tracking and preempt, so the subscribers'
+gateway follows the master that holds the public addresses. Nothing is
+synchronised, as for IPv4: a deterministic pool puts the subscriber's /56 on
+the same public address and block on either box, and open connections drop.
+
+`lab/ha-nat64.sh` measured it on 2026-10-11 with an IPv6-only subscriber and
+an IPv4 server, in three runs (one with workers): the translated round trip
+came back **3.3 to 3.9 s** after a pulled uplink, **3.3 to 3.9 s** after a
+stopped dataplane and **2.8 to 4.0 s** after a killed one -
+RFC 5798's master-down interval, the election and nothing else - each time
+on the same public address and a port in the same block. An open UDP socket
+came back on a new port of that block (a new session on the new master); an
+open TCP connection was reset, and a new one got the same address and block.
+docs/ha.md, "A NAT64 pool in the pair", has the table and what it does not
+cover (a dynamic pool, a NIC's own carrier). `commit check` warns about a
+NAT64 pool only on a pair with no IPv6 virtual router at all, which is a
+pair whose IPv6 side must follow the master some other way.
 
 ## FTP64 (phase 5)
 
@@ -322,14 +336,19 @@ table's delegations by `test/test_bpa_identity.c`, the RADIUS attribute by
 `test/test_bpa_radius.c`, the monitor's decoding by `test/test_logmon.py`.
 
 `lab/nat64.sh` puts an IPv6-only subscriber in one network namespace and an
-IPv4 server in another, builds the pool through the VTY, and checks 46
+IPv4 server in another, builds the pool through the VTY, and checks 53
 things on both sides of the box: the deterministic datapath, the
 subscriber's block against `ref/bpa_model.py`, the dynamic pool's log read
 off IPFIX and syslog collectors - once with VPP carrying it and once with the
 log container - and then each per-pool setting: the reserve, the MSS clamp,
 the session cap, the alarm, a second tenant in a VRF, the blackholed NAT64
 prefix and a forward reached from IPv4. It passes single-threaded and with
-two workers, and its off run goes red on all 46. `lab/nat64-scale.sh`
+two workers, and its off run goes red on all of them. **`ListTop` is proven
+live there** (#485): `OperationalService.ListTop`, asked over gRPC while the
+subscriber's flows are open, names it by its /56 in pool `v6` with one block
+of 2048 - never by the index, which as an IPv4 address names nobody - its
+ports grow by exactly the 12 flows the lab opens between two calls, and its
+`text` is the VTY's `show cgnat top`. `lab/ha-nat64.sh` is the pair (above). `lab/nat64-scale.sh`
 measures the memory and the clocks (docs/architecture.md, "Memory").
 
 FTP64's decisions - every command and reply above, RFC 6384's own examples

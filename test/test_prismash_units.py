@@ -7807,6 +7807,104 @@ check(r is False and "start:" in o.getvalue(),
       f"a router that could not be started: {o.getvalue()!r}")
 ok("six refusals, each naming the interface and the virtual router")
 
+print("\n=== vrrp_row_family: which family one dumped router is (#485) ===")
+# Mutation shown red: reading the addresses only, which calls an IPv6 router
+# that stands for nothing yet an IPv4 one.
+check(prismash.vrrp_row_family({"addrs": ["fe80::1"]}) == 6
+      and prismash.vrrp_row_family(VRRP_ROWS[0]) == 4,
+      "by its addresses")
+check(prismash.vrrp_row_family({"config": {"flags": 9}}) == 6
+      and prismash.vrrp_row_family(
+          {"config": {"flags": "VRRP_API_VR_PREEMPT|VRRP_API_VR_IPV6"}}) == 6
+      and prismash.vrrp_row_family({"config": {"flags": 1}}) == 4,
+      "and by its flags, as a number or as names")
+ok("4 or 6, whatever shape vpp_papi hands the flags back in")
+
+print("\n=== Shell.set_vrrp: one id, both families (#485) ===")
+# Mutation shown red: the IPv6 router built with the IPv4 flag, which VPP
+# takes as a second IPv4 router and refuses its addresses.
+api = Api(have={"pg0": 1, "pg1": 2})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+vr6 = {"addresses": ["100.64.3.254", "fe80::1", "2001:db8::1"],
+       "priority": 200, "track": {"pg1": 150}}
+check(sh.set_vrrp("pg0", 1, vr6) is True, "it goes through")
+adds = [a for m, a in api.calls if m == "vrrp_vr_add_del" and a["is_add"]]
+check(len(adds) == 2 and adds[0]["addrs"] == ["100.64.3.254"]
+      and adds[0]["flags"] == "VRRP_API_VR_PREEMPT"
+      and adds[1]["addrs"] == ["fe80::1", "2001:db8::1"]
+      and adds[1]["flags"] == ["VRRP_API_VR_PREEMPT", "VRRP_API_VR_IPV6"]
+      and adds[0]["priority"] == adds[1]["priority"] == 200,
+      f"two routers, the IPv6 one with its link-local first: {adds!r}")
+v6calls = [m for m, a in api.calls if a.get("is_ipv6") == 1]
+check(v6calls == ["vrrp_vr_track_if_add_del", "vrrp_vr_start_stop"],
+      f"and the IPv6 one tracked and started as itself: {v6calls!r}")
+# Mutation shown red: vrrp_track_ip6 not called, which is the IPv6 gateway
+# that lab/ha-nat64.sh measured never leaving a box with its uplink pulled.
+_en = [i for i, (m, a) in enumerate(api.calls)
+       if m == "sw_interface_ip6_enable_disable"]
+_tr6 = [i for i, (m, a) in enumerate(api.calls)
+        if m == "vrrp_vr_track_if_add_del" and a["is_ipv6"] == 1]
+check(len(_en) == 1 and api.calls[_en[0]][1]["sw_if_index"] == 2
+      and _en[0] < _tr6[0],
+      f"IPv6 enabled on the tracked port before the IPv6 tracking: "
+      f"{[m for m, _ in api.calls]!r}")
+sh = shell(dp=Dp({"show interface": IFACES}), api=Api(have={"pg0": 1}))
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, {"addresses": ["2001:db8::1"], "priority": 100,
+                               "track": {}})
+check(r is False and "no IPv6 link-local address" in o.getvalue(),
+      f"no link-local is refused here as at commit check: {o.getvalue()!r}")
+api = Api(have={"pg0": 1})
+api.transport, api.why_vat2 = "vat2", "PRISMA_API=vat2"
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+with spoken() as o:
+    r = sh.set_vrrp("pg0", 1, {"addresses": ["fe80::1"], "priority": 100,
+                               "track": {}})
+check(r is False and "needs vpp_papi" in o.getvalue()
+      and not [m for m, a in api.calls if a.get("is_add") == 1],
+      f"over vat2 an IPv6 router is refused, not sent: {o.getvalue()!r}")
+ok("the IPv6 gateway with the IPv4 router's priority and tracking")
+
+print("\n=== Shell.vrrp_track_ip6: IPv6 on what an IPv6 router tracks ===")
+# Mutation shown red: the enable dropped, which leaves VPP counting an
+# IPv4-only uplink as down for the IPv6 gateway - lab/ha-nat64.sh measured
+# the gateway staying on the box whose uplink was pulled (#485).
+api = Api(have={"pg1": 2})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+check(sh.vrrp_track_ip6("pg1", 2) is True, "it goes through")
+check([m for m, _ in api.calls] == ["sw_interface_ip6_enable_disable",
+                                    "sw_interface_ip6nd_ra_config"]
+      and api.calls[0][1] == {"sw_if_index": 2, "enable": True}
+      and api.calls[1][1]["suppress"] == 1 and not api.calls[1][1]["is_no"],
+      f"IPv6 enabled, and its advertisements suppressed: {api.calls!r}")
+api = Api(have={"pg1": 2}, calls={})
+api.call = lambda m, a: (api.calls.append((m, a)),
+                         vppapi.Reply(vppapi.REFUSED, retval=-81,
+                                      reason="exists"))[1]
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+check(sh.vrrp_track_ip6("pg1", 2) is True and len(api.calls) == 1,
+      "an interface with IPv6 already is left as it was")
+sh = shell(dp=Dp({"show interface": IFACES}),
+           api=Api(have={"pg1": 2}, refuse={"sw_interface_ip6_enable_disable"}))
+with spoken() as o:
+    r = sh.vrrp_track_ip6("pg1", 2)
+check(r is False and "track pg1: IPv6" in o.getvalue(),
+      f"and a refusal says which tracked port: {o.getvalue()!r}")
+ok("a link-local is all VPP asks to see a tracked port for IPv6")
+
+print("\n=== Shell.add_vrrp_family: one family's router, built and started ===")
+# Mutation shown red: is_ipv6 dropped from the start, which starts the IPv4
+# router twice and the IPv6 one never.
+api = Api(have={"pg0": 1})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+check(sh.add_vrrp_family("pg0", 1, 4, {"priority": 90, "track": {}}, 1,
+                         ["fe80::4"]) is True, "it goes through")
+check([(m, a.get("is_ipv6")) for m, a in api.calls]
+      == [("vrrp_vr_add_del", None), ("vrrp_vr_start_stop", 1)]
+      and api.calls[0][1]["vr_id"] == 4,
+      f"built, then started as an IPv6 router: {api.calls!r}")
+ok("set_vrrp's work for one of the two routers")
+
 print("\n=== Shell.say_vrrp_restart: what changing a router costs ===")
 # Mutation shown red: the sentence reduced to "restarting vrrp 1". What an
 # operator needs is not that it restarts - it is that the pair changes hands
@@ -7845,6 +7943,42 @@ with spoken() as o:
 check(r is False and "no vrrp 1" in o.getvalue(),
       f"a dataplane that refused the removal: {o.getvalue()!r}")
 ok("an orderly withdrawal, and a refusal that names it")
+
+print("\n=== Shell.del_vrrp: every family the box holds under the id (#485) ===")
+# Mutation shown red: deleting the IPv4 router only, which leaves the IPv6
+# gateway advertising on a box whose configuration no longer has it.
+rows = [dict(VRRP_ROWS[0]),
+        dict(VRRP_ROWS[0], addrs=["fe80::1", "2001:db8::1"],
+             config=dict(VRRP_ROWS[0]["config"],
+                         flags="VRRP_API_VR_PREEMPT|VRRP_API_VR_IPV6"))]
+api = Api(have={"pg0": 1}, rows={"vrrp_vr_dump": rows})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+check(sh.del_vrrp("pg0", 1) is True, "it goes through")
+check([(m, a.get("is_ipv6"), a.get("flags")) for m, a in api.calls]
+      == [("vrrp_vr_start_stop", 0, None),
+          ("vrrp_vr_add_del", None, "VRRP_API_VR_PREEMPT"),
+          ("vrrp_vr_start_stop", 1, None),
+          ("vrrp_vr_add_del", None, prismash.VRRP_FLAGS_IPV6)],
+      f"both routers stopped and deleted, each as itself: {api.calls!r}")
+ok("one statement off, both routers gone")
+
+print("\n=== Shell.device_vrrp: one id, two routers, one statement (#485) ===")
+# Mutation shown red: the second row replacing the first, which reads a
+# dual-family router back as IPv6 only and removes the IPv4 one at the next
+# commit.
+api = Api(have={"pg0": 1, "pg1": 2},
+          rows={"vrrp_vr_dump": [rows[1], rows[0]],
+                "vrrp_vr_track_if_dump": TRACK_ROWS})
+sh = shell(dp=Dp({"show interface": IFACES}), api=api)
+have = sh.device_vrrp()
+check(have == {"pg0": {1: {"addresses": ["100.64.3.254", "fe80::1",
+                                         "2001:db8::1"],
+                           "priority": 200, "track": {"pg1": 150}}}},
+      f"IPv4 first whatever the dump's order, then the IPv6: {have!r}")
+state = sh.device_vrrp_state()
+check([r["family"] for r in state] == [4, 6],
+      f"and the state is a row per router, each with its family: {state!r}")
+ok("the configuration a dual-family router reads back as")
 
 print("\n=== Shell.device_vrrp_track: what one virtual router watches ===")
 # Mutation shown red: the name lookup dropped, which would key the map by

@@ -77,7 +77,46 @@ version has a chance of seeing it.
 
 ### Added
 
+* **IPv6 virtual routers: a NAT64 pool in a VRRP pair fails over.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485), item 3)
+  An IPv6 address under `vrrp <vrid>` - the link-local first, as RFC 5798
+  section 5.2.9 has it, then the global one - builds that id's IPv6 virtual
+  router (VRRPv3) beside the IPv4 one, with the same priority, tracking and
+  preempt, so the IPv6 subscribers' gateway follows the master that holds
+  the public addresses. Virtual MAC `00:00:5e:00:02:<vrid>`, built over
+  vpp_papi (vat2 cannot encode its two flags, and is refused for it).
+  `commit check` refuses an IPv6 router with no link-local, and warns about
+  a NAT64 pool only in a pair with no IPv6 router at all - it warned about
+  every NAT64 pool in a pair before. `show cgnat ha`, `show interface`,
+  `GetHaStatus` (`HaRouter.family`, new) and `ListVrrp` list each family's
+  router. lab/ha-nat64.sh measures a NAT64 failover with an IPv6-only
+  subscriber: back in 3.3-3.9 s after a pulled uplink, 3.3-3.9 s after a
+  stopped dataplane, 2.8-4.0 s after a killed one (three runs, one with
+  workers), on the same public address and block; open connections drop, as for IPv4. docs/ha.md and docs/nat64.md
+  have the table. VRRPV3-MIB serves the IPv6 router's primary and master
+  address as the interface's link-local (RFC 6527), and lab/snmp.sh reads
+  the IPv6 twin of its router.
+* **`ListTop` with a NAT64 subscriber, proven live.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485), item 4)
+  lab/nat64.sh asks `OperationalService.ListTop` over gRPC while an
+  IPv6-only subscriber's flows cross the pool: its row is the /56, in its
+  pool, its ports grow by exactly the flows the lab opens, and `text` is the
+  VTY's `show cgnat top`. Unit fixtures were all that held it before.
+
 ### Fixed
+
+* **A virtual router tracking an interface with no address of its family
+  tracked nothing, and said nothing.**
+  ([#485](https://github.com/andrediashexa/hexarouting/issues/485))
+  VPP counts a tracked interface as up only when it has an address of the
+  tracking router's family: an IPv4 router tracking a port with no IPv4
+  address advertises its priority less the decrement from the moment it
+  starts, and a cable pulled there moves nothing. Found when lab/ha-nat64.sh's
+  first run had the new IPv6 gateway tracking an IPv4-only uplink and
+  staying on the box whose uplink was gone. For an IPv6 router the VTY now
+  enables IPv6 on what it tracks - a link-local, router advertisements
+  suppressed - which is all VPP asks for; for an IPv4 router there is no such
+  fix, and `commit check` warns, naming the interface.
 
 ## 0.153.0 - the installation medium speaks on the serial port
 

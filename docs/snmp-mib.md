@@ -187,7 +187,7 @@ address family (1 IPv4, 2 IPv6).
 
 | Table | Served | From |
 |---|---|---|
-| `vrrpv3OperationsTable` (`.1.1.1`) | master address (only while this box is master), primary address (the card's first own address), virtual MAC, status (initialize, backup, master), priority (the configured one), address count, advertisement interval in centiseconds, preempt and accept mode, row status active | `show vrrp vr`, `show interface address` |
+| `vrrpv3OperationsTable` (`.1.1.1`) | master address (only while this box is master), primary address (the card's first own address of the router's family; for an IPv6 router its link-local, the address RFC 5798 advertises from, #485), virtual MAC, status (initialize, backup, master), priority (the configured one), address count, advertisement interval in centiseconds, preempt and accept mode, row status active | `show vrrp vr`, `show interface address`, `show ip6 interface <name>` for an IPv6 router's interface |
 | `vrrpv3AssociatedIpAddrTable` (`.1.2.1`) | the router's virtual addresses, each indexed by type, length and octets | `show vrrp vr` |
 
 **Not served**: `vrrpv3OperationsUpTime`, the statistics group and the RFC's

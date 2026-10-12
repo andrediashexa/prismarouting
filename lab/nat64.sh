@@ -1,6 +1,7 @@
 #!/bin/sh
-# OFF-RED-AT-LEAST: 48
-# (the floor: what the off run of 2026-10-04 measured red, every check)
+# OFF-RED-AT-LEAST: 52
+# (the floor: what the off run of 2026-10-04 measured red, every check, and
+# the four ListTop checks of #485 item 4, measured red on 2026-10-11)
 # NAT64: an IPv6-only subscriber reaches an IPv4 server (#485), through a
 # deterministic pool (sections 1-12) and then a dynamic one whose blocks are
 # logged (13-14).
@@ -331,6 +332,37 @@ $HX -c "configure" -c "nat" -c "cgnat" -c "pool old64" \
     -c "prefix-outside 203.0.113.6/32" -c "exit" -c "commit check" \
     > /tmp/n64-oldform.txt 2>&1
 cat /tmp/n64-npool.txt /tmp/n64-nsub.txt /tmp/n64-oldform.txt | sed 's/^/  /'
+
+echo
+echo "=========== 11b. ListTop through the API, with the subscriber live ==========="
+# #485 item 4: OperationalService.ListTop - what prisma-web's top screen
+# reads - asked over gRPC with mutual TLS while the subscriber's IPv6 flows
+# are open, then asked again after FLOWS more (lab/api_top64_check.py says
+# what each answer is held to). The certificates and the stubs are made the
+# way lab/api-grpc.sh makes them.
+C=/tmp/api64; rm -rf $C; mkdir -p $C/box
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=lab clients CA" \
+  -keyout $C/ca.key -out $C/ca.crt 2>/dev/null
+for _who in server root; do
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=$([ $_who = server ] && echo prisma-api || echo root)" \
+    -keyout $C/$_who.key -out $C/$_who.csr 2>/dev/null
+  if [ $_who = server ]; then
+    printf 'subjectAltName=DNS:prisma-api,IP:127.0.0.1\n' > $C/ext
+  else
+    printf 'extendedKeyUsage=clientAuth\n' > $C/ext
+  fi
+  openssl x509 -req -in $C/$_who.csr -CA $C/ca.crt -CAkey $C/ca.key -CAcreateserial \
+    -days 2 -extfile $C/ext -out $C/$_who.crt 2>/dev/null
+done
+cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
+sh tools/gen-api.sh /tmp/apistubs64 >/dev/null 2>&1 || echo "  the stubs were not generated"
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50564 --dir $C/box \
+  --stubs /tmp/apistubs64 --stop-on-eof > /tmp/apiserver64.log 2>&1 &
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver64.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+sed 's/^/  /' /tmp/apiserver64.log
+TOP64=$(python3 lab/api_top64_check.py /tmp/apistubs64 $C 127.0.0.1:50564 2>&1)
+printf '%s\n' "$TOP64" | sed 's/^/  /'
+printf '%s\n' "$TOP64" > /tmp/n64-top64.txt
 
 # ======================================================================
 # PHASE 3 (#485): the pool turned dynamic, and what it logs.
@@ -673,6 +705,14 @@ expect "show cgnat subscriber takes an IPv6 address and gives the block" \
   grep -q "the formula gives it 203.0.113.3 ports 44032-46079" /tmp/n64-sub.txt
 expect "show cgnat top names the subscriber by its prefix" \
   grep -q "^2001:db8:1200:ab00::/56 " /tmp/n64-top.txt
+expect "ListTop: the NAT64 subscriber's row is its /56, in pool v6, one block" \
+  grep -q "^RESULT top64-row ok" /tmp/n64-top64.txt
+expect "ListTop: no row names a NAT64 subscriber by its index" \
+  grep -q "^RESULT top64-not-index ok" /tmp/n64-top64.txt
+expect "ListTop: the row's ports grew by exactly the flows the lab opened" \
+  grep -q "^RESULT top64-ports ok" /tmp/n64-top64.txt
+expect "ListTop: its text is the VTY's show cgnat top, the /56 on it" \
+  grep -q "^RESULT top64-text ok" /tmp/n64-top64.txt
 expect "#572: show nat64 pool lists the NAT64 pool, as the dataplane holds it" \
   sh -c "grep -q '^pool v6 ' /tmp/n64-npool.txt && grep -q 'inside6' /tmp/n64-npool.txt"
 expect "#572: show nat64 subscriber gives the same block as show cgnat" \

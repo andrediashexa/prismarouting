@@ -305,7 +305,14 @@ carries the screen, verbatim, in `text`.
   file the account may not read is `peer_read` false with the reason in
   `peer_unread`, and the call still answers this box. The VTY and the API
   read only a regular file of at most 1 MiB: a FIFO, a device or a
-  directory is refused by name, never read.
+  directory is refused by name, never read. Each `HaRouter` carries its
+  `family` (4 or 6, #485): one `vrrp <vrid>` with addresses of both
+  families is two routers on the dataplane, two rows here with the same
+  `interface` and `vr_id`, each with its own `state`, `virtual_mac`
+  (`00:00:5e:00:01:<vrid>` and `00:00:5e:00:02:<vrid>`) and priorities.
+  `ListVrrp`'s `VrrpRouter.family` says the same, and `GetConfig`'s area
+  `vrrp` keeps one `VrrpConfig` per id, its `addresses` both families -
+  the IPv4 ones, then the IPv6 link-local, then the other IPv6 ones.
 * **Widths.** `show bpa top` and `show bpa drops` printed through vppinfra
   widths, which cut a value longer than its column: a pool of more than
   twelve letters, more than 99,999 ports, a counter of thirteen digits. The

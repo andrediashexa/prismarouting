@@ -744,6 +744,22 @@ check(_v.get(f"{V}.2.1.2.3.10.1.4.10.9.0.1") == ("integer", 1)
       == ("integer", 1),
       "the virtual addresses, indexed by type, length and octets")
 check(agent.vrrpv3_rows([], {}, {}) == [], "no routers, no table")
+# #485: an IPv6 router's own address is its link-local. Mutation shown red:
+# the sort dropped, which serves the card's global address as the primary -
+# not the address the router's advertisements leave from (RFC 6527).
+_vd6 = [dict(_vd[1], status=3)]
+_v6 = {o: (t, v) for o, t, v in agent.vrrpv3_rows(
+    _vd6, {"pg0": 1}, {"pg0": ["2001:db8::2", "fe80::2"]})}
+_FE80_2 = "FE 80 00 00 00 00 00 00 00 00 00 00 00 00 00 02"
+check(_v6.get(f"{V}.1.1.4.1.20.2") == ("octet", _FE80_2)
+      and _v6.get(f"{V}.1.1.3.1.20.2") == ("octet", _FE80_2),
+      f"the primary and the master's address are the link-local: {_v6}")
+check(agent.parse_ip6_link_local(
+          "pg0 is admin up\r\n  Global unicast address(es):\n    2001:db8::2/64\n"
+          "  Link-local address(es):\n    fe80::2\n  Joined group address(es):\n")
+      == "fe80::2"
+      and agent.parse_ip6_link_local("pg0 is admin up\n") == "",
+      "parse_ip6_link_local: the link-local under its heading, or nothing")
 # Every column served is one VRRPV3-MIB defines, with the type it declares.
 _VR = open(os.path.join(os.path.dirname(AGENT), "..", "test", "mibs",
                         "VRRPV3-MIB.txt")).read()

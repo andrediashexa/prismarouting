@@ -59,6 +59,13 @@ vc show plugins | awk '/bpa_plugin.so/ { print $3; exit }' \
 # table has to be able to say.
 vppctl vrrp vr add pg0 vr_id 7 priority 150 interval 100 100.64.3.1 >/dev/null
 vppctl vrrp proto start pg0 vr_id 7 >/dev/null
+# And its IPv6 twin under the same VRID (#485), the shape `vrrp 7 address
+# fe80::7` gives a router on a box: IPv6 enabled on pg0, the link-local the
+# router's own, the virtual link-local first (RFC 5798 5.2.9).
+vppctl enable ip6 interface pg0 >/dev/null
+vppctl vrrp vr add pg0 vr_id 7 ipv6 priority 150 interval 100 fe80::7 2001:db8:7::1 >/dev/null
+vppctl vrrp proto start pg0 vr_id 7 ipv6 >/dev/null
+PG0_LL=$(vppctl show ip6 interface pg0 | tr -d '\r' | sed -n '/Link-local/{n;s/^ *//;s/\/.*//;p;q}')
 vppctl create bond mode lacp >/dev/null
 
 # BFD-STD-MIB (#559): bfdd, with one session nobody answers - a `peer` on a
@@ -256,6 +263,12 @@ VVST=$($VV VRRPV3-MIB::vrrpv3OperationsStatus.$VVIX 2>&1)
 VVPRI=$($VV VRRPV3-MIB::vrrpv3OperationsPriority.$VVIX 2>&1)
 VVMAC=$($VV VRRPV3-MIB::vrrpv3OperationsVirtualMacAddr.$VVIX 2>&1)
 VVCNT=$($VV VRRPV3-MIB::vrrpv3OperationsAddrCount.$VVIX 2>&1)
+# The IPv6 twin: the same ifIndex and VRID, address type 2.
+VV6IX="${PG0:-0}.7.2"
+VV6ST=$($VV VRRPV3-MIB::vrrpv3OperationsStatus.$VV6IX 2>&1)
+VV6MAC=$($VV VRRPV3-MIB::vrrpv3OperationsVirtualMacAddr.$VV6IX 2>&1)
+VV6CNT=$($VV VRRPV3-MIB::vrrpv3OperationsAddrCount.$VV6IX 2>&1)
+VV6PRI=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.207.1.1.1.1.4.$VV6IX 2>&1)
 VVWALK=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m VRRPV3-MIB 127.0.0.1 \
          VRRPV3-MIB::vrrpv3MIB 2>&1)
 # IP-MIB (#522): pg0's address under the ifIndex IF-MIB gives pg0, which is
@@ -282,6 +295,7 @@ echo "  VRRP 1: $VRIF, $VRST, priority $VRPRI; bundle 1: $BNAME with $BMEM membe
 echo "  NATV2-MIB: instance 1 $NVALIAS, $NVPORTS port map entries, $NVSUBS address map entries, ports from $NVMIN, range $NVBEGIN - $NVEND"
 echo "  ... $(printf '%s\n' "$NVWALK" | grep -c .) NATV2-MIB rows walked"
 echo "  VRRPV3-MIB: router $VVIX $VVST, priority $VVPRI, MAC $VVMAC, $VVCNT address(es)"
+echo "  VRRPV3-MIB: router $VV6IX $VV6ST, MAC $VV6MAC, $VV6CNT address(es), primary $VV6PRI (pg0's link-local ${PG0_LL:-none})"
 echo "  ... $(printf '%s\n' "$VVWALK" | grep -c .) VRRPV3-MIB rows walked"
 echo "  IP-MIB: ipForwarding $IPFWD; 100.64.3.254 on ifIndex $IPADIX (ipAddressTable $IPAIX, pg0 is ${PG0:-none}), mask $IPADMASK"
 printf '%s\n' "$IPWALK" | sed 's/^/    /' | head -12
@@ -491,6 +505,12 @@ expect "VRRPV3-MIB finds pg0's VRID 7 master ($VVST)" test "$VVST" = "master"
 expect "with the priority configured ($VVPRI)" test "$VVPRI" = "150"
 expect_in "and VRID 7's virtual MAC (0:0:5e:0:1:7)" "0:0:5e:0:1:7" "$VVMAC"
 expect "and its one virtual address ($VVCNT)" test "$VVCNT" = "1"
+expect "VRRPV3-MIB finds VRID 7's IPv6 twin master, as type 2 ($VV6ST)" \
+  test "$VV6ST" = "master"
+expect_in "with the IPv6 virtual MAC (0:0:5e:0:2:7)" "0:0:5e:0:2:7" "$VV6MAC"
+expect "and its two virtual addresses ($VV6CNT)" test "$VV6CNT" = "2"
+expect "and pg0's link-local as its primary address (RFC 6527)" \
+  sh -c "[ -n '$PG0_LL' ] && python3 -c 'import ipaddress,sys; o=bytes(int(x,16) for x in sys.argv[1].replace(chr(34),\"\").split()); sys.exit(ipaddress.IPv6Address(o)!=ipaddress.IPv6Address(sys.argv[2]))' '$VV6PRI' '$PG0_LL'"
 expect_not_in "every VRRPV3-MIB row resolves to a name in the RFC's module" \
   "iso.3.6.1.2.1.207" "$VVWALK"
 expect "IP-MIB says the box forwards ($IPFWD)" test "$IPFWD" = "forwarding"
