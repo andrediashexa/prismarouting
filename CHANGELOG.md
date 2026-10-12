@@ -87,9 +87,10 @@ version has a chance of seeing it.
   view and the box's syslog records against each other; `off` makes the
   pool deterministic and five of them go red. Measured on 0.153.0: every
   connection traced by the records to exactly its subscriber; `policy
-  interleaved` spreads a fresh pool evenly and drifts to a max/min of
-  1.67-2.2 after churn, because each worker's free list is a stack;
-  3.7-4.8 Gbit/s of TCP on a shared host; handoff ~0 for TCP and about half
+  interleaved` spreads a fresh pool evenly (max/min 1.14) and, after six
+  rounds of churn, anywhere from 1.14 to 2.2 (a model of the stack-shaped
+  free list averages 2.25; least-loaded would hold 1.14);
+  3.7-5.2 Gbit/s of TCP on a shared host; handoff ~0 for TCP and about half
   for one-way UDP. The numbers are in `docs/architecture.md`. Images,
   disks and runs are cached in `/var/cache/prisma/bench3vm`, never in the
   tree. Ships in no medium.

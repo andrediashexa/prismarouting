@@ -299,7 +299,7 @@ what its `off` run does.
 | Internet | Debian 12, 2 vCPU, 1 GB: a server that writes down the public address and port each connection **arrived from**, a syslog collector, iperf3 |
 | Host | Xeon E5-2680 v4, 16 threads, **shared** with other agents' labs (load 4.7 before a run, up to 11.8 during it) |
 
-**BPA across real NICs.** Three runs, identical in every count that is not
+**BPA across real NICs.** Four runs, identical in every count that is not
 a throughput:
 
 | What | Measured |
@@ -329,7 +329,7 @@ the holders leaving at random and 30 idle subscribers arriving:
 | after round 6 | 61 | 6 9 7 7 7 10 8 7 | 1.67 | 1.14 |
 | after round 12 | 61 | 7 7 5 7 10 9 7 9 | 2.00 | 1.14 |
 
-Round 6 measured 1.67, 1.14 and 2.2 in three runs: the fresh spread is the
+Round 6 measured 1.67, 1.14, 2.2 and 2.0 in four runs: the fresh spread is the
 formula's, and after churn it drifts. The reason is the free list: each
 worker's free blocks are a **stack** (`vec_add1` on release, `vec_pop` on
 allocation in `bpa_dyn.c`), so an arrival takes the block the last leaver
@@ -349,8 +349,8 @@ measurement. Eight subscribers, 20 s each:
 
 | Traffic | Through the box | Into the inside card | Lost |
 |---|---|---|---|
-| TCP, 1500-byte frames, 8 streams | 4.77, 3.70, 4.05 Gbit/s | 413, 321, 351 k packets/s | 19-24 k `dpdk tx failure` on the outside card, matching the senders' 22-26 k retransmits |
-| UDP, 64-byte payloads, 8 streams | | 139, 160, 115 k packets/s | 22-31% of datagrams; 88-170 k of them are the outside card's `dpdk tx failure` |
+| TCP, 1500-byte frames, 8 streams | 4.77, 3.70, 4.05, 5.19 Gbit/s | 413, 321, 351, 449 k packets/s | 19-24 k `dpdk tx failure` on the outside card, matching the senders' 22-26 k retransmits |
+| UDP, 64-byte payloads, 8 streams | | 139, 160, 115, 109 k packets/s | 15-31% of datagrams; 23-170 k of them are the outside card's `dpdk tx failure` |
 
 **The handoff share per worker** (cf.
 [#487](https://github.com/andrediashexa/hexarouting/issues/487)), from
@@ -358,8 +358,8 @@ measurement. Eight subscribers, 20 s each:
 
 | Traffic | Handed to another worker |
 |---|---|
-| TCP | 17 of 8.3 M, 19 of 6.4 M, 17 of 7.0 M - every worker under 0.001% |
-| UDP, one way | 52%, 49%, 59% of all packets; per worker from 0% to 79% |
+| TCP | 17 of 8.3 M, 19 of 6.4 M, 17 of 7.0 M, 19 of 9.0 M - every worker under 0.001% |
+| UDP, one way | 52%, 49%, 59%, 52% of all packets; per worker from 0% to 79% |
 
 #487 places each RX queue on the thread of its TX twin, and the host's tap
 steers a flow to the queue the guest last transmitted it on - so a flow the
