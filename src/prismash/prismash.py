@@ -36,6 +36,7 @@ import textwrap
 import time
 
 from config import startup_default_mtu  # noqa: E402  (#560)
+from config import startup_claimed_cards  # noqa: E402  (#605)
 from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRF_RESERVED_PREFIX, vrf_device_error, vrf_table_taken,
                     PROBE_DEADLINE, Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
@@ -22926,7 +22927,36 @@ class Shell:
             pass
         return ""
 
-    def claim_note(self, nics):
+    def claimed_at_boot(self):
+        """
+        The cards the tuner claimed on this boot, by name, read off the
+        startup.conf it wrote (config.startup_claimed_cards()); [] on a box
+        with no such file. Its own reading because it is a fact the
+        dataplane need not be up to answer (#605).
+        """
+        try:
+            with open(self.STARTUP_CONF) as f:
+                return startup_claimed_cards(f.read())
+        except OSError:
+            return []
+
+    @staticmethod
+    def box_cards(nics, claimed=()):
+        """
+        Every card this box has, by name: the ones Linux lists (`nics`, as
+        host_nics() gives them) and the ones the tuner claimed on this boot.
+
+        BOTH, because neither is the box (#605). A card the dataplane holds
+        is gone from /sys/class/net, so Linux alone counted a box with a
+        management card and two data cards as a one-card box - and the rule
+        "never the last card" was then read as overruling the reserve, on a
+        screen that told the operator the dataplane would take the very card
+        the box is reached on. The tuner counts the cards at boot, before it
+        binds any of them; this is the same count read back afterwards.
+        """
+        return sorted({n["name"] for n in nics} | set(claimed))
+
+    def claim_note(self, nics, claimed=()):
         """
         What the dataplane will claim on this box, and why, as prose lines.
 
@@ -22948,6 +22978,9 @@ class Shell:
         would be. `waiting_note()` says that, under this, naming the cards it
         is about - which is the only line on the screen an operator can act
         on, and the action is a reboot.
+
+        `claimed` is what the tuner claimed on this boot (#605), because a
+        card the dataplane holds is not one Linux lists: see box_cards().
         """
         named = self.read_dataplane_if()
         if named:
@@ -22955,20 +22988,27 @@ class Shell:
                     f"claims that card and no other.",
                     "Remove it with 'no interface' under 'system' > "
                     "'dataplane' to let the box choose again."]
-        if not nics:
+        have = self.box_cards(nics, claimed)
+        if not have:
             return ["There is no card here for the dataplane to claim."]
         reserve = self.reserved_for_linux()
-        have = [n["name"] for n in nics]
         if reserve and reserve in have and len(have) > 1:
-            return [f"The dataplane claims {len(have) - 1} of them. It claims "
-                    f"every card this box has except one reserved for Linux, "
-                    f"and never the last one.",
-                    "Reserved for Linux:",
-                    f"  {reserve}",
-                    "It is the management network this box was installed "
-                    "with.",
-                    "'interface <name>' under 'system', 'dataplane' claims that card alone "
-                    "instead."]
+            # THE CARDS BY NAME, each on a row of its own (#367), and the
+            # count against every card the box has rather than against the
+            # list above, which is Linux's and so is short of every card the
+            # dataplane already took (#605).
+            return ([f"The dataplane claims {len(have) - 1} of this box's "
+                     f"{len(have)} cards. It claims every card this box has "
+                     f"except one reserved for Linux, and never the last "
+                     f"one.",
+                     "Claimed by the dataplane:"]
+                    + [f"  {n}" for n in have if n != reserve]
+                    + ["Reserved for Linux:",
+                       f"  {reserve}",
+                       "It is the management network this box was installed "
+                       "with.",
+                       "'interface <name>' under 'system', 'dataplane' "
+                       "claims that card alone instead."])
         if reserve and reserve in have:
             # THE NARROWING, and the box it is about is the commonest there
             # is. A reserve allowed to take the only card leaves a VM
@@ -22992,7 +23032,7 @@ class Shell:
                 "'interface <name>' under 'system', 'dataplane' claims that card alone "
                 "instead."]
 
-    def waiting_note(self, nics, held):
+    def waiting_note(self, nics, held, claimed=()):
         """
         The cards Linux has that the dataplane has not taken yet, as prose.
 
@@ -23018,8 +23058,22 @@ class Shell:
         """
         if held is None or not nics:
             return []
+        # ONLY A CARD THE RULE CLAIMS IS WAITING (#605). The card reserved
+        # for Linux stays in Linux on every boot; listing it here told the
+        # #475 bench's box that its management card would go to the
+        # dataplane at the next reboot, and it never does. Same rule, same
+        # count as claim_note() above, so the two lines cannot disagree.
+        named = self.read_dataplane_if()
+        have = self.box_cards(nics, claimed)
+        reserve = self.reserved_for_linux()
+        if named:
+            wanted = {named}
+        elif reserve and reserve in have and len(have) > 1:
+            wanted = set(have) - {reserve}
+        else:
+            wanted = set(have)
         waiting = sorted(n["name"] for n in nics
-                         if n["name"] not in set(held))
+                         if n["name"] in wanted and n["name"] not in set(held))
         if not waiting:
             return []
         return ["The dataplane does not hold " + ", ".join(waiting)
@@ -23056,7 +23110,11 @@ class Shell:
             return ["This box has no PCI NIC Linux can see, so there is "
                     "nothing to give the dataplane whatever the tuning does."]
         default = self.default_route_nic()
-        usable = [n["name"] for n in nics if n["name"] != default]
+        # And the cards the dataplane already took, which Linux no longer
+        # lists: without them a box with a management card and two claimed
+        # data cards read as a one-card box here (#605).
+        usable = [n for n in self.box_cards(nics, self.claimed_at_boot())
+                  if n != default]
         if usable or not default:
             return []
         return [f"This box has one NIC, '{default}', and it carries the "
@@ -23261,8 +23319,9 @@ class Shell:
         """
         What `show hardware` reads, as data (#558, phase 7): what the
         dataplane holds (None when it could not be asked, which is not []),
-        the NICs Linux has (host_nics()) and the one carrying the default
-        route (None when none does). The screen is drawn from this one reading
+        the NICs Linux has (host_nics()), the one carrying the default
+        route (None when none does) and the cards the tuner claimed on this
+        boot (claimed_at_boot(), #605). The screen is drawn from this one reading
         and so is OperationalService.GetHardware.
         """
         rc, out = self.dp.run("show interface")
@@ -23271,7 +23330,8 @@ class Shell:
             held = sorted(n for n in routes.parse_interfaces(out)
                           if n != "local0")
         return {"held": held, "nics": self.host_nics(),
-                "mgmt": self.default_route_nic()}
+                "mgmt": self.default_route_nic(),
+                "claimed": self.claimed_at_boot()}
 
     def show_hardware(self, args, facts=None):
         """
@@ -23447,11 +23507,12 @@ class Shell:
         # cannot describe a claim the tuner would not make. It is not a second
         # copy of the rule: the rule is one sentence and this states it, which
         # is the difference between a screen and a reimplementation.
-        for line in self.claim_note(nics):
+        claimed = f.get("claimed") or []
+        for line in self.claim_note(nics, claimed):
             print_prose(line, indent="  ")
         # And which of them is not on the dataplane YET, which is the half
         # the rule above cannot say (#405).
-        for line in self.waiting_note(nics, held):
+        for line in self.waiting_note(nics, held, claimed):
             print_prose(line, indent="  ")
         if not mgmt:
             print_prose("no interface carries a default route on this box, "
@@ -23464,7 +23525,11 @@ class Shell:
             # the box claims it by itself unless a reserve spares it. With no
             # other card, the note says the box takes it whether or not it is
             # named (#303, #378).
-            if any(n["name"] != mgmt for n in nics):
+            # "Another card" is any card the box has, the ones the dataplane
+            # already took included: Linux's list alone sent the #475 bench's
+            # box, a management card and two claimed data cards, to the
+            # one-card sentence (#605).
+            if any(n != mgmt for n in self.box_cards(nics, claimed)):
                 print_prose(f"'{mgmt}' carries the default route: it is how "
                             f"this box is reached. If the dataplane takes "
                             f"it, named or claimed, its address moves onto "

@@ -1900,6 +1900,21 @@ Two things worth keeping from this:
 
 ## Installation
 
+**Which file to take, from the public releases directory.**
+`https://prismarouting.com.br/releases/latest/` offers two things, each beside
+its `sha256`: the **newest ISO**, which is what a new machine is installed
+from, and the **newest upgrade package**, which is what an installed box is
+taken to afterwards (`system upgrade`, below). After a patch release they
+carry different versions - a Z release publishes a package and no medium, so
+the ISO is the last X or Y release's - and that is the expected shape, not a
+gap. Until [#604](https://github.com/andrediashexa/hexarouting/issues/604)
+`latest` was a link to the newest version's directory, and after 0.153.1 that
+directory had no ISO: following `latest/` for a new install found nothing to
+install. `tools/publish-release.sh` builds `latest/` as a directory of links,
+moves each half forward on its own, and reads both back through it;
+`test/test_publish_release.sh` holds a patch release after a Y keeping the
+Y's ISO there.
+
 ```sh
 sh appliance/install.sh              # onto an existing Debian 12
 DESTDIR=/mnt sh appliance/install.sh # into a chroot, for the ISO

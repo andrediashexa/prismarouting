@@ -7,7 +7,8 @@
 # no operator can open, and the wiki told them to download the upgrade
 # package "from the release page". The public copy is
 # https://prismarouting.com.br/releases/<version>/, served read-only
-# from the wiki's host, with `latest` pointing at the newest version. This
+# from the wiki's host, with `latest/` offering the newest upgrade package and
+# the newest ISO. This
 # puts one release there, and it is step 7 of the release procedure in
 # CLAUDE.md, because a directory nobody updates stops being true at the next
 # release.
@@ -20,7 +21,8 @@
 # claim, not a download.
 #
 # `latest` only moves forward. Publishing an old version again, to fill a gap,
-# MUST NOT move every operator who follows `latest` back to it.
+# MUST NOT move every operator who follows `latest` back to it. And it offers
+# a medium after a patch release too (#604): see the end of this file.
 #
 # NO HOST LIVES HERE, for the reason no token does: RELEASES_TARGET, or the
 # one line in ~/.releases-target, names the upload account and host as
@@ -122,14 +124,64 @@ if [ "$bad" = 1 ]; then
   exit 1
 fi
 
-# Forward only. `sort -V` orders 0.122.10 after 0.122.9, which a string
-# comparison does not.
-cur=$(ssh -o BatchMode=yes "$HOSTPART" "readlink '$DIR/latest'" 2>/dev/null || true)
-top=$(printf '%s\n%s\n' "${cur:-0.0.0}" "$VER" | sort -V | tail -1)
-if [ "$top" = "$VER" ] && [ "$cur" != "$VER" ]; then
-  ssh -o BatchMode=yes "$HOSTPART" "ln -sfn '$VER' '$DIR/latest'"
-  echo "  latest: ${cur:-none} -> $VER"
+# `latest` IS A DIRECTORY, NOT A LINK TO ONE (#604). It used to be a symlink
+# to the newest version's directory, and after a patch release that directory
+# has no ISO: 0.153.1 moved `latest` to itself, and anybody who took "the
+# latest ISO" from latest/ for a new install found none, while the newest
+# medium sat in 0.153.0/. So latest/ holds links to TWO releases' files, each
+# beside its sha256: the newest upgrade package, and the newest ISO, which
+# after a patch release is the last X or Y release's. Both only ever move
+# forward, each on its own.
+#
+# What is newest is read off what latest/ already offers, so publishing an
+# old version again cannot move either back. When latest/ offers no ISO - the
+# old symlink, pointed at a patch release, or a site that never had one - the
+# newest version directory that has one is taken, once; from then on it is
+# carried forward.
+state=$(ssh -o BatchMode=yes "$HOSTPART" "cd '$DIR' && ls -1 latest/ 2>/dev/null; for v in [0-9]*.[0-9]*.[0-9]*; do [ -f \"\$v/prisma-routing-\$v.iso\" ] && echo \"medium \$v\"; done; true" 2>/dev/null || true)
+cur_up=$(printf '%s\n' "$state" | sed -n 's/^prisma-routing-\([0-9][0-9.]*[0-9]\)-upgrade\.tar\.gz$/\1/p' | sort -V | tail -1)
+cur_iso=$(printf '%s\n' "$state" | sed -n 's/^prisma-routing-\([0-9][0-9.]*[0-9]\)\.iso$/\1/p' | sort -V | tail -1)
+[ -n "$cur_iso" ] || cur_iso=$(printf '%s\n' "$state" | sed -n 's/^medium //p' | sort -V | tail -1)
+# Each half moves only to a version above the one it holds. `sort -V`
+# orders 0.122.10 after 0.122.9, which a string comparison does not.
+up=$cur_up; iso=$cur_iso
+top=$(printf '%s\n%s\n' "${cur_up:-0.0.0}" "$VER" | sort -V | tail -1)
+[ "$top" = "$VER" ] && [ "$cur_up" != "$VER" ] && up=$VER
+top=$(printf '%s\n%s\n' "${cur_iso:-0.0.0}" "$VER" | sort -V | tail -1)
+[ -f "$SRC/$ISO" ] && [ "$top" = "$VER" ] && [ "$cur_iso" != "$VER" ] && iso=$VER
+links=""
+for f in "prisma-routing-$up-upgrade.tar.gz" "prisma-routing-$up-upgrade.tar.gz.sha256"; do
+  links="$links ln -s '../$up/$f' latest.new/'$f' &&"
+done
+if [ -n "$iso" ]; then
+  for f in "prisma-routing-$iso.iso" "prisma-routing-$iso.iso.sha256"; do
+    links="$links ln -s '../$iso/$f' latest.new/'$f' &&"
+  done
+fi
+# Built beside and swapped in, so a reader never sees half of it; `rm -rf` on
+# the old symlink removes the link, not the release it pointed at.
+ssh -o BatchMode=yes "$HOSTPART" "cd '$DIR' && rm -rf latest.new && mkdir -m 755 latest.new &&$links rm -rf latest && mv latest.new latest"
+if [ "$up" = "$cur_up" ]; then
+  echo "  latest upgrade stays at ${cur_up:-none}: $VER is not newer"
 else
-  echo "  latest stays at ${cur:-none}: $VER is not newer"
+  echo "  latest upgrade: ${cur_up:-none} -> $up"
+fi
+echo "  latest medium: ${iso:-none}$([ "$iso" != "$cur_iso" ] && echo " (was ${cur_iso:-none})")"
+# And read back through latest/, the way an operator following it reads it:
+# every link has to land on the file it names.
+for pair in "$up:prisma-routing-$up-upgrade.tar.gz" ${iso:+"$iso:prisma-routing-$iso.iso"}; do
+  v=${pair%%:*}; f=${pair#*:}
+  want=$(curl -fsL --max-time 30 "$URL/$v/$f.sha256" | cut -d" " -f1) || want=""
+  got=$(curl -fsL --max-time 30 "$URL/latest/$f.sha256" | cut -d" " -f1) || got=""
+  if [ -n "$want" ] && [ "$got" = "$want" ]; then
+    echo "  $URL/latest/$f.sha256 matches $v/"
+  else
+    echo "error: $URL/latest/$f.sha256 says '${got:-nothing}', not '${want:-?}'" >&2
+    bad=1
+  fi
+done
+if [ "$bad" = 1 ]; then
+  echo "error: latest/ does not read back; fix it before anybody follows it." >&2
+  exit 1
 fi
 echo "published: $URL/$VER/"

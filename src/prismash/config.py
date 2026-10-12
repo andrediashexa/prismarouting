@@ -3508,6 +3508,30 @@ def startup_default_mtu(text):
             return n
     return DEFAULT_MTU
 
+
+def startup_claimed_cards(text):
+    """
+    The cards the tuner claimed on this boot, by the Linux name it gave each
+    one: the `name` of every `dev <pci> { ... }` stanza in startup.conf, in
+    file order. `dev default` carries no name, so it is no card.
+
+    WHY THE VTY READS THIS AT ALL (#605). A card the dataplane has taken is
+    gone from /sys/class/net, so a box with a management card and two data
+    cards shows Linux ONE card - and `show hardware` counted that one as
+    every card the box has, told the operator the reserve was overruled
+    ("the only card this box has... the dataplane claims it") and that the
+    next boot would take the management card. Measured on the #475 bench on
+    0.153.0: the reserve held and nothing was taken. This file is the
+    tuner's own record of what it claimed, so the screen counts the same
+    cards the tuner did, and it is there whether or not the dataplane answers.
+    """
+    out = []
+    for m in re.finditer(r"^\s*dev\s+(\S+)\s*\{([^}]*)\}", text or "", re.M):
+        n = re.search(r"^\s*name\s+(\S+)", m.group(2), re.M)
+        if n and n.group(1) not in out:
+            out.append(n.group(1))
+    return out
+
 #: An interface's VRF. 0 is not in the range because on an INTERFACE that word
 #: is how the statement is taken back off, which is the split Pool.RANGES'
 #: comment on `vrf` describes: the same word with the same number means a real

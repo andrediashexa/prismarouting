@@ -27,6 +27,12 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.4 - latest/ offers an ISO; show hardware counts the cards the dataplane took
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.3). No message, field or number changes.
+* **`GetHardware`'s screen text changes** (#605) on a box whose dataplane already holds cards: the claim note counts every card the box has, not only the ones Linux still lists ("The dataplane claims 2 of this box's 3 cards"), and names the claimed cards under `Claimed by the dataplane:` before `Reserved for Linux:`. The structured fields (`nics`, `dataplane_holds`, `default_route_interface`) are unchanged: `nics` is still what Linux lists. A client that matched "The dataplane claims N of them" MUST match the new sentence.
+* **The public releases directory** (#604): `releases/latest/` is now a directory offering the newest ISO and the newest upgrade package, each with its `.sha256`; after a patch release they carry different versions. A client that read the version off `latest/`'s listing should take it from the `-upgrade.tar.gz` name, as the box's `system upgrade` does.
+
 ## 0.153.3 - The upgrade's download says how far it is, and resumes
 
 * **Contract:** additive (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`).

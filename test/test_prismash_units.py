@@ -6248,6 +6248,8 @@ NO_ROUTE = script("no-route", "Iface\tDestination\tGateway\tFlags\n"
                   "ens19\t0000000A\t00000000\t0001\n", mode=0o644)
 sh = shell()
 sh.SYS_CLASS_NET, sh.PROC_NET_ROUTE = ONE_NIC, ROUTE
+# What the tuner claimed on this boot, out of this suite's tree (#605).
+sh.STARTUP_CONF = os.path.join(_root, "no-startup.conf")
 note = sh.one_nic_note()
 check(note and "one NIC, 'ens19'" in note[0] and "default route" in note[0],
       f"one card and it carries the default route: {note!r}")

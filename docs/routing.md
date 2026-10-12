@@ -539,6 +539,20 @@ binding happens at boot and only at boot, and that decision holds here: a box
 that moved a card to a userspace driver by itself, on a timer, would be a box
 that can lose the card it is reached over while nobody is watching.
 
+**The count is the box's, not Linux's list**
+([#605](https://github.com/andrediashexa/hexarouting/issues/605)). A card the
+dataplane holds is gone from `/sys/class/net`, so on a box with a management
+card and two claimed data cards Linux lists one card - and this screen counted
+that one as the box: it called the management card *"the only card this box
+has"*, said the dataplane claims it, and listed it as waiting for the next
+boot. The reserve held and nothing was taken. The screen now adds the cards
+the tuner claimed on this boot - the `name` of each `dev` stanza in
+`startup.conf`, which is there whether or not the dataplane answers - and
+applies the same rule the tuner did, so that box reads *"The dataplane claims
+2 of this box's 3 cards"*, names both under `Claimed by the dataplane:` and
+the management card under `Reserved for Linux:`, and lists no reserved card as
+waiting.
+
 The refusal at the prompt says the same thing rather than denying the card
 exists:
 

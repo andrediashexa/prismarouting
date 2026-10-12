@@ -2467,6 +2467,21 @@ check(config.VPP_DEFAULT_MTU == 9000,
 check(config.startup_default_mtu("ethernet { default-mtu 99 }") == 1500,
       "a value outside the MTU range is not believed")
 
+# The cards the tuner claimed, by name (#605): the shape it writes, two
+# claimed cards and the `dev default` that follows them, which is not a card.
+_sc = ("dpdk {\n  iova-mode pa\n"
+       "  dev 0000:00:10.0 {\n    name ens10\n    num-rx-queues 1\n  }\n"
+       "  dev 0000:00:11.0 {\n    name ens11\n    num-rx-queues 1\n"
+       "    workers 0\n  }\n"
+       "  dev default {\n    num-rx-queues 1\n  }\n}\n")
+check(config.startup_claimed_cards(_sc) == ["ens10", "ens11"],
+      f"startup_claimed_cards: both claimed cards, and not `dev default`: "
+      f"{config.startup_claimed_cards(_sc)!r}")
+check(config.startup_claimed_cards("dpdk {\n  no-pci\n}\n") == []
+      and config.startup_claimed_cards("") == []
+      and config.startup_claimed_cards(None) == [],
+      "a box that claimed nothing, and no file, claim no card")
+
 print("\n=== a NAT64 pool: its statements, its refusals, its message (#485) ===")
 # prefix6_error: prefix_error's four questions for an IPv6 inside.
 check(config.prefix6_error("prefix-inside", "2001:db8:1200::/40") is None,

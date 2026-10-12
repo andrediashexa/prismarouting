@@ -2,7 +2,9 @@
 
 A ISO é um **meio de instalação**, não uma appliance para uso direto. Ela dá boot sem credencial nenhuma, roda o produto para inspeção, e oferece um comando que a transforma em uma máquina com dono.
 
-A ISO fica em <https://prismarouting.com.br/releases/>, na pasta da versão, com o `sha256` ao lado. Confira antes de gravar: `sha256sum -c prisma-routing-<versão>.iso.sha256` tem que responder `OK`. Nem toda versão traz ISO. As que só trazem o pacote de atualização são correções que se aplicam por cima de uma caixa já instalada. Para uma máquina nova, use a ISO mais recente da pasta e, depois de instalada, leve a caixa para a versão mais nova pela própria VTY:
+A ISO fica em <https://prismarouting.com.br/releases/>, na pasta da versão, com o `sha256` ao lado. Nem toda versão traz ISO: as que só trazem o pacote de atualização são correções que se aplicam por cima de uma caixa já instalada. Por isso a pasta <https://prismarouting.com.br/releases/latest/> oferece **duas** coisas, cada uma com o seu `sha256`: a **ISO mais nova** (`prisma-routing-<versão>.iso`), que é a que se grava para uma máquina nova, e o **pacote de atualização mais novo** (`prisma-routing-<versão>-upgrade.tar.gz`), que é o que se aplica depois. Depois de uma versão só de correção as duas têm números diferentes, e isso é o esperado: a ISO é da última versão completa e o pacote é da correção mais recente.
+
+Para uma máquina nova, baixe a ISO de `latest/` e confira antes de gravar: `sha256sum -c prisma-routing-<versão>.iso.sha256` tem que responder `OK`. Depois de instalada, leve a caixa para a versão mais nova pela própria VTY:
 
 ```
 prisma> system upgrade

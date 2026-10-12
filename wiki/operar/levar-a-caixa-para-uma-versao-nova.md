@@ -59,7 +59,7 @@ Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa
 
 ## 2. Baixe o pacote da versão nova
 
-Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. `latest` aponta sempre para a mais nova. A mídia de instalação só está lá para a última versão completa: uma versão que muda só o terceiro número publica apenas o pacote de atualização. Na própria caixa, trocando `<versão>` pelo número:
+Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. A pasta `latest/` oferece sempre o pacote de atualização mais novo e, ao lado dele, a ISO mais nova, cada um com o seu `sha256`. A mídia de instalação só existe para as versões completas: uma versão que muda só o terceiro número publica apenas o pacote de atualização, e então a ISO em `latest/` é a da última versão completa. Na própria caixa, trocando `<versão>` pelo número:
 
 ```
 curl -fO https://prismarouting.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz
