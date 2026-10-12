@@ -716,6 +716,7 @@ void bpa_nat64_session_key (bpa_per_thread_t *pt, bpa_session_t *s,
 			    const ip6_address_t *host);
 void bpa_nat64_session_unkey (bpa_per_thread_t *pt, bpa_session_t *s);
 void bpa_nat64_interfaces_update (void);
+void bpa_nat64_interface_update (u32 sw_if_index);
 clib_error_t *bpa_nat64_check_overlap (const bpa_pool_t *cfg);
 int bpa_nat64_out2in (vlib_main_t *vm, vlib_buffer_t *b, bpa_per_thread_t *pt,
 		      bpa_session_t *s);

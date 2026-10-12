@@ -4322,6 +4322,62 @@ class Config:
                 | set(self.ra_enabled) | set(self.pref64)
                 | set(self.vrrp) | set(self.interfaces) | self.declared)
 
+    def linux_mirrors(self) -> int:
+        """
+        How many interfaces the dataplane holds for this file's Linux ends.
+
+        The Linux end of a linux_cp pair is an interface in VPP's own list -
+        `tap4096`, with counters in the statistics segment like any other
+        (see _is_lcp_tap) - and this file names none of them. Since #461 every
+        interface with a block is paired under its own name when Linux can
+        take it, and `lcp-auto-subint` mirrors every sub-interface of a paired
+        card on its own (#403, measured on the maintainer's box: one
+        `interface ens18.100` was `tap4096.100` too). So a box configured for
+        20,000 sub-interfaces holds about 40,000 interfaces, and the tuner
+        sized its statistics segment for half of them until #597.
+
+        Counted as the pairing rule would pair them, plus every sub-interface
+        of a card that is paired: on the side of more, because the pairing is
+        best-effort (a pair the dataplane refuses is skipped) and the cost of
+        counting one too many is a few kilobytes, where one too few is
+        SIGABRT.
+        """
+        names = self.interface_names() | set(self.frr_interface_names())
+        paired = {n for n in names
+                  if n in self.linux_names or not linux_ifname_error(n)}
+        for n in names - paired:
+            parent = n.split(".", 1)[0]
+            if "." in n and parent in paired:
+                paired.add(n)
+        return len(paired)
+
+    def runtime_interfaces(self) -> int:
+        """
+        The most interfaces this configuration lets the box create WHILE IT
+        RUNS, which no `interface` block names: zero, today.
+
+        The seam for #597. A PPPoE session is an interface - one
+        vnet_register_interface each, counters and all (docs/bng.md 2.1) - and
+        the BNG's session ceiling is a statement in this file. Whatever that
+        statement becomes returns its ceiling HERE, and
+        appliance/prisma-routing-tune sizes the statistics segment for it on
+        the next boot without a second reader of the grammar. A session the
+        box accepts beyond what the segment was sized for is an abort of the
+        whole dataplane, so a ceiling the BNG enforces belongs in this number
+        and a number the BNG does not enforce does not.
+        """
+        return 0
+
+    def dataplane_interfaces(self) -> int:
+        """
+        How many interfaces the dataplane will hold for this configuration,
+        at most: the ones it names, their Linux ends, and the ones it lets
+        the box create while running. What prisma-routing-tune sizes the
+        statistics segment for.
+        """
+        return (len(self.interface_names()) + self.linux_mirrors()
+                + self.runtime_interfaces())
+
     def connected_prefixes(self) -> dict:
         """
         {table: [prefix]} - what this configuration MAKES connected.

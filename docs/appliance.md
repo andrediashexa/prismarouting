@@ -695,18 +695,31 @@ VPP's built-in default of **32 MB** (`STAT_SEGMENT_DEFAULT_SIZE`, 32 << 20, in
 the VPP release this image pins), and that is what every box built by this
 product ran on until the tuner started sizing it.
 
-Each interface VPP holds costs the segment, and the cost was measured while
-sizing a BNG (`docs/bng.md` section 2.1):
+Each interface VPP holds costs the segment. It was first measured while sizing
+a BNG (`docs/bng.md` section 2.1), and measured again, by interface kind and
+thread count, for
+[#597](https://github.com/andrediashexa/hexarouting/issues/597) with
+`lab/statseg-scale.sh` and the same probe in steps of 100:
 
-| Segment | Interfaces reached | What happened at the end |
-|---|---|---|
-| 32 MB, the default | between 7,000 and 8,000 | `vlib_stats_create_counter` → `os_panic` → `SIGABRT`. Reproduced twice, at the same step |
-| 1 GB, set by hand | 40,000, using 114.7 MB | nothing; that is where the measurement stopped, not a wall it found |
+| Segment | Interfaces | Threads | Survived | What happened at the end |
+|---|---|---|---|---|
+| 32 MB, the default | PPPoE sessions | 1 | 7,000 (steps of 1,000) | `vlib_stats_create_counter` → `os_panic` → `SIGABRT`. Reproduced twice, at the same step |
+| 32 MB | loopbacks | 1 | 6,600 | `Out-of-memory, calling os_panic()` |
+| 32 MB | loopbacks | 3 | 6,500 | the same |
+| 32 MB | dot1q sub-interfaces | 1 and 2 | 7,800 | the same |
+| 32 MB | dot1q sub-interfaces | 3 and 5 | 5,100 | the same |
+| 32 MB | dot1q sub-interfaces | 8 | 3,300 | the same |
+| 1 GB, set by hand | PPPoE sessions | 1 | 40,000, using 114.7 MB | nothing; that is where the measurement stopped, not a wall it found |
 
 **The failure is the whole dataplane, and it is silent.** VPP does not refuse
 the interface that would not fit and carry on. `vnet_register_interface` tries
 to grow the counter directory, the allocation fails inside the segment, and the
 process aborts. What the operator gets is a dead box and a signal.
+
+**And the threads are half of it.** A box with seven workers - eight threads,
+which is what the tuner gives an eight-core machine - aborted on its 32 MB at
+3,300 interfaces, under half of what a single-threaded box holds. Until #597
+the tuner sized every box as if it were single-threaded.
 
 ### What one interface actually costs, read from VPP's sources
 
@@ -724,16 +737,26 @@ On a single-threaded box that is about 2.6 kB. The measured figure is
 (114.7 − 4.2) MB over 40,000 interfaces, or **about 2.9 kB each**, which is the
 same number with the allocator's own rounding on top.
 
-**What could not be determined without running VPP, and is therefore not
-claimed anywhere:** the interface count a given segment size supports. Dividing
-the size by 2.9 kB predicts about 12,000 interfaces on the 32 MB default, and
-the box aborted below 8,000. The reason is visible in the source and its size
-is not: the directory is **one contiguous vector**, grown by
-`clib_mem_heap_realloc_aligned` to 1.5× whenever it overflows, so a growth may
-need the old copy and the new one inside the segment at the same time. Whether
-dlmalloc extends it in place depends on the state of that heap, which is a
-question about a running dataplane. No formula is offered here, and the two
-measured points above are the only numbers stated.
+**That is what the counters weigh, and not what they cost.** Every one of those
+vectors is grown by copying, to 1.5× what it held
+(`clib_mem_heap_realloc_aligned`), so a growth needs the old copy and the new
+one inside the segment at the same time, and a box aborts at a growth rather
+than at a fill. Dividing the 32 MB by what each row of the table above survived
+gives what an interface cost at its abort, and against the weight - 2,448 plus
+200 a thread - that is:
+
+| Interfaces | Threads | Bytes each at the abort | × the weight |
+|---|---|---|---|
+| loopbacks | 1 | 5,084 | 1.92 |
+| loopbacks | 3 | 5,162 | 1.69 |
+| sub-interfaces | 1, 2 | 4,302 | 1.62, 1.51 |
+| sub-interfaces | 3, 5 | 6,579 | 2.16, 1.91 |
+| sub-interfaces | 8 | 10,168 | 2.51 |
+| PPPoE sessions | 1 | 4,793 | 1.81 |
+
+The ratio is not a constant - it climbs with the threads, more vectors each
+growing on its own - and at eight threads it passed the 2.5 that one 1.5×
+growth explains.
 
 The `+395 MB` quoted for `statseg { size 1G }` in
 [#288](https://github.com/andrediashexa/hexarouting/issues/288) is worth one
@@ -742,33 +765,46 @@ came from it is the RSS difference between **0 and 40,000 sessions** on the
 1 GB box, not the cost of the segment at rest. Nothing measured so far isolates
 what a larger `statseg` costs an idle box.
 
-### The budget the tuner uses, and why it is not 2.9 kB
+### The budget the tuner uses
 
-`prisma-routing-tune` sizes the segment at **4,793 bytes per interface**, which is
-the measurement divided rather than a figure anybody chose: the run above
-printed `after 7000: 7000 live` and then died creating the next batch, so
-**7,000** interfaces is the density that 32 MiB segment was measured surviving,
-and 33,554,432 / 7,000 is 4,793.
+`prisma-routing-tune` sizes the segment at **three times the weight**:
 
-It is deliberately **not** the 2.9 kB above. That number is what the entries
-weigh; this one is what they cost, and the 1.65x between them is the contiguous
-directory that has to hold two copies while it grows. A segment sized at 2.9 kB
-each promises about 12,000 interfaces on 32 MB, and the box aborted below 8,000
-- it would fail at two thirds of what it offered.
+    bytes per interface = 3 × (2,448 + 200 × threads)
 
-Two things fall out of dividing the measurement rather than adding up the
-content:
+which is 7,944 bytes on one thread, 9,144 on three and 12,144 on eight. Three
+because it is above every ratio measured, with at least 16% to spare at each
+of them, and because 2.5, the bound a single growth would set, was measured
+being passed. What a size larger than needed costs is address space: the
+segment's pages are touched as counters are written, so an idle box does not
+pay for the margin.
 
-* the 4.2 MB the segment holds with nothing configured on it is **inside** the
-  figure, amortised over the 7,000, so nothing has to be added on top for the
-  box's own interfaces;
-* at 40,000 interfaces it asks for 183 MB where the measurement used 114.7 MB.
-  Conservative, which is the direction to be wrong in when the alternative is
-  `SIGABRT`.
+`threads` is the main thread and every worker **this plan runs**, not this
+boot's: the first boot after an install has no workers yet and is sized for the
+box it is about to become.
 
-What no per-interface figure covers is an interface created **while the box
-runs** - a PPPoE session, a linux_cp pair made from the VTY - because those are
-in no configuration file. A box that makes them **MUST** set the size itself.
+It replaced #288's **4,793 bytes**, which was the 32 MB divided by the 7,000
+PPPoE sessions it survived - one kind of interface, on one thread. On a box
+with workers that figure promised more than the segment held: #288's size for
+10,000 interfaces on three threads aborted at 9,600, its size for 50,000 on
+three at 40,800, its size for 10,000 on eight at 5,800, and the same 32 MB it
+said was good for 7,000 interfaces aborted at 3,300 on eight.
+
+What the formula was checked against, by `lab/statseg-scale.sh` booting VPP on
+the size the tuner's own function returns and creating that many
+sub-interfaces:
+
+| Sized for | Threads | Size | Held them | Aborted at |
+|---|---|---|---|---|
+| 10,000 | 1 | 76 MB | yes | 11,900 |
+| 50,000 | 1 | 379 MB | yes | 61,400 |
+| 10,000 | 3 | 88 MB | yes | 11,900 |
+| 50,000 | 3 | 437 MB | yes | 92,300 |
+| 10,000 | 8 | 116 MB | yes | 11,900 |
+
+The "aborted at" column is the margin and nothing else: it is where the next
+growth landed - at 11,900 for every size sized for 10,000, whatever the
+threads - which is why it is 19% above the target in one row and 85% in
+another. A segment sized for N holds N; the formula promises nothing past it.
 
 ### What the tuner sizes it from
 
@@ -776,9 +812,9 @@ Every other figure the tuner writes comes from ground truth or from a number
 the operator set: hugepages from `PRISMA_SUBSCRIBERS` and then from the RAM the
 machine has, `buffers-per-numa` from the worker count, `main-heap-size` from
 the pages the kernel **actually reserved**, the NIC's queue count and maximum
-MTU from the card itself. The statistics segment now has such an input too -
-the interfaces the box is **configured** for - and the candidates that are not
-that were each rejected on their own arithmetic:
+MTU from the card itself. The statistics segment has such an input too - the
+interfaces the box's **configuration** makes it hold - and the candidates that
+are not that were each rejected on their own arithmetic:
 
 | Option | Cost |
 |---|---|
@@ -786,19 +822,36 @@ that were each rejected on their own arithmetic:
 | Size it from a constant — 256 MB, 1 GB | A number nobody can justify, which is exactly what `main-heap-size` stopped being when it started reading the reserved pages. It is also not free: the segment is what the operator's RAM is not |
 | Add a `PRISMA_INTERFACES` to `tune.env` | A knob whose correct value the operator cannot know before the box is configured, on a product that today creates interfaces from a configuration the tuner never reads. A refusal path, a document and a wiki page for a number that would be guessed |
 | Leave it to VPP and say nothing | The status quo, and the reason the report was filed: the box meets the limit as a `SIGABRT` |
-| **Count the interfaces the box is configured for, and write a stanza only when they need more than 32 MB** | The count is read from `/etc/prisma-routing/prisma-routing.conf`, which is the file `prisma-routing.service` hands to `prismash --load` at every boot, so the interfaces in it are the interfaces the box will create. Nothing is reserved on a box that does not need it, and no number is invented |
+| **Count what the configuration makes the dataplane hold, and write a stanza only when that needs more than 32 MB** | The count is read from `/etc/prisma-routing/prisma-routing.conf`, which is the file `prisma-routing.service` hands to `prismash --load` at every boot. Nothing is reserved on a box that does not need it, and no number is invented |
 
 The last one is what ships, and the count is taken with **prismash's own parser**
 rather than a grep for `^interface `: a second reader of that grammar answers
 the same until the VTY learns another way to name an interface, and the box
-that would find out is the one with twenty thousand of them. The routing half
-of the file names interfaces too, in FRR's own blocks, and `interface_names()`
-already returns the union by name.
+that would find out is the one with twenty thousand of them. It is three
+numbers, each `Config`'s own answer:
 
-Three things the tuner will not do with that number:
+* **named** - every interface the file has a block for, `interface_names()`;
+* **Linux ends** - `linux_mirrors()`. Since
+  [#461](https://github.com/andrediashexa/hexarouting/issues/461) every
+  interface with a block is paired under its own name when Linux can take it,
+  and `lcp-auto-subint` mirrors every sub-interface of a paired card
+  ([#403](https://github.com/andrediashexa/hexarouting/issues/403)). The Linux
+  end of a pair - `tap4096`, `tap4096.100` - is an interface in VPP's list with
+  counters of its own, so a box configured for 20,000 sub-interfaces Linux can
+  name holds 40,000, and until #597 the tuner sized it for half;
+* **created at runtime** - `runtime_interfaces()`, the most interfaces the
+  configuration lets the box create while it runs. **Zero today.** It is the
+  seam for a BNG ([bng.md](bng.md)): a PPPoE session is an interface, the
+  session ceiling will be a statement in this file, and that statement returns
+  its ceiling here so the next boot is sized for it. What a configuration may
+  promise is `statseg_interfaces_for()` of the size the box can afford, and a
+  session past it is `SIGABRT`, so whatever accepts that ceiling refuses one
+  above it.
 
-* **write a stanza smaller than VPP's own default.** Below 7,000 interfaces the
-  arithmetic asks for less than 32 MB, and a box already has 32 MB;
+Four things the tuner will not do with that number:
+
+* **write a stanza smaller than VPP's own default.** Below what 32 MB holds on
+  the box's threads the arithmetic asks for less, and a box already has 32 MB;
 * **override an operator's own stanza.** `statseg` belongs in
   `/etc/prisma-routing/vpp-base.conf`, the operator-editable base the tuner
   concatenates **ahead** of the stanzas it generates - the same seam that
@@ -807,16 +860,19 @@ Three things the tuner will not do with that number:
 * **say anything about a size to a box with no interfaces to size for.** A box
   with no saved configuration, one whose configuration could not be read, and
   one this program could not reach prismash's parser from are three different
-  sentences, and none of them is a number.
+  sentences, and none of them is a number;
+* **give the segment more than a quarter of the RAM the control plane keeps.**
+  The segment lives outside the hugepage pool, beside FRR, the VTY and the page
+  cache, and a full BGP table is 1.4 GB of that RAM. A quarter of the 2 GB
+  floor is 512 MB - about 58,000 interfaces on three threads. A configuration
+  that asks for more is given the ceiling and told, on both screens, how many
+  interfaces it holds: past that the dataplane aborts, and the answer is RAM or
+  a larger `control-plane` under `system` > `memory`.
 
 The stanza is written in the conservative first-boot profile as well as the
 tuned one. The hugepages and the pinning wait for a reboot because the kernel
 has to grant them; the statistics segment does not, and `prismash --load` creates
 the configured interfaces on that first boot too.
-
-**A box that creates an interface per subscriber still has to be told**, and the
-number it is told is the operator's: a BNG session or a pair made at runtime is
-in no file the tuner reads.
 
 **The size takes effect when VPP next starts, not when the configuration is
 saved.** `statseg` is read at startup and the segment never grows, so an
@@ -831,16 +887,18 @@ at half.
 
 `prisma-routing-tune` says what it found and what it did about it, beside the
 figures it computes from the hardware. A box configured for 20,000
-sub-interfaces, on **one socket, eight cores and 64 GB**:
+sub-interfaces, named the way VPP names them (`Ten0/0/0.N`, which Linux cannot
+take, so they have no Linux ends), on **one socket, eight cores and 64 GB**:
 
 ```
 # 1G hugepages: 6 GB requested (sized for 200000 subscribers), 6 reserved right now
-# statistics segment: 92M, for the 20000 interface(s) configured in
-#          /etc/prisma-routing/prisma-routing.conf, at 4793 bytes each.
-#          That is the density a box on VPP's 32 MB default was measured
-#          surviving: 7,000 interfaces live, aborting before 8,000.
-#          Interfaces created while the box runs - a PPPoE session, a pair
-#          made from the VTY - are not in that file nor in this number.
+# statistics segment: 232M, for 20000 interface(s) from
+#          /etc/prisma-routing/prisma-routing.conf:
+#          20000 named in it, 0 Linux end(s) of their linux_cp pairs,
+#          0 it lets the box create while it runs. 12144 bytes each
+#          on 8 thread(s), 3x what their counters weigh: VPP's 32 MB
+#          default was measured aborting at up to 2.5x, by interface kind
+#          and thread count.
 #          Put your own statseg in /etc/prisma-routing/vpp-base.conf
 #          to choose the size instead.
 ```
@@ -863,24 +921,25 @@ reserves nothing and leaves an installed box on the first-boot profile. What
 the box does instead is count the node it will actually allocate from and
 print which one that was, so a short node reads differently from a short box.
 
-**The box matters, and only one of those two numbers follows from the 20,000.**
-The segment is 20,000 x 4,793 bytes, so it moves with the interface count and
-with nothing else. The hugepage figure does not: it is the session table for
-the subscriber target plus **one gigabyte per four workers**, and the worker
-count is the box. The same 200,000 subscribers ask for 6 GB here and 12 GB on
-a 32-core machine, and an operator who runs the tuner on their own hardware
-and reads a different number has this paragraph to reconcile it with rather
-than nothing. `appliance/test_tune.py` builds this box and requires every line
-quoted above to be a line it printed.
+**The box matters, and both numbers follow from it.** The segment is 20,000 ×
+12,144 bytes, and the 12,144 is this box's eight threads: the same 20,000 on a
+single-threaded box would be 152M. The hugepage figure is the session table
+for the subscriber target plus **one gigabyte per four workers**, and the
+worker count is the box. The same 200,000 subscribers ask for 6 GB here and
+12 GB on a 32-core machine, and an operator who runs the tuner on their own
+hardware and reads a different number has this paragraph to reconcile it with
+rather than nothing. `appliance/test_tune.py` builds this box and requires
+every line quoted above to be a line it printed.
 
 and the stanza that reaches `/etc/vpp/startup.conf`:
 
 ```
 statseg {
-  # sized for the 20000 interface(s) in /etc/prisma-routing/prisma-routing.conf, at
-  # 4793 bytes each. Put your own statseg in /etc/prisma-routing/vpp-base.conf
+  # sized for 20000 interface(s) from /etc/prisma-routing/prisma-routing.conf:
+  # 20000 named, 0 Linux end(s), 0 created at runtime; 12144 bytes each on 8 thread(s).
+  # Put your own statseg in /etc/prisma-routing/vpp-base.conf
   # to choose the size yourself: this one steps aside for it.
-  size 92M
+  size 232M
 }
 ```
 
@@ -888,8 +947,8 @@ The CGNAT box this product mostly ships to gets no stanza at all, and is told
 why:
 
 ```
-# statistics segment: VPP's built-in 32 MB, which was measured holding
-#          7,000 interfaces. This box is configured for 3, in
+# statistics segment: VPP's built-in 32 MB, which holds 2,763
+#          interfaces on 8 thread(s). This box is configured for 3, in
 #          /etc/prisma-routing/prisma-routing.conf: nothing is written, because a
 #          stanza smaller than what VPP gives away would buy the box
 #          nothing and cost it the counters.
@@ -905,8 +964,8 @@ file, and reports how much of it is spent over how many interfaces:
 
 At half the segment that becomes a warning, and at three quarters a failed
 check naming `os_panic` and `SIGABRT` and the stanza that raises it. Three
-quarters rather than nine tenths because of the contiguous directory above: the
-last part of a segment cannot be spent on a growth that has to hold two copies.
+quarters rather than nine tenths because of the growth above: the last part of
+a segment cannot be spent on a growth that has to hold two copies.
 
 Where the size came from is read off the box too, and there are **three**
 answers since the tuner started writing stanzas of its own: a `statseg` in
@@ -921,6 +980,8 @@ comfortable box, a box at 60%, a box at 90%, a box whose `startup.conf` carries
 a stanza, a box whose `vpp-base.conf` carries one, and a dataplane that does
 not answer the question at all - because filling a real statistics segment
 means creating several thousand interfaces on the machine running the tests.
+That is `lab/statseg-scale.sh`'s job, in the build image, where it fills one
+to its abort.
 
 ## Tuning advice: what the box says about its own tuning (#596)
 

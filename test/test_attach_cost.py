@@ -160,6 +160,55 @@ if sweep is not None:
           "whatever is there now")
     ok_unless_red(before, "the once-a-second reconcile is over the CGNAT interfaces, not the box")
 
+# EVERY function the attach calls, and not only the one #287 removed. #485
+# put a second walk of the box on this path - bpa_nat64_interfaces_update(),
+# on every inside attach, NAT64 pool or not - and every check above stayed
+# green, because each named the walk it already knew about. #597 measured it
+# with lab/attach-scale.sh: 15 ms an attach at 50,000 interfaces, 1.1 ms at
+# 1,000.
+#
+# So the callees are read out of the attach's own body and each one's
+# definition is looked for in the plugin's sources. One level deep, which is
+# where both walks were; a walk two calls down is a walk this check misses,
+# and that is said here rather than implied away.
+PLUGIN = os.path.join(ROOT, "src", "plugins", "bpa")
+SOURCES = {f: open(os.path.join(PLUGIN, f), encoding="utf-8").read()
+           for f in sorted(os.listdir(PLUGIN)) if f.endswith((".c", ".h"))}
+
+# A walk of the box, as this tree writes one: VPP's interface pool.
+WALKS = ("interface_main.sw_interfaces", "sw_interfaces)")
+
+if attach is not None:
+    before = fail
+    callees = sorted(set(re.findall(r"\b(bpa_[a-z0-9_]+)\s*\(", attach)))
+    defined = {}
+    for name in callees:
+        for f, text in SOURCES.items():
+            body = body_of(text, name)
+            if body is not None:
+                defined[name] = (f, body)
+                break
+    # The extraction first, again: the attach calls at least the auto-MSS
+    # update, its rx alignment and the NAT64 half, all defined in the plugin.
+    check(len(defined) >= 3,
+          f"only {len(defined)} of the attach's callees were found defined "
+          f"in src/plugins/bpa ({sorted(defined)}), so this check is passing "
+          f"by finding nothing")
+    for name, (f, body) in sorted(defined.items()):
+        check(not any(w in body for w in WALKS),
+              f"bpa_interface_feature_enable_disable() calls {name}() "
+              f"({f}), which walks every interface on the box. One attach "
+              f"then costs a walk and N attaches cost N walks - #287, and "
+              f"again #597. Do the work for sw_if_index only")
+    check(re.search(r"bpa_nat64_interface_update\s*\(\s*sw_if_index\s*\)",
+                    attach),
+          "bpa_interface_feature_enable_disable() no longer gives the "
+          "interface it changed its IPv6 half, so an inside interface "
+          "attached under a NAT64 pool carries IPv4 CGNAT and no NAT64 "
+          "(#485)")
+    ok_unless_red(before, f"none of the {len(defined)} functions the attach "
+                          f"calls walks the box")
+
 # And the counting assertion must still be in the build. A suite that is
 # written and not run is a suite that is not there.
 suites = open(os.path.join(ROOT, "test", "suites.list"), encoding="utf-8").read()

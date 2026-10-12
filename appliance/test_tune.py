@@ -437,6 +437,13 @@ print("\n=== the statistics segment is sized for the interfaces configured (#288
 # creates them, rather than inferred from a subscriber target that counts
 # translations. The arithmetic is the measurement divided: 32 MiB over the
 # 7,000 interfaces that segment was measured holding is 4,793 bytes each.
+#
+# AND THEN #597 MEASURED IT AGAIN, at more than one thread count and with
+# more than one kind of interface, and 4,793 held for neither: the same 32 MiB
+# held 3,300 sub-interfaces on a box with seven workers, which is the box
+# this fixture is (eight cores, seven workers). Each interface's counters are
+# kept per thread, so the size is now 3 x (2,448 + 200 x threads) bytes an
+# interface - 12,144 on eight threads - and 20,000 interfaces get 232M.
 
 def interfaces_conf(root, n, extra=""):
     """A saved configuration naming `n` interfaces, as prismash writes them."""
@@ -466,14 +473,12 @@ with tempfile.TemporaryDirectory() as root:
           f"default, which was measured aborting below 8,000. Generated: "
           f"{stanzas!r}")
     # THE ARITHMETIC, and it is the measurement rather than a constant
-    # somebody liked: 20,000 x 4,793 B is 95,860,000 B, which is 91.4 MiB, so
-    # 92M. Sized instead from the 2.9 kB of counter CONTENT measured at 40,000
-    # interfaces it would be 56M - and that is the figure that predicts 12,000
-    # interfaces on a segment that died below 8,000, because it leaves out the
-    # contiguous directory that has to hold two copies while it grows.
-    check("size 92M" in stanzas,
-          f"20,000 interfaces at the measured 4,793 bytes each is 92M; the "
-          f"stanza says: "
+    # somebody liked: 20,000 x 12,144 B is 242,880,000 B, which is 231.6 MiB,
+    # so 232M. #288's 4,793 bytes would have given 92M, which on eight threads
+    # holds about 9,500 of them (#597's 3,300 per 32 MiB) and aborts there.
+    check("size 232M" in stanzas,
+          f"20,000 interfaces at 12,144 bytes each on eight threads is 232M; "
+          f"the stanza says: "
           f"{[l.strip() for l in stanzas.splitlines() if 'size' in l]}")
     # AND THE REPORT CARRIES THE SAME NUMBER. Two computations of one figure
     # is the shape #326 was: the page quoted a line the tuner had stopped
@@ -500,8 +505,8 @@ with tempfile.TemporaryDirectory() as root:
     # box that finds out is the one with twenty thousand of them.
     sys.path.insert(0, os.path.join(HERE, "..", "src", "prismash"))
     import config as _cfg     # noqa: E402
-    _theirs = len(_cfg.Config.parse(open(conf).read()).interface_names())
-    check(f"the {_theirs} interface(s)" in out,
+    _theirs = _cfg.Config.parse(open(conf).read()).dataplane_interfaces()
+    check(f"for {_theirs} interface(s)" in out,
           f"the tuner and prismash do not agree about how many interfaces that "
           f"file configures: prismash says {_theirs} and the report says "
           f"{[l for l in out.splitlines() if 'interface(s)' in l]}")
@@ -583,7 +588,7 @@ with tempfile.TemporaryDirectory() as root:
     check("FIRST BOOT MODE" in stanzas,
           "this fixture stopped being the first-boot branch, so the check "
           "below is about the other profile")
-    check("size 92M" in stanzas,
+    check("size 232M" in stanzas,
           f"the conservative profile left the segment at 32 MB for a box "
           f"configured for 20,000 interfaces, and that box loads the same "
           f"configuration on its first boot: {stanzas!r}")
@@ -593,18 +598,20 @@ with tempfile.TemporaryDirectory() as root:
     # THE BOX THIS PRODUCT ACTUALLY SHIPS TO, and the one rule 7 of this file
     # is about: a CGNAT box terminating subscribers on a handful of ports has
     # nothing to size for, and must not be told about a size it does not need.
-    # 7,000 is not an arbitrary second case - it is the count that segment was
-    # measured holding, so it is the last box on the default's own evidence.
+    # 2,700 is not an arbitrary second case - it is the count the default
+    # holds on this box's eight threads by the tuner's own arithmetic, below
+    # the 3,300 that segment was measured holding there (#597), so it is the
+    # last box on the default's own evidence.
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_gb=6, isolated="1-7")
-    for _n in (3, 7000):
+    for _n in (3, 2700):
         conf = interfaces_conf(root, _n)
         out = run(root, "--interface", "eth0", "--config", conf)
         stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
         check("statseg" not in stanzas,
               f"a box configured for {_n} interface(s) was given a statseg "
-              f"stanza. VPP's own default holds 7,000, so anything written "
-              f"here is either the same number or a smaller segment than the "
+              f"stanza. VPP's own default holds 2,763 on eight threads, so "
+              f"anything written here is a smaller segment than the "
               f"box already had: "
               f"{[l.strip() for l in stanzas.splitlines() if 'size' in l]}")
         check(f"configured for {_n}, in" in out,
@@ -632,7 +639,7 @@ with tempfile.TemporaryDirectory() as root:
     # And the standing advice, which is what that box can act on instead.
     check("32 MB" in out, f"it must name the default the box actually gets; "
                           f"output was {out!r}")
-    check("7,000 and 8,000" in out,
+    check("3,300" in out,
           "a limit without the measured number behind it is a rumour")
     check("/etc/prisma-routing/vpp-base.conf" in out,
           "saying there is a wall without saying where the stanza goes leaves "
@@ -669,10 +676,10 @@ with tempfile.TemporaryDirectory() as root:
                 "unix {\n  nodaemon\n}\n")
     out = run(root, "--interface", "eth0", "--config", conf, "--vpp-base", base)
     stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
-    check("size 92M" in stanzas,
+    check("size 232M" in stanzas,
           f"the comment block the product ships in vpp-base.conf was read as "
           f"somebody having sized the segment, so this box keeps the 32 MB "
-          f"that aborts at 7,000: {stanzas!r}")
+          f"that aborts at 3,300 on its threads: {stanzas!r}")
     print("  an operator's stanza is left alone; the shipped comment is not one")
 
 with tempfile.TemporaryDirectory() as root:
@@ -2725,24 +2732,104 @@ with tempfile.TemporaryDirectory() as root:
           "no isolated file did not read as no cpu isolated")
 
 # --- the statistics segment ---
-check(tune.statseg_mb_for(20000) == 92,
-      f"20,000 interfaces at the measured bytes each is 92 MB; got "
+# THE MEASUREMENT EACH CONSTANT CAME FROM (#597), held here so that a constant
+# edited to a nicer number goes red against the box that was measured:
+# 32 MiB survived these interface counts, by kind and thread count, and the
+# tuner's arithmetic must never promise more than each of them.
+_MEASURED = ((1, 6600), (3, 6500), (1, 7800), (2, 7800), (3, 5100), (5, 5100),
+             (8, 3300), (1, 7000))
+for _t, _held in _MEASURED:
+    check(tune.statseg_interfaces_for(32, _t) <= _held,
+          f"on {_t} thread(s) the tuner says 32 MB holds "
+          f"{tune.statseg_interfaces_for(32, _t)} interfaces, and that "
+          f"segment was measured aborting after {_held}: a box sized by this "
+          f"arithmetic aborts before the count it was sized for")
+check(tune.STATSEG_MEASURED_INTERFACES == min(h for _, h in _MEASURED),
+      "the figure the report quotes as what the default holds is not the "
+      "worst that was measured")
+check(tune.statseg_bytes_per_interface(1) == 3 * (2448 + 200),
+      f"one thread: 3 x (17 x 144 + 9 x 8 + 8 x 16) is 7,944 bytes; got "
+      f"{tune.statseg_bytes_per_interface(1)}")
+check(tune.statseg_bytes_per_interface(8) == 3 * (2448 + 1600),
+      f"eight threads: 12,144 bytes; got "
+      f"{tune.statseg_bytes_per_interface(8)}")
+check(tune.statseg_bytes_per_interface(0)
+      == tune.statseg_bytes_per_interface(1),
+      "zero threads is not a box; it must cost what one thread does")
+check(tune.statseg_mb_for(20000) == 152,
+      f"20,000 interfaces on one thread at 7,944 bytes is 152 MB; got "
       f"{tune.statseg_mb_for(20000)}")
+check(tune.statseg_mb_for(20000, threads=8) == 232,
+      f"and on eight threads 232 MB; got "
+      f"{tune.statseg_mb_for(20000, threads=8)}")
 check(tune.statseg_mb_for(3) is None,
       "three interfaces got a size, and a stanza smaller than VPP's own "
       "default buys the box nothing")
 # The boundary: the count that needs exactly the default is still None, one
 # more MB is written.
-_at = (tune.STATSEG_DEFAULT_MB << 20) // tune.STATSEG_BYTES_PER_INTERFACE
+_at = (tune.STATSEG_DEFAULT_MB << 20) // tune.statseg_bytes_per_interface(1)
 check(tune.statseg_mb_for(_at) is None and tune.statseg_mb_for(_at + 300),
       f"the boundary is wrong: {_at} interfaces fit the default and get "
       f"{tune.statseg_mb_for(_at)}, {_at + 300} get "
       f"{tune.statseg_mb_for(_at + 300)}")
+# The other direction, which the BNG asks: what a size holds. Round trip.
+for _t in (1, 3, 8):
+    _mb = tune.statseg_mb_for(50000, threads=_t)
+    check(tune.statseg_interfaces_for(_mb, _t) >= 50000
+          and tune.statseg_interfaces_for(_mb - 1, _t) < 50000,
+          f"on {_t} thread(s), {_mb} MB was sized for 50,000 and is said to "
+          f"hold {tune.statseg_interfaces_for(_mb, _t)}; one MB less holds "
+          f"{tune.statseg_interfaces_for(_mb - 1, _t)}")
+check(tune.statseg_ceiling_mb(2) == 512 and tune.statseg_ceiling_mb(16) == 4096,
+      f"a quarter of the control plane's RAM: 2 GB gives "
+      f"{tune.statseg_ceiling_mb(2)} MB, 16 GB {tune.statseg_ceiling_mb(16)}")
+check(tune.statseg_ceiling_mb(None) is None and tune.statseg_ceiling_mb(0) is None,
+      "RAM not known must not cap the segment at zero")
+# THE CEILING, through plan() and onto both screens. A quarter of the RAM the
+# control plane keeps is far more than any real configuration asks for, so
+# the share is turned up here until 20,000 interfaces on four threads (186 MB)
+# do not fit, rather than building a box with 20 GB of configuration.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3", ram_gb=64)
+    _share = tune.STATSEG_RAM_SHARE
+    tune.STATSEG_RAM_SHARE = 128          # 16 GB kept -> 128 MB
+    try:
+        _p = tune.plan(tune.Topology(root), "eth0", 200000,
+                       config_path=interfaces_conf(root, 20000))
+        _rep = tune.render_report(_p, "/etc/prisma-routing/vpp-base.conf")
+        _stz = tune.render_statseg(_p)
+    finally:
+        tune.STATSEG_RAM_SHARE = _share
+    check(_p["statseg_threads"] == 4 and _p["statseg_wanted"] == 186
+          and _p["statseg_capped"] and _p["statseg_mb"] == 128,
+          f"20,000 interfaces on four threads want 186 MB, and a 128 MB "
+          f"ceiling caps them: threads {_p['statseg_threads']}, wanted "
+          f"{_p['statseg_wanted']}, capped {_p['statseg_capped']}, size "
+          f"{_p['statseg_mb']}")
+    _holds = f"{tune.statseg_interfaces_for(128, 4):,}"
+    check("CAPPED" in _rep and _holds in _rep and "size 128M" in _stz,
+          f"a capped segment must say how many interfaces it holds, which "
+          f"is where the dataplane aborts: "
+          f"{[l for l in _rep.splitlines() if 'CAPPED' in l or _holds in l]}")
 with tempfile.TemporaryDirectory() as root:
     _conf = interfaces_conf(root, 3)
-    check(tune.configured_interfaces(_conf) == (3, None),
-          f"a file naming three interfaces counted as "
+    check(tune.configured_interfaces(_conf)
+          == ({"named": 3, "mirrors": 0, "runtime": 0, "total": 3}, None),
+          f"a file naming three interfaces Linux cannot name counted as "
           f"{tune.configured_interfaces(_conf)}")
+    # THE LINUX ENDS (#597). Every interface with a block is paired under its
+    # own name when Linux can take it (#461), and the TAP that pair makes is
+    # an interface in VPP's list too: a file naming two Linux-nameable
+    # sub-interfaces makes the dataplane hold four.
+    _named = os.path.join(root, "named.conf")
+    with open(_named, "w") as f:
+        f.write("! cgnat\ninterface ens18.100\n vlan 100\n exit\n"
+                "interface ens18.200\n vlan 200\n exit\n")
+    check(tune.configured_interfaces(_named)
+          == ({"named": 2, "mirrors": 2, "runtime": 0, "total": 4}, None),
+          f"two sub-interfaces Linux can name, each with its TAP, counted as "
+          f"{tune.configured_interfaces(_named)}")
     check(tune.configured_interfaces(f"{root}/nosuch") == (None, "missing"),
           "a missing configuration did not answer (None, 'missing')")
     check(tune.configured_interfaces(root) == (None, "unreadable"),
@@ -2776,6 +2863,31 @@ with tempfile.TemporaryDirectory() as root:
         check(tune.configured_interfaces(_conf) == (None, "unparsed"),
               f"a parser that raises made configured_interfaces answer "
               f"{tune.configured_interfaces(_conf)}")
+    finally:
+        if _real is not None:
+            sys.modules["config"] = _real
+        else:
+            del sys.modules["config"]
+    # THE SEAM THE BNG FILLS (#597): whatever Config.runtime_interfaces()
+    # returns is in the total the segment is sized for. Zero in every real
+    # configuration today, so a stub stands in for the statement that will
+    # return a session ceiling.
+    class _Ceiling:
+        @staticmethod
+        def parse(text):
+            return _types.SimpleNamespace(
+                interface_names=lambda: {"a", "b"},
+                linux_mirrors=lambda: 2,
+                runtime_interfaces=lambda: 30000)
+    _stub.Config = _Ceiling
+    sys.modules["config"] = _stub
+    try:
+        check(tune.configured_interfaces(_conf)
+              == ({"named": 2, "mirrors": 2, "runtime": 30000,
+                   "total": 30004}, None),
+              f"a configuration whose runtime ceiling is 30,000 counted as "
+              f"{tune.configured_interfaces(_conf)}, so a BNG that states "
+              f"its sessions is sized as if it had none")
     finally:
         if _real is not None:
             sys.modules["config"] = _real
@@ -3244,10 +3356,21 @@ check("default-mtu 4000" in tune.render_ethernet(_low)
       f"{tune.render_ethernet(_low)!r}")
 _p_st = {"statseg_mb": 92, "statseg_operator": False,
          "configured_interfaces": 20000, "config_path": "/etc/h.conf",
-         "vpp_base": "/etc/base.conf"}
+         "vpp_base": "/etc/base.conf", "statseg_threads": 1,
+         "statseg_capped": False, "statseg_wanted": 92,
+         "interface_census": {"named": 10000, "mirrors": 10000, "runtime": 0,
+                              "total": 20000}}
 check("statseg {\n" in tune.render_statseg(_p_st)
       and "  size 92M\n" in tune.render_statseg(_p_st),
       f"the stanza does not carry the size: {tune.render_statseg(_p_st)!r}")
+check("10000 named, 10000 Linux end(s), 0 created at runtime"
+      in tune.render_statseg(_p_st),
+      f"the stanza does not say what the count is made of: "
+      f"{tune.render_statseg(_p_st)!r}")
+check("CAPPED" in tune.render_statseg(dict(_p_st, statseg_capped=True,
+                                           statseg_wanted=900))
+      and "CAPPED" not in tune.render_statseg(_p_st),
+      "a capped size must say so in the file VPP reads, and only then")
 check(tune.render_statseg(dict(_p_st, statseg_operator=True)) == "",
       "the operator's own stanza was overridden by a generated one")
 check(tune.render_statseg(dict(_p_st, statseg_mb=None)) == "",

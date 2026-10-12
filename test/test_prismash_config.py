@@ -2876,5 +2876,42 @@ _o2, _left2 = _c575.without_cards([])
 check(_left2 == [] and _o2.text() == _c575.text(),
       "#575: no missing card leaves nothing out")
 
+# #597: what the dataplane holds for a configuration, which is what the
+# tuner sizes the statistics segment for. The Linux end of every linux_cp
+# pair is an interface in VPP's list with counters of its own (#461 pairs
+# every interface with a block whose name Linux can take, and lcp-auto-subint
+# mirrors a paired card's sub-interfaces), and the file names none of them.
+_c597 = config.Config.parse(
+    "! cgnat\ninterface ens18.100\n vlan 100\n exit\n"
+    "interface loop0\n exit\n"
+    "interface Ten0/0/0.5\n vlan 5\n exit\n"
+    "interface GigabitEthernet0/8/0\n linux-name wan0\n exit\n"
+    "interface GigabitEthernet0/8/0.7\n vlan 7\n exit\n"
+    "! routing\ninterface ens19\n ip ospf cost 10\n exit\n")
+# ens18.100, loop0 and ens19 by their own names; GigabitEthernet0/8/0 by its
+# linux-name, and its .7 through lcp-auto-subint; Ten0/0/0.5 has a name
+# Linux cannot take and a parent nobody paired, so no TAP.
+check(_c597.linux_mirrors() == 5,
+      f"#597: linux_mirrors counts the TAP of every interface the box pairs: "
+      f"{_c597.linux_mirrors()} for {sorted(_c597.interface_names())} + "
+      f"{_c597.frr_interface_names()}, linux_names {_c597.linux_names}")
+check(_c597.runtime_interfaces() == 0,
+      "#597: nothing in this product creates interfaces at runtime from a "
+      "statement yet, so the seam for the BNG's session ceiling says zero")
+check(_c597.dataplane_interfaces()
+      == len(_c597.interface_names()) + 5 + 0,
+      f"#597: dataplane_interfaces is the named, their Linux ends and the "
+      f"runtime ceiling: {_c597.dataplane_interfaces()}")
+# And whatever the BNG's ceiling returns there is in the total: a statement
+# that states 7 sessions is stood in for on this one configuration.
+_base597 = _c597.dataplane_interfaces()
+_c597.runtime_interfaces = lambda: 7
+check(_c597.dataplane_interfaces() == _base597 + 7,
+      f"#597: a runtime ceiling of 7 is not in dataplane_interfaces: "
+      f"{_c597.dataplane_interfaces()} against {_base597}")
+del _c597.runtime_interfaces
+check(config.Config.parse("").dataplane_interfaces() == 0,
+      "#597: an empty configuration makes the dataplane hold nothing extra")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -58,10 +58,12 @@ it did claim:
   (measured). Each session calls `vnet_register_interface`, each interface adds
   stats symlinks, and the stats heap runs out: `os_panic` → `SIGABRT`, the
   whole dataplane, not one subscriber. Reproduced twice at the same step. The
-  tuner now sizes the segment from the interfaces a box is **configured** for,
-  at 4,793 bytes each, which is this measurement divided by the 7,000 it
-  survived - and **a PPPoE session is in no configuration file**, so a BNG is
-  exactly the box that still has to set the size itself.
+  tuner now sizes the segment from the interfaces a box's configuration makes
+  it hold, per thread
+  ([#597](https://github.com/andrediashexa/hexarouting/issues/597)), and a
+  PPPoE session ceiling is one of them **once the BNG states it**:
+  `Config.runtime_interfaces()` in `src/prismash/config.py` is where it goes,
+  and until then a session is in no number the tuner reads.
 * **Per-subscriber speed, which is what a BNG is sold on, does not exist in
   VPP 26.06.** There is a policer and there is no shaper: `configure policer`
   is the entire rate-control surface, `vppctl help` matches nothing for
@@ -240,8 +242,11 @@ vpp[21]: received signal SIGABRT
 ```
 
 `appliance/prisma-routing-tune` emitted no `statseg` stanza when this was
-measured, and now writes one only for interfaces a box is configured for, which
-a PPPoE session never is. The default, measured from a VPP booted on a config
+measured. It now writes one for the interfaces a box's configuration makes it
+hold - the ones it names, the Linux end of each linux_cp pair, and whatever
+`Config.runtime_interfaces()` says the box may create while it runs, which is
+where a session ceiling belongs ([appliance.md](appliance.md), "The
+statistics segment"). The default, measured from a VPP booted on a config
 with none, is `total: 32.00M`. Every
 `vnet_register_interface` adds per-interface counter symlinks to that heap, and
 at somewhere between 7,000 and 8,000 subscriber interfaces it is exhausted and
@@ -259,6 +264,17 @@ at somewhere between 7,000 and 8,000 subscriber interfaces it is exhausted and
 40,000 sessions created in 3,100 ms once the link table is warm, about 78 µs
 each, roughly 10 kB of main heap per subscriber. The 40,000 ceiling is where
 the measurement stopped, **not** a limit that was found.
+
+> [#597](https://github.com/andrediashexa/hexarouting/issues/597) measured the
+> abort again, by interface kind and thread count, with `lab/statseg-scale.sh`.
+> The 7,000 above is a single-threaded box: on the same 32 MB, sub-interfaces
+> survived 7,800 on one thread, 5,100 on three and 3,300 on eight, and a box
+> the tuner gives workers is a box with more than one thread. The tuner now
+> sizes the segment at 3 × (2,448 + 200 × threads) bytes an interface, and
+> segments it sized for 10,000 and 50,000 held them on one and three threads
+> ([appliance.md](appliance.md), "The statistics segment"). For a BNG the
+> number to size for is the session ceiling, which the BNG states through
+> `Config.runtime_interfaces()`.
 
 **What it does to the product's own commands**, at 40,000 subscribers:
 
@@ -443,6 +459,38 @@ justification offered for fixing it.
 > fix, and the numbers in this section **MUST** be read as the ones the box
 > produced in that state.
 
+> And it came back, which is why
+> [#597](https://github.com/andrediashexa/hexarouting/issues/597) measured it
+> again. NAT64
+> ([#485](https://github.com/andrediashexa/hexarouting/issues/485)) gave every
+> inside interface an IPv6 half, and did it by calling
+> `bpa_nat64_interfaces_update()` on every inside attach and detach - a walk of
+> every interface on the box, asking the feature arc about each, on every box
+> whether it had a NAT64 pool or not. #287's own check
+> (`test/test_attach_cost.py`) named the walk it had removed and so stayed
+> green. #597 replaced the call with `bpa_nat64_interface_update()` for the one
+> interface being changed, and the check now reads every function the attach
+> calls. `lab/attach-scale.sh`, single-threaded, dot1q sub-interfaces, 500
+> attaches at each size, on a machine running other labs:
+>
+> | Box holds | Attach, before #597 | Attach, after | Detach, before | Detach, after |
+> |---|---|---|---|---|
+> | 1,000 interfaces | 1,145 µs | 887 µs | 1,143 µs | 877 µs |
+> | 10,000 | 3,883 µs | 1,119 µs | 3,497 µs | 1,034 µs |
+> | 50,000 | 15,068 µs | 1,348 µs | 12,865 µs | 1,038 µs |
+>
+> Attaching all 50,000 one after another took 654 s before and 69 s after.
+> What is left is almost all **one thing, and it is not the dataplane**: with
+> `/var/log/prisma-routing` on a tmpfs the same lab measured 28 µs an attach
+> at 1,000 and 39 µs at 10,000, and 10,000 attached in 217 ms - the policer's
+> figure - so about 0.9 ms of every attach is the `fsync` of
+> the configuration trail entry the attach writes (`bpa_audit_interface`,
+> [logging.md](logging.md)'s MUST). On a box with workers that write runs
+> inside the CLI or API handler, under the barrier. A BNG attaching a session
+> per subscriber writes and fsyncs one trail entry per session; whether a
+> session's attach belongs in the **configuration** trail at all is a decision
+> phase 1 has to make, and #597 did not make it.
+
 It also changes what this section concludes. The honest reading is that the
 per-subscriber attach *ought* to cost what the policer's does, about 42 µs, and
 that the 83 seconds measured is this product's own bug rather than the price of
@@ -455,10 +503,11 @@ barrier is held no packet moves. An access network whose OLT reboots brings its
 subscribers back within seconds.
 
 **Still not measured:** the same figure on a multi-worker box, where the barrier
-wait is added to the work; whether the growth continues above 10,000; and
-whether a different mechanism than one `vnet_feature_enable_disable` per
-interface exists for this at all. The quadratic total above is arithmetic from
-two measured points, and the figure for 40,000 subscribers is **not** measured.
+wait is added to the work; and whether a different mechanism than one
+`vnet_feature_enable_disable` per interface exists for this at all. The
+quadratic total above is arithmetic from two measured points. Whether the
+growth continued above 10,000 is answered by #597's table above: it did, to
+15 ms at 50,000, and after #597 it does not.
 
 ## 4. Is it a second product?
 
@@ -499,7 +548,7 @@ It is a different product that happens to share a dataplane.
 | A control-plane supervisor that owns `accel-ppp`'s lifecycle, its configuration file and its failures, inside `prismash`'s commit/rollback/audit model | `accel-ppp` brings a second configuration file that `prismash` does not model at all |
 | Product code that enables per-interface features on an interface that appears at runtime, and removes them when it goes | Does not exist anywhere in this repository today (3.4) |
 | A fix for `bpa_auto_mss_update()`'s walk over every interface on every attach | O(N²) attach, measured (3.4). Worth doing regardless of any BNG |
-| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) sized it from the interfaces a box is **configured** for, at 4,793 bytes each, and a session interface is in no configuration file - so a BNG gets nothing from that and must set the size in `/etc/prisma-routing/vpp-base.conf`, which means knowing its own subscriber ceiling. The boot self-test reports how much of the segment is spent either way |
+| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) sized it from the interfaces a box is **configured** for, and [#597](https://github.com/andrediashexa/hexarouting/issues/597) per thread, with the Linux ends of the pairs and with a seam for this: a BNG states its session ceiling in its configuration and returns it from `Config.runtime_interfaces()`, and the tuner sizes for it on the next boot. The ceiling it may state is `statseg_interfaces_for()` of the segment the box can afford, and a session past it is SIGABRT, so the BNG **MUST** refuse one. The boot self-test reports how much of the segment is spent either way |
 | A RADIUS client with accounting and CoA/DM, and an append-only retained store for what it records, to `logging.md`'s standard | This is [#21](https://github.com/andrediashexa/hexarouting/issues/21)'s work plus a retention obligation |
 | Per-subscriber shaping | VPP 26.06 has no shaper (2.2). This is not integration work; it is a queueing discipline that is not there |
 | A VTY model for operational, non-configuration state | `show interfaces` returning 40,007 lines is the symptom (2.1) |
@@ -518,8 +567,9 @@ Each of these is unmeasured today and each can invalidate the plan:
    [#28](https://github.com/andrediashexa/hexarouting/issues/28); nothing about
    throughput **MUST** be claimed until it exists.
 2. The per-interface feature cost on a **multi-worker** box, where the barrier
-   wait is added to the 4.3 ms to 8.3 ms of work measured single-threaded, and
-   whether the growth with interface count continues above 10,000 (3.4).
+   wait is added to the work measured single-threaded (3.4). Above 10,000 it is
+   measured since #597, single-threaded: flat after the fix, at about 1 ms an
+   attach of which 0.9 ms is the configuration trail's fsync.
 3. The session ceiling with a sized stats segment: 40,000 is where the
    measurement stopped, not a wall that was found (2.1).
 4. The `8 MiB` link and session bihashes under a realistic subscriber count.
@@ -628,9 +678,8 @@ that measures less and says so.
 
 * PPPoE decapsulation cost per packet, in clocks or in bits per second;
 * the per-interface feature cost on a multi-worker box, where the barrier wait
-  is added to the work measured; and whether the growth with interface count
-  continues above 10,000. The quadratic total is arithmetic from two points,
-  and no figure above 10,000 subscribers is measured;
+  is added to the work measured. Above 10,000 interfaces the single-threaded
+  cost is measured since #597 (3.4), on sub-interfaces rather than sessions;
 * any session ceiling above 40,000, and the bihash capacity of either table;
 * RADIUS authentication, accounting, CoA or DM, against any server;
 * IPv6CP, DHCPv6-PD, or anything IPv6 on a session;
@@ -670,8 +719,10 @@ To take them again, in the build image with `--privileged`:
    process startup.
 4. For the abort in 2.1, boot with **no** `statseg` stanza, which is what
    `prisma-routing-tune` generated then and still generates for a box whose
-   configuration names no interfaces, and create sessions in batches of 1,000 until
-   `vppctl show version` stops answering. Read the reason from VPP's stdout.
+   configuration makes it hold fewer interfaces than the default carries, and
+   create sessions in batches of 1,000 until `vppctl show version` stops
+   answering. Read the reason from VPP's stdout. `lab/statseg-scale.sh` does
+   the same with sub-interfaces in steps of 100, and is the lab to run.
 5. For 3.4, create N sessions, then time `set interface bpa in2out` over them
    in batches, and time `set interface mtu`, `policer add` and `policer input`
    over the same interfaces as controls.

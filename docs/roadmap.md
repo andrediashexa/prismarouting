@@ -559,7 +559,7 @@ plugin has to win or no session can be created.
 
 | Item | Why | Effort |
 |---|---|---|
-| **PPPoE subscriber authentication (BNG phase 1), in a container of its own** - [#597](https://github.com/andrediashexa/hexarouting/issues/597), open | Asked by the operator on 2026-10-08, opening the scope that section 3.4 and #170 had kept to CGNAT. accel-ppp-ng and RADIUS in a `prisma-bng` container, not `mgmt` (recreated on every VTY upgrade) or `vpp`. Phase 1: PAP/CHAP against RADIUS, accounting retained and joined to the BPA trail, IPv4 via IPCP, CGNAT per session, after the O(N²) attach fix and a stats segment sized per session (docs/bng.md). | L |
+| **PPPoE subscriber authentication (BNG phase 1), in a container of its own** - [#597](https://github.com/andrediashexa/hexarouting/issues/597), open | Asked by the operator on 2026-10-08, opening the scope that section 3.4 and #170 had kept to CGNAT. accel-ppp-ng and RADIUS in a `prisma-bng` container, not `mgmt` (recreated on every VTY upgrade) or `vpp`. Phase 1: PAP/CHAP against RADIUS, accounting retained and joined to the BPA trail, IPv4 via IPCP, CGNAT per session, after the O(N²) attach fix and a stats segment sized per session (docs/bng.md). Both prerequisites are done: the attach walk #485 had put back is gone (15 ms to 1.3 ms an attach at 50,000 interfaces), and the tuner sizes the segment per thread, counts the linux_cp Linux ends, and takes a session ceiling from `Config.runtime_interfaces()`, which the BNG fills. | L |
 
 ## 4. Deliberately out of scope
 
