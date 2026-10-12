@@ -5,7 +5,7 @@ BUILD  := .build
 .PHONY: kernel test test-appliance test-iso test-install test-mirror iso \
         upgrade-artifact release-gate \
         hw-up hw-lab hw-vpp hw-down \
-        model vectors clean
+        model vectors clean bench-dyn
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_ftp64 \
@@ -34,7 +34,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@sh tools/run-tests.sh
 
 vectors:
-	@cd ref && python3 gen_vectors.py && python3 gen_nat64_vectors.py
+	@cd ref && python3 gen_vectors.py && python3 gen_nat64_vectors.py \
+	    && python3 gen_dyn_vectors.py
 
 # bpa_pool.c is #included by the harness rather than compiled beside it, and
 # bpa_dyn.c below the same way: four of the functions in each are static, and
@@ -169,7 +170,7 @@ $(BUILD)/test_bpa_rate: test/test_bpa_rate.c \
 $(BUILD)/test_bpa_dyn: test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
                        src/plugins/bpa/bpa_dyn.h src/plugins/bpa/bpa_pool.c \
                        src/plugins/bpa/bpa_pool.h test/bpa_shim.h \
-                       test/bpa_vec_shim.h
+                       test/bpa_vec_shim.h test/bpa_dyn_vectors.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_dyn.c src/plugins/bpa/bpa_pool.c
@@ -568,9 +569,29 @@ upgrade-artifact:
 release-gate:
 	@sh tools/release-gate.sh $(TAG)
 
+# What choosing a dynamic block costs (#603): the least-loaded choice in this
+# tree, and with BENCH_BEFORE=<rev> the stack at that revision, timed by the
+# same file. Not in `make test`: a nanosecond count on a shared build host is
+# a reading, not a verdict. docs/architecture.md has what it printed.
+bench-dyn:
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $(BUILD)/bench_bpa_dyn \
+	    test/bench_bpa_dyn.c src/plugins/bpa/bpa_pool.c
+	@if [ -n "$(BENCH_BEFORE)" ]; then \
+	  rm -rf $(BUILD)/bench-before && mkdir -p $(BUILD)/bench-before && \
+	  for f in bpa_dyn.c bpa_dyn.h bpa_pool.c bpa_pool.h bpa_nat64.h; do \
+	    git show $(BENCH_BEFORE):src/plugins/bpa/$$f \
+	      > $(BUILD)/bench-before/$$f || exit 1; done && \
+	  $(CC) $(CFLAGS) -I $(BUILD)/bench-before -I test -I src/plugins/bpa \
+	    -o $(BUILD)/bench_bpa_dyn_before test/bench_bpa_dyn.c \
+	    $(BUILD)/bench-before/bpa_pool.c && \
+	  $(BUILD)/bench_bpa_dyn_before; fi
+	@$(BUILD)/bench_bpa_dyn
+
 # Validates the reference model itself.
 model:
 	@cd ref && python3 validate.py && python3 check_magic.py
 
 clean:
-	@rm -rf $(BUILD) test/bpa_vectors.h test/bpa_nat64_vectors.h
+	@rm -rf $(BUILD) test/bpa_vectors.h test/bpa_nat64_vectors.h \
+	    test/bpa_dyn_vectors.h
