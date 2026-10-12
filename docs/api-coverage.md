@@ -761,7 +761,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `urpf strict` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf loose` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf off` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `vrrp <1-255> address <A.B.C.D> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
+| `vrrp <1-255> address <A.B.C.D \| X:X::X:X> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `exit` | n/a | - | the session's |
 | `no description <text>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no vrf <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -811,7 +811,7 @@ Entered with `interface <name>`; `EditRequest.path` = `["interface <name>"]`; ch
 | `no urpf strict` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf loose` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf off` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no vrrp <1-255> address <A.B.C.D> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
+| `no vrrp <1-255> address <A.B.C.D \| X:X::X:X> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 
 ## Configuration: interface (bundle)
 
@@ -878,7 +878,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `urpf strict` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf loose` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `urpf off` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `vrrp <1-255> address <A.B.C.D> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
+| `vrrp <1-255> address <A.B.C.D \| X:X::X:X> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 | `exit` | n/a | - | the session's |
 | `no description <text>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no vrf <1-4294967295>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
@@ -936,7 +936,7 @@ Entered with `interface bond<n>`; `EditRequest.path` = `["interface bond<n>"]`; 
 | `no urpf strict` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf loose` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
 | `no urpf off` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (0.149.20) |
-| `no vrrp <1-255> address <A.B.C.D> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
+| `no vrrp <1-255> address <A.B.C.D \| X:X::X:X> \| <1-255> priority <1-254> \| <1-255> track <interface> decrement <1-254>` | typed | ConfigService.GetConfig (fields) / Edit (lines) | area vrrp: read as fields since 0.149.24; written as lines - written as lines, read as fields |
 
 ## Configuration: router static
 

@@ -80,7 +80,8 @@ from config import (probe_host_ok, probe_source_ok, PROBE_COUNT_MAX,
                     VRID_MIN, VRID_MAX, VRRP_PRIORITY_MIN, VRRP_PRIORITY_MAX,
                     VRRP_PRIORITY_DEFAULT,
                     VRRP_DECREMENT_MIN, VRRP_DECREMENT_MAX,
-                    vrrp_statement, vrrp_remove, vrrp_pair_findings)
+                    vrrp_statement, vrrp_remove, vrrp_pair_findings,
+                    vrrp_problems, vrrp_track_findings)
 import doors
 import cpuview
 import tuneadvice
@@ -231,6 +232,32 @@ VRRP_STATE_SAYS = {
     "VRRP_API_VR_STATE_MASTER": VRRP_STATE_WORDS[2],
     "VRRP_API_VR_STATE_INTF_DOWN": VRRP_STATE_WORDS[3],
 }
+#: The flags an IPv6 router is built with (#485): preempt, as an IPv4 one,
+#: and the family. A LIST, which vppapi.encode ORs into the one u32 VPP's
+#: `vrrp_vr_flags` is - over vpp_papi. vat2 cannot carry it: its JSON parser
+#: takes one name for an `enum`, and two segfault it (set_vrrp says where
+#: that was measured), so an IPv6 router is refused on that transport.
+VRRP_FLAGS_IPV6 = ["VRRP_API_VR_PREEMPT", "VRRP_API_VR_IPV6"]
+#: VNET_API_ERROR_VALUE_EXIST (vnet/error.h): what enabling IPv6 on an
+#: interface that has it already answers.
+VNET_VALUE_EXIST = -81
+
+
+def vrrp_row_family(row) -> int:
+    """
+    4 or 6: the family of one `vrrp_vr_dump` row, by its addresses - an
+    IPv6 router stands for IPv6 addresses only - and by its flags when it
+    has none. vpp_papi hands the flags back as a name, or names joined by
+    "|", or a number; each is read.
+    """
+    if any(":" in str(a) for a in row.get("addrs", [])):
+        return 6
+    flags = row.get("config", {}).get("flags")
+    if isinstance(flags, int):
+        return 6 if flags & 0x8 else 4
+    return 6 if "VRRP_API_VR_IPV6" in str(flags or "") else 4
+
+
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 #: PRISMA-ROUTING-MIB with its root left as @PEN@, which appliance/install.sh
@@ -2666,7 +2693,7 @@ INTERFACE_BLOCK = {
              # of the second and third, as it was, the hint said `priority
              # <n>` stood alone - and GetSchema, which reads it, answered a
              # form no line of a box matches.
-             f"<{VRID_MIN}-{VRID_MAX}> address <A.B.C.D> | "
+             f"<{VRID_MIN}-{VRID_MAX}> address <A.B.C.D | X:X::X:X> | "
              f"<{VRID_MIN}-{VRID_MAX}> priority "
              f"<{VRRP_PRIORITY_MIN}-{VRRP_PRIORITY_MAX}> | "
              f"<{VRID_MIN}-{VRID_MAX}> track <interface> decrement "
@@ -8020,35 +8047,40 @@ def pool_announce_findings(routing, pools):
 
 def nat64_ha_findings(pools, vrrp):
     """
-    NAT64 pools on a box that stands in a VRRP pair (#485 phase 4).
+    NAT64 pools on a box that stands in a VRRP pair with no IPv6 virtual
+    router (#485).
 
     The pair's mapping comparison covers a NAT64 pool like any other - its
     subscriber-length and nat64-prefix are mapping fields, and
     test_prismash_config.py holds that they move the fingerprint - so two
     boxes that would map an IPv6 subscriber differently are found. What a
-    NAT64 pool does not get is the failover itself: the pair moves by VRRP,
-    this box takes IPv4 virtual routers only (vrrp_statement), and an IPv6
-    subscriber's gateway is therefore no virtual address that follows the
-    master. Its traffic keeps going to a dead box, or to the standby while
-    the public addresses' replies go to the master.
+    NAT64 pool also needs is a gateway for its IPv6 subscribers that follows
+    the master: an IPv6 address under a `vrrp <vrid>`, which takes that
+    router's priority, tracking and preempt (config.vrrp_take_ipv6), so the
+    IPv6 side moves with the IPv4 side that holds the public addresses.
+    lab/ha-nat64.sh measures that takeover.
 
-    WARNED, NEVER REFUSED: a pair whose IPv6 side follows the master by
-    routing - each box announcing the NAT64 prefix only while it is up - is a
-    correct design this box cannot see, which is #208's shape. No lab
-    measures a NAT64 failover; the warning says what has to be true for one
-    to work.
+    A pair whose virtual routers are all IPv4 still has a subscriber
+    gateway that is no virtual address: its traffic keeps going to a dead
+    box, or to the standby while the replies go to the master. That is
+    warned about, NEVER REFUSED: a pair whose IPv6 side follows the master
+    by routing - each box announcing the NAT64 prefix only while it is up -
+    is a correct design this box cannot see, which is #208's shape.
 
     Returns [(severity, statement, why)], the shape say_finding() prints.
     """
     if not vrrp:
         return []
-    return [("warning", f"nat / cgnat / pool {name}",
-             "a NAT64 pool on a box in a VRRP pair: its IPv6 subscribers' "
-             "gateway is no virtual address, because this box takes IPv4 "
-             "virtual routers only. On a failover their route to the NAT64 "
-             "prefix has to follow the master some other way - announce it "
-             "from each box only while that box is up - or their traffic "
-             "goes to a box that no longer holds the public addresses")
+    if any(":" in a for vrs in vrrp.values() for vr in vrs.values()
+           for a in vr.get("addresses", [])):
+        return []
+    return [("warning", f"nat / nat64 / pool {name}",
+             "a NAT64 pool on a box in a VRRP pair whose virtual routers "
+             "are all IPv4: its IPv6 subscribers' gateway does not follow "
+             "the master. Give the pair an IPv6 one on the subscribers' "
+             "side - 'vrrp <vrid> address fe80::1' and the global address "
+             "they route by - or announce the NAT64 prefix from each box "
+             "only while that box is up")
             for name, p in sorted((pools or {}).items())
             if getattr(p, "is_nat64", False)]
 
@@ -10269,26 +10301,43 @@ class Shell:
             return {}
         names = self.interface_names_by_index()
         out = {}
-        for row in r.fields.get("rows", []):
+        # IPv4 first, so one `vrrp <vrid>` reads back with its IPv4 addresses
+        # ahead of its IPv6 ones whatever order the dump gives them in - the
+        # order config.vrrp_order keeps a configuration in (#485).
+        rows = sorted(r.fields.get("rows", []), key=vrrp_row_family)
+        for row in rows:
             conf = row.get("config", {})
             name = names.get(conf.get("sw_if_index"))
             if name is None:
                 continue
             vrid = conf.get("vr_id")
-            addrs = [a for a in row.get("addrs", []) if ":" not in str(a)]
-            out.setdefault(name, {})[vrid] = {
-                "addresses": addrs,
-                "priority": conf.get("priority", VRRP_PRIORITY_DEFAULT),
-                "track": self.device_vrrp_track(conf.get("sw_if_index"),
-                                                vrid, names),
-            }
+            six = vrrp_row_family(row) == 6
+            addrs = [str(a) for a in row.get("addrs", [])]
+            track = self.device_vrrp_track(conf.get("sw_if_index"), vrid,
+                                           names, is_ipv6=int(six))
+            # ONE VRID IS TWO ROUTERS ON THE DATAPLANE when it has both
+            # families, and one statement here: the addresses joined, the
+            # tracking joined. The priority is the IPv4 router's - set_vrrp
+            # gives both the same, so they differ only on a box somebody
+            # changed with vppctl, and then the next commit puts it right.
+            vr = out.setdefault(name, {}).get(vrid)
+            if vr is None:
+                out[name][vrid] = {
+                    "addresses": addrs,
+                    "priority": conf.get("priority", VRRP_PRIORITY_DEFAULT),
+                    "track": track,
+                }
+            else:
+                vr["addresses"] += [a for a in addrs
+                                    if a not in vr["addresses"]]
+                vr["track"].update(track)
         return out
 
-    def device_vrrp_track(self, idx, vrid, names) -> dict:
+    def device_vrrp_track(self, idx, vrid, names, is_ipv6=0) -> dict:
         """What one virtual router watches: interface name -> decrement."""
         r = self.api.dump("vrrp_vr_track_if_dump",
-                          {"sw_if_index": idx, "vr_id": vrid, "is_ipv6": 0,
-                           "dump_all": 0})
+                          {"sw_if_index": idx, "vr_id": vrid,
+                           "is_ipv6": is_ipv6, "dump_all": 0})
         if r.state != vppapi.OK:
             return {}
         out = {}
@@ -10329,8 +10378,12 @@ class Shell:
                                              str(run.get("state"))),
                 "mac": run.get("mac"),
                 "addresses": [a for a in row.get("addrs", [])],
+                # One VRID may be two routers, one per family (#485): the
+                # screens and the API tell them apart by this.
+                "family": vrrp_row_family(row),
             })
-        return sorted(rows, key=lambda x: (x["interface"], x["vr_id"] or 0))
+        return sorted(rows, key=lambda x: (x["interface"], x["vr_id"] or 0,
+                                           x["family"]))
 
     def interface_names_by_index(self) -> dict:
         """
@@ -10471,6 +10524,12 @@ class Shell:
         so does the integer 3 - which is a client defect worth knowing about
         and not something to route around by guessing.
 
+        THAT WAS vat2, and since #527 the VTY speaks vpp_papi, which packs a
+        list of names as their OR: an IPv6 router is built with PREEMPT|IPV6
+        (VRRP_FLAGS_IPV6), measured taken by VPP 26.06 and dumped back as
+        both on 2026-10-11 (#485). Accept mode stays off, for the reasons
+        below, which were never only the client's.
+
         So the choice is preempt or accept, and it is preempt: the priorities
         in the configuration are the operator's statement of which box should
         hold the service when both are healthy, and without preempt a box that
@@ -10493,19 +10552,42 @@ class Shell:
         if idx is None:
             self.err(f"interface {ifname}: the dataplane does not have it")
             return False
-        if not vr["addresses"]:
-            self.err_prose(f"interface {ifname}: vrrp {vrid} has no address",
-                           "a virtual router with nothing to stand for would "
-                           "elect a master that answers for nothing")
+        for verdict, prose in vrrp_problems(vrid, vr):
+            self.err_prose(f"interface {ifname}: {verdict}", prose)
             return False
         self.del_vrrp(ifname, vrid, quiet=True)
+        # ONE ROUTER PER FAMILY, the same priority, tracking and preempt on
+        # each (config.vrrp_take_ipv6 says why they are one statement). The
+        # IPv6 router's addresses come in config.vrrp_order's order, so its
+        # link-local is the first it advertises (RFC 5798 section 5.2.9).
+        four = [a for a in vr["addresses"] if ":" not in a]
+        six = [a for a in vr["addresses"] if ":" in a]
+        if six and getattr(self.api, "transport", "vpp_papi") == "vat2":
+            self.err_prose(f"interface {ifname}: vrrp {vrid}: an IPv6 "
+                           "router needs vpp_papi",
+                           "vat2 cannot encode its two flags, preempt and "
+                           "IPv6 - " + (getattr(self.api, "why_vat2", "")
+                                        or "this session is on vat2"))
+            return False
+        for is_ipv6, addrs in ((0, four), (1, six)):
+            if addrs and not self.add_vrrp_family(ifname, idx, vrid, vr,
+                                                  is_ipv6, addrs):
+                return False
+        return True
+
+    def add_vrrp_family(self, ifname, idx, vrid, vr, is_ipv6, addrs) -> bool:
+        """
+        One family's router of `vrrp <vrid>`: built, tracked and started -
+        set_vrrp's work for one of the two the dataplane keeps (#485).
+        """
         r = self.api_call("vrrp_vr_add_del",
                           {"is_add": 1, "sw_if_index": idx, "vr_id": vrid,
                            "priority": vr["priority"],
                            "interval": VRRP_INTERVAL_CS,
-                           "flags": "VRRP_API_VR_PREEMPT",
-                           "n_addrs": len(vr["addresses"]),
-                           "addrs": vr["addresses"]})
+                           "flags": (VRRP_FLAGS_IPV6 if is_ipv6
+                                     else "VRRP_API_VR_PREEMPT"),
+                           "n_addrs": len(addrs),
+                           "addrs": list(addrs)})
         if r.state != vppapi.OK:
             self.err_dataplane(f"interface {ifname}: vrrp {vrid}: {r.reason}")
             return False
@@ -10517,9 +10599,11 @@ class Shell:
                                "the dataplane does not have the interface "
                                "this virtual router was told to track")
                 return False
+            if is_ipv6 and not self.vrrp_track_ip6(tracked, t_idx):
+                return False
             r = self.api_call("vrrp_vr_track_if_add_del",
                               {"is_add": 1, "sw_if_index": idx,
-                               "vr_id": vrid, "is_ipv6": 0, "n_ifs": 1,
+                               "vr_id": vrid, "is_ipv6": is_ipv6, "n_ifs": 1,
                                "ifs": [{"sw_if_index": t_idx,
                                         "priority": dec}]})
             if r.state != vppapi.OK:
@@ -10535,13 +10619,37 @@ class Shell:
         # lower priority holds the address and the operator's configuration is
         # a description of a takeover that will not happen.
         r = self.api_call("vrrp_vr_start_stop",
-                          {"sw_if_index": idx, "vr_id": vrid, "is_ipv6": 0,
-                           "is_start": 1})
+                          {"sw_if_index": idx, "vr_id": vrid,
+                           "is_ipv6": is_ipv6, "is_start": 1})
         if r.state != vppapi.OK:
             self.err_dataplane(f"interface {ifname}: vrrp {vrid}: "
                                f"start: {r.reason}")
             return False
         return True
+
+    def vrrp_track_ip6(self, tracked, t_idx) -> bool:
+        """
+        IPv6 on an interface an IPv6 router tracks, with no advertisement.
+
+        VPP counts a tracked interface as up FOR THE ROUTER'S FAMILY: for an
+        IPv6 router, only while the interface has IPv6 enabled. Measured in
+        lab/ha-nat64.sh (#485): the IPv6 gateway tracking an IPv4-only
+        uplink advertised 200 - 150 = 50 from the moment it started, on both
+        boxes, and pulling that uplink then changed nothing - the gateway
+        stayed on the box with no way upstream. A link-local address is
+        enough for VPP to see the interface, so IPv6 is enabled on it
+        (`enable ip6 interface`), and its router advertisements are
+        suppressed, as on any port of this box that nobody asked to
+        advertise. An interface that had IPv6 already is left as it was.
+        """
+        r = self.api_call("sw_interface_ip6_enable_disable",
+                          {"sw_if_index": t_idx, "enable": True})
+        if r.state == vppapi.OK:
+            return self.set_ra_suppress(tracked, True)
+        if getattr(r, "retval", 0) == VNET_VALUE_EXIST:
+            return True
+        self.err_dataplane(f"track {tracked}: IPv6: {r.reason}")
+        return False
 
     def del_vrrp(self, ifname, vrid, quiet=False) -> bool:
         """
@@ -10551,6 +10659,11 @@ class Shell:
         deleted while it is still advertising leaves the peer waiting out the
         master-down interval; one that is stopped sends a zero-priority
         advertisement, which is RFC 5798's way of saying "take it now".
+
+        Each family the dataplane holds under this id goes (#485): one
+        `vrrp <vrid>` may be two routers. When it holds neither, the IPv4
+        one is asked for anyway, so a removal of something that is not there
+        is refused in the dataplane's words, as it always was.
         """
         idx = self.api.interface_index(ifname)
         if idx is None:
@@ -10558,19 +10671,28 @@ class Shell:
                 return True
             self.err(f"interface {ifname}: the dataplane does not have it")
             return False
-        self.api_call("vrrp_vr_start_stop",
-                      {"sw_if_index": idx, "vr_id": vrid, "is_ipv6": 0,
-                       "is_start": 0})
-        r = self.api_call("vrrp_vr_add_del",
-                          {"is_add": 0, "sw_if_index": idx, "vr_id": vrid,
-                           "priority": VRRP_PRIORITY_DEFAULT,
-                           "interval": VRRP_INTERVAL_CS,
-                           "flags": "VRRP_API_VR_PREEMPT",
-                           "n_addrs": 0, "addrs": []})
-        if r.state != vppapi.OK and not quiet:
-            self.err_dataplane(f"interface {ifname}: no vrrp {vrid}: "
-                               f"{r.reason}")
-            return False
+        r = self.api.dump("vrrp_vr_dump", {"sw_if_index": idx})
+        held = sorted({vrrp_row_family(row) == 6
+                       for row in (r.fields.get("rows", [])
+                                   if r.state == vppapi.OK else [])
+                       if row.get("config", {}).get("vr_id") == vrid
+                       and row.get("config", {}).get("sw_if_index",
+                                                     idx) == idx})
+        for is_ipv6 in [int(x) for x in held] or [0]:
+            self.api_call("vrrp_vr_start_stop",
+                          {"sw_if_index": idx, "vr_id": vrid,
+                           "is_ipv6": is_ipv6, "is_start": 0})
+            r = self.api_call("vrrp_vr_add_del",
+                              {"is_add": 0, "sw_if_index": idx, "vr_id": vrid,
+                               "priority": VRRP_PRIORITY_DEFAULT,
+                               "interval": VRRP_INTERVAL_CS,
+                               "flags": (VRRP_FLAGS_IPV6 if is_ipv6
+                                         else "VRRP_API_VR_PREEMPT"),
+                               "n_addrs": 0, "addrs": []})
+            if r.state != vppapi.OK and not quiet:
+                self.err_dataplane(f"interface {ifname}: no vrrp {vrid}: "
+                                   f"{r.reason}")
+                return False
         return True
 
     def dataplane_names(self) -> set:
@@ -12426,13 +12548,9 @@ class Shell:
                 for vr_if in sorted(target.vrrp):
                     for vrid in sorted(target.vrrp[vr_if]):
                         vr = target.vrrp[vr_if][vrid]
-                        if not vr["addresses"]:
-                            self.err_prose(
-                                f"interface {vr_if}: vrrp {vrid} has no "
-                                "address",
-                                "a virtual router with nothing to stand for "
-                                "would elect a master that answers for "
-                                "nothing")
+                        for verdict, prose in vrrp_problems(vrid, vr):
+                            self.err_prose(f"interface {vr_if}: {verdict}",
+                                           prose)
                             ok = False
                         for tracked in sorted(vr["track"]):
                             if tracked not in have:
@@ -13303,11 +13421,17 @@ class Shell:
             # the operator of 10.40.200.166 read it as noise on every commit
             # and asked for it gone. Whether the box exports is still said
             # where it is asked: `show cgnat logging` and the selftest.
-            # A NAT64 pool in a VRRP pair, whose IPv6 side no virtual address
-            # carries (#485). Warned, for the reason the function gives.
+            # A NAT64 pool in a VRRP pair with no IPv6 virtual router, whose
+            # IPv6 side nothing carries (#485). Warned, for the reason the
+            # function gives.
             for sev, stmt, why in nat64_ha_findings(target.pools,
                                                     target.vrrp):
                 self.say_finding(sev, stmt, why)
+            # Tracking the dataplane cannot see (#485), warned for the reason
+            # vrrp_track_findings gives.
+            for stmt, why in vrrp_track_findings(target.vrrp,
+                                                 target.addresses):
+                self.say_finding("warning", stmt, why)
 
             # Would this commit leave the two boxes mapping subscribers
             # differently? Asked only when a peer configuration has been put
@@ -22313,7 +22437,11 @@ class Shell:
             # addresses this router stands for" has no width, and a row whose
             # width nobody can state is a row that folds inside an address at
             # whatever the operator's window happens to be (#355, #363).
-            print(f"    vrrp {row['vr_id']:<6} {row['state']}")
+            # "ipv6" beside the id of the IPv6 router: one `vrrp <vrid>`
+            # with both families is two routers, each with its own role.
+            vr_label = (f"{row['vr_id']} ipv6" if row.get("family") == 6
+                        else str(row["vr_id"]))
+            print(f"    vrrp {vr_label:<6} {row['state']}")
             for addr in row["addresses"]:
                 print(f"                {addr} on {row['mac']}")
 
@@ -25391,7 +25519,8 @@ class Shell:
                         "below is whether a takeover WOULD land subscribers "
                         "where they already are.")
         for row in rows:
-            print(f"    {row['interface']} vrrp {row['vr_id']}   "
+            print(f"    {row['interface']} vrrp {row['vr_id']}"
+                  f"{' ipv6' if row.get('family') == 6 else ''}   "
                   f"{row['state']}")
             print(f"      address(es)        "
                   + ", ".join(str(a) for a in row["addresses"]))

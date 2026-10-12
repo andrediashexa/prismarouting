@@ -612,7 +612,9 @@ def vrrp_of(sh):
         addrs = [str(a) for a in r.get("addresses", [])]
         out.append({"interface": r.get("interface", ""),
                     "vr_id": int(r.get("vr_id", 0) or 0),
-                    "family": 6 if any(":" in a for a in addrs) else 4,
+                    "family": int(r.get("family")
+                                  or (6 if any(":" in a for a in addrs)
+                                      else 4)),
                     "state": str(r.get("state", "")),
                     "priority": int(r.get("advertising", 0) or 0),
                     "addresses": addrs})
@@ -781,7 +783,8 @@ def ha_fields(facts):
                 "addresses": [str(a) for a in r.get("addresses", [])],
                 "virtual_mac": str(r.get("mac") or ""),
                 "priority_configured": int(r.get("configured") or 0),
-                "priority_advertised": int(r.get("advertising") or 0)}
+                "priority_advertised": int(r.get("advertising") or 0),
+                "family": int(r.get("family") or 4)}
                for r in facts["routers"]]
     return {"dataplane": facts["dataplane"], "fingerprint": facts["fingerprint"],
             "pools": list(facts["pools"]), "routers": routers,

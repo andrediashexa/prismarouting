@@ -328,7 +328,7 @@ OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent nat64:off oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
-           utilisation:off vrf:off vrrp:off ha-failover:off
+           utilisation:off vrf:off vrrp:off ha-failover:off ha-nat64:off
            syslog-reconnect:off syslog-spill-resync:off identity-empty:off snmp-traps:off
            hostname:off monitor-interface:off log-container:off
            monitor-cgnat-logging:off cgnat-prefix-list:off replace-rename:off

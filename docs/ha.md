@@ -37,12 +37,16 @@ The trap for whoever implements it: in deterministic mode, two boxes with
 
 **A NAT64 pool in a pair** ([#485](https://github.com/andrediashexa/hexarouting/issues/485)):
 the mapping comparison covers it - `subscriber-length` and `nat64-prefix` are
-mapping fields - but the failover does not carry its IPv6 side. This box takes
-IPv4 virtual routers only, so the IPv6 subscribers' gateway is no virtual
-address that follows the master; their route to the NAT64 prefix has to
-follow it some other way, such as each box announcing the prefix only while
-it is up. `commit check` warns about every NAT64 pool on a box in a VRRP pair,
-and no lab measures a NAT64 failover (docs/nat64.md).
+mapping fields - and the failover carries its IPv6 side. An IPv6 address
+under a `vrrp <vrid>` builds that id's IPv6 virtual router (VRRPv3, RFC 5798)
+beside the IPv4 one, with the same priority, tracking and preempt, so the
+IPv6 subscribers' gateway follows the master that holds the public
+addresses. `lab/ha-nat64.sh` measures it: the service back in 2.8 to 4.0
+seconds after each of the three failures, on the same public address and
+port block, in-flight connections dropped - the IPv4 result, for an
+IPv6-only subscriber. *A NAT64 pool in the pair*, near the end of this page,
+has the numbers and what they do not cover. `commit check` warns about a
+NAT64 pool only on a pair with no IPv6 virtual router.
 
 **What does not exist and is still a plan**: session synchronisation, and
 anything that carries the peer's configuration between the boxes by itself.
@@ -516,3 +520,96 @@ peer. A pair configured without tracking survives a dead box and not a deaf
 one - it goes on holding the subscriber-side address while reaching nothing -
 and that difference is why the uplink is asked separately from the two ways of
 losing the whole box.
+
+## A NAT64 pool in the pair
+
+[#485](https://github.com/andrediashexa/hexarouting/issues/485), items 3 and
+4 of what reopened it. The HA model is the IPv4 one, unchanged: nothing is
+synchronised between the boxes, and a deterministic pool puts the subscriber
+- for NAT64, its delegated prefix - on the same public address and block on
+either box, because the block is a function of the configuration. What a
+NAT64 pool needed and did not have was a gateway for its IPv6 subscribers
+that moves with the master.
+
+### The IPv6 virtual router
+
+```
+interface ens18
+ ipv6 address 2001:db8:1200:ab00::2/56
+ ipv4 address 100.64.3.252/22
+ vrrp 1 address 100.64.3.254
+ vrrp 1 address fe80::1
+ vrrp 1 address 2001:db8:1200:ab00::1
+ vrrp 1 priority 200
+ vrrp 1 track ens19 decrement 150
+ exit
+```
+
+* **One `vrrp <vrid>`, two routers.** RFC 5798 runs one election per family,
+  and VPP keys a router by interface, id and family. The VTY builds the IPv6
+  one from the IPv6 addresses of the same statement, with the IPv4 one's
+  priority, tracking and preempt: two settings that must never disagree are
+  written once, and the IPv6 gateway cannot stay behind on a box that gave
+  up the IPv4 side. `show cgnat ha`, `show interface` and the API
+  (`HaRouter.family`, `VrrpRouter.family`) list the two as two rows.
+* **The link-local first.** RFC 5798 section 5.2.9: an IPv6 virtual router's
+  first address is a link-local one, the address its advertisements name
+  and the gateway hosts on the link are pointed at. `commit check` refuses
+  an IPv6 router with none; a second one is refused at the prompt. The
+  virtual MAC is `00:00:5e:00:02:<vrid>`, and the box that takes over sends
+  an unsolicited Neighbor Advertisement for it.
+* **Over vpp_papi only.** The IPv6 router needs two flags, preempt and IPv6;
+  vpp_papi packs them as their OR (VPP 26.06 took `PREEMPT|IPV6` and dumped
+  it back). vat2 cannot encode two, so on a session forced to vat2 an IPv6
+  router is refused rather than sent.
+* **Tracking is per family, and that is VPP's rule.** VPP counts a tracked
+  interface as up only when it has an address of the tracking router's
+  family. Measured in the lab's first run: the IPv6 gateway tracking an
+  IPv4-only uplink advertised 200 - 150 = 50 from the start on both boxes,
+  and pulling that uplink then moved nothing - the gateway stayed on the box
+  with no way upstream. So the VTY enables IPv6 (a link-local, router
+  advertisements suppressed) on any interface an IPv6 router tracks. The
+  other direction cannot be fixed that way: an IPv4 router tracking an
+  IPv6-only subscriber side never sees it up, and `commit check` warns,
+  telling the operator to give that side an IPv4 address or track something
+  else. The lab gives its subscriber side one, as a box carrying NAT44 and
+  NAT64 subscribers on one port has anyway.
+* **What it does not do.** Accept mode stays off, so the virtual addresses
+  answer no ping (RFC 5798 section 6.4.3), IPv6 as IPv4. The box's router
+  advertisements are its own and are not the virtual router's: a subscriber
+  that takes its default route from an advertisement points at one box's
+  own link-local, which does not move. Point subscribers - or the BNG in
+  front of them - at the virtual link-local; this product's advertisements
+  are suppressed unless asked for.
+
+### What the lab measures
+
+`lab/ha-nat64.sh`: two boxes, an IPv6-only subscriber in its /56, a server on
+the IPv4 side, a deterministic NAT64 pool on both, configured through the
+VTY. The subscriber routes the NAT64 prefix to `fe80::1`; the upstream
+routes the pool to an IPv4 virtual address; each side tracks the other. The
+lab never touches the subscriber's neighbor cache. Each failure is timed from
+the moment it is caused to the first translated round trip through the new
+master, probing every half second from the socket the service used before.
+
+| What was measured (2026-10-11, three runs: two single-threaded, one with workers) | Result |
+|---|---|
+| The round trip through the IPv6 virtual gateway, before any failure | 4 of 4, seen upstream as 203.0.113.3 - the address and block `ref/bpa_model.py` gives the subscriber's /56 |
+| The subscriber's gateway | `fe80::1` resolved to `00:00:5e:00:02:01` and never re-resolved |
+| **A pulled uplink** (the box alive, the cable out) | Back in 3.8, 3.9 and 3.3 s, on box b; box a's IPv6 router went to backup by tracking |
+| **A stopped dataplane** (the appliance's `ExecStop`, then SIGTERM) | Back in 3.9, 3.3 and 3.9 s |
+| **A killed dataplane** (SIGKILL) | Back in 3.3, 2.8 and 4.0 s |
+| An open UDP flow, from the same socket | Comes back on the same public address and a port in the same block - 44034 before, 44035 after: a new session on the new master, not the old one |
+| An open TCP connection across the kill | Gone - reset - and a new one gets the same public address and a port in the same block |
+
+About three and a half seconds is RFC 5798's master-down interval at the
+one-second advertisement this product uses (three intervals plus the skew):
+the takeover is the election, and the translation adds nothing measurable to
+it. Everything else is the IPv4 table above, for an IPv6-only subscriber.
+
+**What it does not cover.** A dynamic NAT64 pool: as an IPv4 dynamic pool,
+the new master allocates afresh, so a subscriber's block - and possibly its
+address - changes across a takeover; nothing is synchronised and the lab
+does not measure that case. A real NIC noticing its own cable is #28's
+question, as for IPv4. A box returning from maintenance takes the service
+back by preempt, which is a second interruption of the same length.

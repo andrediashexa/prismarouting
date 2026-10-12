@@ -169,6 +169,17 @@ class Values:
         if_names = parse_stats_dump(stats_dump("^/if/names$"))[0]
         vrrp_detail = parse_vrrp_detail(vrrp_text, if_names)
         addr_text = vppctl("show interface address") or ""
+        own = parse_interface_addresses(addr_text)
+        # An IPv6 router's own address is its interface's LINK-LOCAL (RFC
+        # 6527, vrrpv3OperationsPrimaryIpAddr; RFC 5798 sends from it), and
+        # `show interface address` does not list one (#485): read it, only
+        # for the interfaces an IPv6 router is on.
+        for name in sorted({r["interface"] for r in vrrp_detail
+                            if r["family"] == 6}):
+            ll = parse_ip6_link_local(
+                vppctl(f"show ip6 interface {name}") or "")
+            if ll:
+                own[name] = [ll] + [a for a in own.get(name, []) if a != ll]
         # IP-MIB (#522): the cards with an address, by vpp_cards' rule.
         prefixes = {n: p for n, p in parse_interface_prefixes(addr_text).items()
                     if p and n != "local0" and not n.startswith("tap")}
@@ -190,7 +201,7 @@ class Values:
                 # given an ifIndex for good, and local0 and the taps have none
                 # in IF-MIB (#498).
                 if_indexes(sorted({r["interface"] for r in vrrp_detail})),
-                parse_interface_addresses(addr_text))
+                own)
             if vrrp_detail else [],
             "bonds": bonds,
             "lag": lag_rows(lag, parse_lacp_details(
@@ -1006,6 +1017,17 @@ def parse_interface_addresses(text):
             for n, p in parse_interface_prefixes(text).items()}
 
 
+def parse_ip6_link_local(text):
+    """The first address under "Link-local address(es):" in `show ip6
+    interface <name>`, without its length, or "" when there is none."""
+    lines = text.replace("\r", "").splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("Link-local address"):
+            for nxt in lines[i + 1:i + 2]:
+                return nxt.strip().split("/")[0]
+    return ""
+
+
 def _inet_octets(address):
     """An address as the hex octets an InetAddress is written in."""
     import ipaddress
@@ -1027,8 +1049,11 @@ def vrrpv3_rows(routers, indexes, own):
         if r["interface"] not in indexes:
             continue
         idx = f"{indexes[r['interface']]}.{r['vr_id']}.{1 if r['family'] == 4 else 2}"
-        mine = [a for a in own.get(r["interface"], [])
-                if ipaddress.ip_address(a).version == r["family"]]
+        # The link-local first for an IPv6 router: it is the address its
+        # advertisements leave from (#485).
+        mine = sorted((a for a in own.get(r["interface"], [])
+                       if ipaddress.ip_address(a).version == r["family"]),
+                      key=lambda a: not ipaddress.ip_address(a).is_link_local)
         if r["status"] == 3 and mine:
             out.append((f"{ops}.3.{idx}", "octet", _inet_octets(mine[0])))
         if mine:

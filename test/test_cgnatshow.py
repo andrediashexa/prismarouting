@@ -388,8 +388,20 @@ h = A.ha_fields(sh.ha)
 check(h["routers"] == [{"interface": "ens18", "vr_id": 10, "state": "master",
                         "addresses": ["200.150.0.1"],
                         "virtual_mac": "00:00:5e:00:01:0a",
-                        "priority_configured": 200, "priority_advertised": 190}],
+                        "priority_configured": 200, "priority_advertised": 190,
+                        "family": 4}],
       f"ha_fields: a router, both priorities: {h['routers']}")
+# #485: one `vrrp <vrid>` with both families is two rows; the family tells
+# them apart. Mutation shown red: the family left out of the row, which
+# gives the IPv6 router's row the same key as the IPv4 one's.
+_six = dict(sh.ha, routers=list(sh.ha["routers"]) + [
+    dict(sh.ha["routers"][0], addresses=["fe80::1", "2001:db8::1"],
+         mac="00:00:5e:00:02:0a", family=6)])
+h6 = A.ha_fields(_six)
+check([r["family"] for r in h6["routers"]] == [4, 6]
+      and h6["routers"][1]["addresses"] == ["fe80::1", "2001:db8::1"],
+      f"ha_fields: the IPv6 router of the same id, as family 6: "
+      f"{h6['routers']}")
 check(h["divergences"] == [{"pool": "nb", "here": "block-size 2048",
                             "there": "block-size 1024"}] and h["agree"] is False,
       "a divergence, and no agreement")

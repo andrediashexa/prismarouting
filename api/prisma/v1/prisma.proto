@@ -2267,6 +2267,9 @@ message HaRouter {
   // it tracks is down.
   uint32 priority_configured = 6;
   uint32 priority_advertised = 7;
+  // 4 or 6 (#485). One `vrrp <vrid>` with addresses of both families is two
+  // routers, one per family, each with its own row and its own state.
+  uint32 family = 8;
 }
 
 message HaDivergence {

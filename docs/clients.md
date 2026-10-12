@@ -27,6 +27,37 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.1 - IPv6 virtual routers, and a NAT64 pool that fails over
+
+* **Contract:** additive (`prisma.proto` sha256 `00b7870c08504f90b96314b2c88fb663ee734f1531fd9935aa8f26371e794456`).
+  #485: `HaRouter` gains `family` (8, uint32: 4 or 6). Nothing else in the
+  contract changes; no message, field or number is moved.
+* **One VRID may now be two routers.** `vrrp <vrid> address` takes IPv6
+  addresses (the link-local first, then global ones), and the box builds
+  that id's IPv6 virtual router beside its IPv4 one, with the same priority
+  and tracking. `GetHaStatus.routers` and `ListVrrp.routers` then carry two
+  rows with the same `interface` and `vr_id`: tell them apart by `family`
+  (`VrrpRouter.family` already existed and now comes from the router's own
+  family rather than from its addresses). Each row has its own `state` -
+  the two can differ for a moment during a takeover - and its own
+  `virtual_mac`: `00:00:5e:00:01:<vrid>` for IPv4, `00:00:5e:00:02:<vrid>`
+  for IPv6. A client that keyed routers by (interface, vr_id) MUST add the
+  family. `family` is 0 from a server older than this release.
+* **`GetConfig` area `vrrp`:** still one `VrrpConfig` per interface and id;
+  its `addresses` now MAY hold IPv6 ones, in the order IPv4, the IPv6
+  link-local, the other IPv6 (each family as written). Editing is by lines
+  (`vrrp 1 address fe80::1`), as before. `SetConfig`/`Edit` refuse an IPv6
+  router with no link-local at `commit check`, and a second link-local at
+  the line, each with its own sentence.
+* **`commit check` output changes:** the warning about a NAT64 pool in a
+  VRRP pair appears only when the pair has no IPv6 virtual router (it was
+  printed for every NAT64 pool in a pair), and a new warning names a
+  `vrrp <vrid> track <interface>` whose interface has no IPv4 address while
+  the router is IPv4.
+* **`ListTop` with a NAT64 subscriber** is now proven live by
+  lab/nat64.sh (a /56 in `subscriber`, as the field comment already said);
+  no change to the call.
+
 ## 0.153.0 - the installation medium speaks on the serial port
 
 * **Contract:** unchanged (`prisma.proto` sha256 `ae262f4a79d5e0636d3238ede79aa6426dee258035e461afc18f307c7248b31c`, the same as 0.152.11). Nothing a client of `prisma.v1` sees changes.

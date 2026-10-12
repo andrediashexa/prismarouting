@@ -968,6 +968,7 @@ VTY_MESSAGES = frozenset({
     "lcp_osi_proto_enable", "lcp_osi_proto_get", "set_ipfix_exporter",
     "sw_bond_interface_dump", "sw_interface_add_del_address",
     "sw_interface_dump", "sw_interface_get_table",
+    "sw_interface_ip6_enable_disable",
     "sw_interface_ip6nd_ra_config", "sw_interface_ip6nd_ra_dump",
     "sw_interface_set_flags", "sw_interface_set_interface_name",
     "sw_interface_set_mac_address", "sw_interface_set_mtu",

@@ -3103,7 +3103,7 @@ def _address_family_error(keyword: str, prefix: str):
     return None
 
 
-VRRP_USAGE = ("vrrp <vrid> address <a.b.c.d> | priority <n> | "
+VRRP_USAGE = ("vrrp <vrid> address <IPv4 | IPv6> | priority <n> | "
               "track <interface> decrement <n>")
 
 #: The same thing as a refusal, split so that it FITS: the whole grammar on
@@ -3111,7 +3111,7 @@ VRRP_USAGE = ("vrrp <vrid> address <a.b.c.d> | priority <n> | "
 #: The verdict carries the statement an operator most often means, the prose
 #: carries the other two.
 VRRP_USAGE_REFUSAL = (
-    "usage: vrrp <vrid> address <a.b.c.d>",
+    "usage: vrrp <vrid> address <IPv4 or IPv6 address>",
     "or 'vrrp <vrid> priority <n>', or 'vrrp <vrid> track <interface> "
     "decrement <n>'")
 
@@ -3157,21 +3157,19 @@ def vrrp_statement(vrrp: dict, iface: str, words: list):
 
     if rest[:1] == ["address"] and len(rest) == 2:
         a = rest[1]
-        if ":" in a:
-            return ("vrrp: this box takes IPv4 virtual routers only",
-                    "an IPv6 virtual router is RFC 5798 section 5.2.2 and a "
-                    "second election to test. It is not refused here because "
-                    "it cannot work, but because nothing has measured it")
         if "/" in a:
             return (f"vrrp {vrid} address '{a}': write it without a prefix "
                     "length",
                     "the virtual address is one of the addresses on this "
                     "interface's subnet, not a subnet of its own")
+        if ":" in a:
+            return vrrp_take_ipv6(make, vr, vrid, a)
         if not _is_ipv4_address(a):
             return (f"vrrp {vrid} address '{a}': not an IPv4 address", "")
         entry = make()
         if a not in entry["addresses"]:
             entry["addresses"].append(a)
+            vrrp_order(entry["addresses"])
         return None
     if rest[:1] == ["priority"] and len(rest) == 2:
         try:
@@ -3207,6 +3205,133 @@ def vrrp_statement(vrrp: dict, iface: str, words: list):
         make()["track"][rest[1]] = d
         return None
     return VRRP_USAGE_REFUSAL
+
+
+def vrrp_take_ipv6(make, vr, vrid, a):
+    """
+    An IPv6 address into a virtual router (#485), or `(verdict, prose)`.
+
+    ONE VRID, BOTH FAMILIES. RFC 5798 runs one election per family - VPP
+    keys a router by interface, id AND family - and this box builds both
+    from one `vrrp <vrid>`: its priority, its tracking and its preempt are
+    the IPv4 router's, so the IPv6 gateway a NAT64 subscriber uses moves
+    with the IPv4 side that carries the public addresses, and never alone.
+    Two settings that must never disagree are written once.
+
+    The address is kept in its canonical text, because the dataplane hands
+    it back that way: `2001:DB8::0:1` typed and `2001:db8::1` read back
+    would be a change on every commit. A multicast, unspecified or loopback
+    address is no gateway, and RFC 5798 section 5.2.9 has exactly ONE
+    link-local address per router, first in its list.
+    """
+    try:
+        ip = ipaddress.IPv6Address(a)
+    except ValueError:
+        return (f"vrrp {vrid} address '{a}': not an IPv6 address", "")
+    if ip.is_multicast or ip.is_unspecified or ip.is_loopback:
+        return (f"vrrp {vrid} address {ip}: not a gateway's address",
+                "a virtual router stands for a unicast address a host on "
+                "this link sends to")
+    if ip.ipv4_mapped is not None:
+        return (f"vrrp {vrid} address {ip}: an IPv4-mapped address",
+                "write the IPv4 address itself")
+    text = str(ip)
+    if ip.is_link_local:
+        held = [x for x in (vr or {}).get("addresses", [])
+                if ":" in x and ipaddress.IPv6Address(x).is_link_local
+                and x != text]
+        if held:
+            return (f"vrrp {vrid}: one link-local address, and it is "
+                    f"{held[0]}",
+                    "RFC 5798 section 5.2.9: an IPv6 virtual router has one "
+                    "link-local address, the first it advertises. Remove "
+                    "the router and write it again to change it")
+    entry = make()
+    if text not in entry["addresses"]:
+        entry["addresses"].append(text)
+        vrrp_order(entry["addresses"])
+    return None
+
+
+def vrrp_order(addresses: list) -> None:
+    """
+    A router's addresses in the order the dataplane gives them back, sorted
+    in place: IPv4, then the IPv6 link-local, then the other IPv6 - each
+    family in the order it was written.
+
+    Two VPP routers carry one `vrrp <vrid>` (vrrp_take_ipv6), and
+    Shell.device_vrrp reads them back IPv4 first; the IPv6 router is built
+    with its link-local first because RFC 5798 section 5.2.9 requires it.
+    A list in any other order would read back as a change on every commit,
+    and a commit would rebuild a router nobody touched - two elections.
+    """
+    # not a unit: the sort key of vrrp_order, a closure over nothing,
+    # measured through vrrp_order's own test in test_prismash_config.py
+    def rank(a):
+        if ":" not in a:
+            return 0
+        return 1 if ipaddress.IPv6Address(a).is_link_local else 2
+    addresses.sort(key=rank)
+
+
+def vrrp_problems(vrid, vr) -> list:
+    """
+    What keeps one router from being built, as `(verdict, prose)` refusals:
+    nothing to stand for, or IPv6 addresses with no link-local among them.
+
+    Asked by `commit check` and again by set_vrrp, so a check that passes
+    is a commit that applies (the reason is beside the check in prismash).
+    The link-local is not asked at the statement, because the global
+    address is as likely to be typed first: a statement-time refusal would
+    refuse the order an operator writes in, not the router.
+    """
+    if not vr["addresses"]:
+        return [(f"vrrp {vrid} has no address",
+                 "a virtual router with nothing to stand for would elect a "
+                 "master that answers for nothing")]
+    six = [a for a in vr["addresses"] if ":" in a]
+    if six and not ipaddress.IPv6Address(six[0]).is_link_local:
+        return [(f"vrrp {vrid} has no IPv6 link-local address",
+                 "RFC 5798 section 5.2.9: an IPv6 virtual router's first "
+                 "address is its link-local one, the gateway hosts on the "
+                 "link are pointed at. Add one, such as: vrrp "
+                 f"{vrid} address fe80::1")]
+    return []
+
+
+def vrrp_track_findings(vrrp: dict, addresses: dict) -> list:
+    """
+    Tracking that cannot work, as [(statement, why)]: an IPv4 router told to
+    track an interface with no IPv4 address.
+
+    VPP counts a tracked interface as up for the ROUTER'S family only
+    (vrrp_intf_is_up in VPP's vrrp.c, measured in lab/ha-nat64.sh, #485): an
+    IPv4 router tracking an interface with no IPv4 address advertises its
+    priority less the decrement from the moment it starts, on both boxes, and
+    a cable pulled there changes nothing. That is the IPv4 router of a NAT64
+    pair tracking an IPv6-only subscriber side. The IPv6 half needs no
+    finding: set_vrrp enables IPv6 on what an IPv6 router tracks
+    (Shell.vrrp_track_ip6), and a link-local is all VPP asks for.
+
+    WARNED, not refused: the pair still elects by the configured order, and
+    a box already running such a router must still load its file.
+    """
+    out = []
+    for ifname in sorted(vrrp):
+        for vrid in sorted(vrrp[ifname]):
+            vr = vrrp[ifname][vrid]
+            if not any(":" not in a for a in vr.get("addresses", [])):
+                continue
+            for t in sorted(vr.get("track", {})):
+                if not any(":" not in a for a in addresses.get(t, [])):
+                    out.append((f"interface {ifname}: vrrp {vrid} track {t}",
+                                f"{t} has no IPv4 address, and the dataplane "
+                                "counts an interface with none as down for "
+                                "an IPv4 router: this box advertises the "
+                                "lower priority for good, and a cable pulled "
+                                f"there moves nothing. Give {t} an IPv4 "
+                                "address, or track another interface"))
+    return out
 
 
 def vrrp_remove(vrrp: dict, iface: str, words: list):

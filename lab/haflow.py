@@ -35,6 +35,12 @@ import sys
 import time
 
 
+def family(address):
+    """AF_INET6 for an IPv6 address, AF_INET otherwise: the subscriber of
+    lab/ha-nat64.sh is IPv6-only, and the upstream answers in IPv4 (#485)."""
+    return socket.AF_INET6 if ":" in address else socket.AF_INET
+
+
 def log_line(path, text):
     with open(path, "a") as fh:
         fh.write("%.3f %s\n" % (time.time(), text))
@@ -56,7 +62,7 @@ def udp_probe(src_ip, src_port, dst_ip, dst_port, count, timeout):
     ok = 0
     seen = "-"
     for i in range(count):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s = socket.socket(family(src_ip), socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # One fixed source socket across the whole lab, because the public port
         # a subscriber is given is a property of its private socket and the
@@ -106,7 +112,7 @@ def tcp_echo(bind_ip, port, log):
 
 
 def _connect(src_ip, src_port, dst_ip, dst_port, timeout):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s = socket.socket(family(src_ip), socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((src_ip, src_port))
     s.settimeout(timeout)

@@ -1319,7 +1319,11 @@ check(config.vrrp_statement({}, "pg0", ["vrrp", "1"])
 for words, want in (
         (["vrrp", "x"], "the virtual router id is a number"),
         (["vrrp", "300", "address", "1.2.3.4"], "the virtual router id is 1"),
-        (["vrrp", "1", "address", "2001:db8::1"], "IPv4 virtual routers only"),
+        (["vrrp", "1", "address", "2001:db8::1/64"], "without a prefix length"),
+        (["vrrp", "1", "address", "2001:db8::g"], "not an IPv6 address"),
+        (["vrrp", "1", "address", "ff02::12"], "not a gateway's address"),
+        (["vrrp", "1", "address", "::"], "not a gateway's address"),
+        (["vrrp", "1", "address", "::ffff:1.2.3.4"], "IPv4-mapped"),
         (["vrrp", "1", "address", "1.2.3.4/24"], "without a prefix length"),
         (["vrrp", "1", "address", "1.2.3"], "not an IPv4 address"),
         (["vrrp", "1", "priority", "255"], "RFC 5798's address owner"),
@@ -1334,6 +1338,83 @@ for words, want in (
 check(config.vrrp_statement({}, "pg0", ["vrrp", "1", "address"])[0]
       == config.VRRP_USAGE_REFUSAL[0], "a half-typed statement is the usage")
 print("  the ONE reader of this statement, so the prompt and a saved file agree")
+
+print("\n=== config.vrrp_take_ipv6: an IPv6 gateway in the same router (#485) ===")
+# Mutation shown red: the text kept as typed rather than canonical, which
+# the dataplane hands back compressed - a change on every commit, and every
+# commit rebuilding a router nobody touched.
+v = {}
+config.vrrp_statement(v, "pg0", ["vrrp", "1", "address", "100.64.3.254"])
+check(config.vrrp_statement(v, "pg0", ["vrrp", "1", "address",
+                                       "2001:DB8:0::0:1"]) is None,
+      "a global IPv6 address is taken into the IPv4 router's id")
+check(config.vrrp_statement(v, "pg0", ["vrrp", "1", "address",
+                                       "FE80::1"]) is None,
+      "and its link-local, typed after it")
+check(v["pg0"][1]["addresses"] == ["100.64.3.254", "fe80::1", "2001:db8::1"],
+      f"canonical text, IPv4 first, the link-local ahead of the global: "
+      f"{v['pg0'][1]['addresses']!r}")
+# Mutation shown red: the link-local test dropped, which hands VPP a router
+# whose advertisements carry two link-local addresses - RFC 5798 5.2.9 has
+# one, first.
+r = config.vrrp_statement(v, "pg0", ["vrrp", "1", "address", "fe80::2"])
+check(r is not None and "one link-local address, and it is fe80::1" in r[0]
+      and "5.2.9" in r[1], f"a second link-local is refused, naming the "
+      f"first: {r!r}")
+check(config.vrrp_statement(v, "pg0", ["vrrp", "1", "address", "fe80::1"])
+      is None and v["pg0"][1]["addresses"].count("fe80::1") == 1,
+      "and the same one again is once")
+r = config.vrrp_take_ipv6(lambda: {"addresses": []}, None, 3, "fe80::7")
+check(r is None, "on a router that is not there yet, it is made")
+check(config.vrrp_take_ipv6(lambda: None, None, 3, "1.2.3.4")[0]
+      == "vrrp 3 address '1.2.3.4': not an IPv6 address",
+      "and an address of the other family is not one")
+print("  one id, two families: the IPv6 gateway moves with the IPv4 side")
+
+print("\n=== config.vrrp_order: the order the dataplane reads back ===")
+# Mutation shown red: sorting the IPv6 addresses by value rather than only
+# by kind, which reorders what the operator wrote and the dataplane keeps.
+a = ["2001:db8::9", "100.64.3.254", "fe80::1", "2001:db8::2", "100.64.3.1"]
+config.vrrp_order(a)
+check(a == ["100.64.3.254", "100.64.3.1", "fe80::1", "2001:db8::9",
+            "2001:db8::2"],
+      f"IPv4 as written, the link-local, the rest as written: {a!r}")
+print("  so a router read back from the box is the router configured")
+
+print("\n=== config.vrrp_problems: what keeps a router from being built ===")
+# Mutation shown red: only the empty case asked, which lets `commit check`
+# pass an IPv6 router with no link-local that RFC 5798 has no shape for.
+check(config.vrrp_problems(1, {"addresses": []})[0][0]
+      == "vrrp 1 has no address", "nothing to stand for")
+p = config.vrrp_problems(2, {"addresses": ["100.64.3.254", "2001:db8::1"]})
+check(len(p) == 1 and p[0][0] == "vrrp 2 has no IPv6 link-local address"
+      and "vrrp 2 address fe80::1" in p[0][1],
+      f"IPv6 with no link-local, and the statement that fixes it: {p!r}")
+check(config.vrrp_problems(2, {"addresses": ["100.64.3.254", "fe80::1",
+                                             "2001:db8::1"]}) == []
+      and config.vrrp_problems(2, {"addresses": ["100.64.3.254"]}) == [],
+      "both families with a link-local, or IPv4 alone, are routers")
+print("  asked by commit check and by the commit, in the same words")
+
+print("\n=== config.vrrp_track_findings: tracking the dataplane cannot see ===")
+# Mutation shown red: the family test dropped from the tracked interface's
+# addresses, which passes an IPv6-only subscriber side tracked by the IPv4
+# router - measured in lab/ha-nat64.sh advertising 50 for good (#485).
+vr = {"ge1": {2: {"addresses": ["192.0.2.10"], "priority": 200,
+                  "track": {"ge0": 150}}}}
+f = config.vrrp_track_findings(vr, {"ge0": ["2001:db8::2/56"],
+                                    "ge1": ["192.0.2.11/24"]})
+check(len(f) == 1 and f[0][0] == "interface ge1: vrrp 2 track ge0"
+      and "ge0 has no IPv4 address" in f[0][1],
+      f"an IPv4 router tracking an IPv6-only port is said: {f!r}")
+check(config.vrrp_track_findings(vr, {"ge0": ["2001:db8::2/56",
+                                              "100.64.3.252/22"]}) == [],
+      "and a port with an IPv4 address is not")
+v6only = {"ge0": {1: {"addresses": ["fe80::1"], "priority": 200,
+                      "track": {"ge1": 150}}}}
+check(config.vrrp_track_findings(v6only, {}) == [],
+      "an IPv6 router's tracking is not: the commit enables IPv6 there")
+print("  warned, because the pair still elects and a box must load its file")
 
 print("\n=== config.vrrp_remove: the whole router, or a reason ===")
 # Mutation shown red: leaving the empty interface entry behind, which makes
