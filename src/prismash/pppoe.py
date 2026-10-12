@@ -654,7 +654,7 @@ def stat_counts(text):
             continue
         if in_sessions:
             k, _, v = s.partition(":")
-            if v.strip().isdigit():
+            if is_number(v.strip()):
                 counts[k.strip()] = int(v)
             else:
                 in_sessions = False
