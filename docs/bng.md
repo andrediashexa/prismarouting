@@ -2,10 +2,22 @@
 
 ## TL;DR
 
-**Nothing here is implemented and nothing here is proposed for implementation.**
-This is the evidence behind
-[#170](https://github.com/andrediashexa/hexarouting/issues/170), taken against
-VPP `26.06-release` in `prisma-routing-dev:26.06` on 2026-09-14.
+**Phase 1 is being built** ([#597](https://github.com/andrediashexa/hexarouting/issues/597),
+started 2026-10-12): PPPoE subscribers terminated on this box, authenticated
+against RADIUS and translated by the CGNAT. Its first increment is in section
+0 - the `prisma-bng` container (accel-ppp-ng driving VPP's pppoe plugin), the
+`pppoe` hierarchy in the VTY with the container's configuration generated
+from the candidate, PAP/CHAP/MS-CHAPv2 against RADIUS with accounting, IPv4
+by IPCP from RADIUS or a pool, each session attached to a BPA pool,
+`show pppoe sessions|summary`, `clear pppoe session`, and `lab/pppoe.sh`
+proving it end to end. Section 0.4 is what remains of phase 1.
+
+**Everything from "Where every number here comes from" down is
+[#170](https://github.com/andrediashexa/hexarouting/issues/170)'s study, kept
+exactly as it was measured** against VPP `26.06-release` in
+`prisma-routing-dev:26.06` on 2026-09-14. Where phase 1 has since changed a
+conclusion, section 0 says so; the record below is not edited to describe
+the repair.
 
 The finding that matters is not the one the issue's title predicts. **The
 dataplane half works, today, and it is cheap.** `lab/bng.sh` terminates a real
@@ -80,10 +92,175 @@ it did claim:
 | **What** | Terminating subscribers on this box: PPPoE server, or IPoE with DHCP. |
 | **Why** | The question was asked, and it **MUST** be answered on evidence rather than on impression. It is not asked again cheaply. |
 | **Who** | The provider who today buys a BNG from one vendor and this box from another. |
-| **When** | Not scheduled. Section 5 lists what would have to be true first. |
+| **When** | Phase 1 started 2026-10-12 ([#597](https://github.com/andrediashexa/hexarouting/issues/597)); its first increment ships in 0.154.0 (section 0.5). Section 5 is the list #170 asked to be answered first. |
 | **Where** | The access side, where the subscriber's inside address comes from. |
-| **How** | If ever: `accel-ppp` on the `pppoe` plugin's control-plane interface. That shape is demonstrated working in `lab/bng.sh`. |
+| **How** | `accel-ppp-ng` on the `pppoe` plugin's control-plane interface, in a container of its own (`prisma-bng`), configured from the VTY's candidate (section 0). |
 | **How much** | The termination is days. What it obliges is a second product: see section 4. |
+
+## 0. Phase 1, as built (#597)
+
+### 0.1 The shape
+
+```mermaid
+flowchart LR
+  CPE["CPE (pppd)"] -- "PADI/PADR, LCP, PAP/CHAP, IPCP" --> VPP
+  VPP["vpp: pppoe plugin, bpa"] -- "discovery and control,\npunted to the TAP pppoe-cp" --> BNG
+  BNG["prisma-bng: accel-pppd"] -- "binary API: session add/del,\nroutes; stats socket" --> VPP
+  BNG -- "Access-Request, Accounting" --> RADIUS[(operator's RADIUS)]
+  VTY["mgmt: prismash"] -- "commit: generates\n/etc/prisma-routing/bng" --> BNG
+  VTY -- "doors: apply / stop / sessions / terminate" --> HOST["host: prisma-bng"]
+  HOST -- "docker-compose up/stop bng" --> BNG
+```
+
+| Piece | Where | What it does |
+|---|---|---|
+| `prisma-bng` image | `build/Dockerfile.bng` | The dataplane image plus accel-ppp-ng, built at its pin by `build/accel-ppp-build.sh` with `build/accel-ppp-ng.patch`. 215 MB against the dataplane's 205 (measured 2026-10-12): the upgrade artifact carries about 10 MB more. |
+| `bng` service | `appliance/compose.yaml` | `network_mode: host` (the TAP and RADIUS), `/run/vpp` (the API and stats sockets, as `mgmt` has them), the generated configuration read-only. A **profile**, so `up` never starts it: docker-compose 1.29.2 (the medium's) leaves a profiled service out of `up`, starts it when named, and removes it on `down` - measured. Limits: 512 MB, 512 processes, `oom_score_adj` +500 (the dataplane is -1000), `restart: unless-stopped`. |
+| host lifecycle | `appliance/prisma-bng` | `apply` (start, or recreate on new files), `stop`, `boot` (from `prisma-routing-containers.service`, only when configured), `status`, `sessions`, `summary`, `terminate`. The only thing that runs docker-compose for the service, so a VTY upgrade (which recreates `mgmt`) touches no session. |
+| plumbing | `appliance/prisma-bng-entrypoint` | Waits for VPP, makes `tap1863` (`pppoe-cp` in Linux) with the access card's MAC, one Linux VLAN device per tag, `create pppoe cp`; deletes sessions a dead control plane left; runs accel-pppd; ends the container when accel-pppd dies or VPP loses the TAP, so the restart policy lays it again. |
+| per session | `appliance/prisma-bng-session` | accel-ppp's ip-up: the existing CGNAT attach (`set interface bpa in2out`), the PPPoE MTU, the MSS clamp. Idempotent (0.3). |
+| configuration | `src/prismash/pppoe.py` | The `pppoe` hierarchy's grammar, one rule for the prompt and the saved file; `accel-ppp.conf`, `chap-secrets` and `access.env` generated at commit into `/etc/prisma-routing/bng` (0660, the configuring group's, as `prisma-routing.conf`); the model read back from `/etc/prisma-routing/pppoe.conf`. |
+
+**How the configuration flows.** An operator types the `pppoe` block in the
+candidate; `commit` (and `rollback`, `commit confirmed`, the audit trail -
+it is one more statement of the configuration) checks it, generates the
+container's files from it, and asks the host through its doors to apply them.
+`show running-config` reads the model back from `pppoe.conf`, never from the
+generated files, and nobody edits those: the next commit rewrites them.
+
+```
+prisma# [edit] pppoe
+prisma# [edit pppoe] interface ens19
+prisma# [edit pppoe] gateway 100.64.0.1
+prisma# [edit pppoe] address-pool 100.64.0.10-100.64.0.200
+prisma# [edit pppoe] radius server 192.0.2.10 secret <secret>
+prisma# [edit pppoe] exit
+prisma# [edit] commit
+```
+
+**Secrets.** A RADIUS shared secret and a lab user's password are held like
+SNMP's community: in the saved configuration and in `pppoe.conf` (0660, group prisma-cgnat, as `prisma-routing.conf`)
+so that rollback can restore them, and blanked on every screen -
+`show running-config`, `show configuration`, `show configuration compare`
+(per diff line, so a changed secret is a `-` and a `+` line with neither
+value). The typed API does not carry the block at all in this increment.
+
+**A session is not configuration.** The plugin makes `pppoe_session<n>` per
+subscriber and the hook attaches the CGNAT to it; read back as configuration
+they would be saved, refused at the next boot and detached by the next
+commit. `Config.drop_pppoe_sessions()` takes them, their CGNAT attachments and
+the control-plane TAP out of every reading of the running configuration.
+
+### 0.2 What works end to end
+
+`lab/pppoe.sh` (run 2026-10-12): real CPEs (pppd with rp-pppoe, one netns
+each, one on VLAN 100), a real freeradius with accounting, accel-ppp-ng built
+by the image's recipe, everything configured through the VTY. It asserts PAP,
+CHAP and MS-CHAPv2 sessions against RADIUS, a wrong password refused
+(Access-Reject, no session), the address from Framed-IP-Address for one CPE
+and from the pool for the others, the DNS servers at the CPE, the subscriber's
+traffic on the block `ref/bpa_model.py` predicts on the captured packet and
+its reply back through the session, the MSS clamp on the session, accounting
+Start / Interim-Update (with the session's real bytes) / Stop at RADIUS, the
+secret absent from `show running-config`, `clear pppoe session` ending one
+session and the CPE redialling, a container restart (by a commit, and by
+killing accel-pppd) dropping every session and all of them redialling while a
+subscriber NOT on PPPoE forwards throughout, and `no pppoe` stopping the
+container with the dataplane surviving the PADIs that keep arriving.
+`lab/pppoe.sh off` commits no `pppoe` block and goes red.
+
+What the lab plays rather than runs: docker. The lab is a container and
+cannot start the image, so `lab/pppoe-shim` runs the entrypoint under a loop
+that restarts it as `unless-stopped` does. `tools/build-images.sh check`
+starts the image (every configured module present and linked), and
+`compose-check` creates the service from the shipped `compose.yaml` and reads
+its limits back from the engine.
+
+### 0.3 What was found building it, measured
+
+1. **Interim accounting ended every session.** accel-ppp reads a session's
+   counters from its kernel interface; a VPP session has none, the read
+   failed, and the interim update terminated the session as Lost-Carrier ten
+   seconds after it came up (`acct-interim-interval=10`). The patch gives the
+   VPP hooks a `read_stats` that reads the session interface's counters from
+   VPP's stats segment (`/run/vpp/stats.sock`); accounting now carries the
+   session's real octets.
+2. **accel-ppp-ng's newest commit crashed at the first session that ended.**
+   The pin moved from #170's `cb69ccc` to `dd07b23` (2026-10-07) for its
+   RADIUS hardening (Message-Authenticator in Access requests and responses,
+   the BlastRADIUS mitigation) and its PADI truncation fix. Its port of
+   upstream PR 334 closes the PPP unit fd after cleanup - and for a VPP
+   session that fd is the channel's own, so `destroy_ppp_channel()` then hit
+   a closed descriptor and accel-pppd died on `md:epoll_ctl: Bad file
+   descriptor`. The patch skips the close for a VPP session.
+3. **The CGNAT attach is not idempotent, and the plugin recycles its
+   interfaces.** A session's interface is hidden, not deleted, when the
+   session ends, keeps its features, and is handed to the next session;
+   `vnet_feature_enable_disable` adds a feature as often as it is asked.
+   Measured: ten `bpa-in2out` stacked on one interface, the second
+   translating the first's output and dropping it as "no pool for source
+   address". The session hook asks the interface's features first. Whether
+   the attach itself should refuse a second enable is a question for
+   [#597](https://github.com/andrediashexa/hexarouting/issues/597)'s other
+   branch, which is making the attach O(1).
+4. **Taking the plugin's control plane away crashes the dataplane.** `create
+   pppoe cp ... del` sets the cp to `~0` and the plugin goes on punting every
+   PADI to it: VPP 26.06 dies in `vnet_per_buffer_interface_output` (SIGSEGV)
+   at the next discovery frame. Deleting the TAP the cp names is the same
+   crash. So the TAP and the cp outlive the container; with nothing reading the
+   TAP the kernel drops what is punted to it. Before any cp is set the plugin
+   punts to index 0, `local0`, and drops - which is why a box with no PPPoE is
+   safe today although the plugin loads on every box.
+5. **RADIUS's Framed-IP-Address needs `gw-ip-address` in accel-ppp's `[radius]`
+   section**, not only in `[ip-pool]`; without it accel-ppp logs "gw-ip-address
+   not specified" and takes the address from the pool instead. The generated
+   file sets both from `gateway`.
+6. **One card per box, as #170 found for one CP interface.** The plugin has
+   one control-plane interface and answers from the card the CPE came in on;
+   the TAP carries that card's MAC. The VTY refuses access interfaces on two
+   cards at commit; any number of VLANs of one card works (one tag each).
+7. **PPPoE discovery is punted from every interface**, not only the access
+   ones: `pppoe_init()` registers the ethertypes box-wide (1.5). A CPE on the
+   upstream side would be answered. Not exercised in the lab; a later step
+   (0.4) MUST restrict it.
+
+### 0.4 What remains of phase 1
+
+In the order they are planned, each its own step on #597:
+
+1. **RADIUS accounting retained and joined to the BPA trail** - section 3.1's
+   obligation: an append-only, fsynced, hash-chained store of who held which
+   inside address when, so a public address and port still name a subscriber.
+   The dataplane already reads RADIUS accounting for identity (`cgnat identity
+   radius`, #21); accel-ppp can copy its accounting there.
+2. **The typed API** for the `pppoe` block and the sessions (a proto change,
+   with `lab/api-grpc.sh`).
+3. **SNMP counters** (sessions active/starting, authentications refused,
+   RADIUS reachability) and **`show log` events** for the container's starts,
+   exits and restarts.
+4. **Discovery restricted to the access interfaces** (0.3 item 7), and the
+   same MAC on two access ports (4, item 8).
+5. **The stats segment sized for the configured `session-limit`** (2.1), and
+   the multi-worker attach cost measured once #597's other branch lands.
+6. A configuration change without a restart of every session (accel-ppp's
+   `reload` for what it can reload).
+
+**Out of phase 1**, each a later issue: IPv6 (IPv6CP, DHCPv6-PD), per-
+subscriber shaping (VPP has no shaper, 2.2), CoA/DM, QinQ (the plugin parses
+one tag), IPoE (VPP has no DHCP server, 1.4), lawful intercept, HA of
+sessions (3.3).
+
+### 0.5 Release
+
+**A Y release (0.154.0)**, and not a patch, for two reasons either of which is
+enough: `appliance/install.sh` installs a new host script and
+`tools/release-gate.sh` refuses a patch that changes it (the artifact runs it,
+but the gate's rule admits no "part of this file"); and CONTRIBUTING.md's
+table puts a feature issue at `0.MINOR.0`. The upgrade artifact CAN carry
+everything else: it carries `prisma-routing-images.tar.gz` (now five images,
+`prisma-bng` added by `tools/build-images.sh save`) and `compose.yaml`, and an
+upgrade adds the service - `up` creates what the new file names and leaves the
+profiled `bng` out until PPPoE is configured.
 
 ## Where every number here comes from
 
