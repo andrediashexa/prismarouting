@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.8 - attaching an interface no longer walks the box; the statistics segment is sized per thread
+
+### Fixed
+
 * **Attaching the CGNAT to an interface walked every interface on the box
   again, and the statistics segment was sized for a single-threaded box.**
   ([#597](https://github.com/andrediashexa/hexarouting/issues/597)) The two
