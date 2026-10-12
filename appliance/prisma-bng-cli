@@ -1,0 +1,12 @@
+#!/bin/sh
+# accel-cmd against this container's accel-pppd (#597), with the password the
+# entrypoint made at start. What the host's prisma-bng runs through
+# `docker exec` for `show pppoe sessions`, `show pppoe summary` and `clear
+# pppoe session`.
+#
+#   prisma-bng-cli <accel-cmd words...>
+RUN_DIR=${PRISMA_BNG_RUN:-/run/prisma-routing/bng}
+ACCEL_CMD=${PRISMA_ACCEL_CMD:-accel-cmd}
+[ -r "$RUN_DIR/cli.password" ] || {
+  echo "prisma-bng-cli: accel-pppd is not running here" >&2; exit 3; }
+exec "$ACCEL_CMD" -H 127.0.0.1 -p 2001 -t 5 -P "$(cat "$RUN_DIR/cli.password")" "$@"

@@ -4624,8 +4624,9 @@ n = len(frr.asked)
 rv, text = driven(lambda: sh.do_clear("clear bgp"))
 check(len(frr.asked) == n and rows(text)[0]
       == "error: usage: clear bgp <neighbour> [soft [in|out]]"
-      and len(rows(text)) == 6 and rows(text)[5].strip() == "clear configuration pending",
-      f"no neighbour is the usage, all six shapes (#558 phase 5 added "
+      and len(rows(text)) == 7 and rows(text)[6].strip() == "clear configuration pending"
+      and rows(text)[5].strip() == "clear pppoe session <id> | user <name> | all",
+      f"no neighbour is the usage, all seven shapes (#558 phase 5 added "
       f"interface counters and a CGNAT subscriber): {text!r}")
 sh = shell(frr=frr, running=cfg, caps={prismash.CAP_CGNAT})
 rv, text = driven(lambda: sh.do_clear("clear bgp 10.0.0.2"))

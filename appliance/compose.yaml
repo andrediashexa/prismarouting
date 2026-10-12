@@ -348,3 +348,63 @@ services:
     # It spills what it holds and gives the streams back on SIGTERM.
     stop_grace_period: 20s
     restart: unless-stopped
+
+  # PPPOE SUBSCRIBER TERMINATION (#597): accel-ppp-ng and its RADIUS client,
+  # driving VPP's pppoe plugin. A container of its own, decided on #597:
+  #   * a crash, a leak or an OOM in accel-ppp must not take forwarding,
+  #     routing or the VTY with it - so its own memory and process limits,
+  #     and the OOM killer's FIRST choice rather than the dataplane;
+  #   * restarted, upgraded and enabled on its own: not in `mgmt`, which is
+  #     recreated on every VTY upgrade and would drop every session at each
+  #     patch; not in `vpp`, which would carry a large control daemon and its
+  #     RADIUS secrets into the dataplane's image.
+  #
+  # NOT STARTED BY `up`: the profile keeps it out, so a box with no PPPoE
+  # never runs it. appliance/prisma-bng starts it by name when the VTY has
+  # generated a configuration - measured with docker-compose 1.29.2 (the
+  # medium's) on 2026-10-12: a plain `up` leaves a profiled service alone,
+  # `up <service>` starts it, and `down` removes it either way.
+  #
+  # WHAT IT SHARES, each for one reason:
+  #   network_mode: host    the pppoe-cp TAP VPP creates is in the host's
+  #                         namespace, and RADIUS is reached by the host's
+  #                         routes - the same reason as logger's
+  #   /run/vpp              the binary API's socket (accel-ppp's VAPI) and the
+  #                         stats socket (each session's counters, for
+  #                         accounting), as mgmt has it; and vppctl's socket,
+  #                         for the plumbing and the session hook
+  #   /etc/prisma-routing/bng, read-only: the configuration the VTY generated
+  #   /run/prisma-routing/bng  its run state: the CLI password, which the
+  #                         host's prisma-bng uses through `docker exec`
+  #   /var/log/prisma-routing  accel-ppp's own log, under bng/
+  # NO ipc: host. accel-ppp-ng's VAPI connects over the socket (use_uds),
+  # not over shared memory, so the host's IPC namespace is not needed.
+  bng:
+    image: prisma-bng:${PRISMA_VERSION:-latest}
+    profiles: ["bng"]
+    network_mode: host
+    init: true
+    depends_on:
+      - vpp
+    cap_add:
+      # The VLAN devices on pppoe-cp and its MAC (NET_ADMIN); the raw
+      # sockets discovery and the sessions' control frames use (NET_RAW).
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /run/vpp:/run/vpp
+      - /etc/prisma-routing/bng:/etc/prisma-routing/bng:ro
+      - /run/prisma-routing/bng:/run/prisma-routing/bng
+      - /var/log/prisma-routing:/var/log/prisma-routing
+      - /etc/localtime:/etc/localtime:ro
+    # THE LIMITS, so that what goes wrong in here stays in here. accel-ppp
+    # holds about 10 kB a session (its own `show stat` in lab/pppoe.sh reads
+    # 9.5 MB resident for three); 512 MB is room for tens of thousands and
+    # a ceiling the rest of the box never pays for. The OOM killer takes
+    # this before anything else (+500, where the dataplane is -1000).
+    mem_limit: 512m
+    pids_limit: 512
+    oom_score_adj: 500
+    # accel-ppp sends PADT and Accounting-Stop for every session on SIGTERM.
+    stop_grace_period: 20s
+    restart: unless-stopped

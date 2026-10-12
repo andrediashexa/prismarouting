@@ -1,0 +1,258 @@
+diff --git a/accel-pppd/include/ap_session_hooks.h b/accel-pppd/include/ap_session_hooks.h
+index b15772a..738b021 100644
+--- a/accel-pppd/include/ap_session_hooks.h
++++ b/accel-pppd/include/ap_session_hooks.h
+@@ -8,6 +8,7 @@
+ #define AP_SESSION_HOOKS_H
+ 
+ #include <netinet/in.h>
++#include <linux/if_link.h>
+ 
+ #include "list.h"
+ 
+@@ -50,6 +51,10 @@ struct ap_session_hooks_t {
+ 	int (*install_limiter)(struct ap_session *ses, int down_speed, int down_burst, int up_speed, int up_burst);
+ 	int (*remove_limiter)(struct ap_session *ses);
+ 
++	/* the session's counters, for a session with no kernel interface
++	 * (prisma-routing #597); 0 - OK */
++	int (*read_stats)(struct ap_session *ses, struct rtnl_link_stats64 *stats);
++
+ 	/* flags */
+ 	uint8_t is_non_dev_ppp:1; /* do not create the ppp device with /dev/ppp */
+ 	uint8_t is_non_socket_dhcpv6_nd:1; /* do not create a sockets for DHCPv6 and ND - use chanel socket */
+diff --git a/accel-pppd/ppp/ppp.c b/accel-pppd/ppp/ppp.c
+index 235b4b6..c22059e 100644
+--- a/accel-pppd/ppp/ppp.c
++++ b/accel-pppd/ppp/ppp.c
+@@ -368,7 +368,12 @@ skip:
+ 	 * radattr removal) has finished, so the kernel cannot give the same
+ 	 * unit index (and thus ifname) to a new session while cleanup still
+ 	 * references the ifname. */
+-	if (!uc)
++	/* prisma-routing #597: NOT for a VPP session, whose unit_fd IS the
++	 * channel's fd (ppp->fd): closing it here left destroy_ppp_channel()
++	 * an fd that was gone, and accel-pppd died on "md:epoll_ctl: Bad file
++	 * descriptor" at the first session that ended - measured in
++	 * prisma-routing's lab/pppoe.sh on this commit. */
++	if (!uc && !is_non_dev_ppp)
+ 		close(ppp->unit_fd);
+ 
+ 	ppp->unit_fd = -1;
+diff --git a/accel-pppd/session.c b/accel-pppd/session.c
+index 4b236e1..a42d6b4 100644
+--- a/accel-pppd/session.c
++++ b/accel-pppd/session.c
+@@ -417,13 +417,17 @@ int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stat
+ {
+ 	struct rtnl_link_stats64 lstats;
+ 
+-	if (ses->ifindex == -1)
+-		return -1;
+-
+ 	if (!stats)
+ 		stats = &lstats;
+ 
+-	if (iplink_get_stats(ses->ifindex, stats)) {
++	/* prisma-routing #597: a session whose interface is VPP's has no kernel
++	 * ifindex, and failing here made every interim accounting update
++	 * terminate the session as Lost-Carrier. The hooks read its counters. */
++	if (ses->ifindex == -1) {
++		if (!ses->hooks || !ses->hooks->read_stats ||
++		    ses->hooks->read_stats(ses, stats))
++			return -1;
++	} else if (iplink_get_stats(ses->ifindex, stats)) {
+ 		log_ppp_warn("failed to get interface statistics\n");
+ 		return -1;
+ 	}
+diff --git a/accel-pppd/session_hooks/vyos_vpp/CMakeLists.txt b/accel-pppd/session_hooks/vyos_vpp/CMakeLists.txt
+index aeb2461..5baf2d6 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/CMakeLists.txt
++++ b/accel-pppd/session_hooks/vyos_vpp/CMakeLists.txt
+@@ -6,11 +6,12 @@ SET(sources
+ 	vpppoe.c
+ 	vpppolicer.c
+ 	vpputils.c
++	vppstats.c
+ )
+ 
+ ADD_LIBRARY(vyos_vpp SHARED ${sources})
+ 
+-TARGET_LINK_LIBRARIES(vyos_vpp vapiclient vlibapi vlib)
++TARGET_LINK_LIBRARIES(vyos_vpp vapiclient vppapiclient vlibapi vlib)
+ set_property(TARGET vyos_vpp PROPERTY CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+ set_property(TARGET vyos_vpp PROPERTY INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/accel-ppp)
+ 
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vpphooks.c b/accel-pppd/session_hooks/vyos_vpp/vpphooks.c
+index 56666a6..73ba098 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/vpphooks.c
++++ b/accel-pppd/session_hooks/vyos_vpp/vpphooks.c
+@@ -20,6 +20,7 @@
+ #include "vppiputils.h"
+ #include "vpppolicer.h"
+ #include "vpppoe.h"
++#include "vppstats.h"
+ 
+ #include "vpphooks.h"
+ 
+@@ -214,6 +215,8 @@ struct ap_session_hooks_t vpp_hooks = {
+ 	.install_limiter = vpppolicer_install_limiter,
+ 	.remove_limiter = vpppolicer_remove_limiter,
+ 
++	.read_stats = vppstats_read,
++
+ 	.is_non_dev_ppp = 1,
+ 	.is_non_socket_dhcpv6_nd = 1
+ };
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vpppoe.c b/accel-pppd/session_hooks/vyos_vpp/vpppoe.c
+index 1bed532..c86dfca 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/vpppoe.c
++++ b/accel-pppd/session_hooks/vyos_vpp/vpppoe.c
+@@ -64,7 +64,7 @@ int vpppoe_sync_add_pppoe_interface(uint8_t *client_mac, uint16_t session_id, ui
+ 
+ 	req->payload.is_add = 1;
+ 	req->payload.session_id = session_id;
+-	req->payload.disable_fib = 1;
++	/* stock VPP 26.06 pppoe.api has no disable_fib (prisma-routing #170) */
+ 
+ 	err = vapi_pppoe_add_del_session(ctx, req, vpppoe_s_session_add_reply_callback, sw_ifindex);
+ 	vpp_check_error(err);
+@@ -105,7 +105,7 @@ int vpppoe_sync_del_pppoe_interface(uint8_t *client_mac, uint16_t session_id)
+ 
+ 	req->payload.is_add = 0;
+ 	req->payload.session_id = session_id;
+-	req->payload.disable_fib = 1;
++	/* stock VPP 26.06 pppoe.api has no disable_fib (prisma-routing #170) */
+ 
+ 	err = vapi_pppoe_add_del_session(ctx, req, vpppoe_s_session_del_reply_callback, NULL);
+ 	vpp_check_error(err);
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vppstats.c b/accel-pppd/session_hooks/vyos_vpp/vppstats.c
+new file mode 100644
+index 0000000..b326927
+--- /dev/null
++++ b/accel-pppd/session_hooks/vyos_vpp/vppstats.c
+@@ -0,0 +1,106 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * prisma-routing #597: a VPP session's counters, read from VPP's statistics
++ * segment over its socket (/run/vpp/stats.sock).
++ *
++ * A session terminated by VPP has no kernel interface, so accel-ppp's own
++ * reader (iplink_get_stats on an ifindex) has nothing to read: it failed, and
++ * every interim accounting update then terminated the session as
++ * Lost-Carrier - measured in prisma-routing's lab/pppoe.sh at the first
++ * interim, ten seconds after the session came up. These are the session
++ * interface's combined counters, summed over VPP's threads: rx is what the
++ * subscriber sent (Acct-Input-*), tx what it was sent (Acct-Output-*).
++ */
++#include <stdint.h>
++#include <string.h>
++#include <pthread.h>
++
++#include <vpp-api/client/stat_client.h>
++
++#include "log.h"
++#include "ap_session.h"
++
++#include "vpphooks.h"
++#include "vppstats.h"
++
++static pthread_mutex_t vppstats_lock = PTHREAD_MUTEX_INITIALIZER;
++static int vppstats_connected;
++
++static int vppstats_sum(stat_segment_data_t *d, uint32_t sw_if_index,
++			uint64_t *packets, uint64_t *bytes)
++{
++	int k;
++
++	*packets = *bytes = 0;
++	if (d->type != STAT_DIR_TYPE_COUNTER_VECTOR_COMBINED)
++		return -1;
++	for (k = 0; k < stat_segment_vec_len(d->combined_counter_vec); k++) {
++		vlib_counter_t *c = d->combined_counter_vec[k];
++		if (c == NULL || sw_if_index >= (uint32_t)stat_segment_vec_len(c))
++			continue;
++		*packets += c[sw_if_index].packets;
++		*bytes += c[sw_if_index].bytes;
++	}
++	return 0;
++}
++
++int vppstats_read(struct ap_session *ses, struct rtnl_link_stats64 *stats)
++{
++	struct vpphook_private_data_t *pd = vpphook_get_pd(ses);
++	uint8_t **patterns = NULL;
++	uint32_t *dir = NULL;
++	stat_segment_data_t *res = NULL;
++	uint64_t p, b;
++	int i, ret = -1;
++
++	if (pd == NULL)
++		return -1;
++
++	pthread_mutex_lock(&vppstats_lock);
++	if (!vppstats_connected) {
++		if (stat_segment_connect(STAT_SEGMENT_SOCKET_FILE)) {
++			log_ppp_warn("vpp: stats segment not reachable\n");
++			goto out;
++		}
++		vppstats_connected = 1;
++	}
++
++	patterns = stat_segment_string_vector(patterns, "^/if/rx$");
++	patterns = stat_segment_string_vector(patterns, "^/if/tx$");
++	dir = stat_segment_ls(patterns);
++	if (dir != NULL)
++		res = stat_segment_dump(dir);
++	if (res == NULL) {
++		/* VPP restarted under us: connect again on the next read */
++		stat_segment_disconnect();
++		vppstats_connected = 0;
++		goto out;
++	}
++
++	memset(stats, 0, sizeof(*stats));
++	for (i = 0; i < stat_segment_vec_len(res); i++) {
++		if (vppstats_sum(&res[i], pd->vpp_sw_if_index, &p, &b))
++			continue;
++		if (!strcmp(res[i].name, "/if/rx")) {
++			stats->rx_packets = p;
++			stats->rx_bytes = b;
++			ret = 0;
++		} else if (!strcmp(res[i].name, "/if/tx")) {
++			stats->tx_packets = p;
++			stats->tx_bytes = b;
++		}
++	}
++
++out:
++	if (res)
++		stat_segment_data_free(res);
++	if (dir)
++		stat_segment_vec_free(dir);
++	if (patterns) {
++		for (i = 0; i < stat_segment_vec_len(patterns); i++)
++			stat_segment_vec_free(patterns[i]);
++		stat_segment_vec_free(patterns);
++	}
++	pthread_mutex_unlock(&vppstats_lock);
++	return ret;
++}
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vppstats.h b/accel-pppd/session_hooks/vyos_vpp/vppstats.h
+new file mode 100644
+index 0000000..eb8cbdf
+--- /dev/null
++++ b/accel-pppd/session_hooks/vyos_vpp/vppstats.h
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* prisma-routing #597: a VPP session's counters, from VPP's stats segment. */
++#ifndef VPPSTATS_H
++#define VPPSTATS_H
++
++#include <linux/if_link.h>
++
++#include "ap_session.h"
++
++int vppstats_read(struct ap_session *ses, struct rtnl_link_stats64 *stats);
++
++#endif /* VPPSTATS_H */

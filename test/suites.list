@@ -166,6 +166,8 @@ python3 test/test_doors.py
 python3 test/test_events.py
 python3 test/test_eventwatch.py
 python3 test/test_eventfwd.py
+python3 test/test_pppoe.py
+sh test/test_prisma_bng.sh
 python3 test/test_bfdtraps.py
 python3 test/test_mtupin.py
 python3 test/test_vrf_devices.py

@@ -78,6 +78,13 @@ OPERATIONAL_RULES = [
     (["monitor", "cgnat", "logging"], "typed", "TelemetryService.WatchLogging",
      "the block events as a stream of LogEvent, the same filters; delivered "
      "in 0.149.25"),
+    # PPPoE (#597), ahead of the rules that would claim it: its first
+    # increment kept the contract as it was, so the sessions are screen text
+    # and `clear pppoe` has no ClearRequest target yet.
+    (["clear", "pppoe"], "none", "-",
+     "#597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4)"),
+    (["show", "pppoe"], "text", "OperationalService.Show",
+     "#597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4)"),
     (["clear"], "typed", "OperationalService.Clear",
      "a ClearRequest target per clear; delivered in 0.149.25"),
     (["rollback"], "typed", "ConfigService.Rollback, then Commit", ""),
@@ -214,6 +221,8 @@ CONFIG_RULES = [
     (["commit"], "typed", "ConfigService.Commit",
      "refusals carry Diagnostics.reason (0.149.18)"),
     (["rollback"], "typed", "ConfigService.Rollback", ""),
+    (["pppoe"], "text", "ConfigService.Edit (lines) / GetRunning",
+     "#597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4); GetConfig has no area for it"),
     # #585: an edit OF the candidate, the session's like `top`, and not a
     # statement in it. Edit takes the line as the prompt does, at the level
     # `path` names; SetConfig takes a whole candidate, which is what a client

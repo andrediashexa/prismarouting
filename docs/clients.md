@@ -27,6 +27,13 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.154.0 - PPPoE subscribers, in a container of their own
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.8). No message, field or number changes.
+* **A new block in the configuration, which the typed API does not carry yet** (#597). A box may now hold a `pppoe` block (PPPoE subscriber termination). `GetConfig` returns no area for it and no field changes; it is in the configuration's text, and `Show` reaches `show pppoe sessions` and `show pppoe summary` as screen text. A client MUST NOT parse those screens as a contract: the typed API for them is a later step of #597. The block's RADIUS secret is blanked (`<set, not shown>`) on every screen, as SNMP's community is.
+* **New interfaces the client may see and MUST NOT configure:** `pppoe_session<n>` (one per subscriber session, appearing and going as subscribers dial) and `tap1863` (PPPoE's control-plane TAP) are in the dataplane's interface list on a box with PPPoE. Neither is ever in the configuration; `GetConfig` leaves them out.
+* **This is a Y release**: a new container image (`prisma-bng`) in the images the upgrade loads, and an installer change. The API is down for the usual upgrade window.
+
 ## 0.153.8 - attaching an interface no longer walks the box; the statistics segment is sized per thread
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.7). Nothing in `prisma.v1` changes shape.

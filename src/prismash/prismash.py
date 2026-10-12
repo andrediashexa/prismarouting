@@ -88,6 +88,7 @@ import cpuview
 import tuneadvice
 import events
 import eventfwd
+import pppoe as pppoe_mod
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     hostname_error, HOSTNAME_DEFAULT,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -1167,7 +1168,8 @@ def compare_redact(diff):
                 or line[0] not in "-+ "):
             out.append(line)
             continue
-        body = identity_redact(snmp_redact(redact([line[1:]])))[0]
+        body = pppoe_mod.redact(identity_redact(snmp_redact(
+            redact([line[1:]]))))[0]
         out.append(line[0] + body)
     return out
 
@@ -2499,6 +2501,12 @@ def pool_effective_rows(pool):
 SHOW = {
     "cgnat": ("CGNAT information", SHOW_CGNAT),
     "nat64": ("NAT64 information", SHOW_NAT64),
+    # #597: the prisma-bng container's sessions, asked of the host.
+    "pppoe": ("PPPoE subscribers", {
+        "sessions": ("one line a session: id, user, address, MAC, uptime",
+                     None),
+        "summary": ("the control plane, the session counts, the "
+                    "configuration", None)}),
     "configuration": ("candidate configuration", {
         "compare": ("differences against the running configuration", None),
         # #575: what the boot left out for a card the box did not have.
@@ -3860,6 +3868,9 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                "cgnat_memory_changed",
                "policy_changed", "cpu_changed", "memory_changed",
                "hardware_changed", "logging_changed", "management_changed",
+               # PPPoE (#597): subscribers' authentication and its RADIUS
+               # secrets, an administrator's like SNMP's.
+               "pppoe_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -4693,6 +4704,11 @@ TREE = {
                                "block goes after the hold-down",
                                "<A.B.C.D>"),
             }),
+            # #597: a PPPoE session, ended by the control plane.
+            "pppoe": ("PPPoE sessions", {
+                "session": ("end one session, one user's, or all; they "
+                            "redial", "<session-id>, user <name>, or all"),
+            }),
             # #572: NAT64's own, by any address in the subscriber's prefix.
             "nat64": ("NAT64 state", {
                 "subscriber": ("end every session of one NAT64 subscriber; "
@@ -4820,6 +4836,9 @@ TREE = {
         # the dataplane has - a fresh appliance has none of those, and the
         # only way to name one used to be editing a file in Linux (#283).
         "system": ("this machine: the card the dataplane is given", None),
+        # #597: PPPoE subscriber termination, in the prisma-bng container.
+        "pppoe": ("PPPoE subscribers: access interfaces, RADIUS, addresses",
+                  None),
         "policy-options": ("routing policy: prefix lists, communities, "
                            "policy-statements", None),
         "hostname": ("the box's name: Linux's, FRR's and SNMP's sysName",
@@ -4994,6 +5013,51 @@ TREE["cpu"] = {
         "main-thread": ("the main thread shares the control plane's core",
                         None)}),
     "exit": ("leave 'cpu'", None),
+    **_EVERY_LEVEL,
+}
+# PPPOE (#597), a level of its own at the top: what is typed there is the
+# pppoe module's grammar, which the saved file is read with too.
+TREE["pppoe"] = {
+    "interface": ("an access interface: a card, or a sub-interface with one "
+                  "VLAN tag", ARG_INTERFACE_NEW),
+    "gateway": ("the box's address on every session (IPCP's local address)",
+                "<A.B.C.D>"),
+    "address-pool": ("addresses for subscribers RADIUS gives none",
+                     "<prefix> | <first>-<last>"),
+    "dns": ("a resolver given to the subscriber; up to 2", "<A.B.C.D>"),
+    "radius": ("the RADIUS servers, for authentication and accounting", {
+        "server": ("a server: its shared secret is never shown",
+                   "<A.B.C.D> secret <secret> [auth-port <n>] "
+                   "[acct-port <n>]"),
+        "nas-identifier": ("the NAS-Identifier sent; prisma-routing when "
+                           "unset", "<name>"),
+        "interim-interval": ("seconds between interim accounting updates; "
+                             "300 when unset, 0 for none", "<0|60-86400>"),
+    }),
+    "authentication": ("the methods offered; all three when unset",
+                       "pap|chap|mschap-v2 ..."),
+    "session-limit": ("at most this many sessions", "<1-1000000>"),
+    "mtu": ("the PPP MTU and MRU; 1492 when unset", "<576-1500>"),
+    "tcp-mss": ("clamp the TCP MSS on every session", "<536-1460>"),
+    "ac-name": ("the access concentrator's name in PADO", "<name>"),
+    "local-user": ("a user and password, for a lab without RADIUS",
+                   "<name> password <password>"),
+    "no": ("take a statement out", {
+        "interface": ("an access interface", "<name>"),
+        "gateway": ("the gateway", None),
+        "address-pool": ("an address pool", "<prefix> | <first>-<last>"),
+        "dns": ("a resolver", "<A.B.C.D>"),
+        "radius": ("a RADIUS setting", {
+            "server": ("a server", "<A.B.C.D>"),
+            "nas-identifier": ("back to prisma-routing", None),
+            "interim-interval": ("back to 300 seconds", None)}),
+        "authentication": ("back to all three", None),
+        "session-limit": ("no limit", None),
+        "mtu": ("back to 1492", None),
+        "tcp-mss": ("no clamp", None),
+        "ac-name": ("back to prisma-routing", None),
+        "local-user": ("a local user", "<name>")}),
+    "exit": ("leave 'pppoe'", None),
     **_EVERY_LEVEL,
 }
 TREE["dataplane"] = {
@@ -10061,6 +10125,8 @@ class Shell:
         # Read back from the file the watcher forwards by (#588 phase 3),
         # the reason everything above is read from the box.
         cfg.logging_hosts = eventfwd.read_conf()
+        # PPPoE (#597): the model the commit wrote, from pppoe.conf.
+        cfg.pppoe = pppoe_mod.read_conf()
         (cfg.snmp, cfg.snmp_communities, cfg.snmp_users,
          cfg.snmp_trap_hosts) = self.snmp.read()
         cfg.api = self.apisvc.read()
@@ -10098,6 +10164,9 @@ class Shell:
         # the name, because `tap0` is equally what an operator's own
         # `create tap` produces and dropping that would be #47.
         cfg.drop_lcp_taps(self.device_lcp_taps())
+        # And PPPoE's: a session's interface and the CGNAT the session hook
+        # attached to it are a subscriber dialling, not configuration (#597).
+        cfg.drop_pppoe_sessions(self.device_pppoe_taps())
         return cfg
 
     def remove_bgp_neighbor(self, line):
@@ -10393,6 +10462,17 @@ class Shell:
             return set()
         return {n for names in routes.lcp_pairs(out).values()
                 for n in names if _is_lcp_tap(n)}
+
+    def device_pppoe_taps(self) -> set:
+        """
+        The prisma-bng container's control-plane TAP (#597), by the name its
+        Linux end was given (pppoe.CP_LINUX), read from `show tap`: VPP calls
+        it tap1863, and an operator's own TAP could be called that too.
+        """
+        rc, out = self.dp.run("show tap")
+        if rc != 0:
+            return set()
+        return pppoe_mod.cp_taps(out)
 
     def fib_table_names(self):
         """
@@ -13978,6 +14058,9 @@ class Shell:
                 self.err(f"logging: {msg}")
                 return False
             print(f"logging: {msg}")
+        if d.get("pppoe_changed"):
+            if not self.apply_pppoe(target):
+                return False
         if d["cgnat_memory_changed"]:
             ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
             if not ok:
@@ -16252,6 +16335,60 @@ class Shell:
         return self.record_event("notice", text, kind="asked", cause=cause,
                                  affects=affects)
 
+    def apply_pppoe(self, target):
+        """
+        PPPoE's configuration into effect (#597): the container's files
+        generated from the committed model, then the host asked to start the
+        prisma-bng container, restart it on the new files, or - with nothing
+        configured - stop it. False refuses the commit.
+
+        A RESTART DROPS EVERY SESSION, and is what a change costs in this
+        increment: accel-ppp reads its file at start. The subscribers redial
+        (their CPE does, within its holdoff) and the forwarding of everybody
+        else is not touched - the dataplane, FRR and this VTY are other
+        containers.
+
+        AT BOOT A REFUSAL IS A WARNING. The box's configuration is replayed
+        on a machine nobody is watching, and a container that cannot start
+        is not a reason for the rest of the box not to come up (#593's rule).
+        """
+        held = target.pppoe
+        why = pppoe_mod.check(held)
+        acc = []
+        if not why and not pppoe_mod.is_empty(held):
+            acc, bad = pppoe_mod.access(held, target.vlans)
+            why = [bad] if bad else []
+            rc, out = self.dp.run("show interface")
+            have = pppoe_mod.interface_names(out) if rc == 0 else set()
+            missing = [n for n in held["interfaces"] if have and n not in have]
+            if missing:
+                why.append("pppoe: the dataplane has no interface "
+                           + ", ".join(missing))
+        if why:
+            for w in why:
+                self.err_prose(w.split(":", 1)[0] + ": not applied",
+                               w.split(":", 1)[1].strip())
+            return False
+        ok, msg = pppoe_mod.write_files(held, acc)
+        if not ok:
+            self.err(f"pppoe: {msg}")
+            return False
+        bng_verb = "stop" if pppoe_mod.is_empty(held) else "apply"
+        rc, out = self.host_run([pppoe_mod.BNG_CTL, bng_verb])
+        said = " ".join(out.split())
+        self.record_settings("PPPoE", rc == 0, said)
+        if rc != 0:
+            if self.booting:
+                print(f"warning: pppoe: the container did not start: {said}")
+                return True
+            self.err_prose("pppoe: the prisma-bng container did not "
+                           f"{'stop' if bng_verb == 'stop' else 'start'}",
+                           said or "the host did not say why")
+            return False
+        print(f"pppoe: {said}" + (", every session redials"
+                                  if said == "restarted" else ""))
+        return True
+
     def record_settings(self, what, ok, msg, retried=False):
         """
         The SNMP or the API settings applied, or refused, in the box's
@@ -17695,6 +17832,37 @@ class Shell:
             return f"no {level} " + " ".join(w[1:])
         return f"{level} " + line.strip()
 
+    def pppoe_rewrite(self, line):
+        """
+        `pppoe` as the level it is (#597), and what is typed in it in the
+        words the model holds: `interface host-acc0` under `pppoe` is
+        `pppoe interface host-acc0`. `no pppoe` at the top takes the whole
+        block, which is what stops the prisma-bng container at the commit.
+        Returns the line to go on with, or "" when it was handled here.
+        """
+        top = pppoe_mod.PPPOE_HIERARCHY
+        w = line.split()
+        if not w:
+            return ""
+        if self.nat_ctx and self.nat_ctx[0] != top:
+            return line
+        if not self.nat_ctx:
+            if line.strip() == top:
+                self.nat_ctx = [top]
+                return ""
+            return line
+        if w[0] in self.NAT_LEVEL_WORDS:
+            if w[0] in ("exit", "quit"):
+                self.nat_ctx.pop()
+                return ""
+            if w[0] == "end":
+                self.nat_ctx = []
+                return ""
+            return line
+        if w[0] == "no":
+            return f"no {top} " + " ".join(w[1:])
+        return f"{top} " + line.strip()
+
     def nat_rewrite(self, line):
         """
         `nat` and `cgnat` as the levels they are (#446), and what is typed in
@@ -17785,6 +17953,9 @@ class Shell:
             if not line:
                 return ""
             line = self.system_rewrite(line)
+            if not line:
+                return ""
+            line = self.pppoe_rewrite(line)
             if not line:
                 return ""
             line = self.nat_rewrite(line)
@@ -18217,6 +18388,15 @@ class Shell:
         # The remote syslog destinations (#588 phase 3), as system_rewrite
         # made them of what was typed under `system` > `logging`: checked
         # here by the rule a saved file is read with.
+        # PPPoE (#597), as pppoe_rewrite made it of what was typed under
+        # `pppoe`: checked here by the rule a saved file is read with.
+        if _lvl == pppoe_mod.PPPOE_HIERARCHY:
+            if not self.require(CAP_ALL, "pppoe"):
+                return True
+            why = pppoe_mod.stage(self.candidate.pppoe, w)
+            if why:
+                self.err_prose("pppoe: not taken", why)
+            return True
         if _lvl == LOGGING_LEVEL:
             why = stage_logging(self.candidate.logging_hosts, w)
             if why:
@@ -21853,6 +22033,9 @@ class Shell:
         if _ha[:2] == ["show", NAT64_LEVEL]:
             self.show_nat64(_ha[2:])
             return
+        if _ha[:2] == ["show", pppoe_mod.PPPOE_HIERARCHY]:
+            self.show_pppoe(_ha[2:])
+            return
         # The ones that carry an argument. Matched by prefix so the argument
         # travels through untouched; prismash is not the place to re-validate an
         # address the dataplane is about to parse anyway.
@@ -21942,7 +22125,8 @@ class Shell:
         is crackable offline at the attacker's leisure.
         """
         print("\n".join(mark_unchecked(
-            identity_redact(snmp_redact(redact(cfg.text().splitlines()))))))
+            pppoe_mod.redact(identity_redact(snmp_redact(redact(
+                cfg.text().splitlines())))))))
         note = Shell.SNMP_UNREAD_NOTE.get(getattr(cfg, "snmp_unread", ""))
         if note:
             print_prose(note)
@@ -25169,6 +25353,9 @@ class Shell:
         if w[1:2] == [NAT64_LEVEL]:
             self.clear_nat64(w[2:])
             return
+        if w[1:2] == [pppoe_mod.PPPOE_HIERARCHY]:
+            self.clear_pppoe(w[2:])
+            return
         if w[1:3] == ["configuration", "pending"] and len(w) == 3:
             self.clear_pending()
             return
@@ -25178,6 +25365,7 @@ class Shell:
             print("       clear isis adjacency [<system-id>]")
             print("       clear interface counters [<interface>]")
             print("       clear cgnat subscriber <A.B.C.D>")
+            print("       clear pppoe session <id> | user <name> | all")
             print("       clear configuration pending")
             return
         if not self.require(CAP_ALL, "clear bgp"):
@@ -25276,6 +25464,62 @@ class Shell:
             return
         for line in out.strip().splitlines():
             print(line)
+
+    def clear_pppoe(self, rest):
+        """
+        `clear pppoe session <id> | user <name> | all` (#597): sessions ended
+        by the control plane - PADT to the CPE, Accounting-Stop to RADIUS,
+        the session interface out of the dataplane. The CPE redials; this
+        changes no configuration.
+        """
+        if rest[:1] != ["session"]:
+            self.err("usage: clear pppoe session <id> | user <name> | all")
+            return
+        words, why = pppoe_mod.clear_words(rest[1:])
+        if why:
+            self.err_prose("clear pppoe session: nothing cleared", why)
+            return
+        if not self.require(CAP_ALL, "clear pppoe session"):
+            return
+        rc, out = self.host_run([pppoe_mod.BNG_CTL, "terminate"] + words)
+        if rc == 3:
+            self.err("clear pppoe session: PPPoE is not running")
+            return
+        if rc != 0:
+            self.err_prose("clear pppoe session: the control plane refused",
+                           " ".join(out.split()) or "it did not say why")
+            return
+        print("cleared: " + " ".join(words))
+
+    def show_pppoe(self, args):
+        """
+        `show pppoe sessions` and `show pppoe summary` (#597), asked of the
+        prisma-bng container through the host: the sessions are accel-ppp's,
+        and only it knows a session's user.
+        """
+        if args == ["sessions"]:
+            rc, out = self.host_run([pppoe_mod.BNG_CTL, "sessions"])
+            if rc == 3:
+                print("PPPoE is not running: no sessions")
+                return
+            if rc != 0:
+                self.err_prose("show pppoe sessions: the control plane did "
+                               "not answer", " ".join(out.split()))
+                return
+            print("\n".join(pppoe_mod.sessions_screen(
+                pppoe_mod.session_rows(out))))
+            return
+        if args == ["summary"]:
+            held = self.running_config().pppoe
+            rc, status = self.host_run([pppoe_mod.BNG_CTL, "status"])
+            status = status.strip() if rc == 0 else "unknown"
+            counts = {}
+            if status == "running":
+                rc, out = self.host_run([pppoe_mod.BNG_CTL, "summary"])
+                counts = pppoe_mod.stat_counts(out) if rc == 0 else {}
+            print("\n".join(pppoe_mod.summary_screen(held, status, counts)))
+            return
+        self.err("usage: show pppoe sessions | summary")
 
     def clear_nat64(self, rest):
         """

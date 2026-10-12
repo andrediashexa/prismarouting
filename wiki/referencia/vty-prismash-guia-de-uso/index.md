@@ -45,6 +45,7 @@ flowchart LR
 | Sistema | `prisma# [edit system] ` | `system`    | `exit`, `up` ou `top` |
 | Placa, núcleos e memória | `prisma# [edit system / dataplane] ` | `dataplane`, `cpu` ou `memory`, dentro de `system` | `exit` volta para `system` |
 | Política de roteamento | `prisma# [edit policy-options] ` | `policy-options` | `exit`, `up` ou `top` |
+| PPPoE | `prisma# [edit pppoe] ` | `pppoe`     | `exit`, `up` ou `top` |
 
 **O prompt nomeia o assunto, não só o tipo de bloco.** `[edit nat / cgnat / pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
 
@@ -406,6 +407,7 @@ Os blocos que têm muitas declarações estão documentados à parte, cada um co
 | `router bgp`, `rpki` | [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) |
 | `policy-options` — listas, `policy-statement` e termos, aplicados no BGP, no OSPF e IS-IS e no que vai para a tabela de encaminhamento | [Política de roteamento (policy-options)](/doc/politica-de-roteamento-policy-options-DULDDxEALE) |
 | `router static`, OSPF, IS-IS, route-maps, `ssh`, `user`, `snmp`, `dns` | [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) |
+| `pppoe` — interfaces de acesso, RADIUS, endereços, sessões | [Configuração de PPPoE](configuracao-de-pppoe.md) |
 
 ## Um nome de interface que não existe é recusado
 

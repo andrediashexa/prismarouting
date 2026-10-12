@@ -105,6 +105,13 @@ cp "$REPO"/src/plugins/bpa/bpa_log*.c "$REPO"/src/plugins/bpa/bpa_log*.h \
 cp "$REPO"/test/bpa_shim.h "$REPO"/test/bpa_vec_shim.h "$REPO"/test/bpa_tcp_shim.h \
    "$REPO"/test/bpa_log_shim.h "$CTX/logd-src/test/"
 
+# The PPPoE container's (#597): accel-ppp-ng's recipe and this repository's
+# delta to it, the entrypoint, the CLI wrapper and the session hook.
+mkdir -p "$CTX/build"
+cp "$REPO/build/accel-ppp-build.sh" "$REPO/build/accel-ppp-ng.patch" "$CTX/build/"
+cp "$REPO/appliance/prisma-bng-entrypoint" "$REPO/appliance/prisma-bng-cli" \
+   "$REPO/appliance/prisma-bng-session" "$CTX/appliance/"
+
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
 docker build -q -f "$REPO/build/Dockerfile.vpp" \
   --build-arg "VPP_VERSION=$VPP_VERSION" \
@@ -127,6 +134,12 @@ docker build -q -f "$REPO/build/Dockerfile.log" \
   --build-arg "BASE=prisma-vpp:$VERSION" \
   -t "prisma-log:$VERSION" "$CTX" > /dev/null
 
+echo "==> PPPoE image, accel-ppp-ng at its pin against VPP $VPP_VERSION (#597)"
+docker build -q -f "$REPO/build/Dockerfile.bng" \
+  --build-arg "BASE=prisma-vpp:$VERSION" \
+  --build-arg "VPP_VERSION=$VPP_VERSION" \
+  -t "prisma-bng:$VERSION" "$CTX" > /dev/null
+
 # BYTES, and the megabyte is left to the one place that prints it. A size()
 # that formatted its own answer would give docs/appliance.md's measured table
 # a second opinion about what a megabyte is.
@@ -137,6 +150,7 @@ printf '    prisma-vpp:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-vpp:$VERSION"
 printf '    prisma-frr:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-frr:$VERSION") / 1048576 ))"
 printf '    prisma-mgmt:%s %s MB\n' "$VERSION" "$(( $(size "prisma-mgmt:$VERSION") / 1048576 ))"
 printf '    prisma-log:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-log:$VERSION") / 1048576 ))"
+printf '    prisma-bng:%s  %s MB\n' "$VERSION" "$(( $(size "prisma-bng:$VERSION") / 1048576 ))"
 
 if [ "$TARGET" = check ]; then
   # WHAT THE IMAGE HOLDS, asked of the image rather than of the Dockerfile.
@@ -251,6 +265,35 @@ CONF
     bad "the log image has no /usr/bin/prisma-logd"
   fi
 
+  echo "==> the PPPoE image (#597), started"
+  for tool in gcc cc cmake; do
+    if docker run --rm --entrypoint sh "prisma-bng:$VERSION" -c "command -v $tool" >/dev/null 2>&1; then
+      bad "the PPPoE image carries $tool: its compiler stage leaked into it"
+    fi
+  done
+  # THE DAEMON LOADS EVERY MODULE THE VTY CAN NAME, asked of the image: a
+  # module missing or linked against a library the runtime stage did not
+  # install is a container that exits at start on a box with PPPoE. accel-
+  # pppd reads the file, loads the modules and stops on the first it cannot.
+  bngout=$(docker run --rm --entrypoint sh "prisma-bng:$VERSION" -c '
+    for m in vyos_vpp pppoe auth_pap auth_chap_md5 auth_mschap_v2 radius \
+             chap-secrets ippool pppd_compat log_file; do
+      f=/usr/lib64/accel-ppp/lib$m.so
+      [ -f "$f" ] || { echo "missing $m"; continue; }
+      ldd "$f" | grep -q "not found" && echo "unlinked $m"
+    done
+    ldd /usr/sbin/accel-pppd | grep -q "not found" && echo "unlinked accel-pppd"
+    test -x /usr/lib/prisma-bng/session || echo "no session hook"
+    test -x /usr/bin/prisma-bng-cli || echo "no cli wrapper"
+    command -v ip >/dev/null || echo "no ip"
+    command -v vppctl >/dev/null || echo "no vppctl"
+    echo done' 2>&1)
+  if [ "$(echo "$bngout" | tail -1)" = done ] && [ "$(echo "$bngout" | wc -l)" -eq 1 ]; then
+    ok "the PPPoE image carries accel-pppd, every module it is configured with, linked"
+  else
+    bad "the PPPoE image is incomplete: $(echo "$bngout" | tr '\n' ' ')"
+  fi
+
   echo "==> the control-plane image, asked its version"
   # /usr/lib/frr, not the PATH: FRR installs its daemons there and puts none
   # of them on the PATH, so `bgpd --version` is "executable file not found"
@@ -339,6 +382,12 @@ services:
     volumes:
       - $CDIR/frr:/etc/frr
       - $CDIR/frr:/var/run/frr
+  bng:
+    volumes:
+      - $CDIR/run:/run/vpp
+      - $CDIR/bng:/etc/prisma-routing/bng:ro
+      - $CDIR/bngrun:/run/prisma-routing/bng
+      - $CDIR/log:/var/log/prisma-routing
 OVR
 
   # THE FRAGMENT THE UNIT GENERATES, generated the way the unit generates it
@@ -569,6 +618,33 @@ OVR
 drain below cannot take the branch a box in service takes" ;;
   esac
 
+  # THE PPPOE CONTAINER IS NOT PART OF `up` (#597). Its profile keeps it out,
+  # so a box with no PPPoE never runs it; and the limits that keep a crash
+  # or a leak in it away from forwarding are what compose hands the engine.
+  # Created and not started: with no configuration generated, its
+  # entrypoint would only say so and exit.
+  echo "==> the PPPoE container (#597): out of 'up', and its limits"
+  ccompose() {
+    docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
+      -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" "$@"
+  }
+  if [ -z "$(ccompose ps -aq bng 2>/dev/null)" ]; then
+    ok "'up' left the PPPoE container out: its profile is not active"
+  else
+    bad "'up' started the PPPoE container on a box with no PPPoE"
+  fi
+  # `up --no-start`, not `create`: compose v2's create takes no --no-deps,
+  # and this must not touch the running vpp.
+  ccompose --profile bng up --no-start --no-deps bng >/dev/null 2>&1 || true
+  lim=$(docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{.HostConfig.OomScoreAdj}} {{.HostConfig.NetworkMode}}' \
+        "$(ccompose --profile bng ps -aq bng 2>/dev/null)" 2>/dev/null || true)
+  if [ "$lim" = "536870912 512 500 host" ]; then
+    ok "named, it is created with 512 MB, 512 processes, OOM's first choice, on the host's network"
+  else
+    bad "the PPPoE container's limits reached the engine as '$lim'"
+  fi
+  ccompose --profile bng rm -f bng >/dev/null 2>&1 || true
+
   echo "==> and stopped, which is the question"
   docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \
     -f "$CDIR/override.yaml" -f "$CDIR/devices.yaml" stop -t 30 >/dev/null 2>&1
@@ -621,6 +697,6 @@ if [ "$TARGET" = save ]; then
   # The log image (#550) is the dataplane's layers and one binary: in the
   # same save it costs that binary and nothing more.
   docker save "prisma-vpp:$VERSION" "prisma-frr:$VERSION" "prisma-mgmt:$VERSION" \
-    "prisma-log:$VERSION" | gzip -1 > "$OUT"
+    "prisma-log:$VERSION" "prisma-bng:$VERSION" | gzip -1 > "$OUT"
   printf '    %s  %s MB\n' "$OUT" "$(( $(wc -c < "$OUT") / 1048576 ))"
 fi

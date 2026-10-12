@@ -1,0 +1,86 @@
+#!/bin/sh
+# lab/pppoe.sh's stand-in for docker and docker-compose (#597): the prisma-bng
+# container's lifecycle, run as a process in the lab's own container.
+#
+#   pppoe-shim docker-compose ... up -d [--no-deps] [--force-recreate] bng
+#   pppoe-shim docker-compose ... stop [-t N] bng | rm -f bng
+#   pppoe-shim docker inspect -f '{{.State.Running}}' prisma-routing_bng_1
+#   pppoe-shim docker exec prisma-routing_bng_1 <command...>
+#
+# WHAT IT REPLACES AND WHAT IT DOES NOT. A lab runs in a container already and
+# cannot run the image; the product's appliance/prisma-bng (the host's ctl),
+# appliance/prisma-bng-entrypoint (the container's PID 1) and the session hook
+# run unchanged, and only docker is played here: "start" runs the entrypoint
+# under a loop that does what `restart: unless-stopped` does - start it again
+# when it exits, until somebody stops it. The image itself, its compose
+# service and its limits are checked by tools/build-images.sh `check` and
+# `compose-check`, which do run it.
+set -u
+PIDF=/run/pppoe-shim.pid
+STOPF=/run/pppoe-shim.stopped
+LOG=${PPPOE_SHIM_LOG:-/var/log/pppoe-shim.log}
+ENTRY=${PPPOE_SHIM_ENTRY:-/src/appliance/prisma-bng-entrypoint}
+
+alive() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; }
+
+start() {
+  alive && return 0
+  rm -f "$STOPF"
+  mkdir -p "$(dirname "$LOG")"
+  setsid sh -c "
+    while [ ! -f '$STOPF' ]; do
+      echo \"== start \$(date +%T)\" >> '$LOG'
+      '$ENTRY' >> '$LOG' 2>&1 &
+      echo \$! > /run/pppoe-shim.child
+      wait \$!
+      [ -f '$STOPF' ] && break
+      sleep 1
+    done" < /dev/null > /dev/null 2>&1 &
+  echo $! > "$PIDF"
+}
+
+stop() {
+  touch "$STOPF"
+  if [ -f /run/pppoe-shim.child ]; then
+    c=$(cat /run/pppoe-shim.child)
+    kill -TERM "$c" 2>/dev/null
+    n=0
+    while kill -0 "$c" 2>/dev/null && [ "$n" -lt "${1:-20}" ]; do
+      sleep 1; n=$((n + 1))
+    done
+    kill -KILL "$c" 2>/dev/null
+  fi
+  [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null
+  rm -f "$PIDF" /run/pppoe-shim.child
+}
+
+role=$(basename "$0")
+[ "$role" = pppoe-shim ] && { role=$1; shift; }
+case "$role" in
+  docker-compose)
+    args=" $* "
+    case "$args" in
+      *" up "*)
+        # AN INSTALLED BOX HAS NO :latest. compose.yaml names
+        # prisma-bng:${PRISMA_VERSION:-latest}, load-the-images loads the
+        # images tagged with the release, and a `up` without the tag asks a
+        # registry and fails ("pull access denied") - measured on the first
+        # installed box, after this lab had passed. So the stand-in refuses
+        # what the box refused.
+        case "${PRISMA_VERSION:-latest}" in
+          latest) echo "pull access denied for prisma-bng:latest" >&2; exit 1 ;;
+        esac
+        case "$args" in *" --force-recreate "*) stop 20 ;; esac
+        start ;;
+      *" stop "*) stop 20 ;;
+      *" rm "*) rm -f "$PIDF" ;;
+      *) echo "pppoe-shim: docker-compose $*: not played here" >&2; exit 1 ;;
+    esac ;;
+  docker)
+    case "${1:-}" in
+      inspect) alive && echo true || echo false ;;
+      exec) shift 2; exec "$@" ;;
+      *) echo "pppoe-shim: docker $*: not played here" >&2; exit 1 ;;
+    esac ;;
+  *) echo "pppoe-shim: run as docker or docker-compose" >&2; exit 2 ;;
+esac

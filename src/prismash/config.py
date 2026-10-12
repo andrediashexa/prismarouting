@@ -20,6 +20,7 @@ import hashlib
 
 import policy as policy_mod
 import eventfwd
+import pppoe as pppoe_mod
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     dns_error, DNS_MAX, hostname_error,
@@ -554,6 +555,40 @@ def denest_system(numbered):
             else:
                 out.append((n, f"{level} {s}"))
     return out, bad
+
+
+def denest_pppoe(numbered):
+    """
+    The `pppoe` block of a file (#597) as the statements the model holds:
+    `interface host-acc0` under `pppoe` is `pppoe interface host-acc0`.
+    Returns the rewritten list and [(lineno, statement, why)] for what cannot
+    be read - which is nothing at this depth: the statements themselves are
+    checked by pppoe.stage(), the prompt's rule.
+    """
+    out = []
+    inside = False
+    routing = False
+    for n, raw in numbered:
+        s = raw.strip()
+        if routing or s == ROUTING_HEADER:
+            routing = True
+            out.append((n, raw))
+            continue
+        if not inside:
+            if s == pppoe_mod.PPPOE_HIERARCHY:
+                inside = True
+            else:
+                out.append((n, raw))
+            continue
+        if not s or s.startswith("!"):
+            continue
+        if s in ("exit", "quit", "end"):
+            inside = False
+        elif s.startswith("no "):
+            out.append((n, f"no {pppoe_mod.PPPOE_HIERARCHY} {s[3:]}"))
+        else:
+            out.append((n, f"{pppoe_mod.PPPOE_HIERARCHY} {s}"))
+    return out, []
 
 
 #: The statements that OPEN an FRR block.
@@ -4038,6 +4073,10 @@ class Config:
         # `system` > `management`: in effect at the commit, and at every boot
         # from tune.env.
         self.management: dict[str, str] = {}
+        # PPPoE termination (#597): pppoe.empty()'s shape, read back from
+        # pppoe.conf - the model the commit wrote, never the files generated
+        # from it for the prisma-bng container.
+        self.pppoe: dict = pppoe_mod.empty()
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -4218,6 +4257,7 @@ class Config:
                            self.hardware, self.logging_hosts,
                            self.management)
         out += policy_mod.nest(self.policy)
+        out += pppoe_mod.nest(self.pppoe)
         if self.hostname:
             out.append(f"hostname {self.hostname}")
         for k in SSH_FIELDS:
@@ -4365,8 +4405,14 @@ class Config:
         box accepts beyond what the segment was sized for is an abort of the
         whole dataplane, so a ceiling the BNG enforces belongs in this number
         and a number the BNG does not enforce does not.
+
+        `pppoe` > `session-limit` is that statement (#597): accel-ppp refuses
+        a session past it (`max-sessions`), so it is enforced, and it is the
+        number. A `pppoe` block with no limit enforces none, and adds
+        nothing here - the operator sets one to have the segment sized.
         """
-        return 0
+        limit = self.pppoe["settings"].get("session-limit", "0")
+        return int(limit) if is_number(limit) else 0
 
     def dataplane_interfaces(self) -> int:
         """
@@ -4635,6 +4681,42 @@ class Config:
             del self.pref64[name]
         self.declared -= taps
 
+    def drop_pppoe_sessions(self, taps=()):
+        """
+        Take PPPoE's runtime interfaces out of this configuration (#597): every
+        `pppoe_sessionN`, and the control-plane TAP the prisma-bng container
+        made (named in `taps`, read off the box like drop_lcp_taps' pairs).
+
+        A SESSION IS NOT CONFIGURATION. VPP's pppoe plugin makes one interface
+        per subscriber when the subscriber dials, and the session hook attaches
+        the CGNAT to it - so `show bpa config` answers `cgnat interface
+        pppoe_session4711 inside`, and the interface reads report its MTU.
+        Read back as configuration, the candidate would carry them, `save`
+        would write them, the boot would refuse a file naming interfaces that
+        do not exist yet - and a commit made after the subscriber hung up would
+        try to detach an interface the plugin had already hidden.
+
+        By the NAME'S SHAPE for the sessions, and that is safe where it was
+        not for drop_lcp_taps: `pppoe_session<n>` is the plugin's name for its
+        own device class and nothing an operator can create is called that.
+        The attachments ARE dropped here, unlike there: they are the session
+        hook's, made for a subscriber, never typed.
+        """
+        gone = {n for n in self.interface_names() | set(self.interfaces)
+                if re.fullmatch(r"pppoe_session\d+", n)} | set(taps or ())
+        if not gone:
+            return
+        for d in (self.mtus, self.urpf, self.descriptions, self.addresses,
+                  self.vlans, self.vrfs, self.macs, self.linux_names,
+                  self.interfaces):
+            for name in [n for n in d if n in gone]:
+                del d[name]
+        self.admin_down -= gone
+        self.ra_enabled -= gone
+        for name in [n for n in self.pref64 if n in gone]:
+            del self.pref64[name]
+        self.declared -= gone
+
     @classmethod
     def parse(cls, text: str, dataplane: bool = False) -> "Config":
         """
@@ -4667,6 +4749,9 @@ class Config:
             cfg.unknown += refused
             cfg.n_statements += len(refused)
             numbered, refused = policy_mod.unnest(numbered)
+            cfg.unknown += refused
+            cfg.n_statements += len(refused)
+            numbered, refused = denest_pppoe(numbered)
             cfg.unknown += refused
             cfg.n_statements += len(refused)
         for lineno, raw in numbered:
@@ -4847,6 +4932,13 @@ class Config:
                 continue
             if s == "no dataplane interface":
                 cfg.dataplane_if = ""
+                continue
+            if s.startswith(f"{pppoe_mod.PPPOE_HIERARCHY} ") or \
+                    s.startswith(f"no {pppoe_mod.PPPOE_HIERARCHY}"):
+                # The `pppoe` block (#597), by the prompt's rule.
+                why = pppoe_mod.stage(cfg.pppoe, s.split())
+                if why:
+                    cfg.unknown.append((lineno, s, why))
                 continue
             if s.startswith(f"{LOGGING_LEVEL} ") or \
                     s.startswith(f"no {LOGGING_LEVEL} "):
@@ -6072,6 +6164,8 @@ class Config:
             "hardware_changed": self.hardware != other.hardware,
             # One flag: logging.conf is written whole (#588 phase 3).
             "logging_changed": self.logging_hosts != other.logging_hosts,
+            # One flag: the container's files are generated whole (#597).
+            "pppoe_changed": self.pppoe != other.pppoe,
             # The VRF's table is part of the setting: `vrf mgmt table 101`
             # over 100 moves the box's own traffic to another table.
             "management_changed": (self.management != other.management

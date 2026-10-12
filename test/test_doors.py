@@ -75,7 +75,15 @@ def slot(e):
             "gw": ["192.0.2.1", "2001:db8::1"],
             "str(table)": ["10", "4294967295"],
             "mgmt['name']": ["ens18"],
-            "self.conf_on_host": [SNMPD_CONF]}.get(u)
+            "self.conf_on_host": [SNMPD_CONF],
+            # PPPoE (#597): the host's script, and what a commit asks of it.
+            "pppoe_mod.BNG_CTL": [doors.pppoe.BNG_CTL_HOST],
+            "bng_verb": ["apply", "stop"]}.get(u)
+
+
+#: A list joined to a name - `[ctl, "terminate"] + words` - and every tail
+#: that name can be: `clear pppoe session`'s words (#597).
+TAILS = {"words": [["all"], ["sid", "8aa8eb1ab0657544"], ["username", "sub1"]]}
 
 
 # In prismash.py, `self.sys._run` and `self.snmp._run` are the doors as well:
@@ -88,14 +96,26 @@ for src, attr in (("system.py", "_run"), ("prismash.py", "host_run"),
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and node.func.attr == attr and node.args \
-                and isinstance(node.args[0], ast.List):
-            choices = [[]]
-            for e in node.args[0].elts:
+                and (isinstance(node.args[0], ast.List)
+                     or (isinstance(node.args[0], ast.BinOp)
+                         and isinstance(node.args[0].left, ast.List))):
+            head, tails = node.args[0], [[]]
+            if isinstance(head, ast.BinOp):
+                # Only a tail this suite names; any other joined list is
+                # left to the reads that came before this one.
+                if ast.unparse(head.right) not in TAILS:
+                    continue
+                tails = TAILS[ast.unparse(head.right)]
+                head = head.left
+            choices = [[]] if tails is not None else None
+            for e in (head.elts if choices is not None else []):
                 vals = slot(e)
                 if vals is None:
                     choices = None
                     break
                 choices = [c + [v] for c in choices for v in vals]
+            if choices is not None:
+                choices = [c + t for c in choices for t in tails]
             stdin = None
             if any(k.arg == "stdin" for k in node.keywords):
                 stdin = "ops:$6$salt$hash\n"

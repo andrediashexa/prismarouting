@@ -77,6 +77,37 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PPPoE subscribers, terminated on the box and translated by the CGNAT -
+  BNG phase 1's first increment.**
+  ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  A `pppoe` block in the configuration - access interfaces (a card, or its
+  sub-interfaces with one VLAN tag each), `gateway`, `address-pool`, `dns`,
+  `radius server <address> secret <secret>`, `radius nas-identifier`,
+  `radius interim-interval`, `authentication pap|chap|mschap-v2`,
+  `session-limit`, `mtu`, `tcp-mss`, `ac-name`, and `local-user` for a lab -
+  committed, rolled back and audited like every other statement. The commit
+  GENERATES the configuration of a new container, `prisma-bng`
+  (accel-ppp-ng driving VPP's pppoe plugin), and starts, restarts or stops
+  it; nobody edits its files. Subscribers authenticate against RADIUS with
+  PAP, CHAP or MS-CHAPv2, with accounting Start, Interim-Update (the
+  session's real bytes, read from the dataplane) and Stop; get their IPv4
+  address from RADIUS (Framed-IP-Address) or the pool, and the DNS servers;
+  and each session is attached to the CGNAT, so a BPA pool translates it
+  exactly as a subscriber behind an inside interface. `show pppoe sessions`
+  and `show pppoe summary` read the sessions; `clear pppoe session <id> |
+  user <name> | all` ends them. The RADIUS secret is never shown.
+  The container is its own: its own memory and process limits and the OOM
+  killer's first choice, restarted and upgraded without touching the
+  dataplane, routing or the VTY, and not run at all on a box with no PPPoE.
+  Proven end to end by the new `lab/pppoe.sh` with real CPEs (pppd) and a
+  real freeradius. Found and fixed on the way, each measured (docs/bng.md
+  0.3): accel-ppp ended every session at its first interim update, and its
+  newest commit crashed at the first session that ended; the CGNAT attach
+  stacked on the plugin's recycled session interfaces; and taking the
+  plugin's control plane away crashes VPP at the next PADI, so the box never
+  does. What remains of phase 1 - the accounting retained and joined to the
+  BPA trail, the API, SNMP, `show log` - is docs/bng.md 0.4.
+
 ### Fixed
 
 ## 0.153.8 - attaching an interface no longer walks the box; the statistics segment is sized per thread

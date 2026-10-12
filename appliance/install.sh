@@ -329,6 +329,12 @@ install -D -m 0755 "$REPO/appliance/watch-the-dataplane" "$DESTDIR/usr/lib/prism
 # Run by prisma-routing-containers.service before compose: it loads the
 # images the medium carried and tells compose which tag to run (#426).
 install -D -m 0755 "$REPO/appliance/load-the-images" "$DESTDIR/usr/lib/prisma-routing/load-the-images"
+# The PPPoE container's lifecycle on the host (#597): started, restarted and
+# stopped by the VTY's commit through the doors, asked for its sessions, and
+# started at boot by prisma-routing-containers.service when PPPoE is
+# configured. The only thing that runs docker-compose for the prisma-bng
+# service, so its lifecycle is its own.
+install -D -m 0755 "$REPO/appliance/prisma-bng" "$DESTDIR/usr/lib/prisma-routing/prisma-bng"
 # The containers' backplane, 128.0.0.0/8 in VRF prisma-bp (#447), brought up
 # by prisma-routing-backplane.service before them.
 install -D -m 0755 "$REPO/appliance/prisma-backplane" "$DESTDIR/usr/lib/prisma-routing/prisma-backplane"

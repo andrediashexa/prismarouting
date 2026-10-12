@@ -1,0 +1,47 @@
+# The PPPoE control plane (#597): accel-ppp-ng, its RADIUS client and the
+# VPP hooks it drives the pppoe plugin with, in a container of its own -
+# appliance/compose.yaml's `bng` says why it is not in mgmt or vpp.
+#
+# BUILT FROM THE DATAPLANE'S OWN IMAGE, in two stages, as prisma-log is: the
+# first compiles accel-ppp-ng at its pin against this VPP's own vpp-dev
+# (build/accel-ppp-build.sh, the recipe lab/pppoe.sh compiles with too); the
+# second is the dataplane image plus the daemon, its modules, its RADIUS
+# dictionaries and the runtime libraries they link. No compiler ships
+# (tools/build-images.sh `check` asks the started image).
+ARG BASE
+FROM ${BASE} AS build
+ARG VPP_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+COPY build/accel-ppp-build.sh build/accel-ppp-ng.patch /build/
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        $(sh /build/accel-ppp-build.sh --deps) \
+        vpp-dev=${VPP_VERSION} libvppinfra-dev=${VPP_VERSION} \
+    && sh /build/accel-ppp-build.sh /accel-root \
+    && rm -rf /accel-root/usr/share/man /accel-root/usr/etc
+
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+        iproute2 libssl3 libpcre2-8-0 \
+        libnl-3-200 libnl-route-3-200 libnl-genl-3-200 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /accel-root/usr/ /usr/
+# NO KERNEL MODULE IS LOADED FROM HERE, and accel-ppp asks anyway: its pppoe
+# module opens an AF_PPPOX socket at start and, when that fails, runs
+# `modprobe -q pppoe` - for the kernel's PPPoE, which a session terminated in
+# VPP never uses (it carries discovery on raw sockets on pppoe-cp). The image
+# has no modprobe, so every start printed "sh: modprobe: not found" (seen on
+# the first installed box). This stands in for it: it loads nothing, says so
+# in one line accel-ppp's own "failed to load pppoe kernel module" follows,
+# and fails, which is the truth.
+RUN printf '#!/bin/sh\necho "modprobe $*: not in the prisma-bng container; VPP carries PPPoE" >&2\nexit 1\n' \
+        > /usr/local/sbin/modprobe \
+    && chmod 0755 /usr/local/sbin/modprobe
+COPY appliance/prisma-bng-entrypoint /usr/local/bin/prisma-bng-entrypoint
+COPY appliance/prisma-bng-cli /usr/bin/prisma-bng-cli
+COPY appliance/prisma-bng-session /usr/lib/prisma-bng/session
+RUN chmod 0755 /usr/local/bin/prisma-bng-entrypoint /usr/bin/prisma-bng-cli \
+        /usr/lib/prisma-bng/session
+ENTRYPOINT ["/usr/local/bin/prisma-bng-entrypoint"]
