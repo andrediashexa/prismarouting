@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.5 - a dynamic interleaved pool stays evenly spread after churn
+
+### Fixed
+
 * **A dynamic `policy interleaved` pool stays evenly spread over its public
   addresses after churn.**
   ([#603](https://github.com/andrediashexa/hexarouting/issues/603)) Each
