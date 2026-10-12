@@ -54,7 +54,20 @@ check(by.get(("operational", "show hardware"), (0, 0, 0, ""))[3] == "typed",
       "show hardware is typed (GetHardware, #558 phase 7)")
 check(by.get(("operational", "ping"), (0, 0, 0, ""))[3] == "typed",
       "ping is typed, a stream (Ping, #558 phase 7)")
-_text = [" ".join(r[1]) for r in rows if r[3] == "text"]
+#: What #597's first increment (PPPoE) left outside the typed API, by the
+#: maintainer's sequencing: the typed API is phase 1's next step (docs/bng.md
+#: 0.4). Named here so that nothing else can join it - a new text or
+#: unreachable path is still a failure - and checked for staleness below, so
+#: an entry that becomes typed is taken out.
+PENDING_597 = {"show pppoe", "clear pppoe", "pppoe"}
+
+
+def pending(path):
+    return any(path == p or path.startswith(p + " ") for p in PENDING_597)
+
+
+_text = [" ".join(r[1]) for r in rows if r[3] == "text"
+         and not pending(" ".join(r[1]))]
 # `show bfd` is typed since BFD's phase 2 (#559): ListBfdSessions; and the
 # last one, `show cgnat ha peer <file>`, since #558's last phase:
 # GetHaStatusRequest.peer_path.
@@ -64,14 +77,23 @@ check(by.get(("operational", "show cgnat ha peer"), (0, 0, 0, ""))[3] == "typed"
                                   (0, 0, 0, "", ""))[4],
       "show cgnat ha peer <file> is typed: GetHaStatus with peer_path (#558)")
 _doc = open(os.path.join(REPO, "docs", "api-coverage.md")).read()
-check("| text | 0 |" in _doc and "| none | 0 |" in _doc,
-      "and the summary says so, text 0 and none 0, rather than leaving the "
-      "rows out")
+_n_text = len([r for r in rows if r[3] == "text"])
+_n_none = len([r for r in rows if r[3] == "none"])
+check(f"| text | {_n_text} |" in _doc and f"| none | {_n_none} |" in _doc
+      and _n_text + _n_none == len([r for r in rows
+                                    if pending(" ".join(r[1]))]),
+      "and the summary says so, text and none counting #597's pending paths "
+      "and nothing else, rather than leaving the rows out")
+check(all(any(pending(" ".join(r[1])) and r[3] in ("text", "none")
+              and " ".join(r[1]).split()[:len(p.split())] == p.split()
+              for r in rows) for p in PENDING_597),
+      f"every #597 pending path is still pending: {sorted(PENDING_597)}")
 check(by.get(("operational", "show bfd peers"), (0, 0, 0, ""))[3] == "typed",
       "show bfd peers is typed (ListBfdSessions, #559 phase 2)")
 check(by.get(("operational", "system reboot"), (0, 0, 0, ""))[3] == "typed",
       "system reboot is typed (SystemService.Reboot, #558 phase 5)")
-check(not [r for r in rows if r[3] == "none"],
+check(not [r for r in rows if r[3] == "none"
+            and not pending(" ".join(r[1]))],
       "no VTY path is unreachable through the API (#558 phase 5): "
       f"{[' '.join(r[1]) for r in rows if r[3] == 'none']}")
 check(by.get(("operational", "start shell"), (0, 0, 0, ""))[3] == "n/a",
@@ -92,7 +114,8 @@ check(any(k[0] == "cgnat" and k[1].startswith("logging") and v[3] == "typed"
       "cgnat: logging typed; the timeouts read as fields in cgnat_globals (0.149.24)")
 # #558 phase 4: no CONFIGURATION statement is text any more - what stays text
 # is operational (a `show`, a probe), and each config row has a reason.
-config_text = [k for k, v in by.items() if v[3] == "text" and "Edit" in v[4]]
+config_text = [k for k, v in by.items() if v[3] == "text" and "Edit" in v[4]
+               and not pending(k[1])]
 check(not config_text,
       f"no configuration statement is text-only after phase 4: {config_text[:5]}")
 check(by.get(("bgp neighbor", "neighbor <address> remote-as"), (0, 0, 0, ""))[3] == "typed",

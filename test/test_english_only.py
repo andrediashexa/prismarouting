@@ -114,6 +114,10 @@ ALLOWED = {
            "sends accounting - and 'nas' is also a Portuguese preposition, "
            "which is why only the RFC's own spelling, in capitals, is "
            "removed here: 'nas' in prose still fails",
+    "nas-identifier": "RFC 2865's NAS-Identifier attribute, as accel-ppp's "
+                      "configuration key and the `pppoe` block's `radius "
+                      "nas-identifier` statement spell it (#597) - an "
+                      "identifier, and 'nas' alone in prose still fails",
     "radius_nas.py": "the file name of the NAS the labs point at the box, "
                      "and a file name is an identifier rather than prose",
     "America/Sao_Paulo": "an IANA timezone identifier",

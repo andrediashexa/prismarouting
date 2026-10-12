@@ -47,6 +47,7 @@ from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
                     hostname_error, is_number)
 import events
+import pppoe
 import transceiver
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
                     VRF_RESERVED_PREFIX, probe_host_ok, probe_source_ok,
@@ -313,6 +314,11 @@ FIXED = {
     ("cat", SNMPD_CONF): "read snmpd's configuration",
     # `system upgrade`'s last step (#528): the VTY on the new release.
     REFRESH_VTY_ARGV: "restart the VTY on the upgraded release",
+    # PPPoE (#597): the prisma-bng container started, restarted on the
+    # configuration the commit generated, or stopped - by the host's script,
+    # which is the only thing that runs docker-compose for it.
+    (pppoe.BNG_CTL_HOST, "apply"): "start or restart the PPPoE container",
+    (pppoe.BNG_CTL_HOST, "stop"): "stop the PPPoE container",
 }
 
 #: What any account may ask of the host from the management plane (#448):
@@ -369,6 +375,12 @@ QUERIES = {
     # tuning advice` writes the host's pinning only for one. The container
     # has no systemd to ask, and would answer "docker" if it had.
     ("systemd-detect-virt", "--vm"): "ask whether the box is a virtual machine",
+    # PPPoE's state and sessions (#597): what `show pppoe` reads, which any
+    # account may - the sessions' users and addresses, as `show cgnat
+    # subscriber` shows a subscriber's.
+    (pppoe.BNG_CTL_HOST, "status"): "ask whether the PPPoE container runs",
+    (pppoe.BNG_CTL_HOST, "sessions"): "list the PPPoE sessions",
+    (pppoe.BNG_CTL_HOST, "summary"): "read the PPPoE counters",
 }
 
 def query_of(argv):
@@ -404,6 +416,17 @@ def _account(name, root_ok=False):
     return bool(ACCOUNT.match(name)) and (root_ok or name != "root")
 
 
+def _clear_back(words):
+    """prisma-bng's terminate words as the `clear pppoe session` words that
+    make them, so verb_of() can hold the two to one builder."""
+    words = list(words)
+    if words[:1] == ["sid"]:
+        return words[1:]
+    if words[:1] == ["username"]:
+        return ["user"] + words[1:]
+    return words
+
+
 def verb_of(argv, stdin=None):
     """
     The door `argv` (with `stdin`) is, or None when it is none of them.
@@ -420,6 +443,11 @@ def verb_of(argv, stdin=None):
     if argv in FIXED:
         return FIXED[argv]
     n = len(argv)
+    # `clear pppoe session` (#597): the words pppoe.clear_words() builds,
+    # and no other - a session id, a user name, or all.
+    if n >= 3 and argv[:2] == (pppoe.BNG_CTL_HOST, "terminate") and \
+            pppoe.clear_words(_clear_back(argv[2:]))[0] == list(argv[2:]):
+        return "end PPPoE sessions"
     if n == 3 and argv[:2] == ("userdel", "-r") and _account(argv[2]):
         return "remove an account"
     if n == 5 and argv[:3] == ("useradd", "-m", "-s") \
