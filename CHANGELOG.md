@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A three-VM bench for BPA under real traffic, local and repeatable.**
+  ([#475](https://github.com/andrediashexa/hexarouting/issues/475))
+  `lab/bench3vm.sh` installs the newest released ISO (its sha256 checked)
+  onto a qemu/KVM guest and puts it between 240 Debian subscribers opening
+  real TCP and UDP connections and an internet that logs which public
+  address and port each arrived from, on two bridges with no uplink inside
+  the lab's container. Its checks hold the internet's log, the subscribers'
+  view and the box's syslog records against each other; `off` makes the
+  pool deterministic and five of them go red. Measured on 0.153.0: every
+  connection traced by the records to exactly its subscriber; `policy
+  interleaved` spreads a fresh pool evenly and drifts to a max/min of
+  1.67-2.2 after churn, because each worker's free list is a stack;
+  3.7-4.8 Gbit/s of TCP on a shared host; handoff ~0 for TCP and about half
+  for one-way UDP. The numbers are in `docs/architecture.md`. Images,
+  disks and runs are cached in `/var/cache/prisma/bench3vm`, never in the
+  tree. Ships in no medium.
+
 ### Fixed
 
 ## 0.153.1 - IPv6 virtual routers, and a NAT64 pool that fails over

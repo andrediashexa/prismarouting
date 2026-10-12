@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.2 - a local three-VM bench for BPA under real traffic
+
+* **Contract:** unchanged (`prisma.proto` sha256 `00b7870c08504f90b96314b2c88fb663ee734f1531fd9935aa8f26371e794456`, the same as 0.153.1). Nothing a client of `prisma.v1` sees changes.
+* **Lab and documents only** (#475): `lab/bench3vm.sh` and its numbers in docs/architecture.md. No box, no upgrade artifact and no API behaviour changes; the lab box is not touched.
+
 ## 0.153.1 - IPv6 virtual routers, and a NAT64 pool that fails over
 
 * **Contract:** additive (`prisma.proto` sha256 `00b7870c08504f90b96314b2c88fb663ee734f1531fd9935aa8f26371e794456`).

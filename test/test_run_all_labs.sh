@@ -814,14 +814,25 @@ echo "=== a lab that takes an off mode is given one by the suite ==="
 # on three labs that are right.
 _off_names=$(sed -n '/^OFF_MODES="/,/"$/p' "$RA" | tr ' ' '\n' \
              | sed 's/^OFF_MODES="//' | grep ':' | cut -d: -f1)
+# A lab in NOT_LABS is not run by the suite at all, so the suite cannot give
+# it an off run either: its off run is as deliberate as its on run, and its
+# NOT_LABS reason has to say how to perform it. lab/bench3vm.sh (#475) is the
+# first such lab with a mode - a bench that installs an ISO and boots three
+# machines, whose `off` makes the pool deterministic and was measured red.
+_not_names=$(sed -n '/^NOT_LABS="/,/^"$/p' "$RA" | sed -n 's/^\([a-z0-9-]*\):.\+$/\1/p')
 _ungiven=""
 for _f in "$REPO"/lab/*.sh; do
   grep -qE '^[[:space:]]*MODE=\$\{1:-' "$_f" || continue
   _n=$(basename "$_f" .sh)
+  if printf '%s\n' "$_not_names" | grep -qx "$_n"; then
+    sed -n "/^NOT_LABS=\"/,/^\"$/p" "$RA" | grep "^$_n:" | grep -q " off" \
+      || _ungiven="$_ungiven $_n(NOT_LABS, and its reason names no off run)"
+    continue
+  fi
   printf '%s\n' "$_off_names" | grep -qx "$_n" || _ungiven="$_ungiven $_n"
 done
 [ -z "$_ungiven" ] \
-  && ok "every lab that takes a mode argument is in OFF_MODES" \
+  && ok "every lab that takes a mode argument is in OFF_MODES, or in NOT_LABS with its off run named" \
   || bad "these labs take a mode argument and the suite never gives them one, "\
 "so the run that is supposed to go red never happens and their green run "\
 "proves nothing:$_ungiven"

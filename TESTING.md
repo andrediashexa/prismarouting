@@ -417,6 +417,23 @@ sh tools/lab.sh soak            # 210 s of churn, about four minutes in all
 sh tools/lab.sh soak 28800      # eight hours of it
 ```
 
+`bench3vm` is excluded for the same reason and one more: it is a
+**measurement bench** ([#475](https://github.com/andrediashexa/hexarouting/issues/475)).
+It installs the newest released ISO (sha256 checked) onto a qemu/KVM guest
+and puts it between two Debian guests - 240 subscribers opening real TCP and
+UDP connections, and an internet that writes down which public address and
+port each one arrived from - on two bridges with no uplink inside the lab's
+container. Its checks hold the internet's log, the subscribers' view and the
+box's syslog records against each other; `off` makes the pool deterministic
+and the BPA checks go red. Everything it downloads, installs or measures is
+kept in `/var/cache/prisma/bench3vm`, never in the tree; the numbers are in
+`docs/architecture.md`, *Dynamic mode under real traffic*.
+
+```sh
+sh tools/lab.sh bench3vm        # about ten minutes with its disks cached
+sh tools/lab.sh bench3vm off    # BPA off: the checks about it go red
+```
+
 **Every cycle fills the session table and every cycle empties it.** Fifteen
 seconds of traffic — 32 subscribers, 199 source ports each, at a rate that
 fills the whole burst so sessions are created while others time out — then

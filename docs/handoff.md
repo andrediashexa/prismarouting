@@ -36,6 +36,16 @@ The CHANGELOG has each one. By theme:
 
 ## The bench (#475)
 
+**Since 2026-10-11 the bench is local and the Proxmox one is off-limits: make
+no change on any Proxmox host.** `lab/bench3vm.sh` builds the same three
+machines with qemu/KVM inside the lab's container on this build machine -
+the newest released ISO installed unattended, two Debian 12 guests, two
+bridges with no uplink - and caches everything in
+`/var/cache/prisma/bench3vm`: `sh tools/lab.sh bench3vm`, and `off` for the
+run that goes red. Its numbers are in `docs/architecture.md`, *Dynamic mode
+under real traffic*.
+
+What follows is the Proxmox bench as it was, for the history on the issue.
 Three VMs on the maintainer's Proxmox (`fix-dl360-g8`), VMIDs 200240-200242,
 on two bridges of their own (vmbr9, vmbr10) with no uplink. **Nothing else on
 that host is ours to touch.** 200240 runs the subscribers, 200241 is the box
