@@ -142,14 +142,13 @@ state=$(ssh -o BatchMode=yes "$HOSTPART" "cd '$DIR' && ls -1 latest/ 2>/dev/null
 cur_up=$(printf '%s\n' "$state" | sed -n 's/^prisma-routing-\([0-9][0-9.]*[0-9]\)-upgrade\.tar\.gz$/\1/p' | sort -V | tail -1)
 cur_iso=$(printf '%s\n' "$state" | sed -n 's/^prisma-routing-\([0-9][0-9.]*[0-9]\)\.iso$/\1/p' | sort -V | tail -1)
 [ -n "$cur_iso" ] || cur_iso=$(printf '%s\n' "$state" | sed -n 's/^medium //p' | sort -V | tail -1)
-newer() {  # is $1 newer than $2 (or $2 empty)? `sort -V` orders 0.122.10
-           # after 0.122.9, which a string comparison does not.
-  [ -z "$2" ] && return 0
-  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]
-}
+# Each half moves only to a version above the one it holds. `sort -V`
+# orders 0.122.10 after 0.122.9, which a string comparison does not.
 up=$cur_up; iso=$cur_iso
-newer "$VER" "$cur_up" && up=$VER
-[ -f "$SRC/$ISO" ] && newer "$VER" "$cur_iso" && iso=$VER
+top=$(printf '%s\n%s\n' "${cur_up:-0.0.0}" "$VER" | sort -V | tail -1)
+[ "$top" = "$VER" ] && [ "$cur_up" != "$VER" ] && up=$VER
+top=$(printf '%s\n%s\n' "${cur_iso:-0.0.0}" "$VER" | sort -V | tail -1)
+[ -f "$SRC/$ISO" ] && [ "$top" = "$VER" ] && [ "$cur_iso" != "$VER" ] && iso=$VER
 links=""
 for f in "prisma-routing-$up-upgrade.tar.gz" "prisma-routing-$up-upgrade.tar.gz.sha256"; do
   links="$links ln -s '../$up/$f' latest.new/'$f' &&"
