@@ -275,11 +275,22 @@ def system_checks():
 
     def upgrade():
         t0 = time.time()
-        phases = [pb.UpgradeProgress.Phase.Name(p.phase)
-                  for p in root.Upgrade(pb.UpgradeRequest(version="0.149.99"), timeout=120)]
+        got = list(root.Upgrade(pb.UpgradeRequest(version="0.149.99"), timeout=120))
+        phases = [pb.UpgradeProgress.Phase.Name(p.phase) for p in got]
         status = root.GetUpgradeStatus(pb.GetUpgradeStatusRequest(), timeout=30)
+        # #602: the download's rows are DOWNLOADs of their own, the progress
+        # one with its numbers, the resume with its sentence.
+        down = [p for p in got if pb.UpgradeProgress.Phase.Name(p.phase) == "DOWNLOAD"]
+        result("system-upgrade-download-progress",
+               len(down) == 4 and down[1].downloaded_bytes == 12400000
+               and down[1].total_bytes == 189000000
+               and down[1].bytes_per_second == 2500000 and down[1].seconds_left == 71
+               and down[3].message.startswith("resuming at 12.4 MB")
+               and down[3].downloaded_bytes == 0,
+               "; ".join(f"{p.message} [{p.downloaded_bytes}/{p.total_bytes}]"
+                         for p in down))
         result("system-upgrade-stream",
-               phases[:3] == ["STARTED", "DOWNLOAD", "VERIFY"]
+               phases[:6] == ["STARTED"] + ["DOWNLOAD"] * 4 + ["VERIFY"]
                and "INSTALL" in phases and phases[-2:] == ["INSTALLED", "API_RESTART"]
                and pb.UpgradeProgress.Phase.Name(status.phase) == "API_RESTART"
                and status.api_away_seconds == 0 and "upgraded to 0.149.99" in status.output,

@@ -78,6 +78,7 @@ python3 test/test_prismash_apply.py
 python3 test/test_prismash_batch.py
 python3 test/test_prismash_system.py
 python3 test/test_prismash_units.py
+python3 test/test_upgrade_download.py
 python3 test/test_prismash_perms.py
 python3 test/test_prismash_confirm.py
 python3 test/test_prismash_igp.py

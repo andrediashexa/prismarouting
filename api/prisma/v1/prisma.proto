@@ -3677,6 +3677,16 @@ message UpgradeProgress {
   string output = 7;
   // FAILED: why, as a Diagnostics reason.
   Diagnostics diagnostics = 8;
+  // DOWNLOAD (#602): a DOWNLOAD message comes every few seconds while the
+  // package downloads, and one for each connection dropped and resumed;
+  // these four are set on the progress ones, to the 0.1 MB and the rate the
+  // VTY's line prints, and are 0 on every other message - and total_bytes
+  // when the server did not say the size, seconds_left when it cannot be
+  // estimated.
+  uint64 downloaded_bytes = 9;
+  uint64 total_bytes = 10;
+  uint64 bytes_per_second = 11;
+  uint32 seconds_left = 12;
 }
 
 // --------------------------------------------------------------- session

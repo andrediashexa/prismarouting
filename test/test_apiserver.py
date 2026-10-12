@@ -1697,6 +1697,29 @@ check([x["phase"] for x in A.upgrade_phases("prisma-api-exit 2\n")] == ["failed"
 _ph = A.upgrade_phases("this box runs: 0.149.24\nnewest published: 0.149.25\n")
 check(_ph == [{"phase": "checked", "message": "newest published: 0.149.25",
                "newest": "0.149.25"}], f"upgrade_phases: no version, the newest named: {_ph}")
+# The download's rows (#602), each a DOWNLOAD, the progress ones with their
+# numbers - read off prismash.download_line() itself, so a rewording of the
+# line goes red here. Mutations shown red: `downloading` never set (the rows
+# are dropped), and DOWNLOADED's KB read as MB.
+_rows = [P.download_line(117e6, 189e6, 50e3), P.download_line(45.2e6, 189e6, 9.7e6),
+         P.download_line(1e6, None, 2e6)]
+check(A.download_progress(_rows[0]) == {
+          "downloaded_bytes": 117000000, "total_bytes": 189000000,
+          "bytes_per_second": 50000, "seconds_left": 24 * 60}
+      and A.download_progress(_rows[1])["seconds_left"] == 15
+      and A.download_progress(_rows[2]) == {
+          "downloaded_bytes": 1000000, "total_bytes": 0,
+          "bytes_per_second": 2000000, "seconds_left": 0}
+      and A.download_progress("  resuming at 1.0 MB on a new connection, 2 of 6") is None,
+      f"download_progress reads download_line back: {[A.download_progress(r) for r in _rows]}")
+_ph = A.upgrade_phases("downloading x\n" + _rows[0] + "\n  nothing arrived for 30 s\n"
+                       "  resuming at 117.0 MB on a new connection, 2 of 6\n" + _rows[1] +
+                       "\nthe package matches its published sha256:\n    abcd\n"
+                       "upgraded to 0.149.25\nprisma-api-exit 0\n")
+check([x["phase"] for x in _ph] == ["download"] * 5 + ["verify", "installed"]
+      and _ph[1]["downloaded_bytes"] == 117000000 and _ph[2]["message"] ==
+      "nothing arrived for 30 s" and "downloaded_bytes" not in _ph[3],
+      f"upgrade_phases: every download row a DOWNLOAD, the progress with numbers: {_ph}")
 for _phrase in ("downloading ", "the package matches its published sha256",
                 "upgraded to ", "the VTY restarts on", "newest published: "):
     check(_phrase in _src, f"upgrade_phases reads a line the VTY prints: {_phrase!r}")
@@ -1883,6 +1906,12 @@ _u = A.progress_pb(_UPB, {"phase": "api_restart", "message": "m", "api_away_seco
                    started=5)
 check(_u.phase == "API_RESTART" and _u.api_away_seconds == 60 and _u.started_at.n == 5e9,
       "progress_pb: a step as UpgradeProgress, with when the run started")
+_u = A.progress_pb(_UPB, A.upgrade_phases("downloading x\n" + P.download_line(
+    117e6, 189e6, 50e3) + "\n")[1])
+check(_u.phase == "DOWNLOAD" and _u.downloaded_bytes == 117000000
+      and _u.total_bytes == 189000000 and _u.bytes_per_second == 50000
+      and _u.seconds_left == 1440,
+      f"progress_pb: a download's progress carries its numbers (#602): {vars(_u)}")
 _u = A.progress_pb(_UPB, {"phase": "failed", "message": "error: x"}, output="error: x\n")
 check(_u.phase == "FAILED" and _u.diag is not None and _u.diag.reason == 14,
       "progress_pb: a FAILED carries its diagnostics")

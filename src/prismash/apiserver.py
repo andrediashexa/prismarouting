@@ -1620,6 +1620,32 @@ API_AWAY_SECONDS = 60
 RUN_EXIT = re.compile(r"^prisma-api-exit (\d+)$")
 
 
+#: prismash.download_line(), read back (#602): the progress of the package's
+#: download, to the 0.1 MB and the rate it prints.
+DOWNLOADED = re.compile(r"^  downloaded (\d+\.\d) (?:of (\d+\.\d) )?MB at "
+                        r"(\d+(?:\.\d)?) (KB|MB)/s"
+                        r"(?:, about (\d+) (s|min) left)?$")
+
+
+def download_progress(line):
+    """
+    One `system upgrade` download progress line as UpgradeProgress's
+    numbers (#602): {"downloaded_bytes", "total_bytes", "bytes_per_second",
+    "seconds_left"}, each 0 when the line did not say it; None for any
+    other line.
+    """
+    m = DOWNLOADED.match(line)
+    if not m:
+        return None
+    got, total, rate, unit, left, per = m.groups()
+    return {"downloaded_bytes": int(float(got) * 1e6),
+            "total_bytes": int(float(total) * 1e6) if total else 0,
+            "bytes_per_second": int(float(rate) * (1e6 if unit == "MB"
+                                                   else 1e3)),
+            "seconds_left": int(left) * (60 if per == "min" else 1)
+            if left else 0}
+
+
 def upgrade_phases(text):
     """
     What `system upgrade <version>` has printed so far, as UpgradeProgress
@@ -1627,7 +1653,7 @@ def upgrade_phases(text):
     "newest"}, in order - read off the VTY's own lines, which
     test/test_apiserver.py holds to prismash.py's source.
     """
-    steps, installing = [], False
+    steps, installing, downloading = [], False, False
     for raw in text.splitlines():
         line = raw.rstrip()
         if not line.strip():
@@ -1643,9 +1669,16 @@ def upgrade_phases(text):
                           "newest": line.split(": ", 1)[1].strip()})
         elif line.startswith("downloading "):
             steps.append({"phase": "download", "message": line})
+            downloading = True
         elif line.startswith("the package matches its published sha256"):
             steps.append({"phase": "verify", "message": line})
-            installing = True
+            installing, downloading = True, False
+        elif downloading and line.startswith("  "):
+            # The download's own rows (#602): its progress, with numbers, and
+            # each connection dropped and resumed, and a sum that did not
+            # match and is downloaded again - each a DOWNLOAD of its own.
+            steps.append({"phase": "download", "message": line.strip(),
+                          **(download_progress(line) or {})})
         elif line.startswith("upgraded to "):
             installing = False
             steps.append({"phase": "installed", "message": line,
@@ -1658,7 +1691,7 @@ def upgrade_phases(text):
             # the install: ending the stream there would lose INSTALLED.
             steps.append({"phase": "api_restart", "message": line.strip()})
         elif line.startswith("error:"):
-            installing = False
+            installing = downloading = False
             steps.append({"phase": "failed", "message": line})
         elif installing and not line.startswith("    "):
             steps.append({"phase": "install", "message": line.strip()})
@@ -3369,7 +3402,11 @@ def progress_pb(pb, st, started=None, output=""):
         phase=pb.UpgradeProgress.Phase.Value(st["phase"].upper()),
         message=st.get("message", ""), version=st.get("version", ""),
         newest=st.get("newest", ""),
-        api_away_seconds=st.get("api_away_seconds", 0), output=output)
+        api_away_seconds=st.get("api_away_seconds", 0), output=output,
+        downloaded_bytes=st.get("downloaded_bytes", 0),
+        total_bytes=st.get("total_bytes", 0),
+        bytes_per_second=st.get("bytes_per_second", 0),
+        seconds_left=st.get("seconds_left", 0))
     if started:
         _stamp(out.started_at, started)
     if st["phase"] == "failed":

@@ -709,13 +709,21 @@ with `REASON_PERMISSION` there as at the prompt.
   whose output goes to `/run/prisma-routing/api/<kind>.log`: an upgrade
   recreates the container the API runs in, so it cannot run inside it. A
   second one while the first runs is `REASON_BUSY`.
-* `Upgrade(version)` streams `STARTED`, `DOWNLOAD`, `VERIFY`, an `INSTALL`
-  per row the package prints, `INSTALLED`, and last `API_RESTART`, with
+* `Upgrade(version)` streams `STARTED`, one or more `DOWNLOAD`s, `VERIFY`, an
+  `INSTALL` per row the package prints, `INSTALLED`, and last `API_RESTART`, with
   `api_away_seconds`: the stream ends there, before the management API
   restarts on the new release. Reconnect after it and read `GetVersion`;
   `GetUpgradeStatus` reads the run back from the host's log, whatever API
   started it. A `FAILED` carries the run's output and its reason. An empty
   `version` installs nothing: one `CHECKED` names the newest release.
+* **A `DOWNLOAD` per row of the download** (#602): the first names the URL;
+  then one every few seconds with its progress in `downloaded_bytes`,
+  `total_bytes`, `bytes_per_second` and `seconds_left` (to the 0.1 MB and
+  the rate the VTY's line prints; `total_bytes` 0 when the server did not say
+  the size, `seconds_left` 0 when it cannot be estimated), and one with only a
+  `message` for each connection dropped and resumed - a stall, a crawl under
+  the floor, a cut - and for a package that did not match its sha256 and is
+  downloaded again. The numbers are 0 on every other message.
 
 Measured in lab/api-grpc.sh with stand-ins for `systemctl` and `systemd-run`
 - a container is no box to restart; the real reboot, shutdown, dataplane
