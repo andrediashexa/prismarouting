@@ -409,7 +409,7 @@ interface ens18
 
 `**track**` **é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: ela segura o endereço do gateway e não alcança nada. Com `track`, a prioridade dela cai pelo decremento e o par assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da do outro — 200 com decremento 150 vira 50, contra os 100 do par.
 
-**O mesmo `vrid` serve o IPv6** (a partir da versão 0.153.1). Um endereço IPv6 no mesmo `vrrp <vrid>` cria o roteador virtual IPv6 (VRRPv3, RFC 5798) ao lado do IPv4, com a mesma prioridade, o mesmo `track` e o mesmo preempt — então o gateway IPv6 dos assinantes muda de caixa junto com o lado IPv4:
+**O mesmo** `**vrid**` **serve o IPv6** (a partir da versão 0.153.1). Um endereço IPv6 no mesmo `vrrp <vrid>` cria o roteador virtual IPv6 (VRRPv3, RFC 5798) ao lado do IPv4, com a mesma prioridade, o mesmo `track` e o mesmo preempt — então o gateway IPv6 dos assinantes muda de caixa junto com o lado IPv4:
 
 ```
 interface ens18
@@ -425,7 +425,7 @@ interface ens18
 
 O roteador IPv6 precisa de **um** endereço link-local (`fe80::...`), que é o primeiro que ele anuncia e o gateway para onde os assinantes apontam (RFC 5798, seção 5.2.9); o `commit check` recusa um roteador IPv6 sem ele, e um segundo link-local é recusado na hora. O MAC virtual do IPv6 é `00:00:5e:00:02:<vrid>`, e quem assume manda um Neighbor Advertisement não solicitado. O `show cgnat ha` mostra os dois roteadores do mesmo `vrid`, o IPv6 marcado `ipv6`.
 
-**O `track` vale para a família do roteador.** O dataplane só considera "de pé" uma interface rastreada que tem endereço da família do roteador. A caixa liga o IPv6 (só o link-local, sem anúncio de roteador) na interface que um roteador IPv6 rastreia; para o roteador IPv4, a interface rastreada precisa de um endereço IPv4, e o `commit check` avisa quando não tem — um lado dos assinantes só IPv6 rastreado pelo roteador IPv4 do uplink nunca seria visto de pé.
+**O** `**track**` **vale para a família do roteador.** O dataplane só considera "de pé" uma interface rastreada que tem endereço da família do roteador. A caixa liga o IPv6 (só o link-local, sem anúncio de roteador) na interface que um roteador IPv6 rastreia; para o roteador IPv4, a interface rastreada precisa de um endereço IPv4, e o `commit check` avisa quando não tem — um lado dos assinantes só IPv6 rastreado pelo roteador IPv4 do uplink nunca seria visto de pé.
 
 **O que é recusado na hora em que você digita:** um endereço com máscara (`100.64.3.254/22` — o endereço virtual é um dos endereços da sub-rede da interface, não uma sub-rede), prioridade 255, e uma interface rastreando a si mesma: uma porta que caiu já parou de anunciar, e o que vale rastrear é o **outro** lado.
 
