@@ -27,6 +27,39 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.3 - The upgrade's download says how far it is, and resumes
+
+* **Contract:** additive (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`).
+  #602: `UpgradeProgress` gains `downloaded_bytes` (9, uint64),
+  `total_bytes` (10, uint64), `bytes_per_second` (11, uint64) and
+  `seconds_left` (12, uint32). Nothing else in the contract changes; no
+  message, field or number is moved.
+* **`SystemService.Upgrade` now sends several `DOWNLOAD` messages.** It sent
+  exactly one (the URL) before `VERIFY`; now the first is still the URL, and
+  after it come one every 5 s or so with the download's progress in the four
+  new fields, and one with only a `message` for each connection the box
+  dropped and resumed (`nothing arrived for 30 s`, `52 KB/s for 30 s, under
+  the floor of 125 KB/s`, `the connection ended at 14.1 of 189.0 MB`,
+  `resuming at 14.1 MB on a new connection, 2 of 6`) and for a package that
+  did not match its sha256 and is downloaded once more. A client that
+  expected `STARTED, DOWNLOAD, VERIFY` in fixed positions MUST read the
+  phase of each message instead. The numbers are the VTY line's precision:
+  bytes to the 0.1 MB (decimal), the rate to the KB/s under 1 MB/s and the
+  0.1 MB/s above; `total_bytes` is 0 when the server did not say the size,
+  `seconds_left` 0 when it cannot be estimated, and all four are 0 on every
+  message that is not a progress one. A progress bar is
+  `downloaded_bytes / total_bytes`; it can go back to 0 once, when a server
+  answered a resume with the whole file.
+* **The stream is live during the download.** The upgrade's output reaches
+  the API through a file, and the VTY wrote it a block at a time: on a real
+  box, `DOWNLOAD` and `VERIFY` could arrive together at the end. Every line
+  is flushed now.
+* **`GetUpgradeStatus` during a download** returns the last of those
+  `DOWNLOAD`s, numbers included.
+* **A failed download** is `FAILED` as before; its `output` can now say
+  `6 connections, and the last: <why>`, and a sum that does not match twice
+  says `downloaded twice`.
+
 ## 0.153.2 - a local three-VM bench for BPA under real traffic
 
 * **Contract:** unchanged (`prisma.proto` sha256 `00b7870c08504f90b96314b2c88fb663ee734f1531fd9935aa8f26371e794456`, the same as 0.153.1). Nothing a client of `prisma.v1` sees changes.

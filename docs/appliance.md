@@ -2824,7 +2824,8 @@ changes nothing. With a version it:
    images (#427), so it is written to disk as it arrives rather than held in
    the VTY's memory;
 2. computes the sum as it downloads and **refuses a mismatch before anything
-   is unpacked**;
+   is unpacked** - after downloading the whole package once more, from the
+   start, and saying so: a single bad download is retried, two are refused;
 3. unpacks into a directory of its own under `/var/tmp`, refusing any member
    that would land, or link, outside it;
 4. runs the package's own `upgrade`, the one an operator runs by hand, and
@@ -2833,6 +2834,47 @@ changes nothing. With a version it:
    refusal keeps the package for whoever reads it next;
 5. says that `save` comes before any reboot, because the running
    configuration is what a reboot replays.
+
+**The download says how far it is, and does not sit on a bad connection**
+([#602](https://github.com/andrediashexa/hexarouting/issues/602)). Measured
+on 10.34.200.166 on 2026-10-11: the VTY's one connection to the releases'
+front ran at about 50 KB/s for 16 minutes, printing nothing, while `curl` on
+the same box fetched the same 189 MB in 21 s. Now:
+
+```
+downloading https://prismarouting.com.br/releases/0.153.2/prisma-routing-0.153.2-upgrade.tar.gz
+  downloaded 12.4 of 189.0 MB at 2.5 MB/s, about 71 s left
+  downloaded 14.0 of 189.0 MB at 52 KB/s, about 56 min left
+  52 KB/s for 30 s, under the floor of 125 KB/s
+  resuming at 14.1 MB on a new connection, 2 of 6
+  downloaded 61.9 of 189.0 MB at 9.6 MB/s, about 13 s left
+```
+
+| Setting (prismash.py) | Value | What it does |
+|---|---|---|
+| `DOWNLOAD_PROGRESS_EVERY` | 5 s | a progress line at most this often |
+| `DOWNLOAD_STALL` | 30 s | no byte at all for this long: the connection is dropped |
+| `DOWNLOAD_FLOOR`, `DOWNLOAD_WINDOW` | 125 KB/s (1 Mbit/s) over 30 s | under it, once the connection has run 30 s: dropped |
+| `DOWNLOAD_CONNECTIONS` | 6 | the first and five more; the last is kept however slow it is |
+| `DOWNLOAD_PAUSE` | 2 s | between one connection and the next |
+
+A dropped, stalled or cut connection is followed by a new one that asks only
+for the rest (`Range: bytes=<n>-`, with `If-Range` naming the file the first
+bytes came from), keeping every byte already written and summed. The name is
+resolved again for it, and the address the dropped connection was on is tried
+last, so a front with several addresses is reached on another one. A server
+that answers the resume with the whole file (200) - one that ignores Range,
+or a package replaced in between - is started again from 0, said. An answer
+no new connection changes (404, 403) is refused at once. A box whose own link
+is under the floor still finishes: the sixth connection is not dropped for
+being slow. Six connections that each stall or end early are refused, with
+the last reason, and nothing was changed.
+
+Through the API (`SystemService.Upgrade`) each of these rows is a `DOWNLOAD`
+message, the progress ones with `downloaded_bytes`, `total_bytes`,
+`bytes_per_second` and `seconds_left` set. The VTY's output is flushed line
+by line for that: the API reads it off a file while the upgrade runs, and
+before 0.153.3 a file received it a block at a time.
 
 The version the box runs, and any older one, are refused. Going back has costs
 of its own (#436 changed a spelling an older release does not read), and it

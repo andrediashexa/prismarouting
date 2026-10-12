@@ -371,6 +371,11 @@ case "$last" in
   *"system upgrade "*)
     v=$(printf '%s' "$last" | sed -n "s/.*system upgrade \([0-9.]*\)'.*/\1/p")
     ( sleep 1; echo "downloading https://prismarouting.com.br/releases/$v/upgrade" >> "$log"
+      # The download's own rows (#602), as prismash prints them: progress,
+      # a stall, the resume on a new connection.
+      echo "  downloaded 12.4 of 189.0 MB at 2.5 MB/s, about 71 s left" >> "$log"
+      echo "  nothing arrived for 30 s" >> "$log"
+      echo "  resuming at 12.4 MB on a new connection, 2 of 6" >> "$log"
       sleep 1; printf 'the package matches its published sha256:\n    abc\n' >> "$log"
       sleep 1; echo "installing the images" >> "$log"
       echo "upgrade: refresh-the-vty is scheduled: the VTY restarts on the new release in a few seconds" >> "$log"
@@ -809,6 +814,7 @@ expect "  Shutdown with force: systemctl poweroff asked" t5 system-shutdown-forc
 expect "RestartDataplane: run on the host detached, its output when it finished" t5 system-dataplane-restart
 expect "Upgrade streams STARTED, DOWNLOAD, VERIFY, INSTALL, INSTALLED, API_RESTART; GetUpgradeStatus reads it back" t5 system-upgrade-stream
 expect "  the last message says how long the API is away, and ends the stream" t5 system-upgrade-away
+expect "  each download row a DOWNLOAD, the progress with its numbers (#602)" t5 system-upgrade-download-progress
 # #564: the system actions above went through the real doors daemon, not
 # around it - a door that refused the API's argv turns these red.
 expect "the system actions went through the host's door: detached runs started there" \

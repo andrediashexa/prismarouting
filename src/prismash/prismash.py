@@ -1827,7 +1827,255 @@ def fetch_url(url, timeout=30):
         return None, f"{url}: {getattr(e, 'reason', e)}"
 
 
-def download_to(url, path, timeout=300):
+#: How `system upgrade` downloads a release (#602). Measured on 10.34.200.166
+#: on 2026-10-11: the one connection the VTY opened to the releases' front
+#: (Cloudflare) ran at about 50 KB/s, with ~29 000 segments out of order, and
+#: after 16 minutes had 117 of the package's 189 MB - while curl on the same
+#: box, in the same minute, had all of it in 21 s. Nothing was printed for the
+#: whole time. So the download says how far it is, and a connection that
+#: crawls or stops is dropped and the rest asked for on a new one.
+#:
+#: A progress line at most this often, in seconds: a 21 s download says four.
+DOWNLOAD_PROGRESS_EVERY = 5
+#: Seconds with no byte at all before a connection is given up as stalled;
+#: also how long a connection may take to open and to answer.
+DOWNLOAD_STALL = 30
+#: The rate under which a connection is dropped, in bytes per second, once it
+#: has run DOWNLOAD_WINDOW seconds, measured over the last that many: 125 KB/s
+#: is 1 Mbit/s, two and a half times the crawl above and under a seventieth of
+#: what curl got. A box whose own link is slower than that is not refused:
+#: the last of DOWNLOAD_CONNECTIONS is kept however slow it is.
+DOWNLOAD_FLOOR = 125000
+DOWNLOAD_WINDOW = 30
+#: Connections one download may open: the first and five more, each after the
+#: first resuming where the last stopped, with an HTTP Range.
+DOWNLOAD_CONNECTIONS = 6
+#: Seconds between one connection and the next.
+DOWNLOAD_PAUSE = 2
+#: Redirects one connection follows, as urllib's own limit does.
+DOWNLOAD_REDIRECTS = 10
+
+
+def say_now(line):
+    """print(), flushed: a line of `system upgrade` the API reads off a file
+    while the upgrade runs (#602)."""
+    print(line, flush=True)
+
+
+def rate_text(bps):
+    """A rate as the download lines say it: `3.1 MB/s`, or `52 KB/s` under
+    one megabyte a second. Decimal units, as the sizes are."""
+    if bps >= 1e6:
+        return f"{bps / 1e6:.1f} MB/s"
+    return f"{bps / 1e3:.0f} KB/s"
+
+
+def download_line(n, total, bps):
+    """
+    The progress line of `system upgrade`'s download (#602): what arrived, of
+    how much when the server said, at what rate, and the time left at it.
+    apiserver.DOWNLOADED reads it back for the API's UpgradeProgress, and
+    test/test_apiserver.py holds the two together.
+    """
+    line = f"  downloaded {n / 1e6:.1f} "
+    line += f"of {total / 1e6:.1f} MB" if total else "MB"
+    line += f" at {rate_text(bps)}"
+    if total and bps > 0 and total > n:
+        left = (total - n) / bps
+        line += (f", about {left:.0f} s left" if left < 120
+                 else f", about {left / 60:.0f} min left")
+    return line
+
+
+def release_connect(host, port, st):
+    """
+    The socket one connection of a download uses (#602): the name resolved
+    afresh, every time, and an address in st["avoid"] - the one the dropped
+    connection was on - tried last, so that a resume lands on another of the
+    front's addresses when it has one. Each address landed on is appended to
+    st["used"]; st["resolve"] stands in for getaddrinfo in the tests.
+
+    Why not urlopen's own connection: socket.create_connection() tries the
+    answers in the resolver's order, so a resume of a connection to a bad
+    edge went to that same edge again as often as not.
+    """
+    resolve = st.get("resolve") or socket.getaddrinfo
+    found = sorted(resolve(host, port, 0, socket.SOCK_STREAM),
+                   key=lambda a: a[4][0] in st.get("avoid", ()))
+    err = OSError(f"{host}: the name has no address")
+    for family, kind, proto, _canon, sa in found:
+        s = socket.socket(family, kind, proto)
+        try:
+            s.settimeout(st.get("stall", DOWNLOAD_STALL))
+            s.connect(sa)
+        except OSError as e:
+            s.close()
+            err = e
+            continue
+        st.setdefault("used", []).append(sa[0])
+        return s
+    raise err
+
+
+def download_open(url, st):
+    """
+    One connection of a download: (connection, response) for `url` from
+    st["n"] on, redirects followed. A resume asks `Range: bytes=<n>-`, with
+    `If-Range` naming the file the first bytes came from, so a package
+    replaced in between comes back whole rather than spliced. Raises what
+    http.client and the socket raise; download_attempt() reads it.
+    """
+    import http.client
+    import ssl
+    import urllib.parse
+    for _hop in range(DOWNLOAD_REDIRECTS + 1):
+        u = urllib.parse.urlsplit(url)
+        if u.scheme not in ("http", "https") or not u.hostname:
+            raise ValueError(f"not a URL a box downloads from: {url}")
+        port = u.port or (443 if u.scheme == "https" else 80)
+        sock = release_connect(u.hostname, port, st)
+        if u.scheme == "https":
+            try:
+                sock = ssl.create_default_context().wrap_socket(
+                    sock, server_hostname=u.hostname)
+            except (OSError, ValueError):
+                sock.close()
+                raise
+            conn = http.client.HTTPSConnection(u.hostname, port)
+        else:
+            conn = http.client.HTTPConnection(u.hostname, port)
+        conn.sock = sock
+        # release_request()'s headers (#456): its User-Agent is the one the
+        # releases' front lets through.
+        headers = dict(release_request(url).header_items())
+        if st["n"]:
+            headers["Range"] = f"bytes={st['n']}-"
+            if st.get("tag"):
+                headers["If-Range"] = st["tag"]
+        try:
+            conn.request("GET", (u.path or "/") + (f"?{u.query}" if u.query
+                                                   else ""), headers=headers)
+            r = conn.getresponse()
+        except BaseException:
+            conn.close()
+            raise
+        where = r.getheader("Location")
+        if r.status in (301, 302, 303, 307, 308) and where:
+            conn.close()
+            url = urllib.parse.urljoin(url, where)
+            continue
+        return conn, r
+    raise ValueError(f"{url}: more than {DOWNLOAD_REDIRECTS} redirects")
+
+
+def download_restart(st):
+    """Throw away what a download has, and start its file and sum again."""
+    st["f"].seek(0)
+    st["f"].truncate()
+    st["h"] = hashlib.sha256()
+    st["n"] = 0
+    st["total"] = None
+    st["tag"] = None
+
+
+def download_body(r, st, floor, say, clock=time.monotonic):
+    """
+    Read response `r` into st's file and sum until it ends, crawls or stops:
+    ("end", ""), ("slow", why), ("stall", why) or ("cut", why). A line
+    from download_line() goes to `say` at most every DOWNLOAD_PROGRESS_EVERY
+    seconds. A `floor` of 0 keeps the connection however slow it is.
+
+    read1(), not read(): read(1 MB) waits for the whole megabyte, which at
+    the crawl measured on .166 is twenty seconds in which neither the floor
+    nor the progress line could be looked at.
+    """
+    import collections
+    import http.client
+    read = r.read1
+    start = last = clock()
+    said = st["n"]
+    seen = collections.deque([(start, st["n"])])
+    while True:
+        try:
+            chunk = read(1 << 16)
+        except (TimeoutError, socket.timeout):
+            return "stall", f"nothing arrived for {st['stall']} s"
+        except (OSError, http.client.HTTPException) as e:
+            return "cut", f"the connection failed: {e or type(e).__name__}"
+        if not chunk:
+            if st["total"] and st["n"] < st["total"]:
+                return "cut", (f"the connection ended at "
+                               f"{st['n'] / 1e6:.1f} of "
+                               f"{st['total'] / 1e6:.1f} MB")
+            return "end", ""
+        st["f"].write(chunk)
+        st["h"].update(chunk)
+        st["n"] += len(chunk)
+        now = clock()
+        seen.append((now, st["n"]))
+        while len(seen) > 2 and seen[1][0] <= now - DOWNLOAD_WINDOW:
+            seen.popleft()
+        if now - last >= DOWNLOAD_PROGRESS_EVERY:
+            say(download_line(st["n"], st["total"],
+                              (st["n"] - said) / (now - last)))
+            last, said = now, st["n"]
+        if not floor or now - start < DOWNLOAD_WINDOW:
+            continue
+        bps = (st["n"] - seen[0][1]) / max(now - seen[0][0], 1e-6)
+        left = (st["total"] or 0) - st["n"]
+        if bps < floor and not (st["total"] and left <= bps * DOWNLOAD_WINDOW):
+            return "slow", (f"{rate_text(bps)} for {DOWNLOAD_WINDOW} s, "
+                            f"under the floor of {rate_text(floor)}")
+
+
+def download_attempt(url, st, floor, say):
+    """
+    One connection of download_to(): ("end", ""), ("refused", why) for an
+    answer no new connection would change, or one of download_body()'s
+    reasons to open another.
+
+    A server that answers a resume with the whole file (200, not 206) has
+    ignored the Range - or If-Range found the file replaced - and the bytes
+    kept are thrown away and the download starts again from 0, said.
+    """
+    import http.client
+    try:
+        conn, r = download_open(url, st)
+    except ValueError as e:
+        return "refused", f"{e}"
+    except (OSError, http.client.HTTPException) as e:
+        return "cut", f"the connection failed: {e or type(e).__name__}"
+    try:
+        if r.status == 416 and st["n"]:
+            download_restart(st)
+            return "cut", "the server refused the resume (HTTP 416)"
+        if r.status >= 500 or r.status in (408, 429):
+            return "cut", f"the server answered HTTP {r.status}"
+        if r.status >= 300:
+            return "refused", f"{url}: HTTP {r.status}"
+        total = r.getheader("Content-Length")
+        if r.status == 206:
+            m = re.match(r"bytes (\d+)-\d+/(\d+)",
+                         r.getheader("Content-Range") or "")
+            if not m or int(m.group(1)) != st["n"]:
+                download_restart(st)
+                return "cut", ("the server resumed at another place: "
+                               f"{r.getheader('Content-Range')}")
+            total = m.group(2)
+        elif st["n"]:
+            say("  the server sent the whole file instead of the rest: "
+                "starting again from 0")
+            download_restart(st)
+        st["total"] = int(total) if is_number(total) else None
+        tag = r.getheader("ETag") or ""
+        st["tag"] = (tag if tag and not tag.startswith("W/")
+                     else r.getheader("Last-Modified"))
+        return download_body(r, st, floor, say)
+    finally:
+        conn.close()
+
+
+def download_to(url, path, timeout=None, say=None, resolve=None):
     """
     (sha256 hex, bytes, "") after writing `url` to `path`, or (None, 0, why).
     Never raises, like fetch_url().
@@ -1836,27 +2084,48 @@ def download_to(url, path, timeout=300):
     more: it carries the container images since 0.125.0 (#427), about 120 MB,
     and held whole in memory it was that plus a copy for the write - inside a
     VTY that exists to stay up while the box is short of everything.
+
+    Said and resumed (#602): `say` gets a progress line every few seconds and
+    a line for each connection dropped. A connection that brings nothing for
+    `timeout` seconds (DOWNLOAD_STALL), that stays under DOWNLOAD_FLOOR for
+    DOWNLOAD_WINDOW, or that ends early is dropped, and the rest is asked for
+    on a new one - the name resolved again and the dropped address tried
+    last - keeping every byte already written and summed, up to
+    DOWNLOAD_CONNECTIONS in all. The last one is kept however slow it is.
     """
-    import urllib.error
-    import urllib.request
-    h = hashlib.sha256()
-    n = 0
+    say = say or (lambda line: None)
+    st = {"n": 0, "h": hashlib.sha256(), "total": None, "tag": None,
+          "stall": timeout or DOWNLOAD_STALL, "resolve": resolve,
+          "used": [], "avoid": set()}
     try:
-        with urllib.request.urlopen(release_request(url),
-                                    timeout=timeout) as r, \
-                open(path, "wb") as f:
-            while True:
-                chunk = r.read(1 << 20)
-                if not chunk:
-                    break
-                h.update(chunk)
-                f.write(chunk)
-                n += len(chunk)
-        return h.hexdigest(), n, ""
-    except urllib.error.HTTPError as e:
-        return None, 0, f"{url}: HTTP {e.code}"
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        return None, 0, f"{url}: {getattr(e, 'reason', e)}"
+        st["f"] = open(path, "wb")
+    except OSError as e:
+        return None, 0, f"{path}: {e.strerror or e}"
+    with st["f"]:
+        for k in range(1, DOWNLOAD_CONNECTIONS + 1):
+            last = k == DOWNLOAD_CONNECTIONS
+            ended, why = download_attempt(url, st, 0 if last else
+                                          DOWNLOAD_FLOOR, say)
+            if ended == "end":
+                st["f"].flush()
+                return st["h"].hexdigest(), st["n"], ""
+            if ended == "refused":
+                return None, 0, why
+            if last:
+                break
+            for line in console_prose(why, "  "):
+                say(line)
+            nxt = k + 1
+            say(f"  resuming at {st['n'] / 1e6:.1f} MB on a new connection, "
+                f"{nxt} of {DOWNLOAD_CONNECTIONS}" if st["n"] else
+                f"  starting again on a new connection, {nxt} of "
+                f"{DOWNLOAD_CONNECTIONS}")
+            if nxt == DOWNLOAD_CONNECTIONS:
+                say("  the last one is kept however slow it is")
+            st["avoid"] = set(st["used"][-1:])
+            time.sleep(DOWNLOAD_PAUSE)
+    return None, 0, (f"{url}: {DOWNLOAD_CONNECTIONS} connections, and the "
+                     f"last: {why}")
 
 
 def latest_release(fetch=fetch_url, base=None):
@@ -16889,22 +17158,35 @@ class Shell:
         work = tempfile.mkdtemp(prefix=f"prisma-upgrade-{want}-",
                                 dir=UPGRADE_WORK)
         tar_path = os.path.join(work, name + ".tar.gz")
-        print(f"downloading {base}")
-        got, _size, why = download_to(base, tar_path)
-        if got is None:
-            shutil.rmtree(work, ignore_errors=True)
-            self.err_prose("system upgrade: the package could not be "
-                           "downloaded; nothing was changed", why)
-            return
-        if got != published.lower():
+        # Flushed, every line of it (#602): through the API this VTY's
+        # output is a file, and a file is written a block at a time - the
+        # progress of a download would reach the client after it ended.
+        print(f"downloading {base}", flush=True)
+        for attempt in (1, 2):
+            got, _size, why = download_to(base, tar_path, say=say_now)
+            if got is None:
+                shutil.rmtree(work, ignore_errors=True)
+                self.err_prose("system upgrade: the package could not be "
+                               "downloaded; nothing was changed", why)
+                return
+            if got == published.lower():
+                break
+            # Measured on .166 on 2026-10-09: one download of 0.152.9 did
+            # not match, and the next one did - the published file was the
+            # release's, byte for byte. So once more, whole, and said.
+            if attempt == 1:
+                say_now("  it does not match its published sha256:")
+                say_now("  downloading it again, once, from the start")
+        else:
             shutil.rmtree(work, ignore_errors=True)
             self.err_prose("system upgrade: it does not match its sha256",
-                           "nothing was changed",
+                           "downloaded twice, and twice not the published "
+                           "file; nothing was changed",
                            f"published {published or '(nothing)'}, "
                            f"downloaded {got}")
             return
-        print("the package matches its published sha256:")
-        print(f"    {got}")
+        say_now("the package matches its published sha256:")
+        say_now(f"    {got}")
         why = extract_within(tar_path, work)
         script = os.path.join(work, name, "upgrade")
         if why is None and not os.path.exists(script):
@@ -16921,7 +17203,7 @@ class Shell:
             said = []
             for row in p.stdout:
                 said.append(row.rstrip("\n"))
-                print(said[-1])
+                say_now(said[-1])
             rc = p.wait()
         except OSError as e:
             print(f"  {e}")

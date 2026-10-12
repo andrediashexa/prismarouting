@@ -79,6 +79,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`system upgrade` sat on one bad connection for half an hour, silently.**
+  ([#602](https://github.com/andrediashexa/hexarouting/issues/602))
+  Seen on 10.34.200.166 on 2026-10-11: the VTY's one connection to the
+  releases' front ran at ~50 KB/s for 16 minutes and had 117 of 189 MB,
+  printing nothing, while curl on the same box had the whole file in 21 s.
+  The download now prints its progress at most every 5 s (`downloaded 45.2
+  of 189.0 MB at 9.7 MB/s, about 15 s left`). A connection that brings
+  nothing for 30 s, stays under 125 KB/s (1 Mbit/s) over 30 s, or ends
+  before the size it announced is dropped, said, and the rest is asked for
+  with an HTTP Range on a new connection - the name resolved again and the
+  dropped address tried last, so a front with several addresses is reached
+  on another - keeping every byte already written and summed. Six
+  connections at most; the sixth is kept however slow it is, so a box whose
+  own link is under the floor still finishes. A server that answers a resume
+  with the whole file (it ignores Range, or `If-Range` found the file
+  replaced) is started again from 0, said; a 404 or 403 is refused at once.
+  A package that does not match its sha256 is downloaded once more, from the
+  start, saying so, and refused only when the second one does not match
+  either - the case seen on the same box two days before, where the retry
+  worked. Same place under /var/tmp, same cleanup: any refusal still changes
+  nothing. The VTY's output is flushed line by line, so the API, which
+  reads it off a file while the upgrade runs, gets each line as it is
+  printed rather than a block at a time; `SystemService.Upgrade` streams
+  each download row as a `DOWNLOAD`, the progress ones with
+  `downloaded_bytes`, `total_bytes`, `bytes_per_second` and `seconds_left`
+  (new, additive). test/test_upgrade_download.py runs it against a local
+  releases server on two addresses that throttles, stalls, cuts the body,
+  ignores Range, answers 500 and serves a corrupt byte; each behaviour was
+  watched going red against a mutation. docs/appliance.md has the defaults.
+
 ## 0.153.2 - BPA under real traffic, on a bench anybody can run
 
 ### Added
