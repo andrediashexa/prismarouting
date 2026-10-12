@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.3 - the upgrade's download says how far it is, and resumes
+
+### Fixed
+
 * **`system upgrade` sat on one bad connection for half an hour, silently.**
   ([#602](https://github.com/andrediashexa/hexarouting/issues/602))
   Seen on 10.34.200.166 on 2026-10-11: the VTY's one connection to the
