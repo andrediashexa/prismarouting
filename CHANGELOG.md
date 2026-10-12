@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.153.1 - IPv6 virtual routers, and a NAT64 pool that fails over
+
+### Added
+
 * **IPv6 virtual routers: a NAT64 pool in a VRRP pair fails over.**
   ([#485](https://github.com/andrediashexa/hexarouting/issues/485), item 3)
   An IPv6 address under `vrrp <vrid>` - the link-local first, as RFC 5798
