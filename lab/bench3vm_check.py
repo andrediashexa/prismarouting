@@ -439,6 +439,44 @@ def main():
               f" (even: {even(s['subscribers'], len(addrs))})")
     summary["spread"] = spreads
 
+    # THE SPREAD, ASSERTED (#603). Until 0.153.5 these were readings: the
+    # free blocks of a slice were a stack, the spread after churn was
+    # whatever the last leavers left, and this bench measured 1.67, 1.14,
+    # 2.2 and 2.0 after six rounds where 1.14 was possible. A dynamic
+    # `policy interleaved` pool now takes the free block on the public
+    # address with the fewest subscribers, and ref/bpa_model.py
+    # (DynamicSlices), replayed over this bench's churn 1000 times, holds the
+    # most even spread from round 6 on in 999 runs and is one subscriber off
+    # it in the last (test/test_dyn_spread.py). So: fresh, full, and every
+    # round from the sixth no more than one subscriber per address off the
+    # most even spread there is - TOLERANCE is that one subscriber at this
+    # bench's size (9/7 against 8/7). Rounds 1 to 5 are printed and not
+    # asserted: half the holders leaving a FULL pool at random can empty one
+    # address to five while another keeps ten, and thirty arrivals cannot
+    # fill that in one round whatever the rule.
+    TOLERANCE = 0.15
+    if mode == "on":
+        late = sorted((int(n[len("churn"):]), n) for n in spreads
+                      if re.fullmatch(r"churn\d+", n)
+                      and int(n[len("churn"):]) >= 6)
+        named = [("fresh", spreads.get("fresh")),
+                 ("full", spreads.get("full"))] + [(n, spreads[n])
+                                                   for _, n in late]
+        check(late != [],
+              "the churn ran to at least round 6, where the spread is "
+              "asserted (BENCH_ROUNDS)")
+        for name, s in named:
+            if s is None:
+                check(False, f"a spread reading for '{name}'")
+                continue
+            ev = even(s["subscribers"], len(addrs))
+            got = s["max_over_min"]
+            check(got is not None and ev is not None
+                  and got <= ev + TOLERANCE,
+                  f"{name}: {s['subscribers']} subscribers over "
+                  f"{len(addrs)} addresses at max/min {got}, the most even "
+                  f"being {ev} (least-loaded, #603; tolerance {TOLERANCE})")
+
     print()
     print("=========== throughput and the handoff (virtio, shared host) "
           "===========")

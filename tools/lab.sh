@@ -55,6 +55,7 @@ if ! docker ps >/dev/null 2>&1; then
                      BENCH_REINSTALL='${BENCH_REINSTALL:-}' \
                      BENCH_ROUNDS='${BENCH_ROUNDS:-}' \
                      BENCH_SECONDS='${BENCH_SECONDS:-}' \
+                     BENCH_UPGRADE='${BENCH_UPGRADE:-}' \
                      '$0' '$LAB' $LAB_ARGV"
 fi
 
@@ -120,6 +121,7 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BENCH_REINSTALL="${BENCH_REINSTALL:-}" \
   -e BENCH_ROUNDS="${BENCH_ROUNDS:-}" \
   -e BENCH_SECONDS="${BENCH_SECONDS:-}" \
+  -e BENCH_UPGRADE="${BENCH_UPGRADE:-}" \
   $LAB_CACHE \
   -e PRISMA_VERSION_STAMP="$PRISMA_VERSION_STAMP" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \

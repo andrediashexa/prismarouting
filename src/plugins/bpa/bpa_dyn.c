@@ -9,6 +9,7 @@
 static void bpa_dyn_unfree (bpa_dyn_t *d, u32 local);
 static void bpa_dyn_push (bpa_dyn_t *d, u32 local);
 static u32 bpa_dyn_pop (bpa_dyn_t *d);
+static void bpa_dyn_index_build (bpa_dyn_t *d);
 
 /*
  * Block `blk` of public address `pub_idx`, taken for the caller when it is
@@ -51,6 +52,8 @@ bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers,
 
   clib_memset (d, 0, sizeof (*d));
   d->reserve = reserve ? 1 : 0;
+  d->worker = worker;
+  d->n_workers = n_workers;
 
   /* indices in [0, total) whose value is congruent to worker */
   n = total / n_workers;
@@ -105,6 +108,21 @@ bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers,
     }
   vec_set_len (d->free_list, n);
 
+  /*
+   * The least-loaded index, for the one kind of slice that has a choice to
+   * make (#603). Not a reserve: a deterministic pool's reserve is a handful of
+   * blocks an address, handed out as extensions on the subscriber's own
+   * address where it can be, and its spread is the formula's.
+   */
+  if (!reserve && p->dyn_share && p->policy == BPA_POLICY_INTERLEAVED
+      && p->dyn_share->n_addr == p->outside.count
+      && p->dyn_share->n_workers == n_workers)
+    {
+      d->share = p->dyn_share;
+      d->n_addr = p->outside.count;
+      bpa_dyn_index_build (d);
+    }
+
   d->by_sub = hash_create (0, sizeof (uword));
   d->active = 1;
   return 0;
@@ -124,6 +142,12 @@ bpa_dyn_free (bpa_dyn_t *d)
      the call looks right. */
   vec_free (d->foreign);
   vec_free (d->foreign_idle);
+  vec_free (d->addr_next);
+  vec_free (d->addr_prev);
+  vec_free (d->addr_head);
+  vec_free (d->addr_tail);
+  vec_free (d->addr_free);
+  vec_free (d->tree);
   hash_free (d->by_sub);
   clib_memset (d, 0, sizeof (*d));
 }
@@ -150,10 +174,11 @@ bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
       return -1;
     }
 
-  local = bpa_dyn_pop (d);
+  local = bpa_dyn_take (d);
   d->owner[local] = sub_idx;
   d->idle_since[local] = 0;
   hash_set (d->by_sub, sub_idx, (uword) local + 1);
+  bpa_dyn_count (d, local, 1);
   d->n_alloc++;
   d->n_allocations++;
   *is_new = 1;
@@ -358,6 +383,22 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 	}
 
       /*
+       * Under the least-loaded choice the slice keeps its free blocks BY
+       * ADDRESS (#603), so the question the second walk below estimates is
+       * one read: the oldest free block on the subscriber's own address, or
+       * none. The walk is not just slower here, it is wrong: it jumps to
+       * where the stack is about to hand blocks out, and a slice that takes
+       * blocks by address no longer fills from the bottom - measured at 96%
+       * of extensions paired on the parallel pattern over eight addresses
+       * with the walk, against 99% before #603 and 100% with this.
+       */
+      if (local == BPA_NO_BLOCK && d->share && d->addr_free[pub_idx] != 0)
+	{
+	  local = d->addr_head[pub_idx];
+	  bpa_dyn_unfree (d, local);
+	}
+
+      /*
        * The second walk, from the stack rather than from the subscriber.
        *
        * `top` is the block the next bpa_dyn_pop() would hand out. The first
@@ -396,8 +437,11 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 	d->n_paired_placed++;
     }
 
+  /* Unpaired, it goes where an arrival would: an extension is not a second
+     subscriber on its address and is not counted as one, but of the
+     addresses it could land on, the least shared is still the better. */
   if (local == BPA_NO_BLOCK)
-    local = bpa_dyn_pop (d);
+    local = bpa_dyn_take (d);
   d->owner[local] = sub_idx;
   d->idle_since[local] = 0;
   /* by_sub is deliberately NOT touched: it names the subscriber's first
@@ -418,6 +462,355 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
   if (PREDICT_FALSE (bpa_dyn_addr (d, p, block_idx, b)))
     return -1;
   return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* the least-loaded choice (#603)                                      */
+
+/*
+ * The public address a slot's block is on. Through bpa_dyn_block_at()
+ * because a borrowed slot's block is the lender's (#210), and under
+ * `policy interleaved` the address is the block index modulo the address
+ * count - bpa_split()'s remainder, without the pool.
+ */
+static_always_inline u32
+bpa_dyn_slot_addr (const bpa_dyn_t *d, u32 local)
+{
+  return bpa_dyn_block_at (d, local, d->worker, d->n_workers) % d->n_addr;
+}
+
+/*
+ * One entry of the tournament: the load in the high word and the address in
+ * the low, so the smaller of two entries IS the rule - fewer subscribers,
+ * then the lower address - with no second array to look the key up in. An
+ * address with no free block in this slice has load ~0 and loses to every
+ * address that has one.
+ *
+ * The first version kept the keys apart and the addresses in the tree, and
+ * paid for it: every match was two reads of a key array as large as the
+ * public set, and no replay could stop early, because a node whose winner
+ * had not changed might still be carrying a key that had. Measured on the
+ * bench below at 774 ns an allocation on a /16; this is the replacement.
+ */
+static_always_inline u64
+bpa_dyn_entry (u32 load, u32 a)
+{
+  return ((u64) load << 32) | a;
+}
+
+/*
+ * Replays the matches above one address after its entry moved, and stops at
+ * the first node that comes out the same: from there up nothing has changed.
+ * At most log2(n_leaves) matches.
+ */
+static void
+bpa_dyn_tree_fix (bpa_dyn_t *d, u32 a)
+{
+  u32 i = (d->n_leaves + a) >> 1;
+
+  while (i)
+    {
+      u64 l = d->tree[2 * i], r = d->tree[2 * i + 1], m = r < l ? r : l;
+
+      if (d->tree[i] == m)
+	break;
+      d->tree[i] = m;
+      i >>= 1;
+    }
+}
+
+/*
+ * An address's pool-wide load: the sum of every worker's row. Each row is
+ * written by one slice only - from its worker's thread, or from the main
+ * thread under the barrier while that worker is stopped - so no element has
+ * two writers, and a read that races a write sees the old count or the new
+ * one, both of which are a count that was true.
+ */
+static_always_inline u32
+bpa_dyn_load_of (const bpa_dyn_share_t *sh, u32 a)
+{
+  const u32 *row = sh->load + (uword) a * sh->n_workers;
+  u32 v, sum = 0;
+
+  for (v = 0; v < sh->n_workers; v++)
+    sum += __atomic_load_n (&row[v], __ATOMIC_RELAXED);
+  return sum;
+}
+
+/* Re-reads one address's pool-wide load into this slice's tree. */
+static void
+bpa_dyn_addr_refresh (bpa_dyn_t *d, u32 a)
+{
+  u64 e = bpa_dyn_entry (
+    d->addr_free[a] ? bpa_dyn_load_of (d->share, a) : ~0u, a);
+
+  if (e == d->tree[d->n_leaves + a])
+    return;
+  d->tree[d->n_leaves + a] = e;
+  bpa_dyn_tree_fix (d, a);
+}
+
+/* A free slot joins its address's list, at the TAIL: oldest-freed first. */
+static void
+bpa_dyn_addr_link (bpa_dyn_t *d, u32 local)
+{
+  u32 a = bpa_dyn_slot_addr (d, local), t = d->addr_tail[a];
+
+  d->addr_next[local] = BPA_NO_BLOCK;
+  d->addr_prev[local] = t;
+  if (t != BPA_NO_BLOCK)
+    d->addr_next[t] = local;
+  else
+    d->addr_head[a] = local;
+  d->addr_tail[a] = local;
+  if (d->addr_free[a]++ == 0)
+    bpa_dyn_addr_refresh (d, a);
+}
+
+/* And leaves it, from anywhere in the list: a pin, a pair, a stride or a
+ * loan names its block, and that block is rarely the head. */
+static void
+bpa_dyn_addr_unlink (bpa_dyn_t *d, u32 local)
+{
+  u32 a = bpa_dyn_slot_addr (d, local);
+  u32 p = d->addr_prev[local], n = d->addr_next[local];
+
+  if (p != BPA_NO_BLOCK)
+    d->addr_next[p] = n;
+  else
+    d->addr_head[a] = n;
+  if (n != BPA_NO_BLOCK)
+    d->addr_prev[n] = p;
+  else
+    d->addr_tail[a] = p;
+  d->addr_next[local] = d->addr_prev[local] = BPA_NO_BLOCK;
+  if (--d->addr_free[a] == 0)
+    bpa_dyn_addr_refresh (d, a);
+}
+
+/*
+ * The index over a fresh slice. Its blocks are linked in ascending order, so
+ * on a pool nobody has churned the choice is the stack's: with one worker the
+ * slice hands out blocks 0, 1, 2 ... exactly as bpa_dyn_pop() did, because
+ * the lowest address with the fewest subscribers is the next block's.
+ */
+static void
+bpa_dyn_index_build (bpa_dyn_t *d)
+{
+  u32 i;
+
+  d->n_leaves = 1;
+  while (d->n_leaves < d->n_addr)
+    d->n_leaves <<= 1;
+  if (d->n_local)
+    {
+      vec_validate (d->addr_next, d->n_local - 1);
+      vec_validate (d->addr_prev, d->n_local - 1);
+    }
+  vec_validate (d->addr_head, d->n_addr - 1);
+  vec_validate (d->addr_tail, d->n_addr - 1);
+  vec_validate (d->addr_free, d->n_addr - 1);
+  vec_validate (d->tree, 2 * d->n_leaves - 1);
+  for (i = 0; i < d->n_addr; i++)
+    {
+      d->addr_head[i] = d->addr_tail[i] = BPA_NO_BLOCK;
+      d->addr_free[i] = 0;
+    }
+  for (i = 0; i < d->n_leaves; i++)
+    d->tree[d->n_leaves + i] = bpa_dyn_entry (~0u, i);
+  for (i = d->n_leaves - 1; i >= 1; i--)
+    d->tree[i] = d->tree[2 * i];
+  for (i = 0; i < d->n_local; i++)
+    bpa_dyn_addr_link (d, i);
+}
+
+/*
+ * Reads back every address whose load another slice LOWERED since this one
+ * last chose. The summary word first, then the word, each taken with an
+ * exchange, so a bit set while this runs is either seen now or left for the
+ * next drain - never cleared unseen. A plain read of the summary before the
+ * exchange, so an allocation after which nobody released anything - the
+ * ordinary case on a worker - pays no locked instruction here at all.
+ */
+static void
+bpa_dyn_drain (bpa_dyn_t *d)
+{
+  u64 *st = d->share->stale[d->worker], *sum = d->share->stale_sum[d->worker];
+  u32 s, n_sum = vec_len (sum);
+
+  for (s = 0; s < n_sum; s++)
+    {
+      u64 x;
+
+      if (!__atomic_load_n (&sum[s], __ATOMIC_RELAXED))
+	continue;
+      x = __atomic_exchange_n (&sum[s], 0, __ATOMIC_SEQ_CST);
+      while (x)
+	{
+	  u32 wi = s * 64 + __builtin_ctzll (x);
+	  u64 y = __atomic_exchange_n (&st[wi], 0, __ATOMIC_SEQ_CST);
+
+	  x &= x - 1;
+	  while (y)
+	    {
+	      u32 a = wi * 64 + __builtin_ctzll (y);
+
+	      y &= y - 1;
+	      if (a < d->n_addr)
+		bpa_dyn_addr_refresh (d, a);
+	    }
+	}
+    }
+}
+
+/*
+ * The address the rule picks right now: the least loaded pool-wide among
+ * those this slice has a free block on, the lowest on a tie.
+ */
+static u32
+bpa_dyn_choose (bpa_dyn_t *d)
+{
+  u32 a, tries;
+  u64 cur;
+
+  /*
+   * EXACT, in two halves. A load another slice LOWERED arrives as a bit, and
+   * the drain reads it back. A load another worker RAISED - an arrival on
+   * its own slice, which is the one change made on a worker thread and
+   * outside the barrier - sends nothing: this slice's entry for it is merely
+   * too low, which can only make that address win when it should not. So
+   * the winner is re-read, and when it was too low it is corrected and the
+   * match replayed, until the winner reads true. Every entry is then at or
+   * below the truth and the winner AT it, so it is the least-loaded address.
+   *
+   * Bounded by the address count, because each pass corrects one address
+   * and a corrected address stays correct for as long as nothing moves it;
+   * paid for, over time, by the arrivals on other workers that made those
+   * entries low - one correction each at most, rather than a message each
+   * whether or not this slice ever looks. That is the trade against
+   * telling every worker about every arrival, which would put a locked
+   * instruction per worker on every allocation: measured, before this, at
+   * 128 ns an allocation on the bench's pool.
+   */
+  bpa_dyn_drain (d);
+  for (tries = 0; tries <= d->n_addr; tries++)
+    {
+      a = (u32) d->tree[1];
+      cur = d->tree[d->n_leaves + a];
+      bpa_dyn_addr_refresh (d, a);
+      if (cur == d->tree[d->n_leaves + a])
+	break;
+    }
+  return (u32) d->tree[1];
+}
+
+u32
+bpa_dyn_take (bpa_dyn_t *d)
+{
+  u32 a, local;
+
+  if (!d->share)
+    return bpa_dyn_pop (d);
+  a = bpa_dyn_choose (d);
+  /* Unreachable while free_list and the index agree, which test_bpa_dyn.c
+     asserts after every scenario; the stack is the answer if they did not. */
+  if (PREDICT_FALSE (a >= d->n_addr || d->addr_free[a] == 0))
+    return bpa_dyn_pop (d);
+  local = d->addr_head[a];
+  bpa_dyn_unfree (d, local);
+  return local;
+}
+
+void
+bpa_dyn_count (bpa_dyn_t *d, u32 local, int delta)
+{
+  bpa_dyn_share_t *sh = d->share;
+  u32 a, v, word, *cell;
+  u64 bit, sbit;
+
+  if (!sh)
+    return;
+  a = bpa_dyn_slot_addr (d, local);
+  /* This worker's own row: no other slice writes it, so no lock. */
+  cell = &sh->load[(uword) a * sh->n_workers + d->worker];
+  __atomic_store_n (cell, *cell + (delta > 0 ? 1 : -1), __ATOMIC_RELAXED);
+  bpa_dyn_addr_refresh (d, a);
+  if (delta > 0)
+    return;
+
+  /*
+   * A LOWERED load is the one the others must be told about: an entry left
+   * too high would keep an address out of the running, and the rule would
+   * stop being the rule without anything saying so. Every other worker, not
+   * only the ones whose own blocks are on this address, because a borrowed
+   * block can put any address in any slice (#210).
+   *
+   * Every caller that lowers a load - the reap, a pin that moves a primary,
+   * an unpin, the free - runs on the main thread under the barrier, so these
+   * ORs meet no worker; they are atomic anyway, so that the day one of them
+   * moves to a worker the bits are still never lost. Read before the OR, so
+   * a bit still waiting to be drained costs nothing.
+   */
+  word = a >> 6;
+  bit = 1ULL << (a & 63);
+  sbit = 1ULL << (word & 63);
+  for (v = 0; v < sh->n_workers; v++)
+    {
+      if (v == d->worker)
+	continue;
+      if (!(__atomic_load_n (&sh->stale[v][word], __ATOMIC_SEQ_CST) & bit))
+	__atomic_fetch_or (&sh->stale[v][word], bit, __ATOMIC_SEQ_CST);
+      if (!(__atomic_load_n (&sh->stale_sum[v][word >> 6], __ATOMIC_SEQ_CST)
+	    & sbit))
+	__atomic_fetch_or (&sh->stale_sum[v][word >> 6], sbit,
+			   __ATOMIC_SEQ_CST);
+    }
+}
+
+void
+bpa_dyn_share_init (bpa_pool_t *p, u32 n_workers)
+{
+  bpa_dyn_share_t *sh = 0;
+  u32 w, n_words, n_sum;
+
+  if (p->dyn_share || p->mode != BPA_MODE_DYNAMIC
+      || p->policy != BPA_POLICY_INTERLEAVED || p->outside.count == 0
+      || n_workers == 0)
+    return;
+  n_words = (p->outside.count + 63) / 64;
+  n_sum = (n_words + 63) / 64;
+  vec_validate (sh, 0);
+  sh->n_addr = p->outside.count;
+  sh->n_workers = n_workers;
+  vec_validate (sh->load, (uword) sh->n_addr * n_workers - 1);
+  vec_validate (sh->stale, n_workers - 1);
+  vec_validate (sh->stale_sum, n_workers - 1);
+  for (w = 0; w < n_workers; w++)
+    {
+      vec_validate (sh->stale[w], n_words - 1);
+      vec_validate (sh->stale_sum[w], n_sum - 1);
+    }
+  p->dyn_share = sh;
+}
+
+void
+bpa_dyn_share_free (bpa_pool_t *p)
+{
+  bpa_dyn_share_t *sh = p->dyn_share;
+  u32 w;
+
+  if (!sh)
+    return;
+  for (w = 0; w < sh->n_workers; w++)
+    {
+      vec_free (sh->stale[w]);
+      vec_free (sh->stale_sum[w]);
+    }
+  vec_free (sh->stale);
+  vec_free (sh->stale_sum);
+  vec_free (sh->load);
+  vec_free (sh);
+  p->dyn_share = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -446,6 +839,8 @@ bpa_dyn_push (bpa_dyn_t *d, u32 local)
 {
   d->free_pos[local] = vec_len (d->free_list);
   vec_add1 (d->free_list, local);
+  if (d->share)
+    bpa_dyn_addr_link (d, local);
 }
 
 static u32
@@ -454,6 +849,8 @@ bpa_dyn_pop (bpa_dyn_t *d)
   u32 local = vec_pop (d->free_list);
 
   d->free_pos[local] = BPA_NO_BLOCK;
+  if (d->share)
+    bpa_dyn_addr_unlink (d, local);
   return local;
 }
 
@@ -474,6 +871,8 @@ bpa_dyn_unfree (bpa_dyn_t *d, u32 local)
   if (i < last)
     d->free_pos[d->free_list[last]] = i;
   vec_del1 (d->free_list, i);
+  if (d->share)
+    bpa_dyn_addr_unlink (d, local);
 }
 
 u32
@@ -558,6 +957,14 @@ bpa_dyn_borrow (bpa_dyn_t *d, u32 block_idx)
       vec_add1 (d->idle_since, 0);
       vec_add1 (d->pinned, 0);
       vec_add1 (d->free_pos, BPA_NO_BLOCK);
+      /* And the least-loaded index's links, when there is one: a borrowed
+	 block is filed under ITS public address, which is the lender's
+	 arithmetic and any address at all as far as this slice knows. */
+      if (d->share)
+	{
+	  vec_add1 (d->addr_next, BPA_NO_BLOCK);
+	  vec_add1 (d->addr_prev, BPA_NO_BLOCK);
+	}
     }
   else
     d->foreign[slot] = block_idx;
@@ -681,6 +1088,16 @@ bpa_dyn_pin (bpa_dyn_t *d, u32 block_idx, u32 sub_idx, u32 n_workers, f64 now,
    * sessions and leaves by the hold-down like any other extension.
    */
   q = hash_get (d->by_sub, sub_idx);
+  /* The subscriber is counted where its PRIMARY is, and the pin moves that:
+     off the old block's address and onto this one's, or onto this one's
+     alone when it held nothing (#603). */
+  if (!q)
+    bpa_dyn_count (d, local, 1);
+  else if ((u32) (q[0] - 1) != local)
+    {
+      bpa_dyn_count (d, (u32) (q[0] - 1), -1);
+      bpa_dyn_count (d, local, 1);
+    }
   if (q && (u32) (q[0] - 1) != local)
     {
       bpa_dyn_extra_t *e;
@@ -742,7 +1159,10 @@ bpa_dyn_unpin (bpa_dyn_t *d, u32 block_idx, u32 n_workers, int *released)
    */
   if (hash_get (d->by_sub, d->owner[local])
       && hash_get (d->by_sub, d->owner[local])[0] == (uword) local + 1)
-    hash_unset (d->by_sub, d->owner[local]);
+    {
+      hash_unset (d->by_sub, d->owner[local]);
+      bpa_dyn_count (d, local, -1);
+    }
   else
     {
       u32 k;
@@ -834,7 +1254,10 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
        * extras instead, and removing the wrong one would strand the other. */
       if (hash_get (d->by_sub, d->owner[i])
 	  && hash_get (d->by_sub, d->owner[i])[0] == (uword) i + 1)
-	hash_unset (d->by_sub, d->owner[i]);
+	{
+	  hash_unset (d->by_sub, d->owner[i]);
+	  bpa_dyn_count (d, i, -1);
+	}
       else
 	{
 	  u32 k;

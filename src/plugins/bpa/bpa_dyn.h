@@ -88,6 +88,47 @@
  */
 #define BPA_PAIR_WALK 32
 
+/*
+ * WHAT THE WORKERS OF ONE INTERLEAVED DYNAMIC POOL SHARE (#603): how many
+ * subscribers each public address has, pool-wide, and which addresses each
+ * worker has not yet heard went DOWN.
+ *
+ * The rule it serves: under `policy interleaved` an arriving subscriber takes
+ * a free block of its worker's slice on the public address with the FEWEST
+ * subscribers in the whole pool, the lowest address on a tie. Before it, the
+ * slice's free blocks were a stack and an arrival took the block the last
+ * leaver gave back - measured on the three-VM bench (#475) at a max/min of
+ * 1.67, 1.14, 2.2 and 2.0 subscribers per address after six rounds of churn,
+ * where 1.14 was possible. ref/bpa_model.py (DynamicSlices) is the rule.
+ *
+ * POOL-WIDE, NOT PER WORKER, and that was measured rather than assumed: three
+ * workers each keeping their OWN share even still stack their surpluses on
+ * the same addresses - 1.44 after six rounds on the bench's shape in the
+ * model, against 1.14. And EXACT, not a snapshot: a per-worker copy of the
+ * pool's loads refreshed once a tick gave 1.16 on average and 1.5 at worst,
+ * because a burst of arrivals on three workers all reads the same stale
+ * minimum and all three put their subscriber there.
+ *
+ * `load` is a row per address with a cell per worker, and a slice writes
+ * only its own cell: the pool-wide count is the sum of the row, and no cell
+ * has two writers, so an allocation takes no lock. `stale` is how a worker
+ * learns that another slice LOWERED an address - which happens only in the
+ * reap, a pin and an unpin, all on the main thread under the barrier - one
+ * bit an address, set for every other worker and read back before it next
+ * chooses. A RAISED load needs no message; bpa_dyn_take() says why. Bits and
+ * not a queue, so a burst of releases on one address is one bit and the
+ * memory is fixed: A/8 bytes a worker, plus A/512 for the summary that keeps
+ * the drain from walking every word.
+ */
+typedef struct bpa_dyn_share
+{
+  u32 *load;	   /* [address * n_workers + worker] -> subscribers there */
+  u64 **stale;	   /* worker -> bitmap of addresses another slice lowered */
+  u64 **stale_sum; /* worker -> bitmap of the words of stale[w] with a bit */
+  u32 n_addr;
+  u32 n_workers;
+} bpa_dyn_share_t;
+
 /* A subscriber's extension block: which local block, and whose it is. */
 typedef struct
 {
@@ -299,7 +340,75 @@ typedef struct
    * with a flag rather than a second copy that has to be kept in step.
    */
   u8 reserve;
+
+  /*
+   * THE LEAST-LOADED CHOICE (#603), present only when `share` is: a dynamic
+   * pool under `policy interleaved`. Every other slice leaves all of these
+   * empty and allocates off the top of free_list as it always has.
+   *
+   * free_list stays the slice's set of free blocks - its length is the free
+   * count everything else reads, lending takes from its top, and the paired
+   * walk jumps from it - and these are an INDEX over it by public address:
+   *
+   *   addr_next/prev   per slot, the doubly linked free list of the slot's
+   *                    own public address, so a named block (a pin, a pair,
+   *                    a stride, a loan) leaves it in constant time
+   *   addr_head/tail   per address, oldest-freed first: a block goes back at
+   *                    the tail, so the one handed out is the one that has
+   *                    been free longest rather than the one somebody left a
+   *                    moment ago
+   *   addr_free        per address, how many free blocks this slice has there
+   *   tree             a tournament over the addresses whose entries are
+   *                    (pool-wide load as this slice last read it, address)
+   *                    in one u64, so the smaller entry is the rule; no free
+   *                    block here reads as load ~0. tree[1] names the address
+   *                    to allocate from; a change to one address replays at
+   *                    most log2(n_leaves) matches
+   *
+   * Twelve bytes a public address for the three per-address arrays, sixteen
+   * for the tree (two u64 per leaf, rounded up to a power of two), and eight
+   * a slot for the links: on the bench's /29 with 40 blocks a slice, 544
+   * bytes; on a /16 with 4096-port blocks at three workers, 1.8 MB plus
+   * 2.6 MB of links, per worker per pool. The measured cost on the
+   * allocation and release paths is in docs/architecture.md ("How it is
+   * kept, and what it costs").
+   */
+  bpa_dyn_share_t *share;
+  u32 worker, n_workers, n_addr, n_leaves;
+  u32 *addr_next, *addr_prev;
+  u32 *addr_head, *addr_tail, *addr_free;
+  u64 *tree;
 } bpa_dyn_t;
+
+/*
+ * Sets p->dyn_share for a dynamic pool under `policy interleaved` and leaves
+ * every other pool alone. Called once, before the first bpa_dyn_init() of the
+ * pool: a slice reads the pointer when it is made, and a slice made before it
+ * allocates off the stack for its whole life.
+ *
+ * bpa_dyn_share_free() after the last slice is freed, because a slice being
+ * freed is still a slice whose releases tell the others.
+ */
+void bpa_dyn_share_init (bpa_pool_t *p, u32 n_workers);
+void bpa_dyn_share_free (bpa_pool_t *p);
+
+/*
+ * The free block an arrival takes: the least-loaded address's oldest when the
+ * slice has a share, the top of the stack when it does not. The caller has
+ * checked that the slice is not empty.
+ */
+u32 bpa_dyn_take (bpa_dyn_t *d);
+
+/*
+ * The slot `local` gained (+1) or lost (-1) a subscriber's PRIMARY block:
+ * moves this worker's cell of its public address's load, and on a loss tells
+ * the other workers. A no-op on a slice with no share.
+ */
+void bpa_dyn_count (bpa_dyn_t *d, u32 local, int delta);
+
+/* Defined so test/bench_bpa_dyn.c can be built against this allocator and
+ * against the stack it replaced, and time both with one file. */
+#define BPA_DYN_TAKE 1
 
 /*
  * `reserve` chooses which index space this slice covers: the pool's reserve

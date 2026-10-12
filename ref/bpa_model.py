@@ -633,6 +633,121 @@ def bitmap_walk(sessions: int, block_size: int, max_blocks: int,
     }
 
 
+# ---------------- dynamic mode: which free block an arrival takes (#603) ------
+#
+# Deterministic mode needs no model of a choice: the formula IS the block. A
+# dynamic pool hands an arriving subscriber whichever free block its worker's
+# slice gives it, and that choice decides how many subscribers share each
+# public address - the thing `policy interleaved` exists to keep even
+# (reputation, blocklists and per-address rate limits upstream).
+#
+# Until #603 the slice's free blocks were a STACK: an arrival took the block
+# the last leaver gave back, on whatever address that was. The pool starts
+# even and drifts with churn - measured on the three-VM bench (#475) at a
+# max/min of 1.67-2.2 after six rounds where 1.14 was possible. The rule now,
+# for `policy interleaved` and nothing else:
+#
+#   an arriving subscriber takes a free block of its worker's slice on the
+#   public address with the FEWEST subscribers in the whole pool, the lowest
+#   address on a tie; on that address, the block that has been free longest
+#   (the slice's own blocks in ascending order to begin with)
+#
+# "Subscribers" is primaries: an extension is a subscriber's second block and
+# goes where paired pooling puts it, on the address it already has, so it is
+# not a second subscriber on that address. The whole pool and not the
+# worker's own share, because three workers each keeping their own share even
+# can still stack their surpluses on the same address: measured in this model
+# on the bench's shape at 1.44 after six rounds against 1.14.
+#
+# `policy blocked` fills one address before the next by design and keeps the
+# stack, as does a deterministic pool's reserve.
+
+class DynamicSlices:
+    """The dynamic allocator's choice of block, per worker, as bpa_dyn.c makes
+    it. `rule` is "least-loaded" (the plugin since #603, interleaved pools) or
+    "stack" (the plugin before it, and every blocked pool still)."""
+
+    def __init__(self, pool: PoolConfig, n_workers: int, rule: str = None):
+        if rule is None:
+            rule = ("least-loaded" if pool.policy is MapPolicy.INTERLEAVED
+                    else "stack")
+        if rule not in ("least-loaded", "stack"):
+            raise BpaError(f"no such allocation rule: {rule}")
+        if rule == "least-loaded" and pool.policy is not MapPolicy.INTERLEAVED:
+            raise BpaError("the least-loaded rule is interleaved's alone")
+        self.pool, self.nw, self.rule = pool, n_workers, rule
+        self.n_addr = pool.outside.count
+        self.held = {}                     # sub -> block index
+        self.load = [0] * self.n_addr      # subscribers per public address
+        self.stack, self.queues = [], []
+        for w in range(n_workers):
+            n = len(range(w, pool.capacity, n_workers))
+            # popped from the end, so the slice hands out ascending blocks
+            self.stack.append(list(range(n - 1, -1, -1)))
+            q = [[] for _ in range(self.n_addr)]
+            for local in range(n):
+                q[self.addr_of(local * n_workers + w)].append(local)
+            self.queues.append(q)
+
+    def addr_of(self, block: int) -> int:
+        return self.pool.split(block)[0]
+
+    def worker_of(self, sub: int) -> int:
+        return sub % self.nw
+
+    def arrive(self, sub: int):
+        """The block `sub` holds after its first packet, or None when its
+        worker's slice is exhausted."""
+        if sub in self.held:
+            return self.held[sub]
+        w = self.worker_of(sub)
+        if self.rule == "stack":
+            if not self.stack[w]:
+                return None
+            local = self.stack[w].pop()
+        else:
+            q = self.queues[w]
+            cands = [a for a in range(self.n_addr) if q[a]]
+            if not cands:
+                return None
+            a = min(cands, key=lambda x: (self.load[x], x))
+            local = q[a].pop(0)
+        block = local * self.nw + w
+        self.held[sub] = block
+        self.load[self.addr_of(block)] += 1
+        return block
+
+    def leave(self, subs):
+        """Releases the blocks of `subs` the way one reap pass does: each
+        worker walks its slice in ascending order, so that is the order the
+        blocks go back in - which is the order an address's free blocks are
+        handed out again."""
+        gone = sorted((self.held[s] // self.nw, self.held[s] % self.nw, s)
+                      for s in subs if s in self.held)
+        for w in range(self.nw):
+            for local, ww, s in gone:
+                if ww != w:
+                    continue
+                block = self.held.pop(s)
+                self.load[self.addr_of(block)] -= 1
+                if self.rule == "stack":
+                    self.stack[w].append(local)
+                else:
+                    self.queues[w][self.addr_of(block)].append(local)
+
+    def spread(self):
+        """max/min subscribers per public address, None when one has none."""
+        lo, hi = min(self.load), max(self.load)
+        return hi / lo if lo else None
+
+
+def even_spread(n: int, k: int):
+    """max/min of the most even spread of n subscribers over k addresses."""
+    lo = n // k
+    hi = lo + (1 if n % k else 0)
+    return hi / lo if lo else None
+
+
 # ---------------------------------------------------------------------------
 # NAT64 (#485, phase 1): the subscriber index over IPv6 prefixes, and RFC 6052.
 # Written from the specifications, not from src/plugins/bpa/bpa_nat64.h:

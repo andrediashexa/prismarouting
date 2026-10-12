@@ -36,6 +36,7 @@
 .build/test_bpa_l4
 .build/test_bpa_auto_mss
 .build/test_bpa_dyn
+python3 test/test_dyn_spread.py
 .build/test_bpa_pptp
 .build/test_bpa_log_tcp
 .build/test_bpa_audit

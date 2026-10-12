@@ -329,8 +329,8 @@ the holders leaving at random and 30 idle subscribers arriving:
 | after round 6 | 61 | 6 9 7 7 7 10 8 7 | 1.67 | 1.14 |
 | after round 12 | 61 | 7 7 5 7 10 9 7 9 | 2.00 | 1.14 |
 
-Round 6 measured 1.67, 1.14, 2.2 and 2.0 in four runs: the fresh spread is the
-formula's, and after churn it drifts. The reason is the free list: each
+Round 6 measured 1.67, 1.14, 2.2 and 2.0 in four runs (0.153.0, before #603):
+the fresh spread is the formula's, and after churn it drifts. The reason is the free list: each
 worker's free blocks are a **stack** (`vec_add1` on release, `vec_pop` on
 allocation in `bpa_dyn.c`), so an arrival takes the block the last leaver
 gave back, on whatever address that was, and nothing pulls the counts back
@@ -338,8 +338,89 @@ together. `lab/bench3vm_model.py` replays the same churn over a model of the
 slices and the stack: a mean max/min of **2.25** after 6 rounds and **2.19**
 after 12 (500 runs), against **1.14** if each worker took a free block from
 the address with the fewest holders. That is the number #475 asked for
-before proposing the change; the change's cost on the allocation path is not
-measured here.
+before proposing the change.
+
+**The least-loaded choice
+([#603](https://github.com/andrediashexa/hexarouting/issues/603)).** Since
+0.153.5 an arriving subscriber on a dynamic `policy interleaved` pool takes a
+free block of its worker's slice on the public address with the **fewest
+subscribers in the whole pool**, the lowest address on a tie, and on that
+address the block that has been free longest. `ref/bpa_model.py`
+(`DynamicSlices`) is the rule; `test/test_bpa_dyn.c` replays five churned
+pools generated from it (`ref/gen_dyn_vectors.py`, 5259 operations) and gets
+every block the model gives, under the new rule and under the stack it
+replaced; `test/test_dyn_spread.py` holds the rule to the bench's churn over
+300 seeds. `policy blocked` (which fills one address first by design) and a
+deterministic pool's reserve keep the stack.
+
+| Rule, bench's pool, 300 seeds of its churn | mean max/min after round 6 | runs from round 6 on above 1.14 |
+|---|---|---|
+| stack (before #603) | 1.60 | most; some reach 2 or more |
+| each worker evens out its **own** share | 1.44 | - |
+| a per-worker copy of the pool's loads, refreshed once a tick | 1.16 (1.5 at worst) | - |
+| **the pool's loads, exact** (what the box does) | **1.143** | **none** |
+
+The two middle rows are why the count is pool-wide and exact: three workers
+each keeping their own share even still stack their surpluses on the same
+addresses, and three workers reading the same stale minimum all put their
+next subscriber there.
+
+**How it is kept, and what it costs.** Each public address has one counter
+per worker, written only by that worker's slice, so the pool-wide count is a
+row sum and an allocation takes no lock. Each slice keeps its free blocks in
+a doubly linked list per address (a named block - a pin, a pair, a stride, a
+loan - leaves in constant time) and a tournament over the addresses whose
+entries are (load as last read, address) in one 64-bit word, so the root is
+the rule. A load another slice **lowers** (the reap, a pin, an unpin: all on
+the main thread under the barrier) is announced with one bit per address per
+worker, read back before the next choice; a load another worker **raises**
+needs no message, because an entry that is too low can only make an address
+win wrongly, and the winner is re-read and corrected until it reads true.
+Memory per worker per pool: 28 bytes a public address and 8 a block of the
+slice - 544 bytes on the bench's /29, about 4.4 MB on a /16 of 4096-port
+blocks at three workers - plus, per pool, 4 bytes per address per worker for
+the counts.
+
+What it costs, measured with `make bench-dyn BENCH_BEFORE=origin/master`
+(`test/bench_bpa_dyn.c`: three workers' slices held half full and churned in
+batches, the workers taking turns so every allocation pays for draining what
+the others released; the allocator's own work, without the subscriber hash;
+one thread, so no cross-core contention; Xeon E5-2680 v4, shared, median of
+200 batches):
+
+| Public addresses | Stack: allocate / release | Least-loaded: allocate / release |
+|---|---|---|
+| 8 (the bench's /29) | 3.8 ns / 4.9 ns | 93-135 ns / 61-83 ns |
+| 256 | 2.2 ns / 3.0 ns | 132-170 ns / 73-92 ns |
+| 1024 | 3.3 ns / 4.4 ns | 156 ns / 76 ns |
+| 4096 | 7.2 ns / 9.7 ns | 200-204 ns / 93 ns |
+| 65536 | 8.9 ns / 17.2 ns | 392-402 ns / 266-275 ns |
+
+So two orders of magnitude over the stack, and still **2.5 to 10 million
+allocations a second per worker**: an allocation is once per subscriber
+arrival after its hold-down, not per packet or per session, and each one is
+already a log record. Bounded: a choice replays at most log2 of the address
+count matches per address it re-reads, and re-reads only what other slices
+moved since it last chose. The ranges are two runs on the shared host. The
+first version - keys in a separate array, every other worker told about every
+arrival with a locked instruction - measured 140-774 ns an allocation; the
+table is after both were removed.
+
+**On the bench**, `BENCH_UPGRADE=<artifact>` installs the released medium and
+upgrades it to an artifact built from the tree, and `lab/bench3vm_check.py`
+now asserts the spread instead of printing it: fresh, full, and every churn
+round from the sixth within one subscriber per address of the most even
+spread possible. Measured on 2026-10-12, twelve rounds each, the released
+0.153.0 medium in both:
+
+| Run | after rounds 1-12 (max/min) | verdict |
+|---|---|---|
+| upgraded to this change (`BENCH_UPGRADE`) | 1.091, 1.111, 1.125, 1.0, then **1.143 at every round from 5 to 12** - each the most even possible | `LAB PASSED` |
+| as released (the stack) | 1.444, 1.375, 1.429, 1.5, 1.5, 1.5, 1.5, 1.5, 1.333, 1.143, 1.8, 1.667 | 6 rounds red |
+| `off`, upgraded (the pool deterministic) | - | the five BPA checks red, as before |
+
+The upgraded box's per-address counts after round 12 were 8 8 8 8 8 7 7 7;
+the released box's were 6 7 8 7 8 8 7 10.
 
 **Throughput, as a sanity number and not a NIC benchmark.** Virtio through
 vhost on a shared build machine; what limits it is the host's packet copying
@@ -1580,6 +1661,13 @@ Two reasons, and both are properties the rest of the box already guarantees:
   free stack, and under `policy interleaved` the next block index is the next
   public address, so a subscriber that filled its block normally ended up
   sending from two addresses at once, more often the larger the pool.
+
+  Since [#603](https://github.com/andrediashexa/hexarouting/issues/603) a
+  dynamic `policy interleaved` pool keeps each slice's free blocks **by public
+  address** (for the least-loaded choice below), so "a free block on the
+  subscriber's own address" is a list head rather than a bounded walk, and the
+  same grid reads **100%** in every cell. The walk is still what a `policy
+  blocked` pool uses.
 * **The reverse arithmetic**. `bpa_reverse()` recovers the subscriber from
   `(public address, port)` without a lookup, and that is what makes the return
   path shard cleanly and the deterministic mode auditable. A forward on some

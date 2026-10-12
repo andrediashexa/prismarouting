@@ -616,6 +616,19 @@ typedef struct
    */
   u8 deleted;
 
+  /*
+   * What every worker's slice of a dynamic `policy interleaved` pool shares:
+   * how many subscribers each public address has, pool-wide (#603). 0 on
+   * every other pool, and on a configuration bpa_pool_add() has not made a
+   * pool yet: the CLI and the API build theirs zeroed, so a copy taken from
+   * one never owns the array the pool will.
+   *
+   * Here and not in a slice because no one slice owns it: an arrival on
+   * worker 0 is placed by what workers 1 and 2 have put on each address.
+   * The type is bpa_dyn.h's; this file only carries the pointer.
+   */
+  struct bpa_dyn_share *dyn_share;
+
   /* derived */
   u32 port_count;
   u32 blocks_per_ip; /* blocks a public address HOLDS */

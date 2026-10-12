@@ -1838,6 +1838,15 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
       u32 i, nw, w;
       int reserve = p->mode != BPA_MODE_DYNAMIC;
 
+      /*
+       * Before the slices, because each slice reads it when it is made (#603):
+       * a dynamic pool under `policy interleaved` places an arrival on the
+       * public address with the fewest subscribers pool-wide, and the count
+       * is one array every worker of this pool writes. Every other pool
+       * leaves it 0 and its slices keep the stack.
+       */
+      bpa_dyn_share_init (p, bm->n_workers ? bm->n_workers : 1);
+
       for (i = 0; i < vec_len (bm->per_thread); i++)
 	{
 	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
@@ -1857,6 +1866,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	      hash_unset_mem (bm->pool_by_name, p->name);
 	      vec_free (p->name);
 	      vec_free (p->statics);
+	      bpa_dyn_share_free (p);
 	      pool_put (bm->pools, p);
 	      vlib_worker_thread_barrier_release (bm->vlib_main);
 	      return e;
@@ -2223,6 +2233,8 @@ bpa_pool_del (u8 *name)
     bm->n_nat64--;
   vec_free (p->name);
   vec_free (p->statics);
+  /* After every slice: a slice being freed still holds a pointer into it. */
+  bpa_dyn_share_free (p);
   pool_put (bm->pools, p);
   bpa_outside_window_update ();
   vlib_worker_thread_barrier_release (vm);

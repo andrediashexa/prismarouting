@@ -7,6 +7,14 @@
 #                                     about BPA go red
 #   ISO=/cache/prisma-routing-X.Y.Z.iso sh tools/lab.sh bench3vm
 #                                     a given medium instead of the newest one
+#   BENCH_UPGRADE=prisma-routing-<stamp>-upgrade.tar.gz sh tools/lab.sh bench3vm
+#                                     the medium, then upgraded to that
+#                                     artifact (a file in the bench's cache,
+#                                     built by appliance/build-upgrade.sh) the
+#                                     way an operator does it, and the
+#                                     dataplane restarted onto it: how a
+#                                     change to the plugin is measured here
+#                                     before it has a medium of its own (#603)
 #
 # WHAT IT IS. Three qemu/KVM guests inside this lab's container, wired by two
 # Linux bridges that exist only in the container's network namespace:
@@ -279,6 +287,34 @@ for p in $BOX $SUBP $INET; do
   wait_ssh "$p" 300 || { echo "  no ssh on port $p"; exit 1; }
 done
 echo "  all three answer ssh"
+
+# THIS TREE, ON THE RELEASED BOX (#603). The bench installs a published
+# medium, so on its own it measures what has shipped. A change to the plugin
+# is measured by upgrading that box to an artifact built from the change -
+# appliance/upgrade, then `system dataplane restart`, which is the route the
+# wiki gives an operator - and the plugin's version is read back so a run
+# cannot report on the old dataplane by mistake. The overlay the box runs on
+# is thrown away with the run, so the cached disk stays the medium's.
+if [ -n "${BENCH_UPGRADE:-}" ]; then
+  echo
+  echo "=========== the box, upgraded to $BENCH_UPGRADE ==========="
+  _a=$C/$(basename "$BENCH_UPGRADE")
+  [ -f "$_a" ] || { echo "  no $_a: put the artifact in the bench's cache"; exit 2; }
+  _d=$(basename "$_a" .tar.gz)
+  put $BOX "$_a" root@127.0.0.1:/root/
+  on $BOX "cd /root && tar xzf $(basename "$_a") && sh /root/$_d/appliance/upgrade" \
+    > "$RUN/upgrade.txt" 2>&1
+  sed 's/^/  | /' "$RUN/upgrade.txt" | tail -5
+  _want=$(on $BOX "sed -n 's/^stamp=//p' /root/$_d/RELEASE" | awk '{print $2}' | tr -d '()')
+  on $BOX "prismash -c 'system dataplane restart'" > "$RUN/dataplane-restart.txt" 2>&1
+  _n=0
+  until on $BOX "prismash -c 'show version'" 2>/dev/null | grep -i plugin | grep -q "$_want" \
+        || [ "$_n" -ge 300 ]; do sleep 5; _n=$((_n + 5)); done
+  on $BOX "prismash -c 'show version'" > "$RUN/version-after-upgrade.txt" 2>&1
+  expect "the box's dataplane runs the artifact's plugin ($_want)" \
+    sh -c "grep -i plugin '$RUN/version-after-upgrade.txt' | grep -q '$_want'"
+  echo "upgraded_to=$(basename "$_a") plugin=$_want" >> "$RUN/meta.txt"
+fi
 
 {
   echo "box=$(on $BOX 'cat /etc/prisma-routing/version 2>/dev/null || prismash -c "show version" | head -1')"

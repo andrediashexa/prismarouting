@@ -79,6 +79,28 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dynamic `policy interleaved` pool stays evenly spread over its public
+  addresses after churn.**
+  ([#603](https://github.com/andrediashexa/hexarouting/issues/603)) Each
+  worker's free blocks were a stack, so an arriving subscriber took the block
+  the last leaver gave back and the subscribers per address drifted: max/min
+  1.67, 1.14, 2.2 and 2.0 after six churn rounds on the #475 bench, where 1.14
+  was possible. An arrival now takes a free block of its worker's slice on the
+  address with the fewest subscribers in the whole pool (the lowest address on
+  a tie, the longest-free block on it), which holds the most even spread from
+  the sixth round on in every one of 300 modelled runs of the bench's churn
+  (the stack: 1.60 on average). The rule is `ref/bpa_model.py`'s
+  (`DynamicSlices`), and `test/test_bpa_dyn.c` replays 5259 generated
+  operations against it under the new rule and the old. The cost is measured
+  with `make bench-dyn`: 93-400 ns an allocation against 2-9 ns for the stack,
+  still millions a second per worker, and an allocation happens once per
+  subscriber arrival. Extensions on such a pool now land on the subscriber's
+  own address in 100% of the grid's cases (was 99.2% at worst). The hold-down,
+  the per-worker slices, the rebalance (#210), the block records, `policy
+  blocked`, deterministic pools and their reserve are unchanged.
+  `lab/bench3vm.sh` asserts the spread now, and `BENCH_UPGRADE=` measures an
+  artifact built from a tree on the released box.
+
 ## 0.153.4 - latest/ offers an ISO; show hardware counts the cards the dataplane took
 
 ### Fixed
