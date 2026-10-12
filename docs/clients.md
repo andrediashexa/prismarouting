@@ -27,6 +27,20 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.7 - no false SNMP refusal at boot
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.6). Nothing in `prisma.v1` changes.
+* **Fewer `settings` events at boot** (#601): `ListEvents` and `WatchEvents`
+  no longer carry a `kind` `settings`, `subject` `snmp` warning ("the SNMP
+  settings were refused: ...") from a boot or a dataplane restart whose
+  `snmp listen-address` was not up yet; the notice "the SNMP settings were
+  applied once the interfaces were up" follows alone, as before. A real
+  refusal at boot is now one warning, written after the retry gives up (it
+  was two), and when an address never came up its `reason` names it. A
+  client alarming on that warning stops seeing it at every boot of
+  10.40.200.166.
+* **Lab box:** not upgraded by this release's preparation.
+
 ## 0.153.6 - the lab reads the log rings again; the box always could
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.5). Nothing a client of `prisma.v1` sees changes.

@@ -285,8 +285,15 @@ start, or the configuration not loading in 180 s) - the restart that left
 (kind `settings`, by the commit's account and session): applied, with what
 the apply said, or refused, with why. Not the boot's: the boot's load (and
 each restart's, and `--reapply`) applies the same settings again, and an
-event per load saying nothing changed is the noise #588 keeps out. A refusal
-at boot is written, and so is the retry after the interfaces (#591).
+event per load saying nothing changed is the noise #588 keeps out. An SNMP
+refusal at boot is not written when it happens: SNMP is tried again after the
+interfaces (#591), and that retry writes how it ended - "applied once the
+interfaces were up" (notice), or refused (warning), once, after the last try
+(#601). A `snmp listen-address` not on any interface yet at the first apply
+- the management address, at every boot of 10.40.200.166 - is waited for, at
+most 15 s, and the boot's journal says "snmp: waiting for <address> to come
+up"; one that never comes is the refusal, naming it. An API refusal at boot is
+written as before: nothing tries it again.
 
 **Decisions taken here, conservatively, that nobody asked for:**
 

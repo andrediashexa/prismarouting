@@ -1328,6 +1328,22 @@ check(len(_r) == 2 and "in vrf mgmt" in _r[0][0],
 check(system.ssh_listen_unbound(["10.200.0.1", "[2001:db8:200::1]"], _ADDRS,
                                 _LINKS, "mgmt") == [],
       "unless management is that VRF, which turns nonlocal bind on (#580)")
+check(system.host_addresses(_ADDRS) == {
+      system.ipaddress.ip_address("127.0.0.1"): "lo",
+      system.ipaddress.ip_address("10.200.0.1"): "vppmg0",
+      system.ipaddress.ip_address("2001:db8:200::1"): "vppmg0",
+      system.ipaddress.ip_address("10.9.0.1"): "eth1"},
+      "host_addresses: each address of `ip -o addr show`, with its interface")
+# #601. Mutation shown red: listen_absent not consulting what is held.
+check(system.listen_absent("10.9.0.1 [2001:db8:200::1] 0.0.0.0 [::]", _ADDRS)
+      == [], "listen_absent: held addresses and the wildcards are present")
+check(system.listen_absent("10.9.0.1 192.0.2.1 2001:db8::9", _ADDRS)
+      == ["192.0.2.1", "2001:db8::9"],
+      "listen_absent: the ones no interface holds, in order")
+check(system.listen_absent("2001:db8:200::1 10.9.0.1", _ADDRS.replace(
+      "2001:db8:200::1/64 scope global", "2001:db8:200::1/64 scope global "
+      "tentative")) == ["2001:db8:200::1"],
+      "listen_absent: and an IPv6 address still tentative, not bindable yet")
 
 print("--- System._apply_groups: the memberships a role implies, both ways")
 GROUPS = ("prisma-admin:x:1001:alice\nprisma-cgnat:x:1002:alice\nvpp:x:1003:\n"
