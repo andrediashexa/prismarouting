@@ -29,7 +29,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_workers \
       $(BUILD)/test_bpa_local \
       $(BUILD)/test_bpa_frame $(BUILD)/test_bpa_exhaust \
-      $(BUILD)/test_bpa_log_ring $(BUILD)/test_prisma_logd \
+      $(BUILD)/test_bpa_log_ring $(BUILD)/test_bpa_log_layout \
+      $(BUILD)/test_prisma_logd \
       $(BUILD)/test_bpa_sock
 	@sh tools/run-tests.sh
 
@@ -105,6 +106,14 @@ $(BUILD)/test_bpa_log_ring: test/test_bpa_log_ring.c \
                    src/plugins/bpa/bpa_log_ring.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_log_ring.c -lpthread -lrt
+
+# The segment the plugin lays out, against the size, the ring count and
+# bpa_log_seg_check(), for 0, 1 and 4 workers (#606).
+$(BUILD)/test_bpa_log_layout: test/test_bpa_log_layout.c \
+                   src/plugins/bpa/bpa_log.h src/plugins/bpa/bpa_log_ring.h \
+                   src/plugins/bpa/bpa_identity.h test/bpa_log_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_log_layout.c
 
 # The log container's process (#550): it includes bpa_log_tcp.c as the TCP
 # exporter's own harness does, and is driven here against a segment, a

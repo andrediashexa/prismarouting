@@ -79,6 +79,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`lab/ipfix.sh` reads the log rings' segment again; the box always
+  could.** ([#606](https://github.com/andrediashexa/hexarouting/issues/606))
+  The lab went red on three checks for every release since 0.150.0 - "another
+  process reads the rings' segment" false, 0 written, pending -1. The segment
+  was right: 1024 header bytes, one 557248-byte ring per vlib main, the export
+  ring and the watch ring add up to the 6129216 bytes /dev/shm held, and
+  prisma-logd, compiled from `bpa_log_ring.h`, accepted it. The lab's own
+  reader, `lab/log_rings.py`, still required layout version 3 and 52-byte
+  events after #485 made them 4 and 68 (0.150.0, NAT64's subscriber prefix),
+  and nothing held it to the header. Found by running the lab at every tag:
+  green at 0.149.33, red from 0.150.0. Boxes logging over TCP or syslog were
+  never affected - the container and the dataplane are built from one tree
+  and check the same header. The reader now takes the layout from
+  `src/prismash/logmon.py` (held to the C header by `test/test_logmon.py`),
+  says which check failed, and gives the bytes the layout adds up to;
+  `bpa_log_seg_size()` and `bpa_log_seg_layout()` in `bpa_log.h` are what the
+  plugin lays the segment out with, and the new `test/test_log_rings.py`
+  hands that segment, for 0, 1 and 4 workers, to `bpa_log_seg_check()`,
+  logmon and the lab's reader. The new `lab/log-container-streams.sh` proves
+  what the issue asked: twelve subscribers' allocations and releases reach an
+  IPFIX/TCP and a syslog collector through the log container, with and
+  without workers; with no container it is red on six checks.
+
 ## 0.153.5 - a dynamic interleaved pool stays evenly spread after churn
 
 ### Fixed

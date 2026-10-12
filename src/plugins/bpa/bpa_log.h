@@ -186,6 +186,30 @@ _Static_assert (sizeof (bpa_log_xev_t) == BPA_LOG_XEV_BYTES,
  * in an accounted way, rather than growing without bound. */
 #define BPA_LOG_QUEUE_MAX 8192
 
+/* The segment bpa_log_seg_create() makes for n_rings vlib mains (a box with
+ * W workers has W + 1): its size, and its layout at a zeroed base. Here and
+ * not in bpa_log.c so that test/test_log_rings.py lays out the very segment
+ * the plugin does and hands it to every reader - bpa_log_seg_check(), logmon
+ * and lab/log_rings.py. #606: the lab's reader still checked version 3 and
+ * 52-byte events after #485 made them 4 and 68 in 0.150.0, and nothing held
+ * it to this file, so it called every segment since unreadable. */
+static inline u64
+bpa_log_seg_size (u32 n_rings)
+{
+  return bpa_log_seg_bytes_watched (n_rings, BPA_LOG_QUEUE_MAX,
+				    sizeof (bpa_log_event_t));
+}
+
+static inline int
+bpa_log_seg_layout (void *base, u32 n_rings, u64 generation)
+{
+  if (bpa_log_seg_init (base, n_rings, BPA_LOG_QUEUE_MAX,
+			sizeof (bpa_log_event_t), generation))
+    return -1;
+  bpa_log_seg_watch (base);
+  return 0;
+}
+
 #ifndef BPA_STANDALONE
 /* The rings' segment (#550): its base, its size, and where it is - the
  * shared segment, or the main heap when /dev/shm could not be had (then

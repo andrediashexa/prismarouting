@@ -46,8 +46,7 @@ bpa_log_seg_create (u32 n_rings)
   bpa_log_seg_t *g = &bpa_log_seg;
   /* With the watch ring (#556) after the export ring: a log container built
    * before it checks the base layout only, which this leaves as it was. */
-  u64 bytes = bpa_log_seg_bytes_watched (n_rings, BPA_LOG_QUEUE_MAX,
-					 sizeof (bpa_log_event_t));
+  u64 bytes = bpa_log_seg_size (n_rings);
   struct timespec ts;
   int fd;
   u8 *base = 0;
@@ -88,11 +87,9 @@ bpa_log_seg_create (u32 n_rings)
       base = clib_mem_alloc_aligned (bytes, CLIB_CACHE_LINE_BYTES);
     }
   /* init() zeroes every byte, which also touches every page. */
-  if (bpa_log_seg_init (base, n_rings, BPA_LOG_QUEUE_MAX,
-			sizeof (bpa_log_event_t),
-			(u64) ts.tv_sec * 1000000000ULL + ts.tv_nsec))
+  if (bpa_log_seg_layout (base, n_rings,
+			  (u64) ts.tv_sec * 1000000000ULL + ts.tv_nsec))
     return clib_error_return (0, "bpa: the log ring size is not a power of two");
-  bpa_log_seg_watch (base);
   g->base = base;
   ((bpa_log_seg_hdr_t *) base)->boot_wall = bpa_main.boot_wall;
   bpa_log_seg_publish (&bpa_log_tcp);

@@ -1013,7 +1013,12 @@ the worst case): no packet lost while two 240 MB spills were replayed - one
 with a monitoring poll every 3 s - with a collector that never reads, or with
 none at all; the main heap flat; and with the container stopped, the streams
 back in the dataplane. Its off mode runs no container, and the replays lose
-packets.
+packets. `lab/log-container-streams.sh` (#606) proves the records themselves:
+twelve subscribers' allocations and releases reach an IPFIX/TCP collector and
+a syslog collector through the container, one per subscriber, with no worker
+and with two, while the segment it reads is read from outside VPP as well -
+one ring per vlib main, the header, the worker rings, the export ring and the
+watch ring adding up to the segment's size.
 
 ### Watching the export live: `monitor cgnat logging` (#556)
 

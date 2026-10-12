@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.153.6 - the lab reads the log rings again; the box always could
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.5). Nothing a client of `prisma.v1` sees changes.
+* **No API-visible behaviour changes** (#606). `lab/ipfix.sh` had been red since 0.150.0 because the lab's own reader of the block-event segment was stale; the segment, the log container and every stream a client reads (`GetLogging`, `WatchLogging`) were correct throughout, and the box's TCP and syslog export through the log container is now proven by a lab of its own.
+
 ## 0.153.5 - a dynamic interleaved pool stays evenly spread after churn
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.4). Nothing a client of `prisma.v1` sees changes in shape.

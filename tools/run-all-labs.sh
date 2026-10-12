@@ -274,7 +274,7 @@ echo
 # printed by anything in this repository.
 BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
            hairpin icmp-tcp ipfix-stop mss nat-behaviour nat64 pptp rtsp sip
-           two-pools ftp64"
+           two-pools ftp64 log-container-streams"
 
 # Labs that are run a THIRD time with the feature they test switched OFF.
 #
@@ -330,7 +330,7 @@ OFF_MODES="audit:off backplane:off policy:off policy-a:off policy-b:off policy-c
            rtsp:BPA_RTSP_OFF=1 sip:off syslog:no-syslog urpf:off
            utilisation:off vrf:off vrrp:off ha-failover:off ha-nat64:off
            syslog-reconnect:off syslog-spill-resync:off identity-empty:off snmp-traps:off
-           hostname:off monitor-interface:off log-container:off
+           hostname:off monitor-interface:off log-container:off log-container-streams:off
            monitor-cgnat-logging:off cgnat-prefix-list:off replace-rename:off
            show-log:off show-log-watch:off transceiver:off default-mtu:off
            system-logging:off mgmt-vrf:off vty-ssh:off tuning-advice:off"
