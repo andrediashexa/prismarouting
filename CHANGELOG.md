@@ -79,6 +79,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release site's `latest/` offers an ISO after a patch release.**
+  ([#604](https://github.com/andrediashexa/hexarouting/issues/604))
+  `latest` was a link to the newest version's directory, and a Z release has
+  no medium: after 0.153.1 anything that took "the latest ISO" from
+  `releases/latest/` found none, while the newest medium sat in `0.153.0/`.
+  `tools/publish-release.sh` now builds `latest/` as a directory of links
+  offering the newest upgrade package and the newest ISO, each with its
+  `sha256`; each half moves forward on its own, an old version published
+  again moves neither back, and both are read back through `latest/`. The
+  first publish after this converts the old link and finds the newest medium
+  among the version directories. `test/test_publish_release.sh` holds a
+  patch release after a Y keeping the Y's ISO in `latest/`, and the box's own
+  `latest_release()` reading the listing through the links. The install pages
+  (docs/appliance.md, the wiki's "Instalação da appliance" and "Levar a caixa
+  para uma versão nova") say which of the two to take.
+
+* **`show hardware` no longer tells a box with a management card and two
+  data cards that its management card is its only card.**
+  ([#605](https://github.com/andrediashexa/hexarouting/issues/605))
+  Found by the #475 bench on 0.153.0. A card the dataplane holds is gone from
+  Linux, so the screen counted Linux's one card as the box: "the only card
+  this box has... the dataplane claims it", the one-NIC note, and the card
+  listed as waiting for the next boot. The reserve held. The screen now
+  counts the cards the tuner claimed on this boot too (the `dev` stanzas of
+  `startup.conf`, there whether or not the dataplane answers) and applies the
+  tuner's rule to them, so it says "The dataplane claims 2 of this box's 3
+  cards", names the claimed cards under `Claimed by the dataplane:` and the
+  management card under `Reserved for Linux:`, and never lists the reserved
+  card as waiting. `test/test_dataplane_if.py` drives that box's shape.
+
 ## 0.153.3 - the upgrade's download says how far it is, and resumes
 
 ### Fixed

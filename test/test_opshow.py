@@ -190,9 +190,12 @@ sh.which_dpdk_driver = lambda: "vfio-pci"
 sh.one_nic_note = lambda: []
 sh.read_dataplane_if = lambda: ""
 sh.reserved_for_linux = lambda: "enp6s18"
+sh.claimed_at_boot = lambda: ["ens10"]
 hf = sh.hardware_facts()
-check(hf == {"held": None, "nics": _nics, "mgmt": "enp6s18"},
-      f"hardware_facts: not asked (None), the NICs, the default route's card: {hf}")
+check(hf == {"held": None, "nics": _nics, "mgmt": "enp6s18",
+             "claimed": ["ens10"]},
+      f"hardware_facts: not asked (None), the NICs, the default route's card, "
+      f"what the tuner claimed (#605): {hf}")
 got = A.facts_screen(sh, sh.hardware_facts, lambda f: sh.show_hardware([], f))
 check(got["facts"] == hf and "enp6s18" in got["text"]
       and "DEFAULT ROUTE" in got["text"] and "not answering" in got["text"],

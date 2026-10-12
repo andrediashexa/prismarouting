@@ -257,6 +257,9 @@ def shell_on(tmp, addrs=None, dp=None, api=None, **kw):
     # not share between fixtures.
     sh.MGMT_PATH_FILE = f"{tmp}/run/prisma-routing/dataplane-management"
     sh.TUNE_ENV = f"{tmp}/etc/prisma-routing/tune.env"
+    # And what the tuner claimed on this boot (#605), for the same reason as
+    # MGMT_CONF: never the startup.conf of the machine running the suite.
+    sh.STARTUP_CONF = f"{tmp}/etc/vpp/startup.conf"
     sh.rb = prismash.Rollback(path=f"{tmp}/rollback")
     sh.confirm = prismash.ConfirmPending(path=f"{tmp}/confirm")
     return sh
@@ -805,7 +808,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # 80-column console, taking the only word an operator recognises with it.
     check(any(l.strip() == "enp1s0" for l in said),
           f"the reserved card's name is not on a row of its own: {said!r}")
-    check("claims 1 of them" in joined,
+    check("claims 1 of this box's 2 cards" in joined,
           f"the count of what it takes is wrong or missing: {joined!r}")
 
 print("\n=== and never the last card, whatever the installer answered ===")
@@ -819,6 +822,83 @@ with tempfile.TemporaryDirectory() as tmp:
     check("linux_cp" in joined,
           f"and does not say where the address goes, which is the whole of "
           f"what the operator loses if it is wrong: {joined!r}")
+
+print("\n=== a management card and two claimed data cards (#605) ===")
+# THE #475 BENCH'S BOX on 0.153.0: ens9 is the management network the
+# installer recorded and carries the default route, ens10 and ens11 are
+# virtio data cards the tuner claimed - so the dataplane holds them and Linux
+# lists ens9 alone. The screen counted Linux's list as the box, said ens9 was
+# "the only card this box has" and that the dataplane claims it, and that the
+# next boot would take it. The reserve held; the screen was wrong.
+#
+# Mutations shown red: claim_note() counting Linux's list only (box_cards()
+# returning the nics alone) - "only card" and no claimed rows; waiting_note()
+# without the reserve - ens9 "not held yet"; show_hardware()'s other-card
+# test on Linux's list - the one-NIC note.
+_BENCH_ROUTE = ("Iface\tDestination\tGateway\tFlags\n"
+                "ens9\t00000000\t0100000A\t0003\n")
+_BENCH_CONF = ("dpdk {\n"
+               "  dev 0000:00:10.0 {\n    name ens10\n    num-rx-queues 1\n  }\n"
+               "  dev 0000:00:11.0 {\n    name ens11\n    num-rx-queues 1\n  }\n"
+               "  dev default {\n    num-rx-queues 1\n  }\n}\n")
+_BENCH_SHOW_IF = (
+    "              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)\n"
+    "ens10                             1      up          1500/0/0/0\n"
+    "ens11                             2      up          1500/0/0/0\n"
+    "local0                            0     down          0/0/0/0\n")
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, cards=("ens9", "lo"), reserve="ens9",
+                  route=_BENCH_ROUTE,
+                  dp=FakeVpp({"show interface": _BENCH_SHOW_IF}))
+    os.makedirs(f"{tmp}/etc/vpp", exist_ok=True)
+    with open(sh.STARTUP_CONF, "w") as _f:
+        _f.write(_BENCH_CONF)
+    said = drive(sh, ["show hardware"])
+    flat = " ".join(said.split())
+    rows = [l.strip() for l in said.splitlines()]
+    check("only card" not in flat and "one NIC" not in flat,
+          f"a box with three cards is told its management card is its only "
+          f"one: {said!r}")
+    check("claims 2 of this box's 3 cards" in flat,
+          f"the count is not two of three: {said!r}")
+    _c = rows.index("Claimed by the dataplane:") \
+        if "Claimed by the dataplane:" in rows else -1
+    _r = rows.index("Reserved for Linux:") \
+        if "Reserved for Linux:" in rows else -1
+    check(_c >= 0 and rows[_c + 1:_c + 3] == ["ens10", "ens11"],
+          f"the claimed cards are not named, each on a row of its own: "
+          f"{said!r}")
+    check(_r >= 0 and rows[_r + 1] == "ens9",
+          f"the management card is not named as kept for Linux: {said!r}")
+    check("does not hold ens9" not in flat and "anyway" not in flat
+          and "next start" not in flat,
+          f"the screen says the dataplane will take the reserved card: "
+          f"{said!r}")
+    check("'ens9' carries the default route: it is how this box is reached"
+          in flat,
+          f"the management card is not given the two-card sentence about "
+          f"the default route: {said!r}")
+    check(not [l for l in said.splitlines() if len(l) > 79],
+          f"a row of that screen is over 79 columns: {said!r}")
+with tempfile.TemporaryDirectory() as tmp:
+    # The same box with the dataplane not answering: the tuner's record is
+    # still there, so the count is still three.
+    sh = shell_on(tmp, cards=("ens9", "lo"), reserve="ens9",
+                  route=_BENCH_ROUTE)
+    os.makedirs(f"{tmp}/etc/vpp", exist_ok=True)
+    with open(sh.STARTUP_CONF, "w") as _f:
+        _f.write(_BENCH_CONF)
+    flat = " ".join(" ".join(sh.claim_note(sh.host_nics(),
+                                           sh.claimed_at_boot())).split())
+    check("claims 2 of this box's 3 cards" in flat and "only card" not in flat,
+          f"claim_note() on the tuner's record alone: {flat!r}")
+    check(sh.one_nic_note() == [],
+          "one_nic_note() calls a box with two claimed cards a one-card box")
+    check(sh.box_cards(sh.host_nics(), sh.claimed_at_boot())
+          == ["ens10", "ens11", "ens9"]
+          and sh.box_cards(sh.host_nics(), ["ens9"]) == ["ens9"],
+          f"box_cards: Linux's list and the tuner's, each card once: "
+          f"{sh.box_cards(sh.host_nics(), sh.claimed_at_boot())!r}")
 
 print("\n=== a card the dataplane has not taken yet is named (#405) ===")
 # The maintainer put a second NIC in a running box, read "The dataplane claims
