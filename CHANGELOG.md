@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.7 - no false SNMP refusal at boot
+
+### Fixed
+
 * **A boot no longer records "the SNMP settings were refused" for an address
   that is merely not up yet.** ([#601](https://github.com/andrediashexa/hexarouting/issues/601))
   On 10.40.200.166, whose `snmp listen-address` is the management card's,
