@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.154.0 - PPPoE subscribers, in a container of their own
+
+### Added
+
 * **PPPoE subscribers, terminated on the box and translated by the CGNAT -
   BNG phase 1's first increment.**
   ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
@@ -107,8 +113,6 @@ version has a chance of seeing it.
   plugin's control plane away crashes VPP at the next PADI, so the box never
   does. What remains of phase 1 - the accounting retained and joined to the
   BPA trail, the API, SNMP, `show log` - is docs/bng.md 0.4.
-
-### Fixed
 
 ## 0.153.8 - attaching an interface no longer walks the box; the statistics segment is sized per thread
 
