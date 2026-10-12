@@ -290,3 +290,41 @@ startup_conf() {
 #
 # Found by #239 in lab/frag.sh, swept by #249.
 vc() { vppctl "$@" | tr -d '\r'; }
+
+# make_interfaces <count> <cli script> <names file>
+#
+# Appends to <cli script> the CLI lines that create <count> more software
+# interfaces, and their names, in creation order, to <names file>. For
+# lab/attach-scale.sh and lab/statseg-scale.sh, which need tens of thousands.
+#
+# Dot1q sub-interfaces of loopbacks, 4,094 to a loopback, and not loopbacks
+# alone: VPP 26.06 has 16,384 loopback instances and no more - `create
+# loopback interface instance 16384` answers "vnet_create_loopback_interface
+# failed", measured in the build image - and the first version of
+# attach-scale ran into that as `exec: CLI line error`, measuring 16,384
+# interfaces while saying 50,000. A sub-interface is a
+# vnet software interface with its counters in the statistics segment and a
+# place on the ip4-unicast arc, which is all either lab asks of one.
+#
+# Every line written is one interface, parents included, so <count> is the
+# number the box holds more of afterwards. State is MI_P/MI_V, so successive
+# calls continue where the last one stopped.
+# test/test_lab_workers.sh reads the lines it writes; whether VPP creates what
+# they name is read back off the box by both labs.
+MI_P=-1
+MI_V=4095
+make_interfaces() {
+  _k=0
+  while [ "$_k" -lt "$1" ]; do
+    if [ "$MI_V" -gt 4094 ]; then
+      MI_P=$((MI_P + 1)); MI_V=1
+      echo "create loopback interface instance $MI_P" >&3
+      echo "loop$MI_P" >&4
+    else
+      echo "create sub-interfaces loop$MI_P $MI_V" >&3
+      echo "loop$MI_P.$MI_V" >&4
+      MI_V=$((MI_V + 1))
+    fi
+    _k=$((_k + 1))
+  done 3>>"$2" 4>>"$3"
+}

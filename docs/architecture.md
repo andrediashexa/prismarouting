@@ -834,6 +834,19 @@ is refused and counted as `no memory for a new session`. The same lab holds
 is read only at those growth moments: reading its free space walks every
 chunk, measured at 86 ms with two million sessions.
 
+**The statistics segment is the other memory that aborts**, and it is sized by
+interfaces, not by sessions. Every interface VPP holds puts 17 counters in it,
+kept once per thread, and running out is `os_panic` on the next interface. VPP's
+32 MB default was measured holding 7,800 sub-interfaces single-threaded, 5,100
+with two workers and 3,300 with seven
+([#597](https://github.com/andrediashexa/hexarouting/issues/597),
+`lab/statseg-scale.sh`). The tuner sizes it at 3 × (2,448 + 200 × threads)
+bytes an interface for what the configuration makes the box hold, and the
+measurement, the formula and the ceiling are in
+[appliance.md](appliance.md), "The statistics segment". A CGNAT attaches to a
+handful of interfaces and never meets it; a BNG, with an interface per
+session, does ([bng.md](bng.md) 2.1).
+
 ## TCP and ICMP handling
 
 Two gaps that produce subscriber complaints rather than ugly graphs:
@@ -1508,6 +1521,28 @@ looks at is the plugin's own array of per-interface MTUs rather than VPP's
 interface pool. The once-a-second pass is over the CGNAT interfaces alone,
 which is also where an interface deleted underneath the plugin is noticed. `show bpa pool` prints the **resolved** number beside the
 word — `tcp-mss      auto -> 1460` — for the same reason.
+
+**The walk came back once, through NAT64, and was taken out again.**
+[#485](https://github.com/andrediashexa/hexarouting/issues/485) gave every
+inside interface its IPv6 half by walking the box on every inside attach and
+detach, NAT64 pool or not;
+[#597](https://github.com/andrediashexa/hexarouting/issues/597) does it for
+the one interface being changed, and walks the box only when the first NAT64
+pool arrives or the last one goes. `lab/attach-scale.sh`, single-threaded,
+500 attaches at each size:
+
+| Box holds | Attach before #597 | After | Detach before | After |
+|---|---|---|---|---|
+| 1,000 interfaces | 1,145 µs | 887 µs | 1,143 µs | 877 µs |
+| 10,000 | 3,883 µs | 1,119 µs | 3,497 µs | 1,034 µs |
+| 50,000 | 15,068 µs | 1,348 µs | 12,865 µs | 1,038 µs |
+
+All 50,000 attached one after another in 654 s before and 69 s after. About
+0.9 ms of what remains is not the attach at all but the `fsync` of the
+configuration trail entry each attach writes: with the trail on a tmpfs the
+same lab measured 28 µs an attach at 1,000 interfaces and 39 µs at 10,000.
+`test/test_attach_cost.py` now reads every function the attach calls for a
+walk of VPP's interface pool, rather than the one walk #287 knew about.
 
 ### What it deliberately does not do
 

@@ -598,41 +598,68 @@ MTU_KEPT_FILE = "/etc/prisma-routing/mtu-9000-kept"
 # the VPP version on purpose.
 STATSEG_DEFAULT_MB = 32
 
-#: The interface count that default was MEASURED holding, and the abort is the
-#: whole dataplane rather than a refused interface. docs/bng.md 2.1 created
-#: subscriber interfaces in batches of a thousand against a VPP booted with no
-#: statseg stanza - `total: 32.00M` - and printed
-#:
-#:     after 7000: 7000 live, RSS 429916 kB
-#:     VPP DIED while creating sessions 7000..8000
-#:     os_panic() called, aborting.
-#:
-#: with _vec_realloc_internal under vlib_stats_create_counter on the stack.
-#: Reproduced twice, at the same step.
-STATSEG_MEASURED_INTERFACES = 7000
+#: What one software interface's counters WEIGH in the segment, from VPP's
+#: sources (docs/appliance.md): 17 directory entries - nine simple counters
+#: and eight combined ones - at 144 bytes each (`vlib_stats_entry_t`,
+#: static-asserted to that size)...
+STATSEG_ENTRY_BYTES = 17 * 144
 
-#: What one interface may therefore claim: 4793 bytes, which is the segment
-#: that box had divided by the interfaces it carried on it.
+#: ...plus the counters themselves, once PER THREAD: 9 x 8 bytes for the
+#: simple ones and 8 x 16 for the combined ones. A box with workers keeps a
+#: copy per worker and one for the main thread, so this half grows with the
+#: worker count as well as with the interfaces.
+STATSEG_THREAD_BYTES = 9 * 8 + 8 * 16
+
+#: What they COST, which is more than they weigh: every one of those vectors
+#: is grown by copying, so a growth needs the old copy and the new one inside
+#: the segment at once, and the box aborts at a growth rather than at a fill.
+#: #597 drove VPP's 32 MiB default to its abort in steps of 100, as
+#: lab/statseg-scale.sh section 1 does, and divided:
 #:
-#: NOT the 2.9 kB of counter content measured at 40,000 interfaces on a 1 GB
-#: segment (docs/appliance.md). That figure is what the entries WEIGH; this one
-#: is what they COST, and the 1.65x between them is the counter directory:
-#: ONE contiguous vector, grown by copying, so a growth needs the old vector
-#: and the new one inside the segment at the same time. Sizing on 2.9 kB
-#: predicts about 12,000 interfaces on a segment that aborted below 8,000 -
-#: the arithmetic issue #288 itself noticed does not add up - and a segment
-#: sized from it would abort at two thirds of the interfaces it promised.
+#:     interfaces          threads   survived   bytes each    / weight
+#:     loopback            1         6,600      5,084         1.92
+#:     loopback            3         6,500      5,162         1.69
+#:     dot1q sub-iface     1, 2      7,800      4,302         1.62, 1.51
+#:     dot1q sub-iface     3, 5      5,100      6,579         2.16, 1.91
+#:     dot1q sub-iface     8         3,300     10,168         2.51
+#:     PPPoE session       1         7,000*     4,793         1.81
 #:
-#: The box's own interfaces are inside this figure rather than added on top of
-#: it: the 4.2 MB that segment holds with no subscriber on it at all is part
-#: of the 32 MB being divided, amortised over the 7,000. That makes the budget
-#: conservative for every box big enough to be given a stanza, which is the
-#: direction to be wrong in when the alternative is SIGABRT.
-STATSEG_BYTES_PER_INTERFACE = ((STATSEG_DEFAULT_MB << 20)
-                               // STATSEG_MEASURED_INTERFACES)
+#:     * docs/bng.md 2.1, in steps of 1,000 (#170)
+#:
+#: The ratio climbs with the thread count - more vectors, each grown on its
+#: own - and at eight threads it passed the 2.5 a single 1.5x growth would
+#: explain, so 2.5 is not a bound and was not used. 3 is, by measurement: at
+#: least 16% of headroom at every point above, and what a size larger than
+#: needed costs is address space the segment does not touch until it is used.
+#:
+#: Not the 4,793 bytes #288 sized on: that was one kind of interface on one
+#: thread, and the same 32 MiB held 3,300 sub-interfaces on a box with seven
+#: workers - a box the tuner had told that its 32 MB was good for 7,000.
+STATSEG_GROWTH = 3
+
+#: The interface count VPP's default was measured holding, at worst, in the
+#: table above: what the report quotes to a box with nothing to size for.
+STATSEG_MEASURED_INTERFACES = 3300
+
+#: Never more of the RAM the control plane keeps than this share of it. The
+#: segment lives outside the hugepage pool, in the same RAM as FRR, the VTY
+#: and the page cache, and a full BGP table is 1.4 GB of it (docs/appliance.md).
+#: A quarter of the 2 GB floor is 512 MB, about 58,000 interfaces on a box
+#: with two workers.
+STATSEG_RAM_SHARE = 4
 
 
-def statseg_mb_for(count):
+def statseg_bytes_per_interface(threads=1):
+    """
+    What one interface costs the segment, in bytes, on a box running
+    `threads` threads in all - the main thread and every worker.
+    """
+    threads = max(1, threads)
+    return -int(-STATSEG_GROWTH * (STATSEG_ENTRY_BYTES
+                                   + STATSEG_THREAD_BYTES * threads) // 1)
+
+
+def statseg_mb_for(count, threads=1):
     """
     MB of statistics segment for `count` interfaces, or None for "nothing".
 
@@ -641,8 +668,30 @@ def statseg_mb_for(count):
     interfaces would be SMALLER than what VPP gives away, and a box that does
     not need this does not want a number in its startup.conf about it.
     """
-    mb = -(-(count * STATSEG_BYTES_PER_INTERFACE) // (1 << 20))   # whole MB, up
+    mb = -(-(count * statseg_bytes_per_interface(threads)) // (1 << 20))
     return mb if mb > STATSEG_DEFAULT_MB else None
+
+
+def statseg_interfaces_for(mb, threads=1):
+    """
+    How many interfaces a segment of `mb` MB holds, by the same arithmetic.
+
+    The other direction, and the one a configuration that creates interfaces
+    while the box runs needs (#597): a PPPoE session ceiling the segment
+    cannot hold is a ceiling the dataplane meets as SIGABRT, so whatever
+    accepts that ceiling refuses one above this number.
+    """
+    return (mb << 20) // statseg_bytes_per_interface(threads)
+
+
+def statseg_ceiling_mb(control_plane_gb):
+    """
+    The most segment a box keeping `control_plane_gb` GB outside its
+    hugepages is given, or None when that RAM is not known.
+    """
+    if not control_plane_gb:
+        return None
+    return (control_plane_gb << 10) // STATSEG_RAM_SHARE
 
 
 #: Where prismash's own configuration parser lives, installed first: the box
@@ -655,7 +704,18 @@ PRISMASH_DIRS = ("/usr/lib/prisma-routing",
 
 def configured_interfaces(path):
     """
-    (interfaces this box is configured for, why not) from its saved config.
+    ({"named", "mirrors", "runtime", "total"}, why not) - the interfaces this
+    box's saved configuration makes its dataplane hold.
+
+    THREE KINDS, and #288 counted the first only. `named` is every interface
+    the file has a block for. `mirrors` is the Linux end of each linux_cp
+    pair the box makes for them - an interface in VPP's list with counters of
+    its own, one per named interface since #461, which doubled a box's real
+    count with nothing in the file saying so (#597). `runtime` is the most
+    the configuration lets the box create while it runs: a PPPoE session is
+    an interface, and Config.runtime_interfaces() is where the BNG says how
+    many it will accept. Each is prismash's own answer, as the docstring
+    below says of the first.
 
     THE COUNT IS READ FROM THE BOX, like the queue count and the maximum MTU
     beside it (#330), and for the same reason: everything else in the
@@ -674,9 +734,10 @@ def configured_interfaces(path):
     and `Config.interface_names()` already returns the union by name rather
     than a line count.
 
-    What it does NOT count is an interface created while the box runs: a PPPoE
-    session, a linux_cp pair made from the VTY. Said out loud in the report
-    rather than guessed at with a multiplier.
+    What it does NOT count is an interface created while the box runs that
+    the configuration does not bound: Config.runtime_interfaces() is the
+    number, and it is zero until something that creates them states its own
+    ceiling there.
 
     Never raises. This runs as root before VPP on every boot, and a
     configuration this program could not read is a reason to leave the segment
@@ -706,9 +767,14 @@ def configured_interfaces(path):
         return None, "noparser"
     try:
         import config as prismash_config
-        return len(prismash_config.Config.parse(text).interface_names()), None
+        cfg = prismash_config.Config.parse(text)
+        census = {"named": len(cfg.interface_names()),
+                  "mirrors": cfg.linux_mirrors(),
+                  "runtime": cfg.runtime_interfaces()}
     except Exception:            # noqa: BLE001 - see the docstring
         return None, "unparsed"
+    census["total"] = sum(census.values())
+    return census, None
 
 
 def operator_statseg(path):
@@ -1185,10 +1251,29 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     # more interfaces than VPP's default segment was measured holding meets
     # that limit as SIGABRT, and it is the only resource on the box whose
     # limit is an abort rather than a refusal (#288).
-    n_ifaces, why_not = configured_interfaces(config_path) if config_path \
+    #
+    # FOR THE THREADS THIS PLAN RUNS, the main thread and every worker: each
+    # interface's counters are kept once per thread, and the same 32 MiB that
+    # held 7,800 sub-interfaces single-threaded held 5,100 with two workers
+    # (#597), and 3,300 with seven. The planned count and not this boot's, so the first boot - which
+    # has none - is sized for the box it is about to become: a segment is
+    # memory touched as it is used, and a size larger than this boot needs
+    # costs it nothing.
+    #
+    # AND NEVER MORE THAN THE RAM THE CONTROL PLANE KEEPS CAN SPARE. A
+    # configuration that asks for more is told how many interfaces the
+    # ceiling holds, which is the number the box will abort past.
+    census, why_not = configured_interfaces(config_path) if config_path \
         else (None, "missing")
+    n_ifaces = census["total"] if census else None
+    statseg_threads = len(workers) + 1
     operator_sized = operator_statseg(vpp_base) if vpp_base else False
-    statseg_mb = statseg_mb_for(n_ifaces) if n_ifaces else None
+    statseg_want = (statseg_mb_for(n_ifaces, statseg_threads)
+                    if n_ifaces else None)
+    statseg_cap = statseg_ceiling_mb(for_os)
+    statseg_capped = bool(statseg_want and statseg_cap
+                          and statseg_want > statseg_cap)
+    statseg_mb = statseg_cap if statseg_capped else statseg_want
 
     result = {
         "total_gb": total_gb,
@@ -1267,7 +1352,13 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         # "this box is configured for nothing yet" and "this box has a
         # configuration I could not read" must not look the same.
         "configured_interfaces": n_ifaces,
+        # The three kinds behind that total (#597), or None with it.
+        "interface_census": census,
         "statseg_why": why_not,
+        "statseg_threads": statseg_threads,
+        # What the configuration asked for, and whether the RAM capped it.
+        "statseg_wanted": statseg_want,
+        "statseg_capped": statseg_capped,
         "config_path": config_path,
         # The size to write, or None for "VPP's own default holds this box".
         "statseg_mb": statseg_mb,
@@ -1467,11 +1558,18 @@ def render_statseg(p):
     """
     if not p["statseg_mb"] or p["statseg_operator"]:
         return ""
+    c = p["interface_census"]
     return ("statseg {\n"
-            f"  # sized for the {p['configured_interfaces']} interface(s) in "
-            f"{p['config_path']}, at\n"
-            f"  # {STATSEG_BYTES_PER_INTERFACE} bytes each. Put your own "
-            f"statseg in {p['vpp_base']}\n"
+            f"  # sized for {p['configured_interfaces']} interface(s) from "
+            f"{p['config_path']}:\n"
+            f"  # {c['named']} named, {c['mirrors']} Linux end(s), "
+            f"{c['runtime']} created at runtime; "
+            f"{statseg_bytes_per_interface(p['statseg_threads'])} bytes each "
+            f"on {p['statseg_threads']} thread(s).\n"
+            + (f"  # CAPPED: {p['statseg_wanted']}M asked for, more than a "
+               f"1/{STATSEG_RAM_SHARE} of the control plane's RAM.\n"
+               if p["statseg_capped"] else "")
+            + f"  # Put your own statseg in {p['vpp_base']}\n"
             "  # to choose the size yourself: this one steps aside for it.\n"
             f"  size {p['statseg_mb']}M\n"
             "}\n")
@@ -2141,6 +2239,9 @@ def render_report(p, vpp_base):
     # true of one box and false of another, printed by a path that never
     # asked which box it was on, is the defect this file keeps having.
     _n = p["configured_interfaces"]
+    _t = p["statseg_threads"]
+    _b = statseg_bytes_per_interface(_t)
+    _c = p["interface_census"]
     if p["statseg_operator"]:
         out.append("# statistics segment: left to the stanza somebody already "
                    "put in")
@@ -2152,28 +2253,40 @@ def render_report(p, vpp_base):
         if _n:
             out.append(f"#          For the record: {_n} interface(s) "
                        f"configured, which need")
-            out.append(f"#          {statseg_mb_for(_n) or STATSEG_DEFAULT_MB}"
-                       f" MB at {STATSEG_BYTES_PER_INTERFACE} bytes each.")
+            out.append(f"#          {statseg_mb_for(_n, _t) or STATSEG_DEFAULT_MB}"
+                       f" MB at {_b} bytes each on {_t} thread(s).")
     elif p["statseg_mb"]:
-        out.append(f"# statistics segment: {p['statseg_mb']}M, for the {_n} "
-                   f"interface(s) configured in")
-        out.append(f"#          {p['config_path']}, at "
-                   f"{STATSEG_BYTES_PER_INTERFACE} bytes each.")
-        out.append(f"#          That is the density a box on VPP's "
-                   f"{STATSEG_DEFAULT_MB} MB default was measured")
-        out.append(f"#          surviving: {STATSEG_MEASURED_INTERFACES:,} "
-                   f"interfaces live, aborting before 8,000.")
-        out.append("#          Interfaces created while the box runs - a PPPoE "
-                   "session, a pair")
-        out.append("#          made from the VTY - are not in that file nor in "
-                   "this number.")
+        out.append(f"# statistics segment: {p['statseg_mb']}M, for {_n} "
+                   f"interface(s) from")
+        out.append(f"#          {p['config_path']}:")
+        out.append(f"#          {_c['named']} named in it, {_c['mirrors']} "
+                   f"Linux end(s) of their linux_cp pairs,")
+        out.append(f"#          {_c['runtime']} it lets the box create while "
+                   f"it runs. {_b} bytes each")
+        out.append(f"#          on {_t} thread(s), {STATSEG_GROWTH}x what "
+                   f"their counters weigh: VPP's {STATSEG_DEFAULT_MB} MB")
+        out.append("#          default was measured aborting at up to 2.5x, "
+                   "by interface kind")
+        out.append("#          and thread count.")
+        if p["statseg_capped"]:
+            out.append(f"#          CAPPED: {_n} interface(s) need "
+                       f"{p['statseg_wanted']}M, and a box keeping")
+            out.append(f"#          {p['control_plane_keeps_gb']} GB for its "
+                       f"control plane gives the segment 1/{STATSEG_RAM_SHARE} "
+                       f"of it.")
+            out.append(f"#          That holds about "
+                       f"{statseg_interfaces_for(p['statseg_mb'], _t):,} "
+                       f"interfaces; past them the dataplane")
+            out.append("#          aborts. Add RAM or raise control-plane "
+                       "memory.")
         out.append(f"#          Put your own statseg in {vpp_base}")
         out.append("#          to choose the size instead.")
     elif _n:
         out.append(f"# statistics segment: VPP's built-in "
-                   f"{STATSEG_DEFAULT_MB} MB, which was measured holding")
-        out.append(f"#          {STATSEG_MEASURED_INTERFACES:,} interfaces. "
-                   f"This box is configured for {_n}, in")
+                   f"{STATSEG_DEFAULT_MB} MB, which holds "
+                   f"{statseg_interfaces_for(STATSEG_DEFAULT_MB, _t):,}")
+        out.append(f"#          interfaces on {_t} thread(s). This box is "
+                   f"configured for {_n}, in")
         out.append(f"#          {p['config_path']}: nothing is written, "
                    f"because a")
         out.append("#          stanza smaller than what VPP gives away would "
@@ -2206,10 +2319,10 @@ def render_report(p, vpp_base):
                        f"no configured")
             out.append(f"#          interface yet, so VPP's built-in "
                        f"{STATSEG_DEFAULT_MB} MB applies.")
-        out.append("#          Measured: a box on that default aborted between "
-                   "7,000 and 8,000")
-        out.append("#          interfaces. It is per INTERFACE, not per "
-                   "subscriber.")
+        out.append("#          Measured: a box on that default aborted at "
+                   f"{STATSEG_MEASURED_INTERFACES:,}")
+        out.append("#          interfaces with seven workers. It is per "
+                   "INTERFACE, not per subscriber.")
         out.append("#          To set it by hand, put a statseg stanza in "
                    "the base file")
         out.append(f"#          ({vpp_base}):")

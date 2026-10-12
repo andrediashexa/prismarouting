@@ -354,5 +354,28 @@ got=$(PATH="$UB/bin:$PATH"; _snmp_opt)
   && ok "and ' -M snmp' with the module in only one of the two layouts" \
   || bad "_snmp_opt with the module under the multiarch layout gave '$got'"
 
+echo
+echo "=== make_interfaces: one CLI line per interface, sub-interfaces past a loopback (#597) ==="
+# lab/attach-scale.sh and lab/statseg-scale.sh count what the box holds by
+# the lines this writes, so a line that creates nothing, or two, is a lab
+# measuring a size it did not reach. 4,094 tags to a loopback, because VPP
+# has 16,384 loopbacks and 50,000 interfaces were wanted.
+MI_P=-1; MI_V=4095
+: > "$WORK/mi.cli"; : > "$WORK/mi.names"
+make_interfaces 4096 "$WORK/mi.cli" "$WORK/mi.names"
+make_interfaces 3 "$WORK/mi.cli" "$WORK/mi.names"
+[ "$(wc -l < "$WORK/mi.cli")" -eq 4099 ] && [ "$(wc -l < "$WORK/mi.names")" -eq 4099 ] \
+  && ok "4,099 asked for in two calls: 4,099 lines and 4,099 names" \
+  || bad "4,099 asked for gave $(wc -l < "$WORK/mi.cli") lines and $(wc -l < "$WORK/mi.names") names"
+[ "$(sed -n 1p "$WORK/mi.cli")" = "create loopback interface instance 0" ] \
+  && [ "$(sed -n 2p "$WORK/mi.names")" = "loop0.1" ] \
+  && [ "$(sed -n 4095p "$WORK/mi.names")" = "loop0.4094" ] \
+  && [ "$(sed -n 4096p "$WORK/mi.cli")" = "create loopback interface instance 1" ] \
+  && [ "$(sed -n 4099p "$WORK/mi.cli")" = "create sub-interfaces loop1 3" ] \
+  && ok "a loopback, its 4,094 tags, the next loopback, and the second call goes on from there" \
+  || bad "the lines are not loop0, loop0.1-4094, loop1, loop1.1-3: $(sed -n '1p;2p;4095p;4096p;4099p' "$WORK/mi.cli" | tr '\n' '|')"
+[ "$(sort "$WORK/mi.names" | uniq -d | wc -l)" -eq 0 ] \
+  && ok "and no name twice" || bad "a name was written twice"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

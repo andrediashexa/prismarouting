@@ -314,7 +314,37 @@ bpa_nat64_interface (u32 sw_if_index, int enable)
   ip6_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
 }
 
-/* not a unit: it walks the box's interfaces; the labs drive it. */
+/*
+ * One interface's IPv6 half, from what the feature arc says about its IPv4
+ * one: on while the CGNAT is attached to it as inside and a NAT64 pool
+ * exists, off otherwise. What an attach and a detach call, for the interface
+ * they changed and no other.
+ *
+ * #485 had the attach call bpa_nat64_interfaces_update() below instead, which
+ * walks every interface on the box - and did so on every inside attach of
+ * every box, NAT64 pool or not, since the walk ran before anything asked
+ * whether there was one. That was #287's quadratic back on the same path #287
+ * had taken it off: measured by lab/attach-scale.sh before #597, 1,145 us an
+ * attach at 1,000 interfaces, 3,883 us at 10,000 and 15,068 us at 50,000;
+ * 887, 1,119 and 1,348 us after it.
+ */
+/* not a unit: vnet_feature_is_enabled and vnet_feature_enable_disable on a
+ * live interface; lab/attach-scale.sh section 5 drives both directions, and
+ * test/test_attach_cost.py holds that the attach calls this and not the walk. */
+void
+bpa_nat64_interface_update (u32 sw_if_index)
+{
+  bpa_main_t *bm = &bpa_main;
+  const char *f4 = vlib_num_workers () ? "bpa-in2out-handoff" : "bpa-in2out";
+  int inside =
+    vnet_feature_is_enabled ("ip4-unicast", f4, sw_if_index) == 1;
+
+  bpa_nat64_interface (sw_if_index, inside && bm->n_nat64 > 0);
+}
+
+/* not a unit: it walks the box's interfaces; the labs drive it. Called when
+ * the first NAT64 pool arrives and when the last one goes - twice in a box's
+ * life, rather than once per attach. */
 void
 bpa_nat64_interfaces_update (void)
 {

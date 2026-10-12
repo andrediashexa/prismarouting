@@ -1131,9 +1131,11 @@ bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
    * THIS interface and not all of them: see bpa_auto_mss.h for why that
    * distinction is the difference between an attach and 83 seconds of them. */
   bpa_auto_mss_interface_update (sw_if_index);
-  /* Its IPv6 half, while a NAT64 pool exists (#485). */
+  /* Its IPv6 half, while a NAT64 pool exists (#485) - for THIS interface,
+   * for the same reason as the line above: the walk over the box that used
+   * to sit here was #287's quadratic again (#597). */
   if (is_inside)
-    bpa_nat64_interfaces_update ();
+    bpa_nat64_interface_update (sw_if_index);
 
   /*
    * Recorded only once the dataplane has accepted it, and by NAME: an entry

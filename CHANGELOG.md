@@ -79,6 +79,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Attaching the CGNAT to an interface walked every interface on the box
+  again, and the statistics segment was sized for a single-threaded box.**
+  ([#597](https://github.com/andrediashexa/hexarouting/issues/597)) The two
+  dataplane prerequisites of BNG phase 1, both defects on a CGNAT box too.
+  *The attach:* #485 (NAT64) gave every inside interface its IPv6 half by
+  calling `bpa_nat64_interfaces_update()` on every inside attach and detach -
+  a walk of the box, NAT64 pool or not - which put #287's quadratic back.
+  `lab/attach-scale.sh`, single-threaded: 1,145 / 3,883 / 15,068 µs an attach
+  at 1,000 / 10,000 / 50,000 interfaces before, 887 / 1,119 / 1,348 after;
+  all 50,000 attached in 654 s before and 69 s after. The attach now gives
+  the one interface its IPv6 half (`bpa_nat64_interface_update()`), and
+  `test/test_attach_cost.py` reads every function the attach calls for a walk,
+  which it did not. About 0.9 ms of what is left is the configuration trail's
+  fsync (28 µs an attach with the trail on a tmpfs). *The segment:*
+  `lab/statseg-scale.sh` drove VPP's 32 MB default to its abort by interface
+  kind and thread count: 7,800 sub-interfaces on one thread, 5,100 on three,
+  3,300 on eight, where #288's 4,793 bytes an interface said 7,000 for every
+  box - its size for 10,000 interfaces on three threads aborted at 9,600. The
+  tuner now sizes at 3 × (2,448 + 200 × threads) bytes an interface, for the
+  threads the plan runs; counts the Linux end of each linux_cp pair, which
+  #461 made one per configured interface and #288 did not count; takes
+  `Config.runtime_interfaces()` - zero today, the seam where the BNG states
+  its session ceiling - and caps the segment at a quarter of the RAM the
+  control plane keeps, saying how many interfaces the capped size holds.
+  Segments it sized for 10,000 and 50,000 held them, on one and three
+  threads. `statseg_interfaces_for()` is the number a session ceiling must
+  not exceed.
+
 ## 0.153.7 - no false SNMP refusal at boot
 
 ### Fixed
