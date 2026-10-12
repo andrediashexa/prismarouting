@@ -35,8 +35,12 @@ echo "=== the dataplane is out of the OOM killer's choice on both paths ==="
 # is resident the dataplane is the biggest thing there.
 UNIT_OOM=$(body "$SYSD/vpp-oom-protect.conf" \
   | sed -n 's/^OOMScoreAdjust=\(.*\)$/\1/p' | tr -d ' ')
+# The DATAPLANE's: the `vpp` service's line, up to the next service. Another
+# container may set its own on purpose - prisma-bng's +500 makes it the OOM
+# killer's first choice (#597) - and is not the dataplane's protection.
 COMP_OOM=$(body "$COMPOSE" \
-  | sed -n 's/^[[:space:]]*oom_score_adj:[[:space:]]*\(.*\)$/\1/p' | tr -d ' ')
+  | awk '/^  [a-z]+:$/ {svc = $1} svc == "vpp:" && /oom_score_adj:/ {print $2}' \
+  | tr -d ' ')
 [ -n "$UNIT_OOM" ] \
   && ok "vpp.service's drop-in sets OOMScoreAdjust=$UNIT_OOM" \
   || bad "no OOMScoreAdjust in $SYSD/vpp-oom-protect.conf: the unit path lost its protection"

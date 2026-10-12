@@ -1,0 +1,205 @@
+#!/bin/sh
+# The prisma-bng container's main process (#597): the PPPoE control plane.
+# compose.yaml runs it under docker's init, which forwards SIGTERM to it.
+#
+# WHAT IT DOES, in order, and why each step is here and not in the VTY:
+#
+#   1. waits for the dataplane to answer;
+#   2. lays the plumbing VPP's pppoe plugin needs - the control-plane TAP
+#      (`pppoe-cp`, tap1863), its Linux MAC set to the access card's, one
+#      Linux VLAN device per tagged access interface, and `create pppoe cp`;
+#   3. removes any PPPoE session VPP still holds from a control plane that
+#      died: accel-ppp does not know them, so nothing would ever take them
+#      down, and their client MACs would be refused a new session;
+#   4. runs accel-pppd on the configuration the VTY GENERATED from the
+#      candidate (/etc/prisma-routing/bng/accel-ppp.conf, never edited by
+#      hand), with a CLI password of its own made here;
+#   5. watches both: accel-pppd exiting, or the dataplane losing the
+#      plumbing (a VPP restart takes the TAP with it), ends the container
+#      with a failure, and the restart policy starts it again from step 1.
+#
+# The plumbing lives here because it belongs to the container's lifetime, not
+# to a commit: a dataplane restart removes it, and the only process that is
+# guaranteed to notice is the one using it. The VTY writes WHAT is wanted
+# (access.env); this script makes it so every time it starts.
+#
+# ON SIGTERM (docker stop, the container's own restart, `no pppoe`): accel-
+# pppd is stopped first - it sends PADT and Accounting-Stop for every session
+# and deletes them from VPP - then any session it left is deleted. The TAP and
+# the plugin's cp are LEFT IN PLACE: taking them out crashes VPP at the next
+# discovery frame (measured; unplumb() has the trace).
+#
+# Every path is a variable so test/test_prisma_bng.sh can drive this with
+# stubs; on the box they are the defaults.
+set -u
+
+CONF_DIR=${PRISMA_BNG_CONF:-/etc/prisma-routing/bng}
+RUN_DIR=${PRISMA_BNG_RUN:-/run/prisma-routing/bng}
+VPPCTL=${PRISMA_VPPCTL:-vppctl}
+ACCEL=${PRISMA_ACCEL:-/usr/sbin/accel-pppd}
+IP=${PRISMA_IP:-ip}
+WAIT_VPP=${PRISMA_BNG_WAIT_VPP:-120}
+WATCH_EVERY=${PRISMA_BNG_WATCH_EVERY:-2}
+# The TAP's id, and so its VPP name: tap1863, for the discovery ethertype.
+# Not 4096 and up, which linux_cp takes for its pairs.
+TAP_ID=1863
+TAP=tap$TAP_ID
+CP=pppoe-cp
+
+say() { echo "prisma-bng: $*" >&2; }
+
+vc() { "$VPPCTL" "$@" 2>/dev/null | tr -d '\r'; }
+
+# wait_vpp - 0 once the dataplane answers, 1 after WAIT_VPP seconds
+wait_vpp() {
+  _n=0
+  until vc show version | grep -q '^vpp'; do
+    _n=$((_n + 1))
+    [ "$_n" -ge "$WAIT_VPP" ] && return 1
+    sleep 1
+  done
+  return 0
+}
+
+# hw_mac <vpp interface> - its Ethernet address, or nothing
+hw_mac() {
+  vc show hardware-interfaces "$1" | sed -n 's/.*Ethernet address \([0-9a-f:]*\).*/\1/p' \
+    | head -1
+}
+
+# sw_index <vpp interface> - its sw_if_index, or nothing
+sw_index() {
+  vc show interface "$1" | awk -v n="$1" '$1 == n {print $2; exit}'
+}
+
+# plumb - the TAP, its MAC, its VLAN devices and the plugin's cp; 0 or 1
+plumb() {
+  # shellcheck disable=SC1091
+  . "$CONF_DIR/access.env" || { say "no $CONF_DIR/access.env"; return 1; }
+  mac=$(hw_mac "$PARENT")
+  [ -n "$mac" ] || { say "the dataplane has no card '$PARENT'"; return 1; }
+  if [ -z "$(sw_index "$TAP")" ]; then
+    vc create tap id "$TAP_ID" host-if-name "$CP" > /dev/null
+  fi
+  idx=$(sw_index "$TAP")
+  [ -n "$idx" ] || { say "could not create $TAP"; return 1; }
+  vc set interface state "$TAP" up > /dev/null
+  # THE ACCESS CARD'S MAC ON THE LINUX SIDE, and it is not cosmetic: the
+  # plugin rewrites every frame it sends from the cp to come from the access
+  # card, so the PADR comes back addressed to it - and accel-ppp drops a
+  # discovery frame not addressed to the interface it is bound to (measured
+  # in #170's lab/bng.sh: discovery dies after PADO with nothing logged).
+  "$IP" link set "$CP" down
+  "$IP" link set "$CP" address "$mac" || return 1
+  "$IP" link set "$CP" up
+  for v in $VLANS; do
+    [ "$v" = 0 ] && continue
+    "$IP" link show "$CP.$v" > /dev/null 2>&1 ||
+      "$IP" link add link "$CP" name "$CP.$v" type vlan id "$v" || return 1
+    "$IP" link set "$CP.$v" up
+  done
+  # ONCE PER TAP. `create pppoe cp` enables a device-input feature on the
+  # TAP, and VPP adds a feature as often as it is asked; a container restart
+  # finds the TAP it laid last time and must not stack a second one.
+  case "$(vc show interface features "$TAP")" in
+    *pppoe-input*) ;;
+    *) vc create pppoe cp cp-if-index "$idx" > /dev/null ;;
+  esac
+  return 0
+}
+
+# clean_sessions - every PPPoE session VPP holds, deleted; prints how many
+clean_sessions() {
+  vc show pppoe session | awk '
+    /sw-if-index/ { for (i = 1; i <= NF; i++) {
+        if ($i == "client-ip") ip = $(i + 1)
+        if ($i == "session-id") sid = $(i + 1) } }
+    /client-mac/ { for (i = 1; i <= NF; i++)
+        if ($i == "client-mac") print ip, sid, $(i + 1) }' > "$RUN_DIR/stale"
+  _n=0
+  while read -r ip sid mac; do
+    vc create pppoe session client-ip "$ip" session-id "$sid" \
+       client-mac "$mac" del > /dev/null
+    _n=$((_n + 1))
+  done < "$RUN_DIR/stale"
+  echo "$_n"
+}
+
+# unplumb - the Linux VLAN devices out; the TAP and the cp STAY.
+#
+# MEASURED, AND IT TAKES THE DATAPLANE DOWN: `create pppoe cp ... del` sets
+# the plugin's control-plane interface to ~0 and the plugin goes on punting
+# every discovery frame to it - so the first PADI from any CPE after it is a
+# frame sent out of interface ~0, and VPP 26.06 dies in
+# vnet_per_buffer_interface_output (SIGSEGV), the whole box with it. lab/
+# pppoe.sh did exactly that at a container restart while its CPEs redialled.
+# Deleting the TAP the cp names is the same crash by another index. So the
+# plumbing outlives the container: with nothing reading the TAP, the kernel
+# drops what VPP punts to it, and the next start finds it laid. A dataplane
+# restart is the only thing that removes it, and the entrypoint lays it again.
+unplumb() {
+  for v in ${VLANS:-}; do
+    [ "$v" = 0 ] || "$IP" link del "$CP.$v" 2>/dev/null
+  done
+  return 0
+}
+
+# run_conf - accel-ppp.conf as generated, plus the CLI on loopback with a
+# password made for this start (prisma-bng-cli reads it back)
+run_conf() {
+  pw=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
+  umask 077
+  printf '%s\n' "$pw" > "$RUN_DIR/cli.password"
+  { cat "$CONF_DIR/accel-ppp.conf"
+    printf '\n[cli]\ntcp=127.0.0.1:2001\npassword=%s\n' "$pw"; } \
+    > "$RUN_DIR/accel-ppp.conf"
+}
+
+stop_all() {
+  say "stopping: accel-pppd first, then the sessions it left"
+  if [ -n "${APID:-}" ]; then
+    kill -TERM "$APID" 2>/dev/null
+    wait "$APID" 2>/dev/null
+  fi
+  _n=$(clean_sessions)
+  [ "$_n" -gt 0 ] && say "removed $_n session(s) accel-pppd left in the dataplane"
+  unplumb
+  rm -f "$RUN_DIR/cli.password" "$RUN_DIR/accel-ppp.conf"
+  exit 0
+}
+
+# not a unit: the container's main loop, driven end to end by lab/pppoe.sh
+main() {
+  mkdir -p "$RUN_DIR"
+  [ -f "$CONF_DIR/accel-ppp.conf" ] || {
+    say "no $CONF_DIR/accel-ppp.conf: PPPoE is not configured"; exit 1; }
+  wait_vpp || { say "the dataplane did not answer in ${WAIT_VPP}s"; exit 1; }
+  plumb || { say "could not lay the plumbing"; exit 1; }
+  _n=$(clean_sessions)
+  [ "$_n" -gt 0 ] && say "removed $_n stale session(s) from the dataplane"
+  run_conf
+  trap stop_all TERM INT
+  # accel-pppd in the FOREGROUND (no -d), as this script's child, so that
+  # its death is this script's to see.
+  "$ACCEL" -c "$RUN_DIR/accel-ppp.conf" -p "$RUN_DIR/accel-pppd.pid" &
+  APID=$!
+  say "accel-pppd started (pid $APID)"
+  while :; do
+    sleep "$WATCH_EVERY" &
+    wait $!
+    if ! kill -0 "$APID" 2>/dev/null; then
+      say "accel-pppd exited; the container ends so it is restarted"
+      unset APID
+      clean_sessions > /dev/null
+      exit 1
+    fi
+    if [ -z "$(sw_index "$TAP")" ]; then
+      say "the dataplane lost $TAP (restarted?); starting again"
+      kill -TERM "$APID" 2>/dev/null
+      wait "$APID" 2>/dev/null
+      exit 1
+    fi
+  done
+}
+
+[ "${PRISMA_BNG_SOURCE_ONLY:-0}" = 1 ] || main "$@"

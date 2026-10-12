@@ -1,0 +1,52 @@
+#!/bin/sh
+# accel-ppp's ip-up for a PPPoE session (#597), in the prisma-bng container.
+#
+#   prisma-bng-session <ifname> <tty> <speed> <local> <peer> <calling-sid>
+#
+# accel-ppp's pppd_compat runs it once the session has its address, with the
+# session's VPP interface as the first argument (pppoe_sessionN). It does
+# what turns a terminated subscriber into one of THIS product's subscribers:
+#
+#   * the CGNAT, by the existing attach (`set interface bpa in2out`), so the
+#     session's inside address is translated by whichever BPA pool covers it -
+#     exactly as a subscriber behind a configured inside interface is. The
+#     attach's cost is #597's other branch (feat/597-prereqs); this calls it
+#     and nothing else;
+#   * the PPPoE MTU on the session interface, so a packet too big for the
+#     access link after the 8 bytes of PPPoE is fragmented or refused there
+#     and not dropped silently by the card;
+#   * the TCP MSS clamp, when one is configured, on the session interface.
+#
+# IDEMPOTENT, AND THE REASON IS MEASURED. VPP's pppoe plugin never deletes a
+# session interface: it hides it and hands it to the next session. Its
+# features stay with it, and vnet_feature_enable_disable adds a feature as
+# many times as it is asked - measured in lab/pppoe.sh's first runs, ten
+# bpa-in2out on one recycled interface, the second translating the first's
+# output and dropping it as "no pool for source address". So each step asks
+# whether the interface already has it.
+set -u
+IF=${1:?usage: prisma-bng-session <ifname> ...}
+VPPCTL=${PRISMA_VPPCTL:-vppctl}
+CONF_DIR=${PRISMA_BNG_CONF:-/etc/prisma-routing/bng}
+
+# shellcheck disable=SC1091
+. "$CONF_DIR/access.env" 2>/dev/null || true
+
+vc() { "$VPPCTL" "$@" 2>/dev/null | tr -d '\r'; }
+
+features=$(vc show interface features "$IF")
+case "$features" in
+  *bpa-in2out*) ;;
+  *) vc set interface bpa in2out "$IF" > /dev/null ;;
+esac
+if [ -n "${MTU:-}" ]; then
+  vc set interface mtu packet "$MTU" "$IF" > /dev/null
+fi
+if [ -n "${TCP_MSS:-}" ]; then
+  case "$features" in
+    *tcp-mss-clamp*) ;;
+    *) vc set interface tcp-mss-clamp "$IF" ip4 enable ip4-mss "$TCP_MSS" \
+         ip6 disable > /dev/null ;;
+  esac
+fi
+exit 0

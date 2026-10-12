@@ -1,0 +1,140 @@
+#!/bin/sh
+# The prisma-bng container's lifecycle, on the host (#597).
+#
+#   prisma-bng apply                start it, or restart it on a new configuration
+#   prisma-bng stop                 stop and remove it (PPPoE no longer configured)
+#   prisma-bng boot                 start it when PPPoE is configured; nothing otherwise
+#   prisma-bng status               running | stopped | not-configured | no-containers
+#   prisma-bng sessions             the sessions, one per line, '|'-separated
+#   prisma-bng summary              accel-ppp's own counters
+#   prisma-bng terminate sid <id>   end one session
+#   prisma-bng terminate username <name>
+#   prisma-bng terminate all
+#
+# THE VTY ASKS THROUGH THE DOORS (src/prismash/doors.py). It writes the
+# configuration into /etc/prisma-routing/bng from the candidate; this script
+# is the only thing that starts, stops or asks the container, so the
+# container's lifecycle is its own: a VTY upgrade recreates `mgmt` and touches
+# nothing here, and a restart here touches neither vpp, frr nor mgmt.
+#
+# NOT STARTED BY THE STACK. compose.yaml gives the service a profile, and
+# docker-compose 1.29.2 (the medium's) leaves a service with a profile out of
+# a plain `up` and starts it when it is named - measured on 2026-10-12, with
+# `down` removing it either way. So a box with no PPPoE never runs it, and
+# prisma-routing-containers.service calls `boot` after `up`.
+#
+# Every external is a variable, so test/test_prisma_bng.sh and lab/pppoe.sh
+# can drive this with a stub docker and docker-compose.
+set -u
+
+COMPOSE=${PRISMA_COMPOSE:-/usr/bin/docker-compose}
+DOCKER=${PRISMA_DOCKER:-docker}
+ETC=${PRISMA_ETC:-/etc/prisma-routing}
+RUN=${PRISMA_RUN:-/run/prisma-routing}
+CONF_DIR=$ETC/bng
+SERVICE=bng
+# The name compose gives it: the project is the directory compose.yaml is in.
+CONTAINER=${PRISMA_BNG_CONTAINER:-prisma-routing_bng_1}
+
+say() { echo "prisma-bng: $*" >&2; }
+
+# compose <args...> - docker-compose on the stack's files, bng's profile on
+compose() {
+  _dev=""
+  [ -f "$RUN/compose-devices.yaml" ] && _dev="-f $RUN/compose-devices.yaml"
+  # shellcheck disable=SC2086
+  (cd "$ETC" && "$COMPOSE" -f "$ETC/compose.yaml" $_dev --profile bng "$@")
+}
+
+# configured - is there a generated configuration to run?
+configured() {
+  [ -f "$CONF_DIR/accel-ppp.conf" ] && [ -f "$CONF_DIR/access.env" ]
+}
+
+# containers - does this box run the stack at all? The units path has no
+# compose, and PPPoE is not offered there.
+containers() {
+  [ -f "$ETC/compose.yaml" ] && command -v "$COMPOSE" > /dev/null 2>&1
+}
+
+# running - is the container up?
+running() {
+  [ "$("$DOCKER" inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = true ]
+}
+
+# cli <accel-cmd words...> - asked of the accel-pppd in the container
+cli() {
+  "$DOCKER" exec "$CONTAINER" prisma-bng-cli "$@"
+}
+
+# terminate_ok <kind> [<value>] - 0 when the words are one this accepts
+terminate_ok() {
+  case "$1" in
+    all) [ $# -eq 1 ] ;;
+    sid) [ $# -eq 2 ] && printf '%s' "$2" | grep -Eq '^[0-9a-fA-F]{16}$' ;;
+    username)
+      [ $# -eq 2 ] && printf '%s' "$2" | grep -Eq '^[A-Za-z0-9._@-]{1,64}$' ;;
+    *) return 1 ;;
+  esac
+}
+
+# not a unit: the dispatcher, each branch driven by test/test_prisma_bng.sh
+main() {
+  verb=${1:-}
+  [ $# -gt 0 ] && shift
+  case "$verb" in
+    apply)
+      containers || {
+        say "PPPoE runs in the prisma-bng container, and this box runs the"
+        say "dataplane as systemd units; move it to the containers first"
+        exit 4; }
+      configured || { say "no generated configuration in $CONF_DIR"; exit 3; }
+      if running; then
+        # A restart, not a recreate, when the image is the same: the
+        # configuration is a bind mount, read again at start.
+        compose up -d --no-deps --force-recreate "$SERVICE" > /dev/null 2>&1 \
+          || { say "could not restart $SERVICE"; exit 1; }
+        echo "restarted"
+      else
+        compose up -d --no-deps "$SERVICE" > /dev/null 2>&1 \
+          || { say "could not start $SERVICE"; exit 1; }
+        echo "started"
+      fi ;;
+    stop)
+      containers || { echo "stopped"; exit 0; }
+      compose stop -t 20 "$SERVICE" > /dev/null 2>&1
+      compose rm -f "$SERVICE" > /dev/null 2>&1
+      echo "stopped" ;;
+    boot)
+      containers || exit 0
+      configured || exit 0
+      compose up -d --no-deps "$SERVICE" > /dev/null 2>&1 \
+        || { say "could not start $SERVICE"; exit 1; }
+      echo "started" ;;
+    status)
+      if ! containers; then echo "no-containers"
+      elif running; then echo "running"
+      elif configured; then echo "stopped"
+      else echo "not-configured"
+      fi ;;
+    sessions)
+      running || { echo "not running"; exit 3; }
+      cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw ;;
+    summary)
+      running || { echo "not running"; exit 3; }
+      cli show stat ;;
+    terminate)
+      terminate_ok "$@" || { say "terminate sid <16 hex> | username <name> | all"; exit 2; }
+      running || { echo "not running"; exit 3; }
+      if [ "$1" = all ]; then
+        cli terminate all hard
+      else
+        cli terminate "$1" "$2" hard
+      fi ;;
+    *)
+      say "usage: prisma-bng apply|stop|boot|status|sessions|summary|terminate"
+      exit 2 ;;
+  esac
+}
+
+[ "${PRISMA_BNG_SOURCE_ONLY:-0}" = 1 ] || main "$@"

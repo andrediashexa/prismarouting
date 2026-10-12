@@ -107,6 +107,11 @@ ExecStartPost=/usr/lib/prisma-routing/share-the-api-segment
 # The management plane on the backplane (#448, phase C): the container has no
 # network until this gives it 128.0.0.2 on bp0, in prisma-bp.
 ExecStartPost=/usr/lib/prisma-routing/prisma-backplane attach prisma-routing_mgmt_1
+# PPPoE's container (#597), which `up` leaves out: compose.yaml gives it a
+# profile, so a box with no PPPoE never runs it. Started here when the VTY
+# has generated a configuration for it; `-` because a PPPoE control plane
+# that cannot start is not a reason for the stack to be reported failed.
+ExecStartPost=-/usr/lib/prisma-routing/prisma-bng boot
 # `down` and not `stop`: the containers are recreated from the compose file
 # on every start, so leaving them around buys nothing and a stopped container
 # holding /run/vpp is a dataplane the next start cannot bind.
