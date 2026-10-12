@@ -365,6 +365,47 @@ def ssh_listen_wildcard_error(value):
     return None
 
 
+def host_addresses(addr_text) -> dict:
+    """
+    {address: interface} of the host's `ip -o addr show` (#593), the first
+    interface holding each; a line that is not an address is skipped.
+    """
+    held = {}
+    for line in (addr_text or "").splitlines():
+        w = line.split()
+        if len(w) > 3 and w[2] in ("inet", "inet6"):
+            try:
+                a = ipaddress.ip_address(w[3].split("/")[0])
+            except ValueError:
+                continue
+            held.setdefault(a, w[1].split("@")[0])
+    return held
+
+
+def listen_absent(value, addr_text) -> list:
+    """
+    The words of the listen-address `value` that no interface of the host
+    holds, per its `ip -o addr show` `addr_text` (#601). A wildcard is never
+    absent. What tells a boot's snmpd that could not bind an address that is
+    not up YET - the management card's, at every boot of 10.40.200.166 -
+    from one that refused its configuration. An IPv6 address still in
+    duplicate address detection (`tentative`) is not bindable yet either:
+    bind() answers EADDRNOTAVAIL for it, as for one not there at all.
+    """
+    held = host_addresses("\n".join(
+        line for line in (addr_text or "").splitlines()
+        if " tentative" not in line))
+    out = []
+    for word in listen_addresses(value):
+        try:
+            a = ipaddress.ip_address(unbracket(word))
+        except ValueError:
+            continue
+        if not a.is_unspecified and a not in held:
+            out.append(word)
+    return out
+
+
 def ssh_listen_unbound(addrs, addr_text, links, mgmt_vrf=""):
     """
     The refusals for listen-addresses `addrs` that sshd could not bind on
@@ -380,15 +421,7 @@ def ssh_listen_unbound(addrs, addr_text, links, mgmt_vrf=""):
     main table, and bind() answers EADDRNOTAVAIL there for a VRF's address.
     The wildcards are always bindable.
     """
-    held = {}
-    for line in (addr_text or "").splitlines():
-        w = line.split()
-        if len(w) > 3 and w[2] in ("inet", "inet6"):
-            try:
-                a = ipaddress.ip_address(w[3].split("/")[0])
-            except ValueError:
-                continue
-            held.setdefault(a, w[1].split("@")[0])
+    held = host_addresses(addr_text)
     out = []
     for word in addrs:
         a = ipaddress.ip_address(unbracket(word))

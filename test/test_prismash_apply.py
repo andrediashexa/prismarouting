@@ -2385,6 +2385,9 @@ _sh.snmp = type("N", (), {"apply": _snmp_apply,
                           "stale": lambda self, *a, **k: False,
                           "read": lambda self: ({}, [], {}, [])})()
 _sh.agentx_follows_snmp = lambda on: None
+# A host that cannot be asked for its addresses (#601): the failure stays
+# the warning it was, wherever this suite runs.
+_sh.sys = system.System(runner=lambda a, stdin=None, timeout=30: (1, ""))
 _sh.booting = True
 _buf = io.StringIO()
 with contextlib.redirect_stdout(_buf):
@@ -2406,6 +2409,136 @@ with contextlib.redirect_stdout(io.StringIO()):
     _ok = _sh2.apply(parse_nested("snmp enabled yes\nsnmp community c\n"))
 check(not _ok and not _sh2.snmp_pending,
       "while a commit typed by an operator still refuses it whole")
+
+print("\n=== the boot's SNMP: an address not up yet is not a refusal (#601) ===")
+# Measured on 10.40.200.166 (0.152.10, 0.152.11), at every boot and every
+# dataplane restart: `snmp listen-address 10.40.200.166 2804:4ed4:1000:6::166`,
+# the management card's addresses not on the host yet when the load applied
+# SNMP, snmpd "Error opening specified endpoint", and the record said "the
+# SNMP settings were refused" - then, nine seconds later, "applied once the
+# interfaces were up", the same configuration. Mutations shown red: the boot's
+# failure recorded again (case 1, 2); snmp_waiting_for answering [] (case 1:
+# the warning printed); the retry not waiting for the address (case 3); the
+# retry's refusal not recorded (case 2, 4); the absent address not named
+# (case 4); the operator's commit's refusal deferred like a boot's (case 5).
+_ADDR_UP = ("1: lo    inet 127.0.0.1/8 scope host lo\n"
+            "2: vppmg0    inet 10.40.200.166/24 scope global vppmg0\n"
+            "2: vppmg0    inet6 2804:4ed4:1000:6::166/64 scope global\n")
+_ADDR_DOWN = "1: lo    inet 127.0.0.1/8 scope host lo\n"
+_SNMP_TEXT = ("snmp enabled yes\nsnmp community c\nsnmp listen-address "
+              "10.40.200.166 2804:4ed4:1000:6::166\n")
+_DIDNT = ("snmpd did not come up with that configuration, so the previous "
+          "one was put back")
+
+
+def _boot_case(addr_seq, ok_seq, booting=True):
+    """A Shell whose host answers `ip -o addr show` from `addr_seq` (the last
+    repeating) and whose snmpd apply answers from `ok_seq`; its record and
+    the applies captured."""
+    sh = shell_with(FakeApi(), "")
+    st = {"addr": list(addr_seq), "ok": list(ok_seq), "applies": 0,
+          "rec": [], "sleeps": 0, "now": 0.0}
+
+    def run(argv, stdin=None, timeout=30):
+        if tuple(argv) == prismash.doors.ADDRS_ARGV:
+            return 0, (st["addr"].pop(0) if len(st["addr"]) > 1
+                       else st["addr"][0])
+        return 0, ""
+
+    def apply(self, *a, **k):
+        st["applies"] += 1
+        ok = st["ok"].pop(0) if len(st["ok"]) > 1 else st["ok"][0]
+        return (ok, "" if ok else _DIDNT)
+
+    def sleep(sec):
+        st["sleeps"] += 1
+        st["now"] += sec
+
+    sh.sys = system.System(runner=run)
+    sh.snmp = type("N", (), {"apply": apply,
+                             "stale": lambda self, *a, **k: False,
+                             "read": lambda self: ({}, [], {}, [])})()
+    sh.agentx_follows_snmp = lambda on: None
+    sh.record_event = lambda sev, text, **k: (st["rec"].append((sev, text))
+                                              or True)
+    sh.booting = booting
+    st["sleep"], st["clock"] = sleep, (lambda: st["now"])
+    return sh, st
+
+
+# 1. The address comes up with the interfaces: nothing but the notice.
+_sh, _st = _boot_case([_ADDR_DOWN, _ADDR_UP], [False, True])
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _ok = _sh.apply(parse_nested(_SNMP_TEXT))
+_said = _buf.getvalue()
+check(_ok and _sh.snmp_pending and _st["rec"] == []
+      and "snmp: waiting for 10.40.200.166 to come up\n" in _said
+      and "snmp: waiting for 2804:4ed4:1000:6::166 to come up\n" in _said
+      and "warning" not in _said,
+      f"the boot's apply, the address not up: no record, no warning, one "
+      f"line saying what it waits for: {_st['rec']} {_said!r}")
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _r = _sh.retry_snmp(sleep=_st["sleep"], clock=_st["clock"])
+check(_r is True and _st["rec"] == [
+      ("notice", "the SNMP settings were applied once the interfaces were up")],
+      f"and the retry records the notice, alone: {_r} {_st['rec']}")
+
+# 2. A real refusal (the address is there; snmpd still will not start):
+# said at once on the journal, recorded ONCE, after the retry.
+_sh, _st = _boot_case([_ADDR_UP], [False])
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _ok = _sh.apply(parse_nested(_SNMP_TEXT))
+check(_ok and _sh.snmp_pending and _st["rec"] == []
+      and f"warning: snmp: {_DIDNT}" in _buf.getvalue(),
+      f"a refusal at boot is a warning on the journal, recorded later: "
+      f"{_st['rec']} {_buf.getvalue()!r}")
+with contextlib.redirect_stdout(io.StringIO()) as _buf:
+    _r = _sh.retry_snmp(sleep=_st["sleep"], clock=_st["clock"])
+check(_r is False and _st["sleeps"] == 0 and _st["rec"] == [
+      ("warning", f"the SNMP settings were refused: {_DIDNT}")],
+      f"and the retry that gives up records it, once: {_r} {_st['rec']}")
+
+# 3. The address comes up during the retry's wait: it is waited for.
+_sh, _st = _boot_case([_ADDR_DOWN, _ADDR_DOWN, _ADDR_DOWN, _ADDR_UP],
+                      [False, True])
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.apply(parse_nested(_SNMP_TEXT))
+    _r = _sh.retry_snmp(sleep=_st["sleep"], clock=_st["clock"])
+check(_r is True and _st["sleeps"] == 2 and _st["applies"] == 2
+      and [s for s, _ in _st["rec"]] == ["notice"],
+      f"Shell.retry_snmp waits for the address, then applies: {_r} {_st}")
+
+# 4. An address that never comes up: the wait is bounded, and the refusal
+# recorded after it names the address.
+_sh, _st = _boot_case([_ADDR_DOWN], [False])
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.apply(parse_nested(_SNMP_TEXT))
+    _r = _sh.retry_snmp(sleep=_st["sleep"], clock=_st["clock"])
+check(_r is False and _st["now"] >= _sh.SNMP_ADDRESS_WAIT
+      and _st["sleeps"] <= _sh.SNMP_ADDRESS_WAIT / _sh.SNMP_ADDRESS_STEP + 1
+      and len(_st["rec"]) == 1 and _st["rec"][0][0] == "warning"
+      and "10.40.200.166 2804:4ed4:1000:6::166 never came up on this box"
+      in _st["rec"][0][1],
+      f"an address that never comes is a refusal, after the wait: {_st}")
+
+# 5. The operator's commit: refused at once, recorded at once, nothing
+# waiting - an address that is not on the box is the operator's to fix.
+_sh, _st = _boot_case([_ADDR_DOWN], [False], booting=False)
+with contextlib.redirect_stdout(io.StringIO()):
+    _ok = _sh.apply(parse_nested(_SNMP_TEXT))
+check(not _ok and not _sh.snmp_pending and _st["rec"] == [
+      ("warning", f"the SNMP settings were refused: {_DIDNT}")],
+      f"a commit typed by an operator is refused and recorded at once: "
+      f"{_ok} {_st['rec']}")
+
+check(_boot_case([_ADDR_DOWN], [True])[0].snmp_waiting_for(
+      {"enabled": "yes", "listen-address": "10.40.200.166 127.0.0.1"})
+      == ["10.40.200.166"]
+      and _boot_case([_ADDR_DOWN], [True])[0].snmp_waiting_for(
+          {"enabled": "no", "listen-address": "10.40.200.166"}) == [],
+      "Shell.snmp_waiting_for: the absent addresses of an enabled snmpd")
+print("  the boot's SNMP failure is recorded once, by the retry, and not at "
+      "all when the address only had to come up")
 
 
 print("=== a check reads each dump once; an apply reads fresh (#520) ===")

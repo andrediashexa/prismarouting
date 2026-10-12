@@ -852,6 +852,48 @@ EOF
       "$(ip -6 route show table 200 2001:db8:99::/48 2>&1)"
   afresh "tenant: given back, the upstream learns the card's IPv6 afresh" \
       up veth-up-o 2001:db8:10::1 2001:db8:10::2
+
+  # THE BOOT'S SNMP, RECORDED ONCE AND ONLY WHEN IT IS TRUE (#601). The load
+  # applies SNMP before the interfaces whenever snmpd.conf is not the file
+  # this release writes (#523) - forced here by a line appended to it - and
+  # with nonlocal bind off snmpd cannot bind an address no interface has
+  # yet. 10.40.200.166 recorded "the SNMP settings were refused" at every
+  # boot that way, then "applied once the interfaces were up", the same
+  # file. Phases 4 to 7 never see it: management in its VRF turns nonlocal
+  # bind on. A boot after phase 8 left the card in vrf mgmt with no
+  # management statement:
+  #   11. the card still in the VRF: snmpd cannot bind its addresses from
+  #       the main table, ever - a real refusal, recorded ONCE, after the
+  #       retry (0.152.11 recorded it twice, the first before the retry);
+  # The other half - an address that is only not up YET, the shape
+  # 10.40.200.166 shows at every boot - is not reproduced here: stopping
+  # and starting this lab's dataplane does not recreate the boot's order
+  # (the load's SNMP apply succeeded at once, or did not run, in two
+  # attempts on 2026-10-12). It is held by test_prismash_apply and proven
+  # on .166 itself after the release.
+  boot11() {  # <phase>: a boot, snmpd started first, then --load
+    $HX -c "save" 2>&1 | tail -1 | sed 's/^/  /'
+    stop_box
+    sysctl -q -w net.ipv4.ip_nonlocal_bind=0 net.ipv6.ip_nonlocal_bind=0
+    echo "# written by an earlier release" >> /etc/snmp/snmpd.conf
+    systemctl restart snmpd
+    EV11=$(wc -l < "$PRISMA_EVENTS" 2>/dev/null || echo 0)
+    start_box
+    $HX --load "$PRISMA_CONFIG" > "/tmp/load$1.log" 2>&1
+    grep -i "snmp" "/tmp/load$1.log" | sed 's/^/  load: /'
+    EVENTS11=$(tail -n +"$((EV11 + 1))" "$PRISMA_EVENTS" 2>/dev/null \
+               | grep '"subject":"snmp"')
+    echo "$EVENTS11" | grep . | sed 's/.*"text":"\([^"]*\)".*/  event: \1/'
+  }
+  echo; echo "=== 11. a boot whose snmpd cannot bind, the card in a VRF ==="
+  boot11 11
+  expect_in "real refusal: the load says it, as a warning" \
+      "warning: snmp" "$(cat /tmp/load11.log)"
+  expect "real refusal: recorded once, after the retry (#601)" \
+      [ "$(echo "$EVENTS11" | grep -c 'SNMP settings were refused')" = 1 ]
+  expect_not_in "real refusal: and nothing says it was applied" \
+      "SNMP settings were applied" "$EVENTS11"
+
 fi
 
 verdict

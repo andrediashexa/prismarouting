@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A boot no longer records "the SNMP settings were refused" for an address
+  that is merely not up yet.** ([#601](https://github.com/andrediashexa/hexarouting/issues/601))
+  On 10.40.200.166, whose `snmp listen-address` is the management card's,
+  every reboot and every `system dataplane restart` recorded that warning -
+  snmpd could not bind an address no interface had yet - and nine seconds
+  later "applied once the interfaces were up", the same configuration. The
+  boot's SNMP failure is now left to the retry after the interfaces (#591),
+  which records how it ended, once. A listen-address no interface holds is
+  waited for, at most 15 s, and the journal says "snmp: waiting for
+  <address> to come up"; an address that never comes, a configuration
+  snmpd refuses, a port in use, are recorded as the refusal after that last
+  try, the absent address named. Before, a real refusal at boot was recorded
+  twice. A commit typed at the VTY is refused and recorded at once, as
+  before. lab/mgmt-vrf.sh's boot phase applies SNMP before the interfaces
+  and asserts the record.
+
 ## 0.153.6 - the log rings' lab reader caught up, and a lab for the streams
 
 ### Fixed

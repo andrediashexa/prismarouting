@@ -99,7 +99,7 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     validate_operator,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT, GROUP_OPERATOR,
                     ROLE_ADMIN, ROLE_CGNAT, SSH_DEFAULTS, listen_addresses,
-                    ssh_listen_legacy, ssh_listen_unbound)
+                    ssh_listen_legacy, ssh_listen_unbound, listen_absent)
 import routes
 import typedcfg
 import logmon
@@ -14037,7 +14037,8 @@ class Shell:
                                       target.snmp_users,
                                       target.snmp_trap_hosts,
                                       hostname=name)
-            self.record_settings("SNMP", ok, msg)
+            if ok or not self.booting:
+                self.record_settings("SNMP", ok, msg)
             if not ok and self.booting:
                 # NOT A REASON FOR THE BOX NOT TO COME UP (#591). snmpd is
                 # applied before the interfaces, so a listen-address on one
@@ -14047,12 +14048,30 @@ class Shell:
                 # 10.40.200.166 came up with no address at all, the load
                 # retrying every 8 s. The rest goes on; SNMP is tried again
                 # once the interfaces are there (Shell.retry_snmp).
-                print(f"warning: snmp: {msg}")
-                print_prose("the rest of the configuration is applied, and "
-                            "SNMP is tried again after the interfaces")
+                #
+                # AND NOT RECORDED HERE (#601). That retry answers this
+                # failure, so it is the one that says how it ended: .166
+                # recorded "the SNMP settings were refused" at every boot and
+                # every dataplane restart, and nine seconds later "applied
+                # once the interfaces were up" - the same configuration. A
+                # warning that is not true trains the operator to ignore
+                # warnings (#586). An address not up yet is said as what it
+                # is, on the journal only; any other failure as before.
+                waiting = self.snmp_waiting_for(target.snmp)
+                if waiting:
+                    # One address a row: an IPv6 one is 45 columns at its
+                    # widest, and a list of them has no widest at all.
+                    for addr in waiting:
+                        print(f"snmp: waiting for {addr} to come up")
+                    print_prose("SNMP is applied after the interfaces")
+                else:
+                    print(f"warning: snmp: {msg}")
+                    print_prose("the rest of the configuration is applied, "
+                                "and SNMP is tried again after the interfaces")
                 self.snmp_pending = (target.snmp, target.snmp_communities,
                                      target.snmp_users,
                                      target.snmp_trap_hosts, name)
+                msg = ""
             elif not ok:
                 self.err(f"snmp: {msg}")
                 return False
@@ -14726,18 +14745,55 @@ class Shell:
         args.update(kw)
         return self.api_call("bpa_global_set", args)
 
-    def retry_snmp(self):
+    #: How long the retry after the interfaces waits for a listen-address
+    #: that is not up yet (#601), and how often it looks. On .166 the
+    #: management address was there by the time the load ended (the retry,
+    #: nine seconds after the first apply, bound it at once); the wait is
+    #: for the card whose address the kernel is given a moment later, and
+    #: it is bounded because an address that never comes is a refusal.
+    SNMP_ADDRESS_WAIT = 15.0
+    SNMP_ADDRESS_STEP = 1.0
+
+    def snmp_waiting_for(self, settings):
+        """
+        The `snmp listen-address` words of `settings` that no interface of
+        the host holds yet (#601), read through its doors - [] when snmpd is
+        not enabled, or the host cannot be asked, which leaves the failure
+        the refusal it was.
+        """
+        if settings.get("enabled") != "yes":
+            return []
+        rc, addrs = self.sys._run(list(doors.ADDRS_ARGV))
+        if rc != 0:
+            return []
+        return listen_absent(settings.get("listen-address",
+                                          SNMP_DEFAULTS["listen-address"]),
+                             addrs)
+
+    def retry_snmp(self, sleep=time.sleep, clock=time.monotonic):
         """
         The SNMP apply the boot's load set aside (#591), once more now that
         the interfaces - and the addresses snmpd listens on - are there.
-        Said either way; a failure here is still a warning, the box being up.
+        Said either way, and recorded either way: the boot's own failure was
+        not (#601), so this is where a refusal is written - once, after the
+        last try. A listen-address still not up is waited for, at most
+        SNMP_ADDRESS_WAIT seconds, and named in the refusal if it never came.
         """
         if not self.snmp_pending:
             return None
         settings, communities, users, traps, name = self.snmp_pending
         self.snmp_pending = None
+        until = clock() + self.SNMP_ADDRESS_WAIT
+        while self.snmp_waiting_for(settings) and clock() < until:
+            sleep(self.SNMP_ADDRESS_STEP)
         ok, msg = self.snmp.apply(settings, communities, users, traps,
                                   hostname=name)
+        if not ok:
+            absent = self.snmp_waiting_for(settings)
+            if absent:
+                msg = (f"{' '.join(absent)} never came up on this box, so "
+                       f"snmpd could not listen there and its previous "
+                       f"configuration was put back")
         self.record_settings("SNMP", ok, msg, retried=True)
         if ok:
             print("snmp: applied once the interfaces were up"
@@ -16206,7 +16262,10 @@ class Shell:
         --reapply) puts the same settings on again, and an event per load
         saying nothing changed is the routine noise #588 keeps out: under
         `booting` only a refusal is written, and the retry after the
-        interfaces (#591) either way, since it answers that refusal.
+        interfaces (#591) either way, since it answers that refusal. The
+        boot's SNMP refusal itself is left to that retry (#601): Shell.apply
+        does not call this for it, so a failure is written once, after the
+        last try, and an address that was merely not up yet never is.
         """
         if ok and self.booting and not retried:
             return False
