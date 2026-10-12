@@ -51,6 +51,10 @@ if ! docker ps >/dev/null 2>&1; then
   exec sg docker -c "IMAGE='$IMAGE' LAB_WORKERS='${LAB_WORKERS:-}' \
                      LAB_WORKER_COUNT='${LAB_WORKER_COUNT:-}' \
                      PRISMA_VERSION_STAMP='${PRISMA_VERSION_STAMP:-}' \
+                     ISO='${ISO:-}' BENCH_CACHE='${BENCH_CACHE:-}' \
+                     BENCH_REINSTALL='${BENCH_REINSTALL:-}' \
+                     BENCH_ROUNDS='${BENCH_ROUNDS:-}' \
+                     BENCH_SECONDS='${BENCH_SECONDS:-}' \
                      '$0' '$LAB' $LAB_ARGV"
 fi
 
@@ -79,7 +83,20 @@ KVM=""
 # has nothing to do with what it tests.
 case "$LAB" in
   boot-iso|install-iso) LAB_MEM=${LAB_MEM:-10g} ;;
+  # Three guests: the box at 6 GB, the subscribers and the internet at 1 GB.
+  bench3vm) LAB_MEM=${LAB_MEM:-10g} ;;
 esac
+
+# THE BENCH'S CACHE, OUTSIDE THE TREE (#475). lab/bench3vm.sh keeps the ISO,
+# the installed disk, the prepared Debian image and every run's evidence in
+# /var/cache/prisma, where build caches live; mounted only for that lab, so
+# no other lab can come to depend on what happens to be cached there.
+LAB_CACHE=""
+if [ "$LAB" = bench3vm ]; then
+  BENCH_CACHE=${BENCH_CACHE:-/var/cache/prisma/bench3vm}
+  mkdir -p "$BENCH_CACHE"
+  LAB_CACHE="-v $BENCH_CACHE:/cache"
+fi
 
 # APT OVER IPv4, AND WITH A DEADLINE. Measured on 2026-09-13, mid release
 # suite: `getent hosts deb.debian.org` inside the container returns only
@@ -100,6 +117,10 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BOOT_NO_1G="${BOOT_NO_1G:-}" \
   -e BOOT_IOMMU="${BOOT_IOMMU:-}" \
   -e LOGCOPY="${LOGCOPY:-}" \
+  -e BENCH_REINSTALL="${BENCH_REINSTALL:-}" \
+  -e BENCH_ROUNDS="${BENCH_ROUNDS:-}" \
+  -e BENCH_SECONDS="${BENCH_SECONDS:-}" \
+  $LAB_CACHE \
   -e PRISMA_VERSION_STAMP="$PRISMA_VERSION_STAMP" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "cat > /etc/apt/apt.conf.d/99lab <<'APTCONF'

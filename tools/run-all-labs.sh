@@ -368,6 +368,7 @@ boot-iso:the release gate runs this, against a tag
 install-iso:the release gate runs this, against a tag
 bfd-measure:a measurement and not a pass or fail: it sweeps BFD intervals for docs/bfd.md and takes about fifteen minutes by design (#559). Run it deliberately: sh tools/lab.sh bfd-measure
 soak:hours of churn is the point of it (#30), and four minutes is its SHORTEST run. The longest lab here is about two minutes, and a suite that waited on this one would stop being run - which is how a suite loses the assertion instead of the lab losing it. Run it deliberately: sh tools/lab.sh soak, or sh tools/lab.sh soak 28800 for the eight hours it is for
+bench3vm:a measurement bench that installs the released ISO and boots three machines (#475): about ten minutes with its disks cached, a quarter of an hour the first time, and its numbers are the point. Run it deliberately: sh tools/lab.sh bench3vm, and sh tools/lab.sh bench3vm off to watch it go red
 "
 
 not_lab_reason() {  # <name> -> its reason, or nothing if it is a lab

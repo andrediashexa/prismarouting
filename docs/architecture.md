@@ -279,6 +279,97 @@ thing waits behind `bpa rebalance enable`. Which side of that trade an
 operator wants is a decision about their traffic, and the numbers above are
 what it should be taken on.
 
+### Dynamic mode under real traffic (#475)
+
+Every lab above drives BPA with VPP's packet generator. `lab/bench3vm.sh`
+([#475](https://github.com/andrediashexa/hexarouting/issues/475)) puts the
+**released ISO** between hosts that open real connections, on this build
+machine: three qemu/KVM guests on two bridges that exist only inside the lab's
+container, with no address and no uplink, so no test packet leaves the host.
+Run it with `sh tools/lab.sh bench3vm`; `TESTING.md` says how it is kept and
+what its `off` run does.
+
+**The conditions**, measured on 2026-10-11 and 12:
+
+| | |
+|---|---|
+| Box | `prisma-routing-0.153.0.iso` (sha256 `57d0b3a2...`, checked against the published one), installed unattended in 149 s, booted from disk, configured through `prismash`. 4 vCPU (3 workers), 6 GB, virtio-net with vhost, 3 queues per data card, MTU 1500 |
+| Pool | `prefix-outside 203.0.113.0/29` (8 addresses), `block-size 4096`, ports 1024-65535: 15 blocks an address, 120 in all, 40 in each worker's slice. `mode bpa`, `policy interleaved`, `block-holddown 5`, `timeout udp 20` (below the RFC floor on purpose, so a round of churn takes seconds), syslog to the internet guest |
+| Subscribers | Debian 12, 2 vCPU, 1 GB: 240 addresses in `100.64.0.0/22`, each holding one TCP connection to the internet guest and sending one UDP datagram from the same address; leaving is a reset |
+| Internet | Debian 12, 2 vCPU, 1 GB: a server that writes down the public address and port each connection **arrived from**, a syslog collector, iperf3 |
+| Host | Xeon E5-2680 v4, 16 threads, **shared** with other agents' labs (load 4.7 before a run, up to 11.8 during it) |
+
+**BPA across real NICs.** Four runs, identical in every count that is not
+a throughput:
+
+| What | Measured |
+|---|---|
+| The pool filling | 120 of 240 subscribers got through, 120 were refused at their SYN and never reached the internet; every slice 40/40, `480 refusals` (four SYNs each) |
+| What the internet saw | 600 connections (960 with 12 rounds of churn), every one from a pool address; each subscriber's TCP and UDP from the same public address |
+| The records | 300 `BLOCK-ALLOC` and 239 `BLOCK-RELEASE` lines (480 and 419); for **every** connection the internet logged, "who held this address and port at that instant", asked of the records alone, names exactly the subscriber the internet heard from; every allocation was used by its subscriber |
+| The box's own reading | `show bpa subscriber` agrees with the internet for every subscriber holding a block at the end (61) |
+| The transport | 660 syslog lines written and 660 received (1020 and 1020), none pending, none dropped |
+| Blocks back | after a reset and the 20 s UDP timeout plus the 5 s hold-down, every departing subscriber's block was released and reused: 239 releases for 239 departures |
+
+The `off` run makes the pool `mode deterministic` and nothing else: the
+connections still cross, and five checks go red - the pool never fills on
+demand, no block comes back, no record arrives, no connection can be traced
+from the records, and there is no allocation to have been used.
+
+**How evenly a dynamic pool spreads subscribers over its addresses**
+(asked on 2026-09-30). Holders per public address, `203.0.113.0` to `.7`,
+read from `show bpa subscriber` for all 240 subscribers. A churn round is half
+the holders leaving at random and 30 idle subscribers arriving:
+
+| When | Holders | Per address | max/min | the most even possible |
+|---|---|---|---|---|
+| fresh pool, 60 joined | 60 | 8 8 8 8 7 7 7 7 | 1.14 | 1.14 |
+| full | 120 | 15 each | 1.00 | 1.00 |
+| after round 1 | 90 | 10 10 10 10 12 13 13 12 | 1.30 | 1.09 |
+| after round 6 | 61 | 6 9 7 7 7 10 8 7 | 1.67 | 1.14 |
+| after round 12 | 61 | 7 7 5 7 10 9 7 9 | 2.00 | 1.14 |
+
+Round 6 measured 1.67, 1.14, 2.2 and 2.0 in four runs: the fresh spread is the
+formula's, and after churn it drifts. The reason is the free list: each
+worker's free blocks are a **stack** (`vec_add1` on release, `vec_pop` on
+allocation in `bpa_dyn.c`), so an arrival takes the block the last leaver
+gave back, on whatever address that was, and nothing pulls the counts back
+together. `lab/bench3vm_model.py` replays the same churn over a model of the
+slices and the stack: a mean max/min of **2.25** after 6 rounds and **2.19**
+after 12 (500 runs), against **1.14** if each worker took a free block from
+the address with the fewest holders. That is the number #475 asked for
+before proposing the change; the change's cost on the allocation path is not
+measured here.
+
+**Throughput, as a sanity number and not a NIC benchmark.** Virtio through
+vhost on a shared build machine; what limits it is the host's packet copying
+and whoever else is running, as #475's Proxmox rounds found.
+[#28](https://github.com/andrediashexa/hexarouting/issues/28) is the real
+measurement. Eight subscribers, 20 s each:
+
+| Traffic | Through the box | Into the inside card | Lost |
+|---|---|---|---|
+| TCP, 1500-byte frames, 8 streams | 4.77, 3.70, 4.05, 5.19 Gbit/s | 413, 321, 351, 449 k packets/s | 19-24 k `dpdk tx failure` on the outside card, matching the senders' 22-26 k retransmits |
+| UDP, 64-byte payloads, 8 streams | | 139, 160, 115, 109 k packets/s | 15-31% of datagrams; 23-170 k of them are the outside card's `dpdk tx failure` |
+
+**The handoff share per worker** (cf.
+[#487](https://github.com/andrediashexa/hexarouting/issues/487)), from
+`show errors` with the counters cleared before each run:
+
+| Traffic | Handed to another worker |
+|---|---|
+| TCP | 17 of 8.3 M, 19 of 6.4 M, 17 of 7.0 M, 19 of 9.0 M - every worker under 0.001% |
+| UDP, one way | 52%, 49%, 59%, 52% of all packets; per worker from 0% to 79% |
+
+#487 places each RX queue on the thread of its TX twin, and the host's tap
+steers a flow to the queue the guest last transmitted it on - so a flow the
+owner **answers** (TCP's ACKs) comes back to the owner, and #487's figure
+holds. A flow with no return traffic is steered by the host's hash, which
+knows nothing of owners, and about half of it crosses workers - with the
+handoff's queue overflowing at that rate (`packets dropped by congestion`,
+2150 in one run). That is [#29](https://github.com/andrediashexa/hexarouting/issues/29)'s
+subject on a real NIC too: RSS by a hash the box does not choose.
+
 **The index space is the part that is not symmetric.** A block's name in a
 worker's slice is arithmetic - `block_idx = local × n_workers + worker` - so
 every index in a slice is congruent to that worker's id, and a borrowed block
