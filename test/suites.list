@@ -23,6 +23,7 @@
 .build/test_bpa_frame
 .build/test_bpa_exhaust
 .build/test_bpa_log_ring
+.build/test_bpa_log_layout
 .build/test_prisma_logd
 .build/test_bpa_sock
 .build/test_bpa_ports
@@ -181,6 +182,7 @@ python3 test/test_cgnatshow.py
 python3 test/test_opshow.py
 python3 test/test_api_coverage.py
 python3 test/test_logmon.py
+python3 test/test_log_rings.py
 sh test/test_api_configure.sh
 sh test/test_kernel_current.sh
 python3 test/test_pager.py

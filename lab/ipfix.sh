@@ -315,6 +315,7 @@ RING_OK=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; d=json.load(sys.st
 RING_WRITTEN=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("written", 0))')
 RING_PENDING=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pending", -1))')
 RING_DROPPED=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("dropped", -1))')
+RING_LAYOUT=$(printf '%s' "$RINGS" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s of %s" % (d.get("layout_bytes"), d.get("bytes")))')
 
 echo
 echo "=========== VERDICT ==========="
@@ -324,6 +325,10 @@ C=$(cat /tmp/collector.out)
 # --- the rings are outside the main heap, and another process can read them ---
 expect "another process reads the rings' segment and its header checks (#550)" \
   test "$RING_OK" = yes
+# #606: the header, n worker rings, the export ring and the watch ring are
+# the whole segment - the sum the reader could not make while it was red.
+expect "and its layout adds up to the segment: ${RING_LAYOUT} bytes" \
+  sh -c "printf '%s' '$RING_LAYOUT' | awk '\$1 == \$3 && \$1 > 0 { ok = 1 } END { exit !ok }'"
 expect_in "show bpa logging says the rings are in /dev/shm, outside the main heap" \
   "rings       /dev/shm/prisma-bpa-log" "$LOG_BACK"
 expect "the events this run made are in the rings: ${RING_WRITTEN} written (at least 8)" \
