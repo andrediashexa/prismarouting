@@ -382,6 +382,12 @@ services:
     volumes:
       - $CDIR/frr:/etc/frr
       - $CDIR/frr:/var/run/frr
+  bng:
+    volumes:
+      - $CDIR/run:/run/vpp
+      - $CDIR/bng:/etc/prisma-routing/bng:ro
+      - $CDIR/bngrun:/run/prisma-routing/bng
+      - $CDIR/log:/var/log/prisma-routing
 OVR
 
   # THE FRAGMENT THE UNIT GENERATES, generated the way the unit generates it
@@ -627,15 +633,17 @@ drain below cannot take the branch a box in service takes" ;;
   else
     bad "'up' started the PPPoE container on a box with no PPPoE"
   fi
-  ccompose --profile bng create --no-deps bng >/dev/null 2>&1
+  # `up --no-start`, not `create`: compose v2's create takes no --no-deps,
+  # and this must not touch the running vpp.
+  ccompose --profile bng up --no-start --no-deps bng >/dev/null 2>&1 || true
   lim=$(docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{.HostConfig.OomScoreAdj}} {{.HostConfig.NetworkMode}}' \
-        "$(ccompose --profile bng ps -aq bng 2>/dev/null)" 2>/dev/null)
+        "$(ccompose --profile bng ps -aq bng 2>/dev/null)" 2>/dev/null || true)
   if [ "$lim" = "536870912 512 500 host" ]; then
     ok "named, it is created with 512 MB, 512 processes, OOM's first choice, on the host's network"
   else
     bad "the PPPoE container's limits reached the engine as '$lim'"
   fi
-  ccompose --profile bng rm -f bng >/dev/null 2>&1
+  ccompose --profile bng rm -f bng >/dev/null 2>&1 || true
 
   echo "==> and stopped, which is the question"
   docker compose -p prismacheck -f "$REPO/appliance/compose.yaml" \

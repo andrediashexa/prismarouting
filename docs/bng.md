@@ -224,6 +224,20 @@ its limits back from the engine.
    upstream side would be answered. Not exercised in the lab; a later step
    (0.4) MUST restrict it.
 
+8. **Two defects only an installed box showed** (the maintainer's bench,
+   0.153.97 built from this branch, 2026-10-12): `prisma-bng apply` ran
+   compose without the stack's environment, so it asked for
+   `prisma-bng:latest`, which no installed box has ("pull access denied");
+   and nothing made `/var/log/prisma-routing/bng`, so accel-pppd exited at
+   start ("log:log_error:open: No such file or directory") and the container
+   restarted for ever, answering no PADI. `prisma-bng` now reads
+   `PRISMA_VERSION` and `PRISMA_VPP_GID` from `/run/prisma-routing/compose.env`
+   as the stack's unit does, and the entrypoint (and `apply`) make the log
+   directory. The lab now runs with the release's tag only and from a log
+   volume without the directory, and is red without either fix. With them the
+   bench terminated PAP and CHAP against a real FreeRADIUS and carried 1.26
+   Gbit/s through one session and the BPA pool.
+
 ### 0.4 What remains of phase 1
 
 In the order they are planned, each its own step on #597:
