@@ -427,7 +427,13 @@ container. Its checks hold the internet's log, the subscribers' view and the
 box's syslog records against each other; `off` makes the pool deterministic
 and the BPA checks go red. Everything it downloads, installs or measures is
 kept in `/var/cache/prisma/bench3vm`, never in the tree; the numbers are in
-`docs/architecture.md`, *Dynamic mode under real traffic*.
+`docs/architecture.md`, *Dynamic mode under real traffic*. Since
+[#603](https://github.com/andrediashexa/hexarouting/issues/603) the spread of
+subscribers over the pool's addresses is asserted (fresh, full, and every
+churn round from the sixth within one subscriber of the most even), so a
+released medium from before #603 goes red there; `BENCH_UPGRADE` names an
+upgrade artifact in the cache that the box is upgraded to before it is
+configured, which is how a change to the plugin is measured on this bench.
 
 ```sh
 sh tools/lab.sh bench3vm        # about ten minutes with its disks cached

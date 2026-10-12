@@ -16,6 +16,12 @@ priced - a free block taken from the address with the fewest holders.
 
 A model and not the box: it says what the stack does to the spread, not
 what a least-loaded choice would cost on the allocation path.
+
+Kept as the record of what #475 measured before #603. The box takes the
+least-loaded block now, and the rule it is held to is ref/bpa_model.py's
+DynamicSlices - which releases a round's leavers in the order the reap does
+rather than at random, so its stack averages 1.60 after six rounds where
+this one says 2.25. Both are a stack drifting; the order is the difference.
 """
 import random
 import statistics

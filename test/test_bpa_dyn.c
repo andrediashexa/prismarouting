@@ -2602,11 +2602,15 @@ main (void)
      * address, and both indexes over the free blocks.
      *
      * Mutations shown red, each on its own: bpa_dyn_take() always popping
-     * the stack (2560 of the least-loaded answers wrong); the tournament
-     * preferring the HIGHER address on a tie; a block going back at the HEAD
-     * of its address's list instead of the tail; bpa_dyn_count() not telling
-     * the other workers (every multi-worker pool wrong, one-worker right);
-     * the reap not uncounting a primary (every load wrong after round 1).
+     * the stack (190 to 550 answers wrong in every pool); the root not
+     * re-read until it reads true (the bench's fresh fill at 1.5); no drain,
+     * no summary bit, or bpa_dyn_count() telling nobody (the multi-worker
+     * pools wrong, the one-worker pool right); one worker's cell read as the
+     * pool's load (every multi-worker pool wrong); the reap not uncounting a
+     * primary (every pool wrong). Three more go red elsewhere in this file:
+     * a tie going to the HIGHER address and a borrowed slot left out of the
+     * index (the index readers), and a block going back at the HEAD of its
+     * address's list (the stride checks, whose blocks it moves).
      */
     u32 scn, bad_ll = 0, bad_st = 0, n_ops = 0;
     u32 *sp_ll = calloc (BPA_DYN_VEC_N_CHK, sizeof (u32));
@@ -2938,6 +2942,120 @@ main (void)
     bpa_dyn_share_free (&pr);
     CHECK (pr.dyn_share == 0, "the share was freed and still pointed at");
     printf ("  blocked, the reserve and a mismatched share keep the stack\n");
+  }
+
+  printf ("\n=== the least-loaded pieces, one at a time (#603) ===\n");
+  {
+    /*
+     * Each function behind bpa_dyn_take(), named and driven on its own, so a
+     * wrong one is found by name rather than as a block number somewhere in
+     * five thousand operations. One worker of two over four addresses, so
+     * there is a second worker's bits to set and read.
+     */
+    bpa_pool_t pu;
+    bpa_dyn_t d, o;
+    u32 local, a, n;
+
+    CHECK (bpa_dyn_entry (3, 5) == ((3ULL << 32) | 5)
+	     && bpa_dyn_entry (2, 7) < bpa_dyn_entry (3, 0)
+	     && bpa_dyn_entry (3, 1) < bpa_dyn_entry (3, 2),
+	   "bpa_dyn_entry: the load first, then the address");
+
+    memset (&pu, 0, sizeof (pu));
+    CHECK (mkpool (&pu, "pieces", 4, 1279, 4, BPA_POLICY_INTERLEAVED) == 0,
+	   "pool 'pieces' rejected");
+    bpa_dyn_share_init (&pu, 2);
+    CHECK (bpa_dyn_init (&d, &pu, 0, 2, 0) == 0 && d.share, "slice 0");
+    CHECK (bpa_dyn_init (&o, &pu, 1, 2, 0) == 0 && o.share, "slice 1");
+    /* Worker 0's blocks are 0, 2, 4 ...: addresses 0 and 2 only. */
+    CHECK (d.addr_free[0] == d.n_local / 2 && d.addr_free[2] == d.n_local / 2
+	     && d.addr_free[1] == 0,
+	   "bpa_dyn_index_build: %u/%u/%u free on addresses 0/1/2",
+	   d.addr_free[0], d.addr_free[1], d.addr_free[2]);
+    CHECK (d.addr_head[0] == 0 && d.addr_head[2] == 1,
+	   "bpa_dyn_index_build: each address's list starts at its lowest "
+	   "block");
+
+    /* Built again over a slice nothing has touched: the same index. */
+    {
+      u32 h1 = o.addr_head[1], f1 = o.addr_free[1];
+
+      bpa_dyn_index_build (&o);
+      CHECK (o.addr_head[1] == h1 && o.addr_free[1] == f1
+	       && index_disagreements (&o) == 0,
+	     "bpa_dyn_index_build: a second build over a fresh slice differs");
+    }
+
+    /* bpa_dyn_take on a fresh slice: address 0, its lowest block. */
+    local = bpa_dyn_take (&d);
+    CHECK (local == 0 && bpa_dyn_slot_addr (&d, local) == 0,
+	   "bpa_dyn_take: slot %u, not 0", local);
+    bpa_dyn_count (&d, local, 1);
+    CHECK (bpa_dyn_load_of (pu.dyn_share, 0) == 1
+	     && (u32) d.tree[1] == 2,
+	   "bpa_dyn_count: address 0 counts %u, and the root is %u, not 2",
+	   bpa_dyn_load_of (pu.dyn_share, 0), (u32) d.tree[1]);
+
+    /* bpa_dyn_addr_unlink / bpa_dyn_addr_link: off the middle, back on the
+       tail. */
+    n = d.addr_free[2];
+    bpa_dyn_addr_unlink (&d, 3);
+    CHECK (d.addr_free[2] == n - 1 && d.addr_next[3] == BPA_NO_BLOCK
+	     && d.addr_prev[3] == BPA_NO_BLOCK,
+	   "bpa_dyn_addr_unlink: slot 3 still linked");
+    bpa_dyn_addr_link (&d, 3);
+    CHECK (d.addr_free[2] == n && d.addr_tail[2] == 3,
+	   "bpa_dyn_addr_link: slot 3 is not at the tail");
+
+    /* bpa_dyn_tree_fix / bpa_dyn_addr_refresh: a cell moved by hand. */
+    pu.dyn_share->load[2 * 2 + 1] = 5;
+    CHECK ((u32) d.tree[1] == 2, "the guard: the tree has not looked yet");
+    bpa_dyn_addr_refresh (&d, 2);
+    CHECK ((u32) (d.tree[d.n_leaves + 2] >> 32) == 5 && (u32) d.tree[1] == 0,
+	   "bpa_dyn_addr_refresh: address 2 reads %u, the root is %u",
+	   (u32) (d.tree[d.n_leaves + 2] >> 32), (u32) d.tree[1]);
+    d.tree[d.n_leaves + 0] = bpa_dyn_entry (9, 0);
+    bpa_dyn_tree_fix (&d, 0);
+    CHECK ((u32) d.tree[1] == 2, "bpa_dyn_tree_fix: the root is %u, not 2",
+	   (u32) d.tree[1]);
+    bpa_dyn_addr_refresh (&d, 0);
+    pu.dyn_share->load[2 * 2 + 1] = 0;
+
+    /* bpa_dyn_drain: worker 1 lowers address 2; worker 0 hears it only
+       through the bit. */
+    pu.dyn_share->load[2 * 2 + 1] = 3;
+    bpa_dyn_addr_refresh (&d, 2);
+    pu.dyn_share->load[2 * 2 + 1] = 1;
+    pu.dyn_share->stale[0][0] |= 1ULL << 2;
+    pu.dyn_share->stale_sum[0][0] |= 1ULL;
+    CHECK ((u32) (d.tree[d.n_leaves + 2] >> 32) == 3, "the guard: worker 0 "
+	   "still reads 3 for address 2");
+    bpa_dyn_drain (&d);
+    CHECK ((u32) (d.tree[d.n_leaves + 2] >> 32) == 1
+	     && pu.dyn_share->stale[0][0] == 0
+	     && pu.dyn_share->stale_sum[0][0] == 0,
+	   "bpa_dyn_drain: address 2 reads %u, bits left %llx/%llx",
+	   (u32) (d.tree[d.n_leaves + 2] >> 32),
+	   (unsigned long long) pu.dyn_share->stale[0][0],
+	   (unsigned long long) pu.dyn_share->stale_sum[0][0]);
+    /* And bpa_dyn_count's lowering sets worker 1's bits. */
+    bpa_dyn_count (&d, local, -1);
+    CHECK ((pu.dyn_share->stale[1][0] & 1ULL) && (pu.dyn_share->stale_sum[1][0]
+						  & 1ULL),
+	   "bpa_dyn_count: lowering address 0 told worker 1 nothing");
+    for (a = 0; a < 4; a++)
+      {
+	pu.dyn_share->load[a * 2 + 1] = 0;
+	bpa_dyn_addr_refresh (&d, a);
+      }
+    bpa_dyn_push (&d, local);
+    CHECK (index_disagreements (&d) == 0, "the pieces left slice 0 "
+	   "disagreeing");
+    bpa_dyn_free (&d);
+    bpa_dyn_free (&o);
+    bpa_dyn_share_free (&pu);
+    printf ("  entry, build, take, count, link, unlink, refresh, fix and "
+	    "drain, each on its own\n");
   }
 
   (void) i;

@@ -20,11 +20,11 @@ idle subscribers arriving.
   address to five while another keeps ten)
 
 Mutations shown red, one at a time, in ref/bpa_model.py: arrive() keying on
-the address alone (round 6 is nowhere near even); keying on the
-worker's OWN share of the load instead of the pool's (the bench's mean after
-six rounds rises to 1.44 and the every-run claim fails); leave() handing
-blocks back in any order but the reap's (the plugin vectors then differ and
-test_bpa_dyn.c goes red, not this).
+the address alone (addresses left empty: 2100 run-rounds above 8/7); keying
+on the worker's OWN share of the load instead of the pool's (the mean after
+six rounds rises to 1.44, 2018 run-rounds above 8/7); taking an address's
+newest free block instead of its oldest (the fresh one-worker pool stops
+handing out 0, 1, 2 ...).
 """
 import os
 import random
@@ -64,7 +64,8 @@ def churn(rule, seed):
         idle = [s for s in range(1, 241) if s not in d.held]
         for s in rnd.sample(idle, 30):
             d.arrive(s)
-        out.append(d.spread())
+        # An address with nobody on it is as uneven as a pool gets.
+        out.append(d.spread() or float("inf"))
     return out
 
 
@@ -81,7 +82,7 @@ check(st6 > 1.4,
 check(max(r[5] for r in stack) >= 2.0,
       "and some runs of the stack reach 2 or more, as the box did")
 bad = [(seed, k) for seed, r in enumerate(least) for k in range(5, ROUNDS)
-       if r[k] is None or r[k] > 8 / 7 + 1e-9]
+       if r[k] > 8 / 7 + 1e-9]
 check(not bad, f"least-loaded: from round 6 on, every run at 8/7 or better "
       f"({len(bad)} run-rounds above it)")
 print("=== the rule's edges ===")
