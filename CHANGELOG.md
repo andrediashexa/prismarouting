@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.153.4 - latest/ offers an ISO; show hardware counts the cards the dataplane took
+
+### Fixed
+
 * **The release site's `latest/` offers an ISO after a patch release.**
   ([#604](https://github.com/andrediashexa/hexarouting/issues/604))
   `latest` was a link to the newest version's directory, and a Z release has
