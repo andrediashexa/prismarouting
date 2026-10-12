@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.153.2 - BPA under real traffic, on a bench anybody can run
+
+### Added
+
 * **A three-VM bench for BPA under real traffic, local and repeatable.**
   ([#475](https://github.com/andrediashexa/hexarouting/issues/475))
   `lab/bench3vm.sh` installs the newest released ISO (its sha256 checked)
@@ -94,8 +100,6 @@ version has a chance of seeing it.
   for one-way UDP. The numbers are in `docs/architecture.md`. Images,
   disks and runs are cached in `/var/cache/prisma/bench3vm`, never in the
   tree. Ships in no medium.
-
-### Fixed
 
 ## 0.153.1 - IPv6 virtual routers, and a NAT64 pool that fails over
 
