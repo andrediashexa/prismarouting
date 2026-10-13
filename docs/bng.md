@@ -670,8 +670,41 @@ and one of its own:
   the record cannot know");
 * only IPv4 sessions are recorded: IPv6 is not phase 1.
 
-**Measured in `lab/pppoe.sh`** (section 17) - see the CHANGELOG entry for
-the run's numbers.
+**Measured in `lab/pppoe.sh`** (section 17, 2026-10-13, single-threaded
+and with three workers), against the files accel-ppp wrote:
+
+* `clear pppoe session user sub1`: its stop written within the clear, with
+  the user, MAC, access interface, `100.64.0.77` and `NAS-Request` - the
+  `Acct-Terminate-Cause` RADIUS received for it, read from FreeRADIUS's
+  detail file - and the redial's start after it, the same address;
+* accel-pppd killed with -9 holding three sessions: the next one wrote three
+  stops `Control-Plane-Lost` and `restart closed 3` before its first
+  session, and the first entry of the file and every one after it were still
+  there and still chained;
+* the formula: the public address and port section 6 caught on the wire,
+  asked `at` the instant it was sent, named sub1;
+* the block log: with the pool made dynamic (`mode bpa`) and its log sent to
+  a syslog collector, the one `BLOCK-ALLOC` whose range held the port sub2's
+  packet left on named sub2's inside address, and `show pppoe history
+  address <it> at <the log's instant>` named sub2; half a second before that
+  session began it named nobody; `show cgnat translation ... at` refused the
+  dynamic block;
+* `verify`: 59 entries, intact; the third line given another address,
+  `BROKEN at entry 3`; put back, intact;
+* accounting sent to two servers that do not exist, authentication
+  answering: sub3's start written, then its stop `NAS-Error` 12 s later when
+  accel-ppp gave up on the Start (3 s, two sends, two servers), and neither
+  real server was sent an Accounting-Request for it;
+* both RADIUS servers killed: sub2 cleared, its stop written; in the next
+  15 s no start for it and no session - nobody could authenticate it, so
+  nothing was held, which is the one sense in which a session "started with
+  RADIUS down" cannot be recorded: it does not exist.
+
+The lab's 25 trail checks, run against the product without this change
+(0.155.3, the same lab): 19 red. The six that pass are about what is not
+the trail - the cause RADIUS received, the block log's record, no
+Accounting-Request sent - or are what a box without one also does: nobody
+named before a session, no start while RADIUS is down, no "NOT written".
 
 ## Where every number here comes from
 
