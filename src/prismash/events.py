@@ -569,7 +569,11 @@ def cause_of(events, component, started, boot, boot_reason="", after=None):
     a dataplane 8 s after an operator's restart had brought it up, and with
     the window alone the second start was the operator's too.
     """
-    if boot is not None and 0 <= started - boot <= RESTARTED_AFTER:
+    # Only the first start since the boot is the boot's: on prisma-bench
+    # (0.155.5) accel-pppd killed 12 s after the box came up was restarted by
+    # its policy, and the window alone called that start "with the boot".
+    if boot is not None and 0 <= started - boot <= RESTARTED_AFTER and \
+            (after is None or after < boot):
         return "boot", boot_reason
     best = None
     for ev in events:

@@ -222,6 +222,11 @@ check(events.cause_of([asked], "dataplane", NOW - 200, BOOT)[0] == "unexpected",
       "cause_of: an asked AFTER the start is not its cause")
 check(events.cause_of([asked], "dataplane", BOOT + 40, BOOT, "system reboot by ana")
       == ("boot", "system reboot by ana"), "cause_of: a start with the boot is the boot's")
+check(events.cause_of([], "bng", BOOT + 40, BOOT, after=BOOT + 10)
+      == ("unexpected", "")
+      and events.cause_of([], "bng", BOOT + 40, BOOT, after=BOOT - 600)[0]
+      == "boot",
+      "cause_of: a second start since the boot is not the boot's")
 check(events.cause_of([asked], "dataplane", NOW - 60, BOOT, after=NOW - 105)[0]
       == "operator"
       and events.cause_of([asked], "dataplane", NOW - 60, BOOT, after=NOW - 95)[0]
