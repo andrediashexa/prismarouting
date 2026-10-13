@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.4 - the PPPoE session trail: who held which inside address, when
+
+### Added
+
 * **PPPoE: the box's own record of who held which inside address, from when
   to when.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   With a BNG the inside address is handed out in order of arrival, so the
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   `show pppoe history address <a> at <time>` gives the session). `show
   pppoe summary` counts the entries written and any it could not write.
   docs/bng.md 0.7.
-
-### Fixed
 
 ## 0.155.3 - PPPoE counters in the MIB; SNMP GET of optics and thresholds fixed
 
