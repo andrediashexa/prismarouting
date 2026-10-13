@@ -31,6 +31,11 @@ moved: **a poller walking `.1.3.6.1.4.1.32473` walks `.1.3.6.1.4.1.67033`
 instead**, with the same object numbers below it, and an NMS reloads the file
 `show snmp mib` now prints (its `::= { enterprises 67033 }`).
 
+The same number is the vendor of the product's RADIUS attributes (#607):
+`Prisma-Rate-Limit-Down` and `-Up` under vendor 67033, whose dictionary
+`show aaa radius dictionary` prints ([bng.md](bng.md) 0.6). That vendor is the
+product's and does not follow `snmp enterprise-number`.
+
 An operator may still name a number of its own with
 `snmp enterprise-number <number>`, and `no snmp enterprise-number` goes back
 to the product's.

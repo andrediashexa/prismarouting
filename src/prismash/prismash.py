@@ -88,6 +88,7 @@ import cpuview
 import tuneadvice
 import events
 import eventfwd
+import aaa as aaa_mod
 import pppoe as pppoe_mod
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     hostname_error, HOSTNAME_DEFAULT,
@@ -270,6 +271,9 @@ SNMP_MIB_TEMPLATE = os.environ.get(
 #: as @PEN@ the same way, installed beside the MIB.
 ZABBIX_TEMPLATE = os.environ.get(
     "PRISMA_ZABBIX_TEMPLATE", "/usr/share/prisma-routing/prisma-routing-zabbix.json.in")
+#: Prisma's RADIUS dictionary, vendor 67033 (#607), installed beside them.
+RADIUS_DICTIONARY = os.environ.get(
+    "PRISMA_RADIUS_DICTIONARY", "/usr/share/prisma-routing/dictionary.prisma")
 
 # The three reachability tools, each with the package that carries it (#395).
 #
@@ -1168,8 +1172,8 @@ def compare_redact(diff):
                 or line[0] not in "-+ "):
             out.append(line)
             continue
-        body = pppoe_mod.redact(identity_redact(snmp_redact(
-            redact([line[1:]]))))[0]
+        body = aaa_mod.redact(pppoe_mod.redact(identity_redact(snmp_redact(
+            redact([line[1:]])))))[0]
         out.append(line[0] + body)
     return out
 
@@ -2502,9 +2506,17 @@ SHOW = {
     "cgnat": ("CGNAT information", SHOW_CGNAT),
     "nat64": ("NAT64 information", SHOW_NAT64),
     # #597: the prisma-bng container's sessions, asked of the host.
+    # #607: what the RADIUS server is given to send Prisma's attributes.
+    "aaa": ("authentication and accounting", {
+        "radius": ("RADIUS", {
+            "dictionary": ("Prisma's RADIUS dictionary, vendor 67033: "
+                           "install it on the RADIUS server", None)})}),
     "pppoe": ("PPPoE subscribers", {
-        "sessions": ("one line a session: id, user, address, MAC, uptime",
+        "sessions": ("one line a session: id, user, address, limit, uptime",
                      None),
+        # #607: one session whole - its MAC, traffic and policers.
+        "session": ("one session: MAC, traffic, rate limit, policer counters",
+                    "<session-id>"),
         "summary": ("the control plane, the session counts, the "
                     "configuration", None)}),
     "configuration": ("candidate configuration", {
@@ -3871,6 +3883,8 @@ DELTA_ADMIN = ("vrrp_set", "vrrp_del",
                # PPPoE (#597): subscribers' authentication and its RADIUS
                # secrets, an administrator's like SNMP's.
                "pppoe_changed",
+               # RADIUS (#607), its servers' secrets an administrator's too.
+               "aaa_changed",
                "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
@@ -4837,8 +4851,10 @@ TREE = {
         # only way to name one used to be editing a file in Linux (#283).
         "system": ("this machine: the card the dataplane is given", None),
         # #597: PPPoE subscriber termination, in the prisma-bng container.
-        "pppoe": ("PPPoE subscribers: access interfaces, RADIUS, addresses",
+        "pppoe": ("PPPoE subscribers: access interfaces, addresses, limits",
                   None),
+        # #607: RADIUS, for PPPoE and whatever authenticates next.
+        "aaa": ("authentication and accounting: the RADIUS servers", None),
         "policy-options": ("routing policy: prefix lists, communities, "
                            "policy-statements", None),
         "hostname": ("the box's name: Linux's, FRR's and SNMP's sysName",
@@ -5025,21 +5041,17 @@ TREE["pppoe"] = {
     "address-pool": ("addresses for subscribers RADIUS gives none",
                      "<prefix> | <first>-<last>"),
     "dns": ("a resolver given to the subscriber; up to 2", "<A.B.C.D>"),
-    "radius": ("the RADIUS servers, for authentication and accounting", {
-        "server": ("a server: its shared secret is never shown",
-                   "<A.B.C.D> secret <secret> [auth-port <n>] "
-                   "[acct-port <n>]"),
-        "nas-identifier": ("the NAS-Identifier sent; prisma-routing when "
-                           "unset", "<name>"),
-        "interim-interval": ("seconds between interim accounting updates; "
-                             "300 when unset, 0 for none", "<0|60-86400>"),
-    }),
     "authentication": ("the methods offered; all three when unset",
                        "pap|chap|mschap-v2 ..."),
     "session-limit": ("at most this many sessions", "<1-1000000>"),
     "mtu": ("the PPP MTU and MRU; 1492 when unset", "<576-1500>"),
     "tcp-mss": ("clamp the TCP MSS on every session", "<536-1460>"),
     "ac-name": ("the access concentrator's name in PADO", "<name>"),
+    # #607: a policer on each session, in VPP.
+    "rate-limit": ("each session's download/upload limit, a VPP policer; "
+                   "RADIUS's Prisma-Rate-Limit-Down/-Up", {
+        "default": ("the limit of a session RADIUS gives none",
+                    "<download>/<upload>")}),
     "local-user": ("a user and password, for a lab without RADIUS",
                    "<name> password <password>"),
     "no": ("take a statement out", {
@@ -5047,17 +5059,61 @@ TREE["pppoe"] = {
         "gateway": ("the gateway", None),
         "address-pool": ("an address pool", "<prefix> | <first>-<last>"),
         "dns": ("a resolver", "<A.B.C.D>"),
-        "radius": ("a RADIUS setting", {
-            "server": ("a server", "<A.B.C.D>"),
-            "nas-identifier": ("back to prisma-routing", None),
-            "interim-interval": ("back to 300 seconds", None)}),
         "authentication": ("back to all three", None),
         "session-limit": ("no limit", None),
         "mtu": ("back to 1492", None),
         "tcp-mss": ("no clamp", None),
         "ac-name": ("back to prisma-routing", None),
+        "rate-limit": ("a rate-limit setting", {
+            "default": ("no limit for a session RADIUS gives none", None)}),
         "local-user": ("a local user", "<name>")}),
     "exit": ("leave 'pppoe'", None),
+    **_EVERY_LEVEL,
+}
+# AAA (#607), a level at the top with one level under it: `radius`. What is
+# typed there is the aaa module's grammar, which the saved file is read with.
+TREE["aaa"] = {
+    "radius": ("the RADIUS servers: order, timers, Disconnect and CoA", None),
+    "exit": ("leave 'aaa'", None),
+    **_EVERY_LEVEL,
+}
+TREE["radius"] = {
+    "server": ("a server: its shared secret is never shown",
+               "<A.B.C.D> secret <secret> [auth-port <n>] [acct-port <n>] "
+               "[role auth|acct|both] [priority <1-255>]"),
+    "mode": ("how the servers are used; failover when unset",
+             "failover|round-robin"),
+    "timeout": ("seconds a request waits for an answer; 3 when unset",
+                "<1-60>"),
+    "retries": ("sends to one server after the first, before the next; 1 "
+                "when unset", "<0-10>"),
+    "dead-time": ("seconds a server that did not answer is left alone; 30 "
+                  "when unset", "<1-3600>"),
+    "nas-identifier": ("the NAS-Identifier sent; prisma-routing when unset",
+                       "<name>"),
+    "interim-interval": ("seconds between interim accounting updates; 300 "
+                         "when unset, 0 for none", "<0|60-86400>"),
+    "dynamic-authorization": ("Disconnect and CoA from the RADIUS side "
+                              "(RFC 5176)", {
+        "listen": ("the box's address the requests come to",
+                   "<A.B.C.D> [port <n>]"),
+        "client": ("a server that may send them, with its secret",
+                   "<A.B.C.D> secret <secret>")}),
+    "rate-profile": ("the rates a Cisco-AVPair sub-qos-policy name means",
+                     "<name> down <rate> up <rate>"),
+    "no": ("take a statement out", {
+        "server": ("a server", "<A.B.C.D>"),
+        "mode": ("back to failover", None),
+        "timeout": ("back to 3 seconds", None),
+        "retries": ("back to 1", None),
+        "dead-time": ("back to 30 seconds", None),
+        "nas-identifier": ("back to prisma-routing", None),
+        "interim-interval": ("back to 300 seconds", None),
+        "dynamic-authorization": ("the listener and every client", {
+            "listen": ("stop listening", None),
+            "client": ("a client", "<A.B.C.D>")}),
+        "rate-profile": ("a rate profile", "<name>")}),
+    "exit": ("leave 'radius'", None),
     **_EVERY_LEVEL,
 }
 TREE["dataplane"] = {
@@ -10127,6 +10183,9 @@ class Shell:
         cfg.logging_hosts = eventfwd.read_conf()
         # PPPoE (#597): the model the commit wrote, from pppoe.conf.
         cfg.pppoe = pppoe_mod.read_conf()
+        # RADIUS (#607): from aaa.conf - or, on a box upgraded from 0.154.0
+        # and not committed since, from what pppoe.conf held under `radius`.
+        cfg.aaa = aaa_mod.read_conf(legacy=pppoe_mod.CONF_PATH)
         (cfg.snmp, cfg.snmp_communities, cfg.snmp_users,
          cfg.snmp_trap_hosts) = self.snmp.read()
         cfg.api = self.apisvc.read()
@@ -14058,8 +14117,8 @@ class Shell:
                 self.err(f"logging: {msg}")
                 return False
             print(f"logging: {msg}")
-        if d.get("pppoe_changed"):
-            if not self.apply_pppoe(target):
+        if d.get("pppoe_changed") or d.get("aaa_changed"):
+            if not self.apply_pppoe(target, running, d):
                 return False
         if d["cgnat_memory_changed"]:
             ok, msg = self.apply_cgnat_memory(target.cgnat_memory_gb)
@@ -16335,25 +16394,36 @@ class Shell:
         return self.record_event("notice", text, kind="asked", cause=cause,
                                  affects=affects)
 
-    def apply_pppoe(self, target):
+    def apply_pppoe(self, target, running=None, d=None, refresh=False):
         """
-        PPPoE's configuration into effect (#597): the container's files
-        generated from the committed model, then the host asked to start the
-        prisma-bng container, restart it on the new files, or - with nothing
-        configured - stop it. False refuses the commit.
+        PPPoE's configuration, and RADIUS's (#607), into effect: the
+        container's files generated from the committed model, aaa.conf
+        written, then the host asked to start the prisma-bng container,
+        restart it on the new files, reload it, or - with nothing configured
+        - stop it. False refuses the commit.
 
-        A RESTART DROPS EVERY SESSION, and is what a change costs in this
-        increment: accel-ppp reads its file at start. The subscribers redial
+        A RESTART DROPS EVERY SESSION, and is what a PPPoE change costs:
+        accel-ppp reads most of its file at start. The subscribers redial
         (their CPE does, within its holdoff) and the forwarding of everybody
         else is not touched - the dataplane, FRR and this VTY are other
         containers.
+
+        A RADIUS CHANGE IS A RELOAD (#607), and drops nothing: accel-ppp
+        reads its [radius] section again at `reload` (radius.c and serv.c
+        register for EV_CONFIG_RELOAD), so adding a backup server or
+        changing a timer does not cost every subscriber a redial. Not when
+        the change is one accel-ppp only reads at start: the [modules] list
+        (RADIUS appearing or going), or the Disconnect/CoA listener, whose
+        socket is opened once (dm_coa.c init). `refresh` is the load's: the
+        files were generated by an older release (pppoe.FORMAT), so they are
+        written again and the container restarted on them.
 
         AT BOOT A REFUSAL IS A WARNING. The box's configuration is replayed
         on a machine nobody is watching, and a container that cannot start
         is not a reason for the rest of the box not to come up (#593's rule).
         """
-        held = target.pppoe
-        why = pppoe_mod.check(held)
+        held, aaa = target.pppoe, target.aaa
+        why = aaa_mod.check(aaa) + pppoe_mod.check(held, aaa)
         acc = []
         if not why and not pppoe_mod.is_empty(held):
             acc, bad = pppoe_mod.access(held, target.vlans)
@@ -16369,24 +16439,52 @@ class Shell:
                 self.err_prose(w.split(":", 1)[0] + ": not applied",
                                w.split(":", 1)[1].strip())
             return False
-        ok, msg = pppoe_mod.write_files(held, acc)
+        ok, msg = aaa_mod.write_conf(aaa)
+        if not ok:
+            self.err(f"aaa: {msg}")
+            return False
+        # No delta is a caller asking for both (the load's refresh, a unit).
+        d = d if d is not None else {"pppoe_changed": True,
+                                     "aaa_changed": True}
+        if not refresh and not d.get("pppoe_changed") \
+                and pppoe_mod.is_empty(held):
+            # RADIUS with no PPPoE to use it: held, and nothing runs.
+            print("aaa: written")
+            return True
+        ok, msg = pppoe_mod.write_files(held, acc, aaa=aaa)
         if not ok:
             self.err(f"pppoe: {msg}")
             return False
-        bng_verb = "stop" if pppoe_mod.is_empty(held) else "apply"
+        if pppoe_mod.is_empty(held):
+            bng_verb = "stop"
+        elif (not refresh and running is not None
+              and not d.get("pppoe_changed") and d.get("aaa_changed")
+              and pppoe_mod.modules(held, aaa)
+              == pppoe_mod.modules(running.pppoe, running.aaa)
+              and aaa_mod.dae_words(aaa) == aaa_mod.dae_words(running.aaa)):
+            bng_verb = "reload"
+        else:
+            bng_verb = "apply"
         rc, out = self.host_run([pppoe_mod.BNG_CTL, bng_verb])
+        if bng_verb == "reload" and rc == 3:
+            # Not running: there is nothing to reload, so it is started -
+            # on the files just written.
+            bng_verb = "apply"
+            rc, out = self.host_run([pppoe_mod.BNG_CTL, bng_verb])
         said = " ".join(out.split())
         self.record_settings("PPPoE", rc == 0, said)
         if rc != 0:
             if self.booting:
                 print(f"warning: pppoe: the container did not start: {said}")
                 return True
-            self.err_prose("pppoe: the prisma-bng container did not "
-                           f"{'stop' if bng_verb == 'stop' else 'start'}",
+            did = {"stop": "stop", "reload": "reload"}.get(bng_verb, "start")
+            self.err_prose(f"pppoe: the prisma-bng container did not {did}",
                            said or "the host did not say why")
             return False
         print(f"pppoe: {said}" + (", every session redials"
-                                  if said == "restarted" else ""))
+                                  if said == "restarted" else
+                                  ", no session dropped"
+                                  if said == "reloaded" else ""))
         return True
 
     def record_settings(self, what, ok, msg, retried=False):
@@ -17863,6 +17961,47 @@ class Shell:
             return f"no {top} " + " ".join(w[1:])
         return f"{top} " + line.strip()
 
+    def aaa_rewrite(self, line):
+        """
+        `aaa` and `radius` as the levels they are (#607), and what is typed
+        in `radius` in the words the model holds: `server 192.0.2.1 secret
+        s` there is `aaa radius server 192.0.2.1 secret s`. `no aaa` at the
+        top takes the whole block. Returns the line to go on with, or ""
+        when it was handled here.
+        """
+        top = aaa_mod.AAA_HIERARCHY
+        w = line.split()
+        if not w:
+            return ""
+        if self.nat_ctx and self.nat_ctx[0] != top:
+            return line
+        if not self.nat_ctx:
+            if line.strip() == top:
+                self.nat_ctx = [top]
+                return ""
+            return line
+        if w[0] in self.NAT_LEVEL_WORDS:
+            if w[0] in ("exit", "quit"):
+                self.nat_ctx.pop()
+                return ""
+            if w[0] == "end":
+                self.nat_ctx = []
+                return ""
+            return line
+        if self.nat_ctx == [top]:
+            if line.strip() == aaa_mod.RADIUS_LEVEL:
+                self.nat_ctx.append(aaa_mod.RADIUS_LEVEL)
+            elif w == ["no", aaa_mod.RADIUS_LEVEL]:
+                return f"no {top} {aaa_mod.RADIUS_LEVEL}"
+            else:
+                self.err_prose(aaa_mod.LEVELS_SAY,
+                               "'radius' enters its level; 'exit' leaves "
+                               "'aaa'")
+            return ""
+        if w[0] == "no":
+            return f"no {top} {aaa_mod.RADIUS_LEVEL} " + " ".join(w[1:])
+        return f"{top} {aaa_mod.RADIUS_LEVEL} " + line.strip()
+
     def nat_rewrite(self, line):
         """
         `nat` and `cgnat` as the levels they are (#446), and what is typed in
@@ -17956,6 +18095,9 @@ class Shell:
             if not line:
                 return ""
             line = self.pppoe_rewrite(line)
+            if not line:
+                return ""
+            line = self.aaa_rewrite(line)
             if not line:
                 return ""
             line = self.nat_rewrite(line)
@@ -18396,6 +18538,16 @@ class Shell:
             why = pppoe_mod.stage(self.candidate.pppoe, w)
             if why:
                 self.err_prose("pppoe: not taken", why)
+            return True
+        # RADIUS (#607), as aaa_rewrite made it of what was typed under
+        # `aaa` > `radius`: checked here by the rule a saved file is read
+        # with. An administrator's, like PPPoE's: it holds secrets.
+        if _lvl == aaa_mod.AAA_HIERARCHY:
+            if not self.require(CAP_ALL, "aaa"):
+                return True
+            why = aaa_mod.stage(self.candidate.aaa, w)
+            if why:
+                self.err_prose("aaa: not taken", why)
             return True
         if _lvl == LOGGING_LEVEL:
             why = stage_logging(self.candidate.logging_hosts, w)
@@ -21606,6 +21758,22 @@ class Shell:
         elif text:
             sys.stdout.write(text)
 
+    def show_radius_dictionary(self):
+        """
+        Prisma's RADIUS dictionary (#607), vendor 67033: the rate-limit
+        attributes, for an operator to install on the RADIUS server - printed
+        as `show snmp zabbix-template` prints the template, because the VTY
+        is where the operator is. The vendor is the product's PEN and not the
+        SNMP `enterprise-number` a box may name: an attribute's vendor is
+        what accel-ppp's own copy of this file says, on every box.
+        """
+        try:
+            with open(RADIUS_DICTIONARY) as f:
+                sys.stdout.write(f.read())
+        except OSError:
+            self.err("the RADIUS dictionary is not on this box")
+            print_prose(f"it is installed as {RADIUS_DICTIONARY}")
+
     def text_with_pen(self, path):
         """
         `path` with @PEN@ replaced by the running enterprise number; "" when
@@ -22024,6 +22192,9 @@ class Shell:
         if line == "show snmp zabbix-template":
             self.show_snmp_zabbix_template()
             return
+        if line == "show aaa radius dictionary":
+            self.show_radius_dictionary()
+            return
         # Before the forwarding below, which would otherwise hand `ha` to a
         # dataplane that has no such command.
         _ha = line.split()
@@ -22125,8 +22296,8 @@ class Shell:
         is crackable offline at the attacker's leisure.
         """
         print("\n".join(mark_unchecked(
-            pppoe_mod.redact(identity_redact(snmp_redact(redact(
-                cfg.text().splitlines())))))))
+            aaa_mod.redact(pppoe_mod.redact(identity_redact(snmp_redact(
+                redact(cfg.text().splitlines()))))))))
         note = Shell.SNMP_UNREAD_NOTE.get(getattr(cfg, "snmp_unread", ""))
         if note:
             print_prose(note)
@@ -22173,6 +22344,21 @@ class Shell:
                         if _lvl == DATAPLANE_LEVEL
                         else nest_system(None, **{_lvl: getattr(cfg, _lvl)}))
                 block = [b[2:] for b in _sub[2:-2]]
+            print("\n".join(block) if block else
+                  "nothing is configured here yet")
+            return
+        # Standing in `pppoe` (#597) or `aaa`/`radius` (#607): that block,
+        # its secrets blanked. Before #607 `pppoe` fell through to the
+        # `nat` case below and printed the CGNAT's block.
+        if self.nat_ctx and not self.frr_ctx and self.nat_ctx[0] in (
+                pppoe_mod.PPPOE_HIERARCHY, aaa_mod.AAA_HIERARCHY):
+            if self.nat_ctx[0] == pppoe_mod.PPPOE_HIERARCHY:
+                block = pppoe_mod.redact(pppoe_mod.body(cfg.pppoe))
+            elif self.nat_ctx[-1] == aaa_mod.RADIUS_LEVEL:
+                block = aaa_mod.redact(aaa_mod.body(cfg.aaa))
+            else:
+                block = aaa_mod.redact([b[1:] for b in
+                                        aaa_mod.nest(cfg.aaa)[1:-1]])
             print("\n".join(block) if block else
                   "nothing is configured here yet")
             return
@@ -25509,17 +25695,47 @@ class Shell:
             print("\n".join(pppoe_mod.sessions_screen(
                 pppoe_mod.session_rows(out))))
             return
+        if len(args) == 2 and args[0] == "session":
+            # #607: one session, with what the list has no room for and its
+            # policers as VPP counts them.
+            sid = args[1].lower()
+            rc, out = self.host_run([pppoe_mod.BNG_CTL, "sessions"])
+            if rc == 3:
+                print("PPPoE is not running: no sessions")
+                return
+            if rc != 0:
+                self.err_prose("show pppoe session: the control plane did "
+                               "not answer", " ".join(out.split()))
+                return
+            rows = [r for r in pppoe_mod.session_rows(out)
+                    if r["sid"].lower() == sid]
+            if not rows:
+                self.err_prose(f"show pppoe session: no session {args[1]}",
+                               "'show pppoe sessions' lists them")
+                return
+            _rc, vs = self.dp.run("show pppoe session")
+            idx = pppoe_mod.session_index(vs if _rc == 0 else "",
+                                          rows[0]["calling-sid"])
+            _rc, vp = self.dp.run("show policer")
+            print("\n".join(pppoe_mod.session_screen(
+                rows[0], idx, pppoe_mod.policers(vp if _rc == 0 else ""))))
+            return
         if args == ["summary"]:
-            held = self.running_config().pppoe
+            cfg = self.running_config()
+            held = cfg.pppoe
             rc, status = self.host_run([pppoe_mod.BNG_CTL, "status"])
             status = status.strip() if rc == 0 else "unknown"
-            counts = {}
+            counts, states = {}, {}
             if status == "running":
                 rc, out = self.host_run([pppoe_mod.BNG_CTL, "summary"])
                 counts = pppoe_mod.stat_counts(out) if rc == 0 else {}
-            print("\n".join(pppoe_mod.summary_screen(held, status, counts)))
+                # Which RADIUS servers accel-ppp has marked down (#607):
+                # the same `show stat`, its radius blocks.
+                states = aaa_mod.server_states(out) if rc == 0 else {}
+            print("\n".join(pppoe_mod.summary_screen(held, status, counts,
+                                                     cfg.aaa, states)))
             return
-        self.err("usage: show pppoe sessions | summary")
+        self.err("usage: show pppoe sessions | session <id> | summary")
 
     def clear_nat64(self, rest):
         """
@@ -27631,6 +27847,14 @@ class Shell:
             print(f"    {path}")
             print(f"    {text}")
             print_prose(f"({why})", indent="    ")
+        # 0.154.0's RADIUS, inside `pppoe`, is read as `aaa radius` (#607)
+        # and the file is written with it once applied - said, with the
+        # secret blanked as every screen blanks it.
+        for lineno, text, now in target.moved:
+            print(f"note: line {lineno} is now under 'aaa radius' (#607)")
+            print(f"    {path}")
+            print(f"    {pppoe_mod.redact([text])[0]}")
+            print(f"    {aaa_mod.redact([now])[0]}")
 
         # AND A STANZA FRR NEVER HELD (#389). A name over FRR_IFNAME_MAX
         # characters - a card this box still calls by the dataplane's own
@@ -27853,8 +28077,19 @@ class Shell:
         # box's own way home and nothing else puts it back.
         if way_back and management_table(target):
             self.management_way_home(way_back, management_table(target))
+        # THE CONTAINER'S FILES, from an older release (#607). A box upgraded
+        # from 0.154.0 has the same model in pppoe.conf as in its saved file
+        # - so the commit above saw no change - and an accel-ppp.conf with
+        # no [shaper] and `fail-time=0` on every server. Written again and
+        # the container restarted on them, once: the format line says which
+        # release's they are.
+        if applied and not pppoe_mod.is_empty(target.pppoe) \
+                and pppoe_mod.file_format() != pppoe_mod.FORMAT:
+            print("note: PPPoE's files are from an older release; written "
+                  "again (#607)")
+            self.apply_pppoe(target, refresh=True)
         if applied:
-            if migrated and from_file:
+            if (migrated or target.moved) and from_file:
                 # The FULL file (#575): `target` may be short of what waits
                 # for a card, and the file is never trimmed.
                 self.write_migrated(path, full)

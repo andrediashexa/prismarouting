@@ -21,6 +21,20 @@ index b15772a..738b021 100644
  	/* flags */
  	uint8_t is_non_dev_ppp:1; /* do not create the ppp device with /dev/ppp */
  	uint8_t is_non_socket_dhcpv6_nd:1; /* do not create a sockets for DHCPv6 and ND - use chanel socket */
+diff --git a/accel-pppd/include/events.h b/accel-pppd/include/events.h
+index bafb876..ee35d3d 100644
+--- a/accel-pppd/include/events.h
++++ b/accel-pppd/include/events.h
+@@ -36,6 +36,9 @@ struct ev_radius_t
+ 	struct rad_packet_t *request;
+ 	struct rad_packet_t *reply;
+ 	int res;
++	/* Prisma Routing (#607): how many of a CoA-Request's attributes a
++	 * handler took, so dm_coa can refuse one nothing acts on. */
++	int handled;
+ };
+ 
+ struct ev_mppe_keys_t
 diff --git a/accel-pppd/ppp/ppp.c b/accel-pppd/ppp/ppp.c
 index 235b4b6..c22059e 100644
 --- a/accel-pppd/ppp/ppp.c
@@ -39,6 +53,341 @@ index 235b4b6..c22059e 100644
  		close(ppp->unit_fd);
  
  	ppp->unit_fd = -1;
+diff --git a/accel-pppd/radius/dm_coa.c b/accel-pppd/radius/dm_coa.c
+index e1d32c6..fbf0f16 100644
+--- a/accel-pppd/radius/dm_coa.c
++++ b/accel-pppd/radius/dm_coa.c
+@@ -31,6 +31,66 @@ struct dm_coa_serv_t
+ 
+ static struct dm_coa_serv_t serv;
+ 
++/* Prisma Routing (#607): the clients that may send a Disconnect or a CoA,
++ * each with its own secret - `dae-client=<address>,<secret>`, as many as
++ * configured. accel-ppp had one secret for the listener and took a request
++ * from ANY source that knew it; with a client list, a source that is not
++ * on it gets nothing back at all, as a wrong secret gets nothing. With no
++ * list, the listener's own secret, as before. */
++#define DAE_CLIENTS_MAX 16
++static struct {
++	in_addr_t addr;
++	char *secret;
++} dae_clients[DAE_CLIENTS_MAX];
++static int dae_clients_n;
++
++static void dae_clients_load(void)
++{
++	struct conf_sect_t *sect = conf_get_section("radius");
++	struct conf_option_t *opt;
++	char *str, *comma;
++
++	if (!sect)
++		return;
++
++	list_for_each_entry(opt, &sect->items, entry) {
++		if (strcmp(opt->name, "dae-client") || !opt->val)
++			continue;
++		if (dae_clients_n == DAE_CLIENTS_MAX) {
++			log_emerg("radius:dm_coa: more than %i dae-client, the rest ignored\n", DAE_CLIENTS_MAX);
++			break;
++		}
++		str = _strdup(opt->val);
++		comma = strchr(str, ',');
++		if (!comma || !comma[1]) {
++			log_emerg("radius:dm_coa: failed to parse dae-client '%s'\n", opt->val);
++			_free(str);
++			continue;
++		}
++		*comma = 0;
++		dae_clients[dae_clients_n].addr = inet_addr(str);
++		dae_clients[dae_clients_n].secret = _strdup(comma + 1);
++		dae_clients_n++;
++		_free(str);
++	}
++}
++
++/* The secret a request from `addr` is checked and answered with, or NULL:
++ * a source no `dae-client` names, when there is a list. */
++static const char *dae_secret(const struct sockaddr_in *addr)
++{
++	int i;
++
++	if (!dae_clients_n)
++		return conf_dm_coa_secret;
++
++	for (i = 0; i < dae_clients_n; i++)
++		if (dae_clients[i].addr == addr->sin_addr.s_addr)
++			return dae_clients[i].secret;
++
++	return NULL;
++}
++
+ static int dm_coa_check_RA(struct rad_packet_t *pack, const char *secret)
+ {
+ 	uint8_t RA[16];
+@@ -88,7 +148,7 @@ static int dm_coa_send_ack(int fd, struct rad_packet_t *req, struct sockaddr_in
+ 		return -1;
+ 	}
+ 
+-	if (dm_coa_set_RA(reply, conf_dm_coa_secret)) {
++	if (!dae_secret(addr) || dm_coa_set_RA(reply, dae_secret(addr))) {
+ 		rad_packet_free(reply);
+ 		return -1;
+ 	}
+@@ -126,7 +186,7 @@ static int dm_coa_send_nak(int fd, struct rad_packet_t *req, struct sockaddr_in
+ 		return -1;
+ 	}
+ 
+-	if (dm_coa_set_RA(reply, conf_dm_coa_secret)) {
++	if (!dae_secret(addr) || dm_coa_set_RA(reply, dae_secret(addr))) {
+ 		rad_packet_free(reply);
+ 		return -1;
+ 	}
+@@ -180,6 +240,32 @@ int rad_update_vrf(struct radius_pd_t *rpd, const char *vrf_name)
+ }
+ #endif
+ 
++/* Prisma Routing (#607): what a CoA-Request may carry to say WHICH session
++ * it is about, or to sign itself - none of it a change to make. */
++static int coa_identifies(struct rad_attr_t *attr)
++{
++	if (attr->vendor)
++		return 0;
++	switch (attr->attr->id) {
++		case User_Name:
++		case Acct_Session_Id:
++		case Acct_Multi_Session_Id:
++		case NAS_IP_Address:
++		case NAS_IPv6_Address:
++		case NAS_Identifier:
++		case NAS_Port:
++		case NAS_Port_Id:
++		case Framed_IP_Address:
++		case Calling_Station_Id:
++		case Called_Station_Id:
++		case Event_Timestamp:
++		case Message_Authenticator:
++		case State:
++			return 1;
++	}
++	return 0;
++}
++
+ static void coa_request(struct radius_pd_t *rpd)
+ {
+ 	struct rad_attr_t *class;
+@@ -189,62 +275,97 @@ static void coa_request(struct radius_pd_t *rpd)
+ 		.ses = rpd->ses,
+ 		.request = rpd->dm_coa_req,
+ 	};
+-
+ 	int send_ack = 0;
++	int err_code = 0;
++	int changes = 0, done;
+ 
+ 	if (conf_verbose) {
+ 		log_ppp_info2("recv ");
+ 		rad_packet_print(rpd->dm_coa_req, NULL, log_ppp_info2);
+ 	}
+ 
++	/* Prisma Routing (#607): every attribute that asks for a change has
++	 * to be one something here acts on, or the whole request is refused
++	 * (RFC 5176 3.5, Error-Cause 401) BEFORE anything is changed - an ACK
++	 * for a request half of which was ignored is a NAS saying it did what
++	 * it did not. The shaper reports what it took (ev.handled); Class,
++	 * Session-Timeout and the VRF are this file's own. */
++	list_for_each_entry(attr, &rpd->dm_coa_req->attrs, entry) {
++		if (coa_identifies(attr))
++			continue;
++		if (!attr->vendor && (attr->attr->id == Class || attr->attr->id == Session_Timeout))
++			continue;
++#ifdef HAVE_VRF
++		if (attr->vendor && !strcmp(attr->attr->name, "Accel-VRF-Name"))
++			continue;
++#endif
++		changes++;
++	}
++
++	ev.handled = 0;
++	ev.res = 0;
+ 	triton_event_fire(EV_RADIUS_COA, &ev);
+ 
+ 	if (ev.res)
+ 		goto out;
+-	else {
+-		class = rad_packet_find_attr(rpd->dm_coa_req, NULL, "Class");
+-		if (class) {
+-			if (rpd->attr_class_len < class->len) {
+-				if (rpd->attr_class)
+-					_free(rpd->attr_class);
+-				rpd->attr_class = _malloc(class->len);
+-			}
+-
+-			memcpy(rpd->attr_class, class->val.octets, class->len);
+-			rpd->attr_class_len = class->len;
+-
+-			if (rpd->acct_req && rpd->acct_req->pack) {
+-				if (prev_class)
+-					rad_packet_change_octets(rpd->acct_req->pack, NULL, "Class", rpd->attr_class, rpd->attr_class_len);
+-				else
+-					rad_packet_add_octets(rpd->acct_req->pack, NULL, "Class", rpd->attr_class, rpd->attr_class_len);
+-			}
+-			send_ack = 1;
+-			goto out;
++
++	if (changes > ev.handled) {
++		log_ppp_warn("radius:dm_coa: CoA-Request with %i attribute(s) nothing here acts on, refused\n",
++			changes - ev.handled);
++		err_code = 401;
++		goto out;
++	}
++
++	done = ev.handled;
++
++	class = rad_packet_find_attr(rpd->dm_coa_req, NULL, "Class");
++	if (class) {
++		if (rpd->attr_class_len < class->len) {
++			if (rpd->attr_class)
++				_free(rpd->attr_class);
++			rpd->attr_class = _malloc(class->len);
+ 		}
+ 
+-		attr = rad_packet_find_attr(rpd->dm_coa_req, NULL, "Session-Timeout");
+-		if (attr){
+-			rad_update_session_timeout(rpd, attr->val.integer);
+-			send_ack = 1;
+-			goto out;
++		memcpy(rpd->attr_class, class->val.octets, class->len);
++		rpd->attr_class_len = class->len;
++
++		if (rpd->acct_req && rpd->acct_req->pack) {
++			if (prev_class)
++				rad_packet_change_octets(rpd->acct_req->pack, NULL, "Class", rpd->attr_class, rpd->attr_class_len);
++			else
++				rad_packet_add_octets(rpd->acct_req->pack, NULL, "Class", rpd->attr_class, rpd->attr_class_len);
+ 		}
++		done++;
++	}
++
++	/* Not behind Class's `goto out` any more: a CoA carrying both
++	 * changed the Class and dropped the Session-Timeout, and was ACKed. */
++	attr = rad_packet_find_attr(rpd->dm_coa_req, NULL, "Session-Timeout");
++	if (attr) {
++		rad_update_session_timeout(rpd, attr->val.integer);
++		done++;
++	}
+ #ifdef HAVE_VRF
+-		attr = rad_packet_find_attr(rpd->dm_coa_req, "Accel-PPP", "Accel-VRF-Name");
+-		if (attr){
+-			if(!rad_update_vrf(rpd, attr->val.string)){
+-				goto out;
+-			}
+-		}
++	attr = rad_packet_find_attr(rpd->dm_coa_req, "Accel-PPP", "Accel-VRF-Name");
++	if (attr) {
++		if (!rad_update_vrf(rpd, attr->val.string))
++			goto out;
++		done++;
++	}
+ #endif
+-		send_ack = 1;
++	/* A CoA that changes nothing at all is refused as well (RFC 5176's
++	 * "Missing Attribute", 402): there was nothing to do. */
++	if (!done) {
++		err_code = 402;
++		goto out;
+ 	}
++	send_ack = 1;
+ 
+ out:
+ 	if (send_ack)
+ 		dm_coa_send_ack(serv.hnd.fd, rpd->dm_coa_req, &rpd->dm_coa_addr);
+ 	else
+-		dm_coa_send_nak(serv.hnd.fd, rpd->dm_coa_req, &rpd->dm_coa_addr, 0);
++		dm_coa_send_nak(serv.hnd.fd, rpd->dm_coa_req, &rpd->dm_coa_addr, err_code);
+ 
+ 	rad_packet_free(rpd->dm_coa_req);
+ 
+@@ -284,7 +405,12 @@ static int dm_coa_read(struct triton_md_handler_t *h)
+ 			rad_packet_print(pack, NULL, log_debug);
+ 		}
+ 
+-		if (dm_coa_check_RA(pack, conf_dm_coa_secret)) {
++		if (!dae_secret(&addr)) {
++			log_warn("radius:dm_coa: request from %s, which is not a dae-client\n", inet_ntoa(addr.sin_addr));
++			goto out_err_no_reply;
++		}
++
++		if (dm_coa_check_RA(pack, dae_secret(&addr))) {
+ 			log_warn("radius:dm_coa: RA validation failed\n");
+ 			goto out_err_no_reply;
+ 		}
+@@ -349,6 +475,8 @@ static void init(void)
+ 		return;
+ 	}
+ 
++	dae_clients_load();
++
+ 	serv.hnd.fd = socket (PF_INET, SOCK_DGRAM, 0);
+ 	if (serv.hnd.fd < 0) {
+ 		log_emerg("radius:dm_coa: socket: %s\n", strerror(errno));
+diff --git a/accel-pppd/radius/radius_p.h b/accel-pppd/radius/radius_p.h
+index c381451..fc1a894 100644
+--- a/accel-pppd/radius/radius_p.h
++++ b/accel-pppd/radius/radius_p.h
+@@ -168,7 +168,7 @@ struct rad_server_t {
+ 	struct stat_accm_t *stat_interim_query_1m;
+ 	struct stat_accm_t *stat_interim_query_5m;
+ 
+-	unsigned int backup:1;
++	unsigned int backup; /* a level since #607 (Prisma): lowest first */
+ 	unsigned int starting:1;
+ 	unsigned int acct_on:1;
+ 	unsigned int need_free:1;
+diff --git a/accel-pppd/radius/serv.c b/accel-pppd/radius/serv.c
+index 555ef44..b076bc8 100644
+--- a/accel-pppd/radius/serv.c
++++ b/accel-pppd/radius/serv.c
+@@ -590,7 +590,16 @@ static void __add_server(struct rad_server_t *s)
+ 	struct rad_server_t *s1;
+ 
+ 	list_for_each_entry(s1, &serv_list, entry) {
+-		if (s1->addr == s->addr && s1->auth_port == s->auth_port && s1->acct_port == s->acct_port) {
++		/* Prisma Routing (#607): the secret is part of what a server IS
++		 * at a reload - a new secret is a new server, and the old one is
++		 * freed once its requests are done, rather than a secret swapped
++		 * under a request that is signing with it. The level and the
++		 * weight are taken over, or a reload could not change the order. */
++		if (s1->addr == s->addr && s1->auth_port == s->auth_port && s1->acct_port == s->acct_port
++				&& !s1->need_close && s1->secret && s->secret && !strcmp(s1->secret, s->secret)) {
++			s1->backup = s->backup;
++			s1->weight = s->weight;
++			_free(s->secret);
+ 			s1->fail_timeout = s->fail_timeout;
+ 			s1->req_limit = s->req_limit;
+ 			s1->max_fail = s->max_fail;
+@@ -924,10 +933,20 @@ static int parse_server2(const char *_opt, struct rad_server_t *s)
+ 	} else
+ 		s->bind_default = 1;
+ 
++	/* Prisma Routing (#607): `backup=<n>`, a level. __rad_server_get()
++	 * already prefers the lowest `backup` and only this parser held it to
++	 * 0/1, so a second backup shared the load with the first instead of
++	 * waiting behind it. A bare `,backup` is still level 1. */
+ 	ptr3 = strstr(ptr2, ",backup");
+-	if (ptr3)
++	if (ptr3) {
+ 		s->backup = 1;
+-	else
++		if (ptr3[7] == '=') {
++			long lvl = strtol(ptr3 + 8, &endptr, 10);
++			if ((*endptr != ',' && *endptr != 0) || lvl < 0 || lvl > 255)
++				goto out;
++			s->backup = lvl;
++		}
++	} else
+ 		s->backup = 0;
+ 
+ 	*ptr2 = 0;
 diff --git a/accel-pppd/session.c b/accel-pppd/session.c
 index 4b236e1..a42d6b4 100644
 --- a/accel-pppd/session.c
@@ -84,7 +433,7 @@ index aeb2461..5baf2d6 100644
  set_property(TARGET vyos_vpp PROPERTY INSTALL_RPATH ${CMAKE_INSTALL_PREFIX}/lib${LIB_SUFFIX}/accel-ppp)
  
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vpphooks.c b/accel-pppd/session_hooks/vyos_vpp/vpphooks.c
-index 56666a6..73ba098 100644
+index 56666a6..aa4bd0a 100644
 --- a/accel-pppd/session_hooks/vyos_vpp/vpphooks.c
 +++ b/accel-pppd/session_hooks/vyos_vpp/vpphooks.c
 @@ -20,6 +20,7 @@
@@ -104,6 +453,138 @@ index 56666a6..73ba098 100644
  	.is_non_dev_ppp = 1,
  	.is_non_socket_dhcpv6_nd = 1
  };
+@@ -222,6 +225,8 @@ struct ap_session_hooks_t vpp_hooks = {
+ static void vpphooks_init()
+ {
+ 	ap_session_hooks_register(&vpp_hooks);
++	/* Prisma Routing (#607): before the first session (vppiputils.c) */
++	vpp_iproute_flush_stale();
+ }
+ 
+ DEFINE_INIT(20, vpphooks_init);
+\ No newline at end of file
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vppiputils.c b/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
+index e9be8b3..5655919 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
++++ b/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
+@@ -5,6 +5,9 @@
+ */
+ 
+ #include <vapi/ip.api.vapi.h>
++#include <stdlib.h>
++#include <arpa/inet.h>
++#include "log.h"
+ 
+ #include "ap_session.h"
+ #include "triton.h"
+@@ -203,3 +206,93 @@ int vpp_iproute_flush(struct ap_session *ses)
+ 
+ 	return 0;
+ }
++
++/*
++ * Prisma Routing (#607): what a control plane that died left in VPP.
++ *
++ * MEASURED in lab/pppoe.sh, after accel-pppd was killed with -9: the
++ * entrypoint deleted the sessions VPP still held while the /32 routes accel-
++ * ppp had added through them were still there, and the routes went after -
++ * and each session interface's midchain adjacency outlived them all, with no
++ * FIB entry left that used it (`show adj`: still there; `show ip fib`: no
++ * pppoe_session). VPP's pppoe plugin recycles a deleted session's interface
++ * for the next session and builds an adjacency's rewrite only when it is
++ * created (adj_nbr.c), so the next subscriber on that interface was sent the
++ * PREVIOUS one's PPPoE header - another CPE's MAC, VLAN and session id: every
++ * download went to the wrong subscriber. A graceful teardown does it in the
++ * other order - the session's routes, then the session (vpphooks.c) - and the
++ * adjacency goes with them, measured. So this accel-pppd does what the dead
++ * one would have, in that order, before its first session.
++ *
++ * WHAT IS STALE IS READ OFF A FILE the entrypoint wrote with vppctl
++ * ($PRISMA_BNG_STALE: `route <a.b.c.d>/<len> <sw_if_index>` and `session
++ * <client-mac> <session-id>` lines), and not dumped here: a VAPI dump from
++ * this module aborted accel-pppd (`vapi_get_swap_to_host_func: Assertion id
++ * < __vapi_metadata.count` - the control-ping reply a dump waits for is a
++ * message this client's tables do not have), measured in lab/pppoe.sh.
++ */
++#include <stdio.h>
++#include "vpppoe.h"
++
++static vapi_error_e vpp_flush_del_cb(struct vapi_ctx_s *ctx, void *cb_ctx, vapi_error_e rv,
++		bool is_last, vapi_payload_ip_route_add_del_reply *reply)
++{
++	return rv;
++}
++
++int vpp_iproute_flush_stale(void)
++{
++	const char *path = getenv("PRISMA_BNG_STALE");
++	struct vapi_ctx_s *ctx;
++	FILE *f;
++	char line[128], kind[16], a[64];
++	unsigned int len, sw, sid, m[6];
++	struct in_addr dst;
++	int routes = 0, sessions = 0, k;
++	uint8_t mac[6];
++
++	if (!path || !(f = fopen(path, "r")))
++		return 0;
++
++	vpp_get();
++	/* the routes first */
++	while (fgets(line, sizeof(line), f)) {
++		if (sscanf(line, "%15s %63[0-9.]/%u %u", kind, a, &len, &sw) != 4 || strcmp(kind, "route")
++				|| len > 32 || !inet_aton(a, &dst))
++			continue;
++		vpp_lock();
++		ctx = vpp_get_vapi();
++		if (ctx) {
++			vapi_msg_ip_route_add_del *req = vapi_alloc_ip_route_add_del(ctx, 1);
++			if (req) {
++				req->payload.is_add = 0;
++				req->payload.is_multipath = 1;
++				req->payload.route.prefix.address.af = ADDRESS_IP4;
++				memcpy(req->payload.route.prefix.address.un.ip4, &dst.s_addr, 4);
++				req->payload.route.prefix.len = len;
++				req->payload.route.n_paths = 1;
++				req->payload.route.paths[0].sw_if_index = sw;
++				if (vapi_ip_route_add_del(ctx, req, vpp_flush_del_cb, NULL) == VAPI_OK)
++					routes++;
++			}
++		}
++		vpp_unlock();
++	}
++	/* then the sessions */
++	rewind(f);
++	while (fgets(line, sizeof(line), f)) {
++		if (sscanf(line, "%15s %x:%x:%x:%x:%x:%x %u", kind, &m[0], &m[1], &m[2], &m[3], &m[4], &m[5], &sid) != 8
++				|| strcmp(kind, "session") || sid > 65535)
++			continue;
++		for (k = 0; k < 6; k++)
++			mac[k] = m[k];
++		if (!vpppoe_sync_del_pppoe_interface(mac, sid))
++			sessions++;
++	}
++	fclose(f);
++	vpp_put();
++	if (routes || sessions)
++		log_warn("vpp: removed %i route(s) and %i session(s) a previous accel-pppd left\n",
++			routes, sessions);
++	return routes;
++}
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vppiputils.h b/accel-pppd/session_hooks/vyos_vpp/vppiputils.h
+index a5b1910..f5dca3f 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/vppiputils.h
++++ b/accel-pppd/session_hooks/vyos_vpp/vppiputils.h
+@@ -18,4 +18,8 @@ int vpp_ip6route_add_del(struct ap_session *ses, int is_add, int ifindex, const
+ /* remove VPP IPv4 & IPv6 routes related to session */
+ int vpp_iproute_flush(struct ap_session *ses);
+ 
++/* Prisma Routing (#607): remove routes through hidden (session) interfaces
++ * a previous accel-pppd left; the number removed */
++int vpp_iproute_flush_stale(void);
++
+ #endif /* VPPIPUTILS_H */
+\ No newline at end of file
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vpppoe.c b/accel-pppd/session_hooks/vyos_vpp/vpppoe.c
 index 1bed532..c86dfca 100644
 --- a/accel-pppd/session_hooks/vyos_vpp/vpppoe.c
@@ -126,6 +607,102 @@ index 1bed532..c86dfca 100644
  
  	err = vapi_pppoe_add_del_session(ctx, req, vpppoe_s_session_del_reply_callback, NULL);
  	vpp_check_error(err);
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c b/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
+index 5c2bd31..6dae02c 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
++++ b/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
+@@ -177,50 +177,52 @@ int vpppolicer_install_limiter(struct ap_session *ses, int down_speed, int down_
+ 	char policer_output[POLICER_NAME_MAX_LEN] = {};
+ 	struct vpphook_private_data_t *vpphook_data = vpphook_get_pd(ses);
+ 
+-	/* convert rate to kbits/s and burst to bits */
+-	down_speed = down_speed * 8 / 1000;
+-	down_burst = down_burst * 8;
+-	up_speed = up_speed * 8 / 1000;
+-	up_burst = up_burst * 8;
++	/* convert rate to kbits/s and burst to bits - in 64 bits (Prisma
++	 * Routing, #607): bytes * 8 overflowed an int past 2.1 Gbit/s */
++	uint32_t down_kbits = (uint64_t)down_speed * 8 / 1000;
++	uint64_t down_bits = (uint64_t)down_burst * 8;
++	uint32_t up_kbits = (uint64_t)up_speed * 8 / 1000;
++	uint64_t up_bits = (uint64_t)up_burst * 8;
+ 
+ 	/* Remove previously installed limiter, if exists */
+ 	vpppolicer_remove_limiter(ses);
+ 
+-	if (down_speed) {
+-		vpppolicer_generate_name(policer_output, POLICER_NAME_MAX_LEN - 1, ses, down_speed, down_burst, 0);
+-		vpppolicer_add_del(1, policer_output, down_speed, down_burst);
++	if (down_kbits) {
++		vpppolicer_generate_name(policer_output, POLICER_NAME_MAX_LEN - 1, ses, down_kbits, down_bits, 0);
++		vpppolicer_add_del(1, policer_output, down_kbits, down_bits);
+ 		ret = vpppolicer_set_output(1, vpphook_data->vpp_sw_if_index, policer_output);
+ 		if (ret) {
+-			vpppolicer_add_del(0, policer_output, down_speed, down_burst);
++			vpppolicer_add_del(0, policer_output, down_kbits, down_bits);
+ 			goto exit;
+ 		}
+ 
+-		vpphook_data->vpppolicer_down = down_speed;
+-		vpphook_data->vpppolicer_down_burst = down_burst;
++		vpphook_data->vpppolicer_down = down_kbits;
++		vpphook_data->vpppolicer_down_burst = down_bits;
+ 	}
+ 
+-	if (up_speed) {
+-		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_speed, up_burst, 1);
+-		vpppolicer_add_del(1, policer_input, up_speed, up_burst);
++	if (up_kbits) {
++		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_kbits, up_bits, 1);
++		vpppolicer_add_del(1, policer_input, up_kbits, up_bits);
+ 		ret = vpppolicer_set_input(1, vpphook_data->vpp_sw_if_index, policer_input);
+ 		if (ret) {
+-			vpppolicer_add_del(0, policer_input, up_speed, up_burst);
+-			if (down_speed) {
++			vpppolicer_add_del(0, policer_input, up_kbits, up_bits);
++			if (down_kbits) {
+ 				vpppolicer_set_output(0, vpphook_data->vpp_sw_if_index, policer_output);
+-				vpppolicer_add_del(0, policer_output, down_speed, down_burst);
++				vpppolicer_add_del(0, policer_output, down_kbits, down_bits);
+ 				vpphook_data->vpppolicer_down = 0;
+ 				vpphook_data->vpppolicer_down_burst = 0;
+ 			}
+ 			goto exit;
+ 		}
+ 
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 1, "policer-input", "ip4-unicast");
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 1, "policer-input", "ip6-unicast");
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 1, "policer-input", "ip4-multicast");
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 1, "policer-input", "ip6-multicast");
++		/* Prisma Routing (#607): not here. VPP 26.06's policer_input()
++		 * enables policer-input on ip4-unicast and ip6-unicast itself
++		 * (plugins/policer/policer_op.c), and a second enable STACKS the
++		 * node: measured in lab/pppoe.sh, a session interface carried
++		 * policer-input four times, and a 10 Mbit/s plan measured 2. */
+ 
+-		vpphook_data->vpppolicer_up = up_speed;
+-		vpphook_data->vpppolicer_up_burst = up_burst;
++		vpphook_data->vpppolicer_up = up_kbits;
++		vpphook_data->vpppolicer_up_burst = up_bits;
+ 	}
+ 
+ exit:
+@@ -251,10 +253,11 @@ int vpppolicer_remove_limiter(struct ap_session *ses)
+ 			goto exit;
+ 		vpppolicer_add_del(0, policer_input, vpphook_data->vpppolicer_up, vpphook_data->vpppolicer_up_burst);
+ 
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 0, "policer-input", "ip4-unicast");
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 0, "policer-input", "ip6-unicast");
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 0, "policer-input", "ip4-multicast");
+-		vpppoe_set_feature(vpphook_data->vpp_sw_if_index, 0, "policer-input", "ip6-multicast");
++		/* Prisma Routing (#607): not here. VPP 26.06's policer_input()
++		 * enables policer-input on ip4-unicast and ip6-unicast itself
++		 * (plugins/policer/policer_op.c), and a second enable STACKS the
++		 * node: measured in lab/pppoe.sh, a session interface carried
++		 * policer-input four times, and a 10 Mbit/s plan measured 2. */
+ 
+ 		vpphook_data->vpppolicer_up = 0;
+ 		vpphook_data->vpppolicer_up_burst = 0;
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vppstats.c b/accel-pppd/session_hooks/vyos_vpp/vppstats.c
 new file mode 100644
 index 0000000..b326927
@@ -256,3 +833,338 @@ index 0000000..eb8cbdf
 +int vppstats_read(struct ap_session *ses, struct rtnl_link_stats64 *stats);
 +
 +#endif /* VPPSTATS_H */
+diff --git a/accel-pppd/shaper/limiter.c b/accel-pppd/shaper/limiter.c
+index 4ee2300..7d5b9f8 100644
+--- a/accel-pppd/shaper/limiter.c
++++ b/accel-pppd/shaper/limiter.c
+@@ -542,9 +542,11 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int
+ {
+ #ifdef HAVE_SESSION_HOOKS
+ 	if (ses->hooks && ses->hooks->install_limiter) {
+-		down_speed = down_speed * 1000 / 8;
++		/* Prisma Routing (#607): in 64 bits - Kbit * 1000 overflowed an
++		 * int past 2.1 Gbit/s. Bytes per second fit an int to 17 Gbit/s. */
++		down_speed = (long long)down_speed * 1000 / 8;
+ 		down_burst = down_burst ? down_burst : conf_down_burst_factor * down_speed;
+-		up_speed = up_speed * 1000 / 8;
++		up_speed = (long long)up_speed * 1000 / 8;
+ 		up_burst = up_burst ? up_burst : conf_up_burst_factor * up_speed;
+ 		return ses->hooks->install_limiter(ses, down_speed, down_burst, up_speed, up_burst);
+ 	}
+diff --git a/accel-pppd/shaper/shaper.c b/accel-pppd/shaper/shaper.c
+index 3c2a1da..520d715 100644
+--- a/accel-pppd/shaper/shaper.c
++++ b/accel-pppd/shaper/shaper.c
+@@ -22,6 +22,41 @@
+ 
+ #include "memdebug.h"
+ 
++/* Prisma Routing (#607): Cisco-AVPair's rate forms, parsed strictly in a
++ * file of the product's own (build/prisma_rate.c, copied in by
++ * build/accel-ppp-build.sh and tested alone by test/test_prisma_rate.c), and
++ * the operator's `aaa radius rate-profile`s a policy name is looked up in. */
++#include "prisma_rate.c"
++
++#define PRISMA_PROFILES_MAX 64
++static struct {
++	char name[PRISMA_RATE_NAME_MAX + 1];
++	long down, up;
++} prisma_profiles[PRISMA_PROFILES_MAX];
++static int prisma_profiles_n;
++
++static void prisma_profiles_load(void)
++{
++	struct conf_sect_t *sect = conf_get_section("shaper");
++	struct conf_option_t *opt;
++
++	prisma_profiles_n = 0;
++	if (!sect)
++		return;
++	list_for_each_entry(opt, &sect->items, entry) {
++		if (strcmp(opt->name, "cisco-profile") || !opt->val)
++			continue;
++		if (prisma_profiles_n == PRISMA_PROFILES_MAX
++				|| prisma_rate_profile_line(opt->val, prisma_profiles[prisma_profiles_n].name,
++					&prisma_profiles[prisma_profiles_n].down,
++					&prisma_profiles[prisma_profiles_n].up)) {
++			log_error("shaper: cisco-profile '%s' ignored\n", opt->val);
++			continue;
++		}
++		prisma_profiles_n++;
++	}
++}
++
+ #include "shaper.h"
+ #include "tc_core.h"
+ 
+@@ -121,6 +156,11 @@ static int alloc_idx(int init)
+ {
+ 	int i, p = 0;
+ 
++	/* Prisma Routing (#607): a VPP session has no kernel interface, its
++	 * ifindex is -1, and -1 % MAX_IDX is -1 - an index before the map. */
++	if (init < 0)
++		init = 0;
++
+ 	init %= MAX_IDX;
+ 
+ 	pthread_rwlock_wrlock(&shaper_lock);
+@@ -203,7 +243,7 @@ static long int parse_integer(const char *str, char **endptr, double *multiplier
+ 		{ 'B', 0.001 },
+ 		{ 'K', 1.0 },
+ 		{ 'M', 1000.0 },
+-		{ 'G', 10000000.0 }
++		{ 'G', 1000000.0 } /* Prisma (#607): was 10000000, so 1G was 10 Gbit */
+ 	};
+ 	long int val;
+ 	int i;
+@@ -371,31 +411,140 @@ static void clear_old_tr_pd(struct shaper_pd_t *pd)
+ 	}
+ }
+ 
+-static void parse_attr(struct rad_attr_t *attr, int dir, int *speed, int *burst, int *tr_id)
++/* Prisma Routing (#607): 0, or -1 for a value that is not a rate - which
++ * was taken as "no limit" and, in a CoA, REMOVED the session's limit. */
++static int parse_attr(struct rad_attr_t *attr, int dir, int *speed, int *burst, int *tr_id)
+ {
++	int r = 0;
++
+ 	if (attr->attr->type == ATTR_TYPE_STRING) {
+ 		int vendor = attr->vendor ? attr->vendor->id : 0;
+ 		if (vendor == 9) {
+ 			/* VENDOR_Cisco */
+-			parse_string_cisco(attr->val.string, dir, speed, burst, tr_id);
++			r = parse_string_cisco(attr->val.string, dir, speed, burst, tr_id);
+ 		} else if (vendor == 14988 && attr->attr->id == 8) {
+ 			/* VENDOR_Mikrotik && Mikrotik-Rate-Limit */
+ 			dir = (dir == ATTR_DOWN) ? ATTR_UP : ATTR_DOWN;
+-			parse_string_simple(attr->val.string, dir, speed, burst, tr_id);
++			r = parse_string_simple(attr->val.string, dir, speed, burst, tr_id);
+ 		} else
+-			parse_string(attr->val.string, dir, speed, burst, tr_id);
+-	} else if (attr->attr->type == ATTR_TYPE_INTEGER)
++			r = parse_string(attr->val.string, dir, speed, burst, tr_id);
++	} else if (attr->attr->type == ATTR_TYPE_INTEGER) {
++		/* Prisma Routing (#607): kbit/s, and no faster than the policer
++		 * takes - past 10 Gbit/s the bytes per second the hooks are
++		 * handed overflow, and the session would get a rate it was not
++		 * given. */
++		if ((unsigned int)attr->val.integer > 10000000)
++			return -1;
+ 		*speed = conf_multiplier * attr->val.integer;
++	}
++
++	return (r < 0 || *speed < 0) ? -1 : 0;
++}
++
++/* The number of rate attributes in `pack` (0: none), or -1 when one of
++ * them is not a rate - and then nothing in `pd` is changed (#607). */
++/* Prisma Routing (#607): the Cisco-AVPair rates of `pack`, when it carries
++ * no Prisma rate (Prisma's wins): how many rate AVPairs there were, or -1 when
++ * one is malformed, two say one direction, or - `strict`, a CoA - a policy
++ * names no rate-profile. *down/*up are -1 for a direction not given. In an
++ * Access-Accept (not strict) a malformed one makes NONE of them apply, and an
++ * unknown profile leaves its direction unlimited; both are logged. */
++static int prisma_cisco_rates(struct rad_packet_t *pack, int strict, long *down, long *dburst,
++		long *up, long *uburst)
++{
++	struct rad_attr_t *attr;
++	struct prisma_rate pr;
++	int n = 0, i, rc;
++	long kbit;
++
++	*down = *up = -1;
++	*dburst = *uburst = 0;
++	list_for_each_entry(attr, &pack->attrs, entry) {
++		if (!attr->vendor || attr->vendor->id != 9 || strcmp(attr->attr->name, "Cisco-AVPair")
++				|| attr->attr->type != ATTR_TYPE_STRING)
++			continue;
++		rc = prisma_rate_avpair(attr->val.string, &pr);
++		if (!rc)
++			continue;
++		if (rc < 0) {
++			log_ppp_warn("shaper: Cisco-AVPair '%s' is not a rate this box reads; no Cisco-AVPair rate applied\n",
++				attr->val.string);
++			return -1;
++		}
++		n++;
++		kbit = pr.kbit;
++		if (pr.name[0]) {
++			for (i = 0; i < prisma_profiles_n; i++)
++				if (!strcmp(prisma_profiles[i].name, pr.name))
++					break;
++			if (i == prisma_profiles_n) {
++				log_ppp_warn("shaper: no rate-profile '%s'; that direction is not limited\n", pr.name);
++				if (strict)
++					return -1;
++				continue;
++			}
++			kbit = pr.dir == PRISMA_RATE_UP ? prisma_profiles[i].up : prisma_profiles[i].down;
++		}
++		if ((pr.dir == PRISMA_RATE_UP && *up >= 0) || (pr.dir == PRISMA_RATE_DOWN && *down >= 0)) {
++			log_ppp_warn("shaper: two Cisco-AVPair rates for one direction; none applied\n");
++			return -1;
++		}
++		if (pr.dir == PRISMA_RATE_UP) {
++			*up = kbit;
++			*uburst = pr.burst;
++		} else {
++			*down = kbit;
++			*dburst = pr.burst;
++		}
++	}
++	return n;
+ }
+ 
+-static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
++static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack, int strict)
+ {
+ 	struct rad_attr_t *attr;
+ 	int down_speed, down_burst;
+ 	int up_speed, up_burst;
+ 	int tr_id;
+ 	struct time_range_pd_t *tr_pd;
+-	int r = 0;
++	int r = 0, prisma = 0, cisco = 0;
++	long cd = -1, cdb = 0, cu = -1, cub = 0;
++
++	list_for_each_entry(attr, &pack->attrs, entry) {
++		if (attr->vendor && attr->vendor->id != conf_vendor)
++			continue;
++		if (!attr->vendor && conf_vendor)
++			continue;
++		if (attr->attr->id != conf_attr_down && attr->attr->id != conf_attr_up)
++			continue;
++		down_speed = up_speed = down_burst = up_burst = tr_id = 0;
++		if ((attr->attr->id == conf_attr_down && parse_attr(attr, ATTR_DOWN, &down_speed, &down_burst, &tr_id))
++				|| (attr->attr->id == conf_attr_up && parse_attr(attr, ATTR_UP, &up_speed, &up_burst, &tr_id))) {
++			log_ppp_warn("shaper: %s is not a rate, ignored\n", attr->attr->name);
++			return -1;
++		}
++		prisma++;
++	}
++
++	if (prisma) {
++		/* Prisma's wins: a Cisco rate beside it is counted as taken and
++		 * not read. */
++		struct prisma_rate pr;
++		list_for_each_entry(attr, &pack->attrs, entry)
++			if (attr->vendor && attr->vendor->id == 9 && attr->attr->type == ATTR_TYPE_STRING
++					&& !strcmp(attr->attr->name, "Cisco-AVPair")
++					&& prisma_rate_avpair(attr->val.string, &pr))
++				cisco++;
++		if (cisco)
++			log_ppp_info2("shaper: Prisma-Rate-Limit given; the Cisco-AVPair rate is not used\n");
++	} else {
++		cisco = prisma_cisco_rates(pack, strict, &cd, &cdb, &cu, &cub);
++		if (cisco < 0) {
++			if (strict)
++				return -1;
++			cisco = 0;
++		}
++	}
+ 
+ 	list_for_each_entry(tr_pd, &pd->tr_list, entry)
+ 		tr_pd->act = 0;
+@@ -409,7 +558,6 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
+ 			continue;
+ 		if (attr->attr->id != conf_attr_down && attr->attr->id != conf_attr_up)
+ 			continue;
+-		r = 1;
+ 		tr_id = 0;
+ 		down_speed = 0;
+ 		down_burst = 0;
+@@ -419,16 +567,36 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
+ 			parse_attr(attr, ATTR_DOWN, &down_speed, &down_burst, &tr_id);
+ 		if (attr->attr->id == conf_attr_up)
+ 			parse_attr(attr, ATTR_UP, &up_speed, &up_burst, &tr_id);
++		r++;
+ 		tr_pd = get_tr_pd(pd, tr_id);
+-		if (down_speed)
++		/* Prisma Routing (#607): a direction's own attribute sets that
++		 * direction, 0 included - with one attribute a direction, a CoA
++		 * carrying Down 0 is "no download limit", and the old guard on
++		 * the value kept the previous one. */
++		if (attr->attr->id == conf_attr_down) {
+ 			tr_pd->down_speed = down_speed;
+-		if (down_burst)
+ 			tr_pd->down_burst = down_burst;
+-		if (up_speed)
++		}
++		if (attr->attr->id == conf_attr_up) {
+ 			tr_pd->up_speed = up_speed;
+-		if (up_burst)
+ 			tr_pd->up_burst = up_burst;
++		}
++	}
++
++	if (!prisma && cisco > 0 && (cd >= 0 || cu >= 0)) {
++		tr_pd = get_tr_pd(pd, 0);
++		if (cd >= 0) {
++			tr_pd->down_speed = cd;
++			tr_pd->down_burst = cdb;
++		}
++		if (cu >= 0) {
++			tr_pd->up_speed = cu;
++			tr_pd->up_burst = cub;
++		}
+ 	}
++	/* A Cisco rate AVPair is taken - applied, or given way to Prisma's -
++	 * so a CoA carrying it is not refused as unsupported. */
++	r += cisco > 0 ? cisco : 0;
+ 
+ 	if (!r)
+ 		return 0;
+@@ -438,7 +606,7 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
+ 
+ 	clear_old_tr_pd(pd);
+ 
+-	return 1;
++	return r;
+ }
+ 
+ static void ev_radius_access_accept(struct ev_radius_t *ev)
+@@ -448,20 +616,32 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
+ 	if (!pd)
+ 		return;
+ 
+-	check_radius_attrs(pd, ev->reply);
++	check_radius_attrs(pd, ev->reply, 0);
+ }
+ 
+ static void ev_radius_coa(struct ev_radius_t *ev)
+ {
+ 	struct shaper_pd_t *pd = find_pd(ev->ses, 0);
++	int n;
+ 
++	/* Prisma Routing (#607): a session that came up with no rate has no
++	 * shaper data yet, and a CoA GIVING it one was refused here (-1, a
++	 * NAK) - the one case a CoA rate exists for. Made now instead. */
++	if (!pd)
++		pd = find_pd(ev->ses, 1);
+ 	if (!pd) {
+ 		ev->res = -1;
+ 		return;
+ 	}
+ 
+-	if (!check_radius_attrs(pd, ev->request))
++	n = check_radius_attrs(pd, ev->request, 1);
++	if (n < 0) {
++		ev->res = -1;
+ 		return;
++	}
++	if (!n)
++		return;
++	ev->handled += n;
+ 
+ 	if (pd->temp_down_speed || pd->temp_up_speed)
+ 		return;
+@@ -1184,6 +1364,8 @@ static void load_config(void)
+ 	else
+ 		conf_fwmark = 0;
+ 
++	prisma_profiles_load();
++
+ 	opt = conf_get_opt("shaper", "rate-limit");
+ 	if (opt)
+ 		parse_dflt_shaper(opt, &dflt_down_speed, &dflt_up_speed);

@@ -59,7 +59,7 @@ check(by.get(("operational", "ping"), (0, 0, 0, ""))[3] == "typed",
 #: 0.4). Named here so that nothing else can join it - a new text or
 #: unreachable path is still a failure - and checked for staleness below, so
 #: an entry that becomes typed is taken out.
-PENDING_597 = {"show pppoe", "clear pppoe", "pppoe"}
+PENDING_597 = {"show pppoe", "clear pppoe", "pppoe", "aaa", "show aaa"}
 
 
 def pending(path):

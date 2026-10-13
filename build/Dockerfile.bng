@@ -12,7 +12,7 @@ ARG BASE
 FROM ${BASE} AS build
 ARG VPP_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
-COPY build/accel-ppp-build.sh build/accel-ppp-ng.patch /build/
+COPY build/accel-ppp-build.sh build/accel-ppp-ng.patch build/prisma_rate.c /build/
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         $(sh /build/accel-ppp-build.sh --deps) \
@@ -42,6 +42,8 @@ RUN printf '#!/bin/sh\necho "modprobe $*: not in the prisma-bng container; VPP c
 COPY appliance/prisma-bng-entrypoint /usr/local/bin/prisma-bng-entrypoint
 COPY appliance/prisma-bng-cli /usr/bin/prisma-bng-cli
 COPY appliance/prisma-bng-session /usr/lib/prisma-bng/session
+# Prisma's own RADIUS attributes (#607), vendor 67033: the rate limits.
+COPY appliance/dictionary.prisma /usr/share/prisma-bng/dictionary.prisma
 RUN chmod 0755 /usr/local/bin/prisma-bng-entrypoint /usr/bin/prisma-bng-cli \
         /usr/lib/prisma-bng/session
 ENTRYPOINT ["/usr/local/bin/prisma-bng-entrypoint"]

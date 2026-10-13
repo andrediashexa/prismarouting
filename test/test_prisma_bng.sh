@@ -15,10 +15,15 @@
 #     name not checked);
 #   * the plumbing: the TAP's Linux MAC is the access card's, one VLAN device
 #     per tag, `create pppoe cp` on the TAP (mutation: the MAC not set);
-#   * a stale session left by a dead control plane is deleted at start;
+#   * a stale session left by a dead control plane can be deleted
+#     (clean_sessions, which stop_all uses; at start accel-pppd removes them
+#     itself, after their routes - #607);
 #   * the session hook attaches the CGNAT ONCE on a recycled interface
 #     (mutation: the features not asked first - VPP stacks a second
-#     bpa-in2out, measured in lab/pppoe.sh's first runs).
+#     bpa-in2out, measured in lab/pppoe.sh's first runs);
+#   * reload (#607) asks the running container, and keeps its CLI password
+#     (mutation: run_conf making a new one - the running accel-pppd's CLI
+#     still has the old, and the host is locked out of it).
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d)
@@ -41,7 +46,8 @@ cat > "$T/bin/docker" <<EOF
 echo "docker \$*" >> "$T/log"
 case "\$1" in
   inspect) cat "$T/running" 2>/dev/null || echo false ;;
-  exec) shift 2; echo "exec \$*" >> "$T/log" ;;
+  exec) shift 2; echo "exec \$*" >> "$T/log"
+        if [ -f "$T/execfail" ]; then echo "accel-pppd refused the file"; exit 1; fi ;;
 esac
 EOF
 chmod +x "$T/bin/"*
@@ -107,7 +113,20 @@ check "sessions of a stopped container: rc 3, nothing asked" "[ $rc -eq 3 ] && !
 echo true > "$T/running"
 $BNG sessions > /dev/null 2>&1
 check "sessions asked of accel-ppp in the container, by its columns" \
-  "grep -q 'exec prisma-bng-cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw' '$T/log'"
+  "grep -q 'exec prisma-bng-cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw,rate-limit' '$T/log'"
+echo false > "$T/running"; : > "$T/log"
+out=$($BNG reload 2>&1); rc=$?
+check "reload of a stopped container: rc 3, nothing asked (#607)" \
+  "[ $rc -eq 3 ] && ! grep -q exec '$T/log'"
+echo true > "$T/running"; : > "$T/log"
+out=$($BNG reload 2>&1); rc=$?
+check "reload asks the entrypoint in the container, and nobody redials" \
+  "[ $rc -eq 0 ] && [ '$out' = reloaded ] && grep -q 'exec prisma-bng-entrypoint reload' '$T/log' && ! grep -q compose '$T/log'"
+touch "$T/execfail"
+out=$($BNG reload 2>&1); rc=$?
+check "a reload refused in the container is a failure, with its reason" \
+  "[ $rc -eq 1 ] && echo '$out' | grep -q 'refused the file'"
+rm -f "$T/execfail"
 : > "$T/log"
 $BNG terminate username sub1 > /dev/null 2>&1
 $BNG terminate sid 8aa8eb1ab0657544 > /dev/null 2>&1
@@ -138,6 +157,9 @@ case "\$*" in
   "delete tap"*) rm -f "$T/tap" ;;
   "show pppoe session") cat "$T/sessions" 2>/dev/null ;;
   "show interface features"*) cat "$T/features" 2>/dev/null ;;
+  "show policer") cat "$T/policers" 2>/dev/null ;;
+  "show ip fib") cat "$T/fib" 2>/dev/null ;;
+  "show interface") printf '%s\n' "              Name               Idx    State" "pppoe_session3                    12     up" ;;
 esac
 EOF
 cat > "$T/bin/ip" <<EOF
@@ -174,10 +196,53 @@ printf '%s\n' "[0] sw-if-index 5 client-ip 0.0.0.0 session-id 448 encap-if-index
 n=$(clean_sessions)
 check "clean_sessions: a session a dead control plane left, deleted" \
   "[ '$n' = 1 ] && grep -q 'vppctl create pppoe session client-ip 0.0.0.0 session-id 448 client-mac 02:aa:00:00:00:02 del' '$T/vlog'"
+printf '%s\n' 'Name "vyos_12_20000_2000000_down" type 1r2c cir 20000' 'conform 1 packets, 2 bytes' \
+  'Name "vyos_12_10000_1000000_up" type 1r2c cir 10000' 'Name "operators_own" type 1r2c' > "$T/policers"
+: > "$T/vlog"
+n=$(clean_policers)
+check "clean_policers: a dead control plane's session policers unapplied and deleted, by direction (#607)" \
+  "[ '$n' = 2 ] && grep -q 'vppctl policer output unapply name vyos_12_20000_2000000_down pppoe_session3' '$T/vlog' && grep -q 'vppctl policer input unapply name vyos_12_10000_1000000_up pppoe_session3' '$T/vlog' && grep -q 'vppctl policer del name vyos_12_10000_1000000_up' '$T/vlog'"
+check "  and a policer that is not a session's is left alone" "! grep -q operators_own '$T/vlog'"
+# `show ip fib`'s whole table, as VPP 26.06 prints it: a prefix alone on its
+# row (measured - `show ip fib <prefix>` adds "fib:0 index:...", the table
+# does not, and the first cut of this read only the latter).
+printf '%s\n' "ipv4-VRF:0, fib_index:0, flow hash:[src dst ]" "0.0.0.0/32" \
+  "    [0-5] [@6]: ipv4 [features] via 0.0.0.0 pppoe_session3: mtu:1492" \
+  "100.64.0.77/32" "  unicast-ip4-chain" "    [0] [@6]: ipv4 [features] via 0.0.0.0 pppoe_session3: mtu:1492" \
+  "      [@0]: ipv4 via 0.0.0.0 pppoe_session3: mtu:1492" \
+  "100.64.1.0/24" "    [0] [@5]: ipv4 via 100.64.1.2 host-lan0" > "$T/fib"
+printf '%s\n' "[0] sw-if-index 12 client-ip 0.0.0.0 session-id 448 encap-if-index 1 decap-fib-index 0" \
+  "    local-mac 02:fe:de:42:1f:19  client-mac 02:aa:00:00:00:02" > "$T/sessions"
+n=$(stale_state)
+check "stale_state: a dead daemon's routes through its sessions, once each, then the sessions - for accel-pppd to remove in that order (#607)" \
+  "[ '$n' = 2 ] && [ \"\$(sed -n 1p '$T/run/bng/stale-state')\" = 'route 100.64.0.77/32 12' ] && [ \"\$(sed -n 2p '$T/run/bng/stale-state')\" = 'session 02:aa:00:00:00:02 448' ]"
+check "  VPP's own 0.0.0.0/32 and a route through a card are not a session's" \
+  "! grep -q '0.0.0.0/32\\|100.64.1.0' '$T/run/bng/stale-state'"
 printf 'x=1\n' > "$T/etc/bng/accel-ppp.conf"
 run_conf
 check "run_conf: the CLI on loopback, with a password made here and kept 0600" \
   "grep -q '^tcp=127.0.0.1:2001' '$T/run/bng/accel-ppp.conf' && grep -q \"^password=\$(cat '$T/run/bng/cli.password')\" '$T/run/bng/accel-ppp.conf' && [ \"\$(stat -c %a '$T/run/bng/cli.password')\" = 600 ]"
+pw1=$(cat "$T/run/bng/cli.password")
+printf 'x=2\n' > "$T/etc/bng/accel-ppp.conf"
+run_conf keep
+check "run_conf keep: the new file, the running accel-pppd's password" \
+  "[ \"\$(cat '$T/run/bng/cli.password')\" = '$pw1' ] && grep -q '^x=2' '$T/run/bng/accel-ppp.conf' && grep -q '^password=$pw1' '$T/run/bng/accel-ppp.conf'"
+run_conf
+check "run_conf without keep: a new one, as at every start" \
+  "[ \"\$(cat '$T/run/bng/cli.password')\" != '$pw1' ]"
+printf '#!/bin/sh\necho "$@" >> "%s/clilog"\ncat "%s/cliout" 2>/dev/null\n' "$T" "$T" > "$T/bin/prisma-bng-cli"
+chmod +x "$T/bin/prisma-bng-cli"
+: > "$T/cliout"
+PATH="$T/bin:$PATH" reload; rc=$?
+check "reload: the file rebuilt and accel-pppd asked to read it" \
+  "[ $rc -eq 0 ] && grep -qx reload '$T/clilog'"
+echo failed > "$T/cliout"
+PATH="$T/bin:$PATH" reload 2>/dev/null; rc=$?
+check "reload: accel-cmd's 'failed' (it exits 0) is a failure" "[ $rc -eq 1 ]"
+mv "$T/run/bng/cli.password" "$T/run/bng/cli.password.x"
+PATH="$T/bin:$PATH" reload 2>/dev/null; rc=$?
+check "reload: no accel-pppd running here is 3" "[ $rc -eq 3 ]"
+mv "$T/run/bng/cli.password.x" "$T/run/bng/cli.password"
 : > "$T/vlog"
 unplumb
 check "unplumb: the VLAN device out, and the cp and the TAP LEFT - taking them out crashes VPP" \

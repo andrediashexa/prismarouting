@@ -319,6 +319,8 @@ FIXED = {
     # which is the only thing that runs docker-compose for it.
     (pppoe.BNG_CTL_HOST, "apply"): "start or restart the PPPoE container",
     (pppoe.BNG_CTL_HOST, "stop"): "stop the PPPoE container",
+    # #607: a RADIUS change, read again by accel-ppp with no session lost.
+    (pppoe.BNG_CTL_HOST, "reload"): "reload the PPPoE container's RADIUS",
 }
 
 #: What any account may ask of the host from the management plane (#448):
