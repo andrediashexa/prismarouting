@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.1 - a policer's burst in bytes, round-robin a real rotation
+
+### Fixed
+
 * **A session's rate limit let eight times its burst through.**
   ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
   accel-ppp-ng's VPP hook multiplied the bucket by 8 as if VPP took bits; VPP
