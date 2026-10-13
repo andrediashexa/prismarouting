@@ -203,6 +203,7 @@ prisma> show pppoe summary
 
 O que foi recusado está no `show bpa pppoe-access` do dataplane, em duas linhas — `discovery` e `session` — com quantos quadros passaram, quantos chegaram por uma interface que não é de acesso (`not-access`) e quantos traziam um MAC que pertence a outra porta (`held`).
 
+
 :::info
 Dois assinantes **diferentes** com o mesmo MAC em duas portas não são atendidos ao mesmo tempo: o dataplane identifica a sessão pelo MAC e pelo número da sessão, sem a porta. O primeiro fica; o segundo espera.
 
