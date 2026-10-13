@@ -21,6 +21,9 @@ unit tests drive this module without a box, a dataplane or gRPC.
 """
 import re
 
+import aaa as aaa_mod
+import pppoe as pppoe_mod
+
 from config import (block_paths, is_number, is_static_route, static_route_key,
                     static_route_words)
 
@@ -1184,8 +1187,10 @@ def shown_lines(lines):
     """`lines` as a client may see them: a BGP neighbour's password masked,
     as `show running-config` masks it - only that statement, so a
     description that says "password" is left alone. The box is given the
-    real lines."""
-    return [_SECRET.sub(r"\1 <set, not shown>", ln) for ln in lines]
+    real lines. A RADIUS secret and a PPPoE local user's password the same
+    way (#607), by the rule `show running-config` blanks them with."""
+    return aaa_mod.redact(pppoe_mod.redact(
+        [_SECRET.sub(r"\1 <set, not shown>", ln) for ln in lines]))
 
 
 def delete_for(cfg, area, name="", transport="", prefix="", next_hop="",

@@ -8,9 +8,11 @@
 #   2. lays the plumbing VPP's pppoe plugin needs - the control-plane TAP
 #      (`pppoe-cp`, tap1863), its Linux MAC set to the access card's, one
 #      Linux VLAN device per tagged access interface, and `create pppoe cp`;
-#   3. removes any PPPoE session VPP still holds from a control plane that
-#      died: accel-ppp does not know them, so nothing would ever take them
-#      down, and their client MACs would be refused a new session;
+#   3. removes the session policers a control plane that died left
+#      (clean_policers); its sessions, and their routes before them, are
+#      removed by accel-pppd at its own start (#607, the patch's
+#      vppiputils.c) - nothing else would take them down, and their client
+#      MACs would be refused a new session;
 #   4. runs accel-pppd on the configuration the VTY GENERATED from the
 #      candidate (/etc/prisma-routing/bng/accel-ppp.conf, never edited by
 #      hand), with a CLI password of its own made here;
@@ -126,6 +128,55 @@ clean_sessions() {
   echo "$_n"
 }
 
+# clean_policers - every session policer a dead control plane left (#607),
+# unapplied and deleted; prints how many. accel-ppp-ng names them
+# vyos_<sw_if_index>_<kbit>_<burst>_down|up and removes them when a session
+# ends - but not when it is killed, and the session's interface is then
+# recycled for the next subscriber WITH the old policer on it: measured in
+# lab/pppoe.sh after `kill -9`. Run BEFORE clean_sessions, while the session
+# interfaces are still listed by name.
+clean_policers() {
+  vc show policer | sed -n 's/^Name "\(vyos_[0-9]*_[0-9]*_[0-9]*_\(up\|down\)\)".*/\1/p' \
+    > "$RUN_DIR/stale-policers"
+  _n=0
+  while read -r name; do
+    idx=$(echo "$name" | cut -d_ -f2)
+    ifn=$(vc show interface | awk -v i="$idx" '$2 == i {print $1; exit}')
+    case "$name" in
+      *_up) dir=input ;;
+      *) dir=output ;;
+    esac
+    [ -n "$ifn" ] && vc policer "$dir" unapply name "$name" "$ifn" > /dev/null
+    vc policer del name "$name" > /dev/null
+    _n=$((_n + 1))
+  done < "$RUN_DIR/stale-policers"
+  echo "$_n"
+}
+
+# stale_state - what a dead control plane left, for the next accel-pppd to
+# remove in the graceful order (#607): `route <prefix> <sw_if_index>` for each
+# route through a session interface (VPP's own 0.0.0.0/32 aside), then
+# `session <client-mac> <session-id>` for each session; prints how many lines.
+# accel-pppd reads it ($PRISMA_BNG_STALE, the patch's vppiputils.c) before
+# its first session: deleting the sessions here, before their routes, left
+# their adjacencies behind and crossed subscribers' downloads.
+stale_state() {
+  vc show interface | awk '$1 ~ /^pppoe_session[0-9]+$/ {print $1, $2}' \
+    > "$RUN_DIR/session-ifs"
+  vc show ip fib | awk -v f="$RUN_DIR/session-ifs" '
+    BEGIN { while ((getline l < f) > 0) { split(l, w, " "); idx[w[1]] = w[2] } }
+    /^[0-9]+\.[0-9.]+\/[0-9]+( |$)/ { pfx = $1; next }
+    pfx != "0.0.0.0/32" && match($0, /pppoe_session[0-9]+/) {
+      n = substr($0, RSTART, RLENGTH)
+      if ((n in idx) && !seen[pfx " " n]++) print "route", pfx, idx[n] }' \
+    > "$RUN_DIR/stale-state"
+  vc show pppoe session | awk '
+    /session-id/ { for (i = 1; i <= NF; i++) if ($i == "session-id") sid = $(i + 1) }
+    /client-mac/ { for (i = 1; i <= NF; i++) if ($i == "client-mac") print "session", $(i + 1), sid }' \
+    >> "$RUN_DIR/stale-state"
+  wc -l < "$RUN_DIR/stale-state" | tr -d ' '
+}
+
 # unplumb - the Linux VLAN devices out; the TAP and the cp STAY.
 #
 # MEASURED, AND IT TAKES THE DATAPLANE DOWN: `create pppoe cp ... del` sets
@@ -145,10 +196,16 @@ unplumb() {
   return 0
 }
 
-# run_conf - accel-ppp.conf as generated, plus the CLI on loopback with a
-# password made for this start (prisma-bng-cli reads it back)
+# run_conf [keep] - accel-ppp.conf as generated, plus the CLI on loopback
+# with a password made for this start (prisma-bng-cli reads it back); with
+# `keep`, the password the running accel-pppd already has - its CLI listener
+# is not reopened at a reload, so a new one would lock the host out of it.
 run_conf() {
-  pw=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
+  if [ "${1:-}" = keep ] && [ -s "$RUN_DIR/cli.password" ]; then
+    pw=$(cat "$RUN_DIR/cli.password")
+  else
+    pw=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
+  fi
   umask 077
   printf '%s\n' "$pw" > "$RUN_DIR/cli.password"
   { cat "$CONF_DIR/accel-ppp.conf"
@@ -162,6 +219,8 @@ stop_all() {
     kill -TERM "$APID" 2>/dev/null
     wait "$APID" 2>/dev/null
   fi
+  _n=$(clean_policers)
+  [ "$_n" -gt 0 ] && say "removed $_n policer(s) accel-pppd left in the dataplane"
   _n=$(clean_sessions)
   [ "$_n" -gt 0 ] && say "removed $_n session(s) accel-pppd left in the dataplane"
   unplumb
@@ -183,6 +242,17 @@ log_dir() {
   return 0
 }
 
+# reload - accel-ppp's file rebuilt from the generated one and read again by
+# the accel-pppd running (#607): what `prisma-bng reload` runs in here. accel-
+# cmd prints "failed" and exits 0 when the file is refused, so that is read.
+reload() {
+  [ -s "$RUN_DIR/cli.password" ] || { say "accel-pppd is not running"; return 3; }
+  run_conf keep
+  _out=$(prisma-bng-cli reload 2>&1) || { say "reload: $_out"; return 1; }
+  case "$_out" in *failed*) say "reload: accel-pppd refused the file"; return 1 ;; esac
+  return 0
+}
+
 # not a unit: the container's main loop, driven end to end by lab/pppoe.sh
 main() {
   mkdir -p "$RUN_DIR"
@@ -191,8 +261,16 @@ main() {
     say "no $CONF_DIR/accel-ppp.conf: PPPoE is not configured"; exit 1; }
   wait_vpp || { say "the dataplane did not answer in ${WAIT_VPP}s"; exit 1; }
   plumb || { say "could not lay the plumbing"; exit 1; }
-  _n=$(clean_sessions)
-  [ "$_n" -gt 0 ] && say "removed $_n stale session(s) from the dataplane"
+  _n=$(clean_policers)
+  [ "$_n" -gt 0 ] && say "removed $_n stale policer(s) from the dataplane"
+  # NOT clean_sessions here (#607): a dead control plane's sessions are
+  # accel-pppd's to remove, at its start, AFTER their routes - deleted
+  # first, they left each session interface's adjacency behind, and the
+  # recycled interface sent the next subscriber's downloads to the old one
+  # (vppiputils.c in build/accel-ppp-ng.patch has the measurement).
+  _n=$(stale_state)
+  [ "$_n" -gt 0 ] && say "$_n route(s) and session(s) a dead control plane left, for accel-pppd to remove"
+  export PRISMA_BNG_STALE="$RUN_DIR/stale-state"
   run_conf
   trap stop_all TERM INT
   # accel-pppd in the FOREGROUND (no -d), as this script's child, so that
@@ -206,7 +284,9 @@ main() {
     if ! kill -0 "$APID" 2>/dev/null; then
       say "accel-pppd exited; the container ends so it is restarted"
       unset APID
-      clean_sessions > /dev/null
+      # Its policers; its sessions and their routes are the next accel-
+      # pppd's to remove, in that order (see main's start).
+      clean_policers > /dev/null
       exit 1
     fi
     if [ -z "$(sw_index "$TAP")" ]; then
@@ -218,4 +298,7 @@ main() {
   done
 }
 
-[ "${PRISMA_BNG_SOURCE_ONLY:-0}" = 1 ] || main "$@"
+if [ "${PRISMA_BNG_SOURCE_ONLY:-0}" != 1 ]; then
+  if [ "${1:-}" = reload ]; then reload; exit $?; fi
+  main "$@"
+fi

@@ -7,10 +7,12 @@ the doors the commit and the screens go through.
 Each behaviour, shown red by a mutation (named beside the box):
 
   * one rule for the prompt and the saved file: stage() takes and refuses
-    the same statements both read (mutation: the secret not checked for a
-    comma, which would split accel-ppp's `server=` line);
+    the same statements both read (mutation: a local user's password not
+    checked for a quote, which would split chap-secrets' line);
+  * RADIUS is not here since #607: `radius` is refused with where it went
+    (mutation: stage() taking it), and test/test_aaa.py has the rest;
   * the block written, read back and nested exactly as typed (mutation:
-    body() dropping a non-default RADIUS port);
+    body() dropping the rate-limit default);
   * a secret and a password never on a screen (mutation: redact() matching
     only the nested line, so `show configuration compare`'s flat diff leaks);
   * what makes a configuration one the container cannot run, refused at
@@ -36,6 +38,7 @@ _root = tempfile.mkdtemp(prefix="pppoe-")
 import atexit  # noqa: E402
 atexit.register(shutil.rmtree, _root, True)
 for k, v in (("PRISMA_PPPOE_CONF", "pppoe.conf"), ("PRISMA_BNG_DIR", "bng"),
+             ("PRISMA_AAA_CONF", "aaa.conf"),
              ("PRISMA_CONFIG", "prisma-routing.conf"),
              ("PRISMA_CONFIRM", "confirm-pending"),
              ("PRISMA_ROLLBACK", "rollback"),
@@ -50,6 +53,7 @@ os.environ["PRISMA_BNG_CTL"] = os.path.join(_root, "prisma-bng")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "src", "prismash"))
 import pppoe as P  # noqa: E402
+import aaa as A_mod  # noqa: E402
 import config  # noqa: E402
 import doors  # noqa: E402
 import prismash  # noqa: E402
@@ -75,33 +79,34 @@ print("=== the statements: one rule, the prompt's and the file's ===")
 held, whys = staged("interface host-acc0", "interface host-acc0.100",
                     "gateway 100.64.0.1", "address-pool 100.64.0.0/24",
                     "address-pool 100.64.1.10-100.64.1.200", "dns 8.8.8.8",
-                    "radius server 192.0.2.1 secret s3cr3t! auth-port 11812",
-                    "radius nas-identifier bng-1",
-                    "radius interim-interval 600",
                     "authentication pap chap", "session-limit 4000",
                     "mtu 1480", "tcp-mss 1440", "ac-name edge",
+                    "rate-limit default 20M/10M",
                     "local-user lab1 password pw1")
 check(whys == [None] * len(whys), f"stage: every statement taken: {whys}")
 check(held["interfaces"] == ["host-acc0", "host-acc0.100"]
       and held["gateway"] == "100.64.0.1"
-      and held["radius"] == [{"address": "192.0.2.1", "secret": "s3cr3t!",
-                              "auth-port": "11812", "acct-port": "1813"}]
       and held["settings"]["authentication"] == "pap chap"
+      and held["settings"]["rate-limit-default"] == "20M/10M"
       and held["users"] == {"lab1": "pw1"},
-      "stage: held as typed, the RADIUS ports defaulted")
+      "stage: held as typed")
 for line, want in (
-        ("radius server 192.0.2.1 secret a,b", "no space, comma"),
-        ("radius server 192.0.2.1 secret \"q\"", "no space, comma"),
-        ("radius server bng.example secret x", "not an IPv4 address"),
-        ("radius server 192.0.2.1 secret x auth-port 0", "1-65535"),
-        ("radius server 192.0.2.1", "secret <secret>"),
+        ("radius server 192.0.2.1 secret x", "under 'aaa' > 'radius'"),
+        ("radius nas-identifier x", "under 'aaa' > 'radius'"),
+        ("rate-limit default 20M", "<download>/<upload>"),
+        ("rate-limit default 20X/1M", "<download>/<upload>"),
+        ("rate-limit default 11G/1M", "at most 10G"),
+        ("rate-limit default 0/1M", "at most 10G"),
+        ("rate-limit attribute mikrotik-rate-limit", "Prisma-Rate-Limit-Down"),
+        ("rate-limit burst 1", "Prisma-Rate-Limit-Down"),
+        ("rate-limit default", "rate-limit default <download>/<upload>"),
+        ("local-user lab password a\"b", "no space, comma"),
         ("address-pool 100.64.0.0/31", "/30 or shorter"),
         ("address-pool 100.64.0.9-100.64.0.1", "ends before it starts"),
         ("address-pool nonsense", "neither a prefix nor a range"),
         ("gateway 2001:db8::1", "gateway <address>"),
         ("mtu 1501", "576-1500"), ("tcp-mss 100", "536-1460"),
         ("session-limit 0", "1-1000000"),
-        ("radius interim-interval 30", "0 (none) or 60-86400"),
         ("authentication pap pap", "one or more of"),
         ("authentication eap", "one or more of"),
         ("ac-name a/b", "letters, digits"),
@@ -116,15 +121,20 @@ for line, want in (
 h, _ = staged("dns 1.1.1.1", "dns 8.8.8.8")
 check(P.stage(h, "pppoe dns 9.9.9.9".split()).startswith("at most 2"),
       "stage: IPCP carries two resolvers, a third is refused")
-h, _ = staged("radius server 192.0.2.1 secret a")
-P.stage(h, "pppoe radius server 192.0.2.1 secret b".split())
-check([r["secret"] for r in h["radius"]] == ["b"],
-      "stage: a server typed again replaces itself")
-check(P.stage(h, "no pppoe radius server 192.0.2.9".split())
-      .endswith("is not a server here")
-      and P.stage(h, "no pppoe radius server 192.0.2.1".split()) is None
-      and h["radius"] == [],
-      "stage: `no radius server` takes the one named, and says when none is")
+h, _ = staged("rate-limit default 1G/500M")
+check(P.stage(h, "no pppoe rate-limit default".split()) is None
+      and h == P.empty()
+      and P.stage(h, "no pppoe rate-limit default x".split())
+      == "no rate-limit default",
+      "stage: `no rate-limit` takes each back out")
+check(P.rate_kbit("20M") == 20000 and P.rate_kbit("1g") == 1000000
+      and P.rate_kbit("1500K") == 1500 and P.rate_kbit("512") == 512
+      and P.rate_kbit("10G") == 10000000 and P.rate_kbit("10001M") is None
+      and P.rate_kbit("") is None and P.rate_kbit("0") is None,
+      "rate_kbit: kbit/s, K, M, G - G a million, not accel-ppp's ten")
+check(P.rate_words(20000) == "20M" and P.rate_words(1000000) == "1G"
+      and P.rate_words(1500) == "1500K",
+      "rate_words: the shortest spelling")
 h, _ = staged("mtu 1480", "interface x")
 P.stage(h, "no pppoe mtu".split())
 P.stage(h, "no pppoe interface x".split())
@@ -138,8 +148,6 @@ check(P._addr4("100.64.0.001") is None and P._addr4("100.64.0.1") ==
       "100.64.0.1", "_addr4: dotted IPv4 only")
 check(P._number("12", 1, 20) == 12 and P._number("21", 1, 20) is None
       and P._number("x", 1, 20) is None, "_number: within its bounds")
-check(P._radius_server(["192.0.2.1", "secret", "x", "acct-port"])[0] is None,
-      "_radius_server: a port with no value is refused")
 check(P.pool_error("100.64.0.0/22") is None
       and P.pool_error("100.64.0.1-100.64.3.254") is None,
       "pool_error: a prefix and a range")
@@ -148,10 +156,9 @@ check(P.setting_error("bogus", "1").endswith("not a setting of 'pppoe'"),
 
 print("\n=== the block: written, nested, read back ===")
 check(P.body(held)[:2] == ["interface host-acc0", "interface host-acc0.100"]
-      and "radius server 192.0.2.1 secret s3cr3t! auth-port 11812"
-      in P.body(held)
+      and "rate-limit default 20M/10M" in P.body(held)
       and "local-user lab1 password pw1" in P.body(held),
-      "body: the statements, a non-default port kept")
+      "body: the statements, the rate limits kept")
 nested = P.nest(held)
 check(nested[0] == "pppoe" and nested[-1] == " exit"
       and all(x.startswith(" ") for x in nested[1:]) and P.nest(P.empty()) == [],
@@ -161,9 +168,7 @@ check(P.setting(held, "mtu") == "1480" and P.setting(P.empty(), "mtu") ==
 cfg = Config.parse("\n".join(nested) + "\n")
 check(cfg.pppoe == held and not cfg.unknown,
       f"Config.parse: the block read back whole: {cfg.unknown}")
-check([x for x in cfg.text().splitlines() if x.startswith(("pppoe", " "))
-       and ("radius" in x or x == "pppoe")][:1] == ["pppoe"]
-      and "\n".join(nested) in cfg.text(),
+check("\n".join(nested) in cfg.text(),
       "Config.text: the block written where the box writes it")
 bad = Config.parse("pppoe\n mtu 9000\n exit\n")
 check(bad.unknown and "576-1500" in bad.unknown[0][2],
@@ -186,13 +191,14 @@ check(Config.parse("pppoe\n session-limit 4000\n exit\n").runtime_interfaces()
       "tuner sizes the statistics segment for; no limit, nothing")
 
 print("\n=== secrets: never on a screen ===")
-shown = P.redact(nested + ["pppoe radius server 192.0.2.1 secret s3cr3t!",
+shown = P.redact(nested + ["pppoe radius server 192.0.2.1 secret s3cr3t! "
+                           "auth-port 11812",
                            "pppoe local-user lab1 password pw1"])
 check(not any("s3cr3t!" in x or "pw1" in x for x in shown)
-      and " radius server 192.0.2.1 secret <set, not shown> auth-port 11812"
-      in shown,
-      "redact: nested and flat, the secret and the password blanked, the "
-      "port kept")
+      and "pppoe radius server 192.0.2.1 secret <set, not shown> auth-port "
+      "11812" in shown,
+      "redact: nested and flat, the password blanked - and a 0.154.0 "
+      "server's secret, which a rollback revision still carries")
 diff = prismash.compare_redact(["- radius server 192.0.2.1 secret old",
                                 "+ radius server 192.0.2.1 secret new"])
 check(diff == ["- radius server 192.0.2.1 secret <set, not shown>",
@@ -201,8 +207,8 @@ check(diff == ["- radius server 192.0.2.1 secret <set, not shown>",
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     prismash.Shell.print_config(cfg)
-check("s3cr3t!" not in buf.getvalue() and "pw1" not in buf.getvalue()
-      and "secret <set, not shown>" in buf.getvalue(),
+check("pw1" not in buf.getvalue()
+      and "password <set, not shown>" in buf.getvalue(),
       "print_config: show running-config blanks them")
 
 print("\n=== what the container cannot run, refused at commit ===")
@@ -210,12 +216,13 @@ check(P.check(P.empty()) == [], "check: nothing configured is nothing wrong")
 h, _ = staged("interface a")
 w = P.check(h)
 check(len(w) == 3 and any("gateway" in x for x in w)
-      and any("authenticate" in x for x in w)
+      and any("authenticate" in x and "'aaa radius'" in x for x in w)
       and any("address-pool" in x for x in w),
       f"check: no gateway, nobody to authenticate, no address: {w}")
-h, _ = staged("interface a", "gateway 100.64.0.1",
-              "radius server 192.0.2.1 secret s")
-check(P.check(h) == [], "check: RADIUS alone may give every address")
+h, _ = staged("interface a", "gateway 100.64.0.1")
+A = A_mod.empty()
+A_mod.stage(A, "aaa radius server 192.0.2.1 secret s".split())
+check(P.check(h, A) == [], "check: RADIUS alone may give every address")
 
 print("\n=== one card, one tag ===")
 vl = {"ge0.100": {"outer": 100, "inner": None},
@@ -235,19 +242,32 @@ check(P.cp_name(0) == "pppoe-cp" and P.cp_name(100) == "pppoe-cp.100",
 
 print("\n=== the files the container runs ===")
 h, _ = staged("interface ge0", "interface ge0.100", "gateway 100.64.0.1",
-              "address-pool 100.64.0.0/24", "dns 8.8.8.8",
-              "radius server 192.0.2.1 secret s3cr3t!", "tcp-mss 1452",
+              "address-pool 100.64.0.0/24", "dns 8.8.8.8", "tcp-mss 1452",
               "session-limit 900", "authentication pap mschap-v2")
 acc, _ = P.access(h, vl)
-ac = P.accel_conf(h, acc)
+AA = A_mod.empty()
+A_mod.stage(AA, "aaa radius server 192.0.2.1 secret s3cr3t!".split())
+ac = P.accel_conf(h, acc, AA)
 for needle in ("interface=pppoe-cp,vpp-cp=enable",
                "interface=pppoe-cp.100,vpp-cp=enable",
                "server=192.0.2.1,s3cr3t!,auth-port=1812,acct-port=1813",
                "gw-ip-address=100.64.0.1", "100.64.0.0/24", "dns1=8.8.8.8",
                "max-sessions=900", "auth_pap", "auth_mschap_v2", "vyos_vpp",
                "ip-up=/usr/lib/prisma-bng/session", "acct-interim-interval=300",
-               "mtu=1492"):
-    check(needle in ac, f"accel_conf carries {needle}")
+               "mtu=1492", "\nshaper\n", "[shaper]", "vendor=Prisma",
+               "attr-down=Prisma-Rate-Limit-Down",
+               "attr-up=Prisma-Rate-Limit-Up", "vpp-policer-type=1r2c",
+               "dictionary=/usr/share/prisma-bng/dictionary.prisma",
+               "up-burst-factor=0.1", P.FORMAT_LINE):
+    check(needle in ac, f"accel_conf carries {needle!r}")
+check(ac.index("\nradius\n") < ac.index("\nshaper\n"),
+      "accel_conf: the shaper loaded after radius, whose events it takes")
+check("rate-limit=" not in ac, "accel_conf: no default rate unless one is set")
+h3 = dict(h, settings=dict(h["settings"], **{"rate-limit-default": "20M/1G"}))
+ac3 = P.accel_conf(h3, acc, AA)
+check("rate-limit=20000/1000000" in ac3 and "Mikrotik" not in ac3
+      and "attr=" not in ac3,
+      "shaper_section: the default in kbit/s; no other vendor's attribute")
 check("auth_chap_md5" not in ac and "[cli]" not in ac
       and "chap-secrets" not in ac,
       "accel_conf: no method not asked for, no CLI (the entrypoint adds it), "
@@ -255,6 +275,10 @@ check("auth_chap_md5" not in ac and "[cli]" not in ac
 h2, _ = staged("interface ge0", "gateway 100.64.0.1",
                "address-pool 100.64.0.0/24", "local-user a password b")
 ac2 = P.accel_conf(h2, P.access(h2, {})[0])
+check(P.modules(h2, A_mod.empty())[-3:-1] == ["ippool", "shaper"]
+      and "chap-secrets" in P.modules(h2, A_mod.empty())
+      and "radius" in P.modules(h2, AA),
+      "modules: RADIUS when 'aaa radius' has a server, local users else")
 check("chap-secrets\n" in ac2.replace("chap-secrets=", "x=") or
       "[chap-secrets]" in ac2, "accel_conf: local users when no RADIUS")
 check(P.chap_secrets(h2).splitlines()[1] == '"a" * "b" *',
@@ -262,8 +286,12 @@ check(P.chap_secrets(h2).splitlines()[1] == '"a" * "b" *',
 env = P.access_env(h, acc)
 check("PARENT=ge0" in env and 'VLANS="0 100"' in env and "TCP_MSS=1452" in env
       and "MTU=1492" in env, f"access_env: the plumbing's words: {env!r}")
-ok, msg = P.write_files(h, acc)
+ok, msg = P.write_files(h, acc, aaa=AA)
 bng = os.environ["PRISMA_BNG_DIR"]
+check(P.file_format() == P.FORMAT and P.file_format("/proc/no") == "",
+      "file_format: the release format of the files written")
+check("server=192.0.2.1" in open(os.path.join(bng, "accel-ppp.conf")).read(),
+      "write_files: the [radius] from the aaa block it is handed")
 check(ok and all(stat.S_IMODE(os.stat(os.path.join(bng, f)).st_mode) == 0o660
                  for f in ("accel-ppp.conf", "chap-secrets", "access.env"))
       and stat.S_IMODE(os.stat(P.CONF_PATH).st_mode) == 0o660,
@@ -282,10 +310,10 @@ check(open(os.path.join(_root, "w")).read() == "x", "_write: through a rename")
 
 print("\n=== the screens ===")
 TABLE = """\
-        sid       |     ifname     | username |     ip      |    calling-sid    | state  | uptime-raw | rx-bytes-raw | tx-bytes-raw
-------------------+----------------+----------+-------------+-------------------+--------+------------+--------------+--------------
- 8aa8eb1ab0657544 | pppoe_session2 | sub2     | 100.64.0.11 | 02:aa:00:00:00:02 | active | 3725       | 10           | 0
- 8aa8eb1ab0657546 | pppoe_session1 | sub1     | 100.64.0.77 | 02:aa:00:00:00:01 | active | 90061      | 0            | 0
+        sid       |     ifname     | username |     ip      |    calling-sid    | state  | uptime-raw | rx-bytes-raw | tx-bytes-raw | rate-limit
+------------------+----------------+----------+-------------+-------------------+--------+------------+--------------+--------------+------------
+ 8aa8eb1ab0657544 | pppoe_session2 | sub2     | 100.64.0.11 | 02:aa:00:00:00:02 | active | 3725       | 10           | 0            |
+ 8aa8eb1ab0657546 | pppoe_session1 | sub1     | 100.64.0.77 | 02:aa:00:00:00:01 | active | 90061      | 0            | 0            | 20000/10000
 """
 r = P.session_rows(TABLE)
 check(len(r) == 2 and r[0]["sid"] == "8aa8eb1ab0657544"
@@ -295,6 +323,43 @@ check(scr[1].startswith("8aa8eb1ab0657546  sub1") and scr[-1] ==
       "2 session(s)" and "1d+01:01:01" in scr[1]
       and P.sessions_screen([]) == ["no PPPoE session"],
       "sessions_screen: by user, uptime as a duration, and a count")
+check(" 20M/10M " in scr[1] and " - " in scr[2] and "limit down/up" in scr[0],
+      f"sessions_screen: each session's limit, download first: {scr}")
+check(P.limit_words("20000/0") == "20M/none" and P.limit_words("") == "-"
+      and P.limit_words("0/0") == "-" and P.limit_words("x/1") == "-",
+      "limit_words: one direction unlimited says so")
+POL = ('Name "vyos_7_20000_2000000_down" type 1r2c cir 20000 ...\n'
+       'Policer at index 0: single rate, not color-aware\n'
+       'conform 100 packets, 150000 bytes\nexceed 7 packets, 9000 bytes\n'
+       'violate 1 packets, 1500 bytes\n-----------\n'
+       'Name "vyos_7_10000_1000000_up" type 1r2c\n'
+       'conform 50 packets, 5000 bytes\nexceed 0 packets, 0 bytes\n'
+       'violate 0 packets, 0 bytes\n')
+pols = P.policers(POL)
+check(pols == {"vyos_7_20000_2000000_down": {"conform": 100, "dropped": 8},
+               "vyos_7_10000_1000000_up": {"conform": 50, "dropped": 0}},
+      f"policers: passed and dropped, by name: {pols}")
+VS = ("[0] sw-if-index 7 client-ip 0.0.0.0 session-id 3 encap-if-index 1"
+      " decap-fib-index 0\n    local-mac 02:fe:00:00:00:01  client-mac "
+      "02:aa:00:00:00:01\n[1] sw-if-index 9 client-ip 0.0.0.0 session-id 4 "
+      "encap-if-index 1 decap-fib-index 0\n    local-mac 02:fe:00:00:00:01  "
+      "client-mac 02:aa:00:00:00:02\n")
+check(P.session_index(VS, "02:aa:00:00:00:01") == "7"
+      and P.session_index(VS, "02:AA:00:00:00:02") == "9"
+      and P.session_index(VS, "02:aa:00:00:00:03") == ""
+      and P.session_index(VS, "") == "",
+      "session_index: the sw_if_index by the client's MAC - VPP holds "
+      "0.0.0.0 for every session's address")
+one = P.session_screen(r[1], "7", pols)
+check(any(x.startswith("mac") and "02:aa:00:00:00:01" in x for x in one)
+      and any("20M down, 10M up" in x for x in one)
+      and any(x.startswith("policer down") and "8 dropped" in x for x in one)
+      and any(x.startswith("policer up") and "50 packets" in x for x in one)
+      and all(len(x) <= 79 for x in one),
+      f"session_screen: the MAC, the limit and its policers: {one}")
+check(not any("policer" in x for x in P.session_screen(r[1], "8", pols))
+      and any("none" in x for x in P.session_screen(r[0], "", {})),
+      "session_screen: another session's policers are not this one's")
 r2 = P.session_rows(TABLE.replace("| active | 3725", "| start  | 3725"))
 check(P.sessions_screen(r2)[2].endswith("      start"),
       "sessions_screen: a session not active says what it is")
@@ -305,9 +370,11 @@ STAT = "uptime: 0.00:00:13\nsessions:\n  starting: 1\n  active: 3\n" \
     "  finishing: 0\npppoe:\n  starting: 0\n"
 check(P.stat_counts(STAT) == {"starting": 1, "active": 3, "finishing": 0},
       "stat_counts: the sessions block, and not pppoe's below it")
-s = P.summary_screen(h, "running", {"active": 3})
+s = P.summary_screen(h, "running", {"active": 3}, AA, {"192.0.2.1": "failed"})
 check(s[0].endswith("running") and "3 active" in s[1]
-      and any("RADIUS: 192.0.2.1" in x for x in s)
+      and any("RADIUS" in x for x in s)
+      and any("192.0.2.1" in x and "failed" in x for x in s)
+      and any("rate limit" in x and "Prisma-Rate-Limit" in x for x in s)
       and P.summary_screen(P.empty(), "x", {}) == ["PPPoE is not configured"]
       and "NOT running" in P.summary_screen(h, "stopped", {})[0],
       "summary_screen: the control plane, the sessions, the configuration")
@@ -327,6 +394,7 @@ for words in (["12"], ["user"], ["user", "a;b"], ["all", "now"], []):
 CTL = P.BNG_CTL_HOST
 for argv, want in (((CTL, "apply"), "start or restart"),
                    ((CTL, "stop"), "stop the PPPoE"),
+                   ((CTL, "reload"), "reload the PPPoE"),
                    ((CTL, "terminate", "sid", "8aa8eb1ab0657544"), "end PPPoE"),
                    ((CTL, "terminate", "username", "sub1"), "end PPPoE"),
                    ((CTL, "terminate", "all"), "end PPPoE"),
@@ -417,10 +485,13 @@ check(shell(Dp({"show tap": (0, 'Interface: tap1863 (ifindex 2)\n'
       "device_pppoe_taps: read off the box")
 
 IFS = (0, "  Name  Idx\nhost-acc0  1  up\nhost-acc0.100  2  up\n")
-tgt = Config.parse("interface host-acc0.100\n vlan 100\n exit\npppoe\n"
+tgt = Config.parse("interface host-acc0.100\n vlan 100\n exit\n"
+                   "aaa\n radius\n  server 192.0.2.1 secret s\n  exit\n"
+                   " exit\npppoe\n"
                    " interface host-acc0\n interface host-acc0.100\n"
                    " gateway 100.64.0.1\n address-pool 100.64.0.0/24\n"
-                   " radius server 192.0.2.1 secret s\n exit\n")
+                   " exit\n")
+check(not tgt.unknown, f"the target parses: {tgt.unknown}")
 log = ctl(0, "started")
 rv, out = said(lambda: shell(Dp({"show interface": IFS})).apply_pppoe(tgt))
 check(rv is True and "pppoe: started" in out

@@ -20,6 +20,7 @@ import hashlib
 
 import policy as policy_mod
 import eventfwd
+import aaa as aaa_mod
 import pppoe as pppoe_mod
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
@@ -554,6 +555,49 @@ def denest_system(numbered):
                 out.append((n, f"no {level} {s[3:]}"))
             else:
                 out.append((n, f"{level} {s}"))
+    return out, bad
+
+
+def denest_aaa(numbered):
+    """
+    The `aaa` > `radius` block of a file (#607) as the statements the model
+    holds: `server ...` under `radius` is `aaa radius server ...`. Returns
+    the rewritten list and [(lineno, statement, why)] for what cannot be
+    read at this depth - a level under `aaa` that is not `radius`; the
+    statements themselves are checked by aaa.stage(), the prompt's rule.
+    """
+    out, bad = [], []
+    depth = 0          # 0 top, 1 in aaa, 2 in radius
+    routing = False
+    for n, raw in numbered:
+        s = raw.strip()
+        if routing or s == ROUTING_HEADER:
+            routing = True
+            out.append((n, raw))
+            continue
+        if depth == 0:
+            if s == aaa_mod.AAA_HIERARCHY:
+                depth = 1
+            else:
+                out.append((n, raw))
+            continue
+        if not s or s.startswith("!"):
+            continue
+        if depth == 1:
+            if s == aaa_mod.RADIUS_LEVEL:
+                depth = 2
+            elif s in ("exit", "quit", "end"):
+                depth = 0
+            else:
+                bad.append((n, s, aaa_mod.LEVELS_SAY))
+        elif s in ("exit", "quit", "end"):
+            depth = 1
+        elif s.startswith("no "):
+            out.append((n, f"no {aaa_mod.AAA_HIERARCHY} "
+                           f"{aaa_mod.RADIUS_LEVEL} {s[3:]}"))
+        else:
+            out.append((n, f"{aaa_mod.AAA_HIERARCHY} "
+                           f"{aaa_mod.RADIUS_LEVEL} {s}"))
     return out, bad
 
 
@@ -4077,6 +4121,13 @@ class Config:
         # pppoe.conf - the model the commit wrote, never the files generated
         # from it for the prisma-bng container.
         self.pppoe: dict = pppoe_mod.empty()
+        # RADIUS (#607): aaa.empty()'s shape, the `aaa` > `radius` block,
+        # read back from aaa.conf. PPPoE authenticates against it.
+        self.aaa: dict = aaa_mod.empty()
+        # 0.154.0's `pppoe radius ...` lines a file held, read into `aaa`
+        # (#607): (lineno, the line, what it is now). Said at load, like
+        # `dropped`, and the next `save` writes the new block.
+        self.moved: list[tuple[int, str, str]] = []
         # Lines this VTY once held and no longer does, dropped from the file
         # on purpose rather than refused with it: (lineno, text, why). One
         # statement is in here today, `dataplane management`, which #303
@@ -4257,6 +4308,7 @@ class Config:
                            self.hardware, self.logging_hosts,
                            self.management)
         out += policy_mod.nest(self.policy)
+        out += aaa_mod.nest(self.aaa)
         out += pppoe_mod.nest(self.pppoe)
         if self.hostname:
             out.append(f"hostname {self.hostname}")
@@ -4751,6 +4803,9 @@ class Config:
             numbered, refused = policy_mod.unnest(numbered)
             cfg.unknown += refused
             cfg.n_statements += len(refused)
+            numbered, refused = denest_aaa(numbered)
+            cfg.unknown += refused
+            cfg.n_statements += len(refused)
             numbered, refused = denest_pppoe(numbered)
             cfg.unknown += refused
             cfg.n_statements += len(refused)
@@ -4932,6 +4987,27 @@ class Config:
                 continue
             if s == "no dataplane interface":
                 cfg.dataplane_if = ""
+                continue
+            if s.startswith(f"{aaa_mod.AAA_HIERARCHY} ") or \
+                    s == f"no {aaa_mod.AAA_HIERARCHY}" or \
+                    s.startswith(f"no {aaa_mod.AAA_HIERARCHY} "):
+                # The `aaa` block (#607), by the prompt's rule.
+                why = aaa_mod.stage(cfg.aaa, s.split())
+                if why:
+                    cfg.unknown.append((lineno, s, why))
+                continue
+            if s.startswith(f"{pppoe_mod.PPPOE_HIERARCHY} radius "):
+                # 0.154.0's RADIUS, inside `pppoe` (#597): the same
+                # statement under `aaa radius` now (#607), secret and all.
+                # Read, never refused - a box replays its file at boot where
+                # nobody is told anything, and a refusal there is a box with
+                # no subscribers.
+                now = aaa_mod.migrate_pppoe(cfg.aaa, s.split()[1:])
+                if now:
+                    cfg.moved.append((lineno, s, now))
+                else:
+                    cfg.unknown.append((lineno, s, "not a statement 0.154.0 "
+                                        "wrote: " + aaa_mod.MOVED_SAYS))
                 continue
             if s.startswith(f"{pppoe_mod.PPPOE_HIERARCHY} ") or \
                     s.startswith(f"no {pppoe_mod.PPPOE_HIERARCHY}"):
@@ -6166,6 +6242,8 @@ class Config:
             "logging_changed": self.logging_hosts != other.logging_hosts,
             # One flag: the container's files are generated whole (#597).
             "pppoe_changed": self.pppoe != other.pppoe,
+            # And RADIUS's (#607): the same files, and aaa.conf.
+            "aaa_changed": self.aaa != other.aaa,
             # The VRF's table is part of the setting: `vrf mgmt table 101`
             # over 100 moves the box's own traffic to another table.
             "management_changed": (self.management != other.management

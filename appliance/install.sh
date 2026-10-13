@@ -519,6 +519,11 @@ install -m 0644 "$REPO/appliance/PRISMA-ROUTING-MIB.in" \
 # for `show snmp zabbix-template`.
 install -m 0644 "$REPO/appliance/prisma-routing-zabbix.json.in" \
   "$DESTDIR/usr/share/prisma-routing/prisma-routing-zabbix.json.in"
+# Prisma's RADIUS dictionary (#607), vendor 67033, for `show aaa radius
+# dictionary`: what an operator installs on the RADIUS server to send the
+# rate-limit attributes. The prisma-bng image carries its own copy.
+install -m 0644 "$REPO/appliance/dictionary.prisma" \
+  "$DESTDIR/usr/share/prisma-routing/dictionary.prisma"
 chmod 0644 "$DESTDIR/usr/share/prisma-routing/VERSION"
 
 # What the operating system says it is (#438): os-release, the login banners,

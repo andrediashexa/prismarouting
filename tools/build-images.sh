@@ -108,9 +108,11 @@ cp "$REPO"/test/bpa_shim.h "$REPO"/test/bpa_vec_shim.h "$REPO"/test/bpa_tcp_shim
 # The PPPoE container's (#597): accel-ppp-ng's recipe and this repository's
 # delta to it, the entrypoint, the CLI wrapper and the session hook.
 mkdir -p "$CTX/build"
-cp "$REPO/build/accel-ppp-build.sh" "$REPO/build/accel-ppp-ng.patch" "$CTX/build/"
+cp "$REPO/build/accel-ppp-build.sh" "$REPO/build/accel-ppp-ng.patch" \
+   "$REPO/build/prisma_rate.c" "$CTX/build/"
 cp "$REPO/appliance/prisma-bng-entrypoint" "$REPO/appliance/prisma-bng-cli" \
-   "$REPO/appliance/prisma-bng-session" "$CTX/appliance/"
+   "$REPO/appliance/prisma-bng-session" "$REPO/appliance/dictionary.prisma" \
+   "$CTX/appliance/"
 
 echo "==> dataplane image, VPP $VPP_VERSION with this tree's plugin"
 docker build -q -f "$REPO/build/Dockerfile.vpp" \

@@ -77,7 +77,70 @@ version has a chance of seeing it.
 
 ### Added
 
+* **RADIUS in a hierarchy of its own, `aaa` > `radius`: several servers,
+  failover or round-robin, and timers that fail over in seconds.**
+  ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
+  `server <address> secret <s> [auth-port] [acct-port] [role auth|acct|both]
+  [priority <n>]` (up to eight; the priority is always written, so the
+  failover order is on the screen), `mode failover|round-robin`, `timeout`
+  (3 s), `retries` (1), `dead-time` (30 s), `nas-identifier`,
+  `interim-interval`. Failover sends every request to the first server
+  alive and skips one that did not answer for `dead-time`; round-robin gives
+  each request to the server with the least in flight. Accounting follows the
+  same choice; a setup with no accounting server is allowed and said. Mapped
+  onto accel-ppp's own server selection, read in its source, with its
+  `backup` made a level by the patch so a third server waits behind the
+  second. **A change under `aaa radius` is a reload: no session drops.**
+  Measured with two FreeRADIUS servers: the first killed, a new session
+  authenticated and accounted on the second 5 s after it was cleared, and the
+  first was used again once its dead-time was over.
+* **Per-subscriber rate limits, a VPP policer on each PPPoE session.**
+  ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
+  From RADIUS: Prisma's own attributes, vendor 67033 (the product's IANA
+  PEN) - `Prisma-Rate-Limit-Down` and `-Up`, kbit/s - whose dictionary
+  `show aaa radius dictionary` prints for the RADIUS server; and Cisco-AVPair's
+  `lcp:interface-config=rate-limit input|output ...` and `sub-qos-policy-in|out=
+  <name>` (a name is the operator's `aaa radius rate-profile`), Prisma's
+  winning when both are sent. MikroTik's attribute is not read. `pppoe
+  rate-limit default <down>/<up>` for a session RADIUS gives none. A
+  CoA-Request changes the policers on the live session. `show pppoe sessions`
+  lists each session's limit; `show pppoe session <id>` its MAC, traffic and
+  policer counters. Measured with iperf3 through real CPEs and the CGNAT: a
+  20/10 Mbit/s plan at 19.1/9.6, changed by CoA to 50/20 and measured at
+  48.9/19.3 on the same session; a session with no plan unlimited.
+* **Disconnect and CoA (RFC 5176)**: `dynamic-authorization listen <address>
+  [port <n>]` and `client <address> secret <s>`, each client its own secret
+  (a patch: accel-ppp had one, for any source). Disconnect by User-Name or
+  Acct-Session-Id; CoA with a rate or a Session-Timeout. A CoA carrying an
+  attribute nothing acts on is refused whole (Unsupported-Attribute), as is
+  one with a rate that is not one.
+
+### Changed
+
+* **`pppoe radius ...` is now `aaa radius ...`.** A saved file from 0.154.0
+  is read with each line moved - the secret, the ports and the order kept,
+  said at load, the file written again - and nothing has to be done; typed at
+  the prompt, `radius` under `pppoe` is refused with where it went. `show pppoe
+  sessions` shows the limit where the MAC was; the MAC is in `show pppoe
+  session <id>`. A box upgraded from 0.154.0 restarts the PPPoE container once
+  at its first load, on files written again in the new format.
+
 ### Fixed
+
+* **A PPPoE control plane killed with -9 sent subscribers' downloads to
+  other subscribers.** ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
+  The dead daemon's sessions were deleted before their routes, each session
+  interface's adjacency outlived them, and VPP recycled the interface for the
+  next session with the old subscriber's MAC and session id in the rewrite.
+  The next accel-pppd now removes the routes and then the sessions, as a
+  graceful teardown does, and the entrypoint removes the dead daemon's
+  policers. Present since 0.154.0.
+* **A dead RADIUS server was never marked down** (`fail-time=0`): every new
+  subscriber paid the whole retry budget. And a session was ENDED when its
+  interim accounting went unanswered for 3 s, so a RADIUS outage took every
+  subscriber down; it is now kept (`acct-timeout=0`).
+* **`show this` inside `pppoe` printed the CGNAT's block**; it prints the
+  `pppoe` block, its passwords blanked.
 
 ## 0.154.0 - PPPoE subscribers, in a container of their own
 

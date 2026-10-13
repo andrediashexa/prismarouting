@@ -1,0 +1,32 @@
+# -*- text -*-
+#
+# Prisma Routing's RADIUS attributes (#607): vendor 67033, the product's own
+# IANA Private Enterprise Number (assigned 2026-10-02, #554; the SNMP MIB is
+# under the same number). Install it on the RADIUS server beside its other
+# dictionaries - FreeRADIUS: copy it to /usr/share/freeradius/ and add
+# `$INCLUDE dictionary.prisma` to /etc/freeradius/3.0/dictionary. The box
+# prints this file with `show aaa radius dictionary`.
+#
+# Rates are kbit/s, an integer: 20000 is 20 Mbit/s. 0, or the attribute
+# absent, is no limit in that direction. In an Access-Accept they are the
+# session's plan; in a CoA-Request, a new plan for the live session.
+#
+# THE NUMBER PLAN. Each range is kept for one kind of attribute, so a later
+# attribute lands beside its kind and no number is ever reused:
+#     1-15   subscriber rate and QoS
+#    16-31   addressing (pools, IPv6 delegation)
+#    32-47   CGNAT (BPA pool selection, port blocks)
+#    48-63   session control
+#    64-255  unassigned
+# An attribute, once shipped, keeps its number and its type for ever.
+#
+VENDOR		Prisma				67033
+
+BEGIN-VENDOR	Prisma
+
+# The session's download (box to subscriber) and upload (subscriber to box)
+# limit, kbit/s. A VPP policer on the session interface's output and input.
+ATTRIBUTE	Prisma-Rate-Limit-Down			1	integer
+ATTRIBUTE	Prisma-Rate-Limit-Up			2	integer
+
+END-VENDOR	Prisma

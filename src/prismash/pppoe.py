@@ -21,15 +21,33 @@ WHERE THE PIECES RUN:
     over the binary API; appliance/prisma-bng-entrypoint lays the plumbing,
     appliance/prisma-bng-session attaches each session to the CGNAT.
 
-SECRETS. A RADIUS shared secret and a local user's password are passwords on
-the wire, held like SNMP's community: in the saved configuration and in
-pppoe.conf (0660, group prisma-cgnat, as prisma-routing.conf is), never on a
-screen - `redact()` is what every show and compare passes the text through.
+RADIUS IS NOT HERE since #607: it is `aaa` > `radius` (aaa.py), which this
+module is handed wherever accel-ppp's file needs it. A 0.154.0 file's `pppoe
+radius ...` statements are read into that block (config.py), and refused at
+the prompt with where they went.
+
+SECRETS. A local user's password is a password on the wire, held like SNMP's
+community: in the saved configuration and in pppoe.conf (0660, group
+prisma-cgnat, as prisma-routing.conf is), never on a screen - `redact()` is
+what every show and compare passes the text through.
+
+RATE LIMITS (#607). accel-ppp-ng's shaper module, given a session with no
+kernel interface, hands the limit to the session hooks - and its vyos_vpp
+hooks install a VPP policer on the session's own interface, the download one
+on output and the upload one on input (session_hooks/vyos_vpp/vpppolicer.c).
+So the module is loaded, told which RADIUS attribute carries the rate, and a
+CoA carrying a new one changes the policers on the live session. The rate is
+Prisma's own pair of attributes, vendor 67033 (appliance/dictionary.prisma):
+Prisma-Rate-Limit-Down and -Up, integers in kbit/s - by the operator's
+decision the primary form; Cisco-AVPair's rate-limit and sub-qos-policy
+forms are read too (build/prisma_rate.c), and Prisma's wins when both are
+there. MikroTik's is not read.
 """
 import ipaddress
 import os
 import re
 
+import aaa as aaa_mod
 from system import is_number
 
 #: The hierarchy's word, at the top of configuration mode.
@@ -62,18 +80,28 @@ AUTH_MODULE = {"pap": "auth_pap", "chap": "auth_chap_md5",
 
 #: Settings that take one value, with the bounds each is checked against.
 #: The defaults are what an absent statement means; they are never written.
-DEFAULTS = {"mtu": "1492", "interim-interval": "300",
-            "authentication": "pap chap mschap-v2",
-            "ac-name": "prisma-routing", "nas-identifier": "prisma-routing"}
+DEFAULTS = {"mtu": "1492", "authentication": "pap chap mschap-v2",
+            "ac-name": "prisma-routing"}
 DNS_MAX = 2
-RADIUS_MAX = 4
 POOLS_MAX = 16
 INTERFACES_MAX = 16
 USERS_MAX = 1000
 SESSION_LIMIT_MAX = 1000000
 MTU_MIN, MTU_MAX = 576, 1500
 MSS_MIN, MSS_MAX = 536, 1460
-INTERIM_MIN, INTERIM_MAX = 60, 86400
+
+#: Where a session's rate comes from, in an Access-Accept or a CoA-Request:
+#: Prisma's vendor-specific attributes (#607), the shaper's `vendor`,
+#: `attr-down` and `attr-up`. Integers in kbit/s, so nothing is parsed.
+RATE_VENDOR = "Prisma"
+RATE_DOWN, RATE_UP = "Prisma-Rate-Limit-Down", "Prisma-Rate-Limit-Up"
+#: Where the image puts the dictionary that names them (build/Dockerfile.bng).
+PRISMA_DICTIONARY = "/usr/share/prisma-bng/dictionary.prisma"
+#: The fastest a session's policer takes: past it, accel-ppp's bytes per
+#: second overflow an int (17 Gbit/s; build/accel-ppp-ng.patch moved the
+#: earlier overflow, 2.1 Gbit/s, to 64 bits).
+RATE_MAX_KBIT = 10000000
+_RATE = re.compile(r"^([0-9]{1,8})([KMG]?)$", re.IGNORECASE)
 
 #: A secret or password: printable ASCII with no space, and none of the
 #: characters accel-ppp's files use to separate fields (`,` in a `server=`
@@ -91,7 +119,7 @@ NOT_SHOWN = "<set, not shown>"
 def empty():
     """The model of a box with no PPPoE."""
     return {"interfaces": [], "gateway": "", "pools": [], "dns": [],
-            "radius": [], "settings": {}, "users": {}}
+            "settings": {}, "users": {}}
 
 
 def is_empty(held) -> bool:
@@ -135,31 +163,22 @@ def _number(word, lo, hi):
     return n if lo <= n <= hi else None
 
 
-def _radius_server(words):
-    """
-    `<address> secret <s> [auth-port <n>] [acct-port <n>]` as a server dict,
-    and why not.
-    """
-    if len(words) < 3 or words[1] != "secret":
-        return None, ("radius server <address> secret <secret> "
-                      "[auth-port <n>] [acct-port <n>]")
-    addr = _addr4(words[0])
-    if not addr:
-        return None, f"radius server: '{words[0]}' is not an IPv4 address"
-    if not _SECRET.match(words[2]):
-        return None, ("radius server: a secret is 1-128 printable characters "
-                      "with no space, comma, quote or '#'")
-    srv = {"address": addr, "secret": words[2], "auth-port": "1812",
-           "acct-port": "1813"}
-    rest = words[3:]
-    while rest:
-        if len(rest) < 2 or rest[0] not in ("auth-port", "acct-port") \
-                or _number(rest[1], 1, 65535) is None:
-            return None, ("radius server: after the secret, auth-port <n> "
-                          "and acct-port <n>, 1-65535")
-        srv[rest[0]] = rest[1]
-        rest = rest[2:]
-    return srv, None
+def rate_kbit(word):
+    """A rate - kbit/s, or with K, M or G - as kbit/s, or None."""
+    m = _RATE.match(word or "")
+    if not m:
+        return None
+    n = int(m.group(1)) * {"": 1, "K": 1, "M": 1000,
+                           "G": 1000000}[m.group(2).upper()]
+    return n if 0 < n <= RATE_MAX_KBIT else None
+
+
+def rate_words(kbit):
+    """kbit/s as the shortest of 20M, 1500K, 1G."""
+    for unit, n in (("G", 1000000), ("M", 1000)):
+        if kbit and kbit % n == 0:
+            return f"{kbit // n}{unit}"
+    return f"{kbit}K"
 
 
 def setting_error(key, value):
@@ -173,12 +192,12 @@ def setting_error(key, value):
     elif key == "session-limit":
         if _number(value, 1, SESSION_LIMIT_MAX) is None:
             return f"session-limit: 1-{SESSION_LIMIT_MAX}"
-    elif key == "interim-interval":
-        n = _number(value, 0, INTERIM_MAX)
-        if n is None or 0 < n < INTERIM_MIN:
-            return (f"radius interim-interval: 0 (none) or "
-                    f"{INTERIM_MIN}-{INTERIM_MAX} seconds")
-    elif key in ("ac-name", "nas-identifier"):
+    elif key == "rate-limit-default":
+        down, _, up = value.partition("/")
+        if rate_kbit(down) is None or rate_kbit(up) is None:
+            return ("rate-limit default <download>/<upload>: kbit/s, or "
+                    "with K, M or G, as 20M/10M; at most 10G")
+    elif key == "ac-name":
         if not _WORD.match(value):
             return f"{key}: 1-32 letters, digits, '.', '_' or '-'"
     elif key == "authentication":
@@ -192,11 +211,12 @@ def setting_error(key, value):
 
 
 #: The statements, as `?` offers them and the refusal lists them.
-STATEMENTS = ("interface", "gateway", "address-pool", "dns", "radius",
+STATEMENTS = ("interface", "gateway", "address-pool", "dns",
               "authentication", "session-limit", "mtu", "tcp-mss", "ac-name",
-              "local-user")
-SAYS = ("under 'pppoe': interface, gateway, address-pool, dns, radius, "
-        "authentication, session-limit, mtu, tcp-mss, ac-name, local-user")
+              "rate-limit", "local-user")
+SAYS = ("under 'pppoe': interface, gateway, address-pool, dns, "
+        "authentication, session-limit, mtu, tcp-mss, ac-name, rate-limit, "
+        "local-user")
 
 
 def stage(held, words):
@@ -270,43 +290,26 @@ def stage(held, words):
             held["dns"].append(a)
         return None
     if kw == "radius":
-        if args[:1] == ["server"]:
-            if neg:
-                a = _addr4(args[1]) if len(args) == 2 else None
-                if not a:
-                    return "no radius server <address>"
-                if a not in [r["address"] for r in held["radius"]]:
-                    return f"no radius server: {a} is not a server here"
-                held["radius"][:] = [r for r in held["radius"]
-                                     if r["address"] != a]
-                return None
-            srv, why = _radius_server(args[1:])
-            if why:
-                return why
-            for i, r in enumerate(held["radius"]):
-                if r["address"] == srv["address"]:
-                    held["radius"][i] = srv
-                    return None
-            if len(held["radius"]) >= RADIUS_MAX:
-                return f"at most {RADIUS_MAX} RADIUS servers"
-            held["radius"].append(srv)
+        # #607: one spelling. A saved file's are read into `aaa radius`
+        # before they get here (config.py); typed, they are told where.
+        return aaa_mod.MOVED_SAYS
+    if kw == "rate-limit":
+        if args[:1] != ["default"]:
+            return ("rate-limit default <download>/<upload>; a session's own "
+                    "comes from RADIUS, Prisma-Rate-Limit-Down and -Up")
+        key = "rate-limit-default"
+        if neg:
+            if len(args) != 1:
+                return "no rate-limit default"
+            s.pop(key, None)
             return None
-        if args[:1] in (["nas-identifier"], ["interim-interval"]):
-            key = args[0]
-            if neg:
-                if len(args) != 1:
-                    return f"no radius {key}"
-                s.pop(key, None)
-                return None
-            if len(args) != 2:
-                return f"radius {key} <value>"
-            why = setting_error(key, args[1])
-            if why:
-                return why
-            s[key] = args[1]
-            return None
-        return ("radius server <address> secret <secret> ..., radius "
-                "nas-identifier <name>, radius interim-interval <seconds>")
+        if len(args) != 2:
+            return "rate-limit default <download>/<upload>"
+        why = setting_error(key, args[1])
+        if why:
+            return why
+        s[key] = args[1]
+        return None
     if kw in ("authentication", "session-limit", "mtu", "tcp-mss", "ac-name"):
         if neg:
             if args:
@@ -349,19 +352,12 @@ def body(held):
         out.append(f"gateway {held['gateway']}")
     out += [f"address-pool {p}" for p in held["pools"]]
     out += [f"dns {a}" for a in held["dns"]]
-    for r in held["radius"]:
-        line = f"radius server {r['address']} secret {r['secret']}"
-        for k in ("auth-port", "acct-port"):
-            if r[k] != {"auth-port": "1812", "acct-port": "1813"}[k]:
-                line += f" {k} {r[k]}"
-        out.append(line)
     s = held["settings"]
-    for k in ("nas-identifier", "interim-interval"):
-        if k in s:
-            out.append(f"radius {k} {s[k]}")
     for k in ("authentication", "session-limit", "mtu", "tcp-mss", "ac-name"):
         if k in s:
             out.append(f"{k} {s[k]}")
+    if "rate-limit-default" in s:
+        out.append(f"rate-limit default {s['rate-limit-default']}")
     out += [f"local-user {n} password {held['users'][n]}"
             for n in sorted(held["users"])]
     return out
@@ -376,17 +372,23 @@ def nest(held):
 
 
 def redact(lines):
-    """A RADIUS secret and a local user's password, never on a screen."""
+    """
+    A local user's password, never on a screen - and a 0.154.0 `radius
+    server` line's secret, which a rollback revision or a compare against
+    one still carries.
+    """
     out = []
     for line in lines:
         w = line.split()
         pre = line[:len(line) - len(line.lstrip())]
         at = 1 if w[:1] == [PPPOE_HIERARCHY] else 0
         tail = w[at:]
-        if tail[:2] == ["radius", "server"] and "secret" in tail:
+        if tail[:2] == ["radius", "server"] and "secret" in tail \
+                and " ".join(w[w.index("secret") + 1:][:3]) != NOT_SHOWN:
             i = w.index("secret")
             out.append(pre + " ".join(w[:i + 1] + [NOT_SHOWN] + w[i + 2:]))
-        elif tail[:1] == ["local-user"] and "password" in tail:
+        elif tail[:1] == ["local-user"] and "password" in tail \
+                and " ".join(w[w.index("password") + 1:][:3]) != NOT_SHOWN:
             i = w.index("password")
             out.append(pre + " ".join(w[:i + 1] + [NOT_SHOWN] + w[i + 2:]))
         else:
@@ -399,13 +401,23 @@ def setting(held, key):
     return held["settings"].get(key, DEFAULTS.get(key, ""))
 
 
-def check(held):
+def uses_radius(aaa):
+    """
+    True when PPPoE authenticates against RADIUS: whenever `aaa radius` has
+    a server. accel-ppp's radius module answers every Access-Request it is
+    loaded for, so a local user beside it would be asked of RADIUS too.
+    """
+    return bool(aaa["servers"])
+
+
+def check(held, aaa=None):
     """
     What makes a configuration one the container cannot run, as rows; empty
     when it can. Asked at commit, where the operator is: a container started
     on a configuration accel-ppp cannot use is a box that answers no PADI and
-    says nothing.
+    says nothing. `aaa` is the `aaa` block, where its RADIUS is.
     """
+    aaa = aaa if aaa is not None else aaa_mod.empty()
     if is_empty(held):
         return []
     why = []
@@ -414,12 +426,12 @@ def check(held):
     if not held["gateway"]:
         why.append("pppoe: no gateway ('gateway <address>'), the address the "
                    "subscribers see the box at")
-    if not held["radius"] and not held["users"]:
-        why.append("pppoe: nobody to authenticate against: a RADIUS server "
-                   "or, for a lab, a local-user")
-    if not held["pools"] and not held["radius"]:
-        why.append("pppoe: no address-pool, and no RADIUS to give a "
-                   "Framed-IP-Address")
+    if not uses_radius(aaa) and not held["users"]:
+        why.append("pppoe: nobody to authenticate against: a server under "
+                   "'aaa radius' or, for a lab, a local-user")
+    if not held["pools"] and not uses_radius(aaa):
+        why.append("pppoe: no address-pool, and no RADIUS under 'aaa "
+                   "radius' to give a Framed-IP-Address")
     return why
 
 
@@ -467,21 +479,74 @@ def cp_name(vlan):
     return CP_LINUX if not vlan else f"{CP_LINUX}.{vlan}"
 
 
-def accel_conf(held, acc):
+#: What generated a file, and with it what is in it: a box whose file says
+#: otherwise was generated by an older release, and its files are written
+#: again at the next load (prismash.Shell.apply_pppoe). 2: #607's [radius]
+#: and [shaper].
+FORMAT = "2"
+FORMAT_LINE = f"# prisma-bng format {FORMAT}"
+
+
+def shaper_section(held, aaa=None):
     """
-    accel-ppp.conf, generated. `acc` is access()'s list. The CLI section is
-    not here: the entrypoint adds it with a password made at each start.
+    accel-ppp.conf's [shaper]: the attributes that carry the rate, the VPP
+    policer it becomes, and the default for a session with none. Two
+    attributes, one a direction: the shaper reads an integer as kbit/s
+    (shaper.c parse_attr), so nothing is parsed out of a string.
+
+      vpp-policer-type=1r2c  one rate, one bucket: up to the rate passes,
+                             past it is dropped. accel-ppp-ng's default is
+                             2r3c with the committed rate at 0.8 of it,
+                             which measures as the rate anyway and reads as
+                             a policer half of whose numbers are not the
+                             subscriber's plan;
+      up-burst-factor=0.1    a tenth of a second at the rate, as download
+                             has: the shaper's default for upload, 1, is a
+                             whole second of the plan let through at line
+                             rate before the policer starts to drop.
+    """
+    out = ["[shaper]", f"vendor={RATE_VENDOR}", f"attr-down={RATE_DOWN}",
+           f"attr-up={RATE_UP}", "vpp-policer-type=1r2c",
+           "down-burst-factor=0.1",
+            "up-burst-factor=0.1", "verbose=1"]
+    dflt = held["settings"].get("rate-limit-default")
+    if dflt:
+        down, _, up = dflt.partition("/")
+        out.append(f"rate-limit={rate_kbit(down)}/{rate_kbit(up)}")
+    # The names a Cisco-AVPair sub-qos-policy may give (#607).
+    out += aaa_mod.shaper_profiles(aaa if aaa is not None
+                                   else aaa_mod.empty())
+    return out
+
+
+def modules(held, aaa):
+    """
+    accel-ppp's [modules], which it reads at START only: a change here is a
+    restart, never a reload (prismash.Shell.apply_pppoe).
     """
     auth = setting(held, "authentication").split()
     mods = ["log_file", "vyos_vpp", "pppoe"] + [AUTH_MODULE[a] for a in auth]
-    mods.append("radius" if held["radius"] else "chap-secrets")
+    mods.append("radius" if uses_radius(aaa) else "chap-secrets")
     if held["pools"]:
         mods.append("ippool")
+    # After radius, whose Access-Accept and CoA events it takes.
+    mods.append("shaper")
     mods.append("pppd_compat")
+    return mods
+
+
+def accel_conf(held, acc, aaa=None):
+    """
+    accel-ppp.conf, generated. `acc` is access()'s list, `aaa` the `aaa`
+    block. The CLI section is not here: the entrypoint adds it with a
+    password made at each start.
+    """
+    aaa = aaa if aaa is not None else aaa_mod.empty()
+    mods = modules(held, aaa)
     mtu = setting(held, "mtu")
     out = ["# GENERATED by prismash from the committed configuration (#597).",
            "# Do not edit: the next commit rewrites it, and 'show",
-           "# running-config' never reads it.",
+           "# running-config' never reads it.", FORMAT_LINE,
            "", "[modules]"] + mods + [
         "", "[core]", f"log-error={LOG_DIR}/accel-ppp-error.log",
         "thread-count=4",
@@ -497,20 +562,15 @@ def accel_conf(held, acc):
     if held["dns"]:
         out += ["", "[dns]"] + [f"dns{i + 1}={a}"
                                 for i, a in enumerate(held["dns"])]
-    if held["radius"]:
-        out += ["", "[radius]", f"dictionary={DICTIONARY}",
-                f"nas-identifier={setting(held, 'nas-identifier')}",
-                f"gw-ip-address={held['gateway']}", "verbose=1",
-                f"acct-interim-interval={setting(held, 'interim-interval')}"]
-        out += [f"server={r['address']},{r['secret']},auth-port="
-                f"{r['auth-port']},acct-port={r['acct-port']},req-limit=0,"
-                f"fail-time=0" for r in held["radius"]]
+    if uses_radius(aaa):
+        out += [""] + aaa_mod.accel_radius(aaa, held["gateway"])
     else:
         out += ["", "[chap-secrets]", f"gw-ip-address={held['gateway']}",
                 f"chap-secrets={BNG_DIR}/chap-secrets"]
     if held["pools"]:
         out += ["", "[ip-pool]", f"gw-ip-address={held['gateway']}"]
         out += held["pools"]
+    out += [""] + shaper_section(held, aaa)
     out += ["", "[pppd-compat]", f"ip-up={SESSION_HOOK}", "verbose=1",
             "", "[log]", f"log-file={LOG_DIR}/accel-ppp.log", "level=3",
             "copy=1", ""]
@@ -554,10 +614,23 @@ def _write(path, text):
     os.replace(tmp, path)
 
 
-def write_files(held, acc, conf=None, bng=None):
+def file_format(bng=None):
+    """The FORMAT the container's accel-ppp.conf was generated in, or ""."""
+    try:
+        with open(os.path.join(bng or BNG_DIR, "accel-ppp.conf")) as f:
+            for line in f:
+                if line.startswith("# prisma-bng format "):
+                    return line.split()[-1]
+    except OSError:
+        pass
+    return ""
+
+
+def write_files(held, acc, conf=None, bng=None, aaa=None):
     """
     The model into pppoe.conf and, when it is set, the container's files into
     BNG_DIR; with nothing set, both removed. (True, what) or (False, why).
+    `aaa` is the `aaa` block the [radius] section is written from.
     """
     conf = conf or CONF_PATH
     bng = bng or BNG_DIR
@@ -570,7 +643,8 @@ def write_files(held, acc, conf=None, bng=None):
                     os.unlink(p)
             return True, "not configured"
         os.makedirs(bng, mode=0o770, exist_ok=True)
-        _write(os.path.join(bng, "accel-ppp.conf"), accel_conf(held, acc))
+        _write(os.path.join(bng, "accel-ppp.conf"),
+               accel_conf(held, acc, aaa))
         _write(os.path.join(bng, "chap-secrets"), chap_secrets(held))
         _write(os.path.join(bng, "access.env"), access_env(held, acc))
         _write(conf, "\n".join(nest(held)) + "\n")
@@ -599,7 +673,7 @@ def read_conf(path=None):
 
 #: The columns prisma-bng asks accel-cmd for (`prisma-bng sessions`).
 SESSION_COLUMNS = ("sid", "ifname", "username", "ip", "calling-sid", "state",
-                   "uptime-raw", "rx-bytes-raw", "tx-bytes-raw")
+                   "uptime-raw", "rx-bytes-raw", "tx-bytes-raw", "rate-limit")
 
 
 def session_rows(text):
@@ -626,21 +700,104 @@ def _uptime(raw):
     return (f"{d}d+" if d else "") + f"{h:02d}:{m:02d}:{s:02d}"
 
 
+def limit_words(raw):
+    """
+    The shaper's `rate-limit` column - "<down>/<up>" in kbit/s, empty for
+    none - as "20M/10M", or "-".
+    """
+    down, _, up = (raw or "").partition("/")
+    if not is_number(down) or not is_number(up) or not (int(down)
+                                                         or int(up)):
+        return "-"
+    return "/".join(rate_words(int(x)) if int(x) else "none"
+                    for x in (down, up))
+
+
 def sessions_screen(rows):
     """
     `show pppoe sessions`: one line a session, and a count. A session not
     yet active (still authenticating) or finishing says so where its uptime
-    would be - a column of its own would not fit a console beside the MAC.
+    would be. The limit is download/upload; the MAC moved to `show pppoe
+    session <id>` (#607) - both do not fit a console beside the address.
     """
     if not rows:
         return ["no PPPoE session"]
-    out = [f"{'session':<16}  {'user':<12} {'address':<15} {'mac':<17} "
-           f"{'uptime':>11}"]
+    out = [f"{'session':<16}  {'user':<12} {'address':<15} "
+           f"{'limit down/up':<15} {'uptime':>11}"]
     for r in sorted(rows, key=lambda r: (r["username"], r["sid"])):
         out.append(f"{r['sid']:<16}  {r['username'][:12]:<12} "
-                   f"{r['ip'] or '-':<15} {r['calling-sid']:<17} "
+                   f"{r['ip'] or '-':<15} "
+                   f"{limit_words(r.get('rate-limit')):<15} "
                    f"{(_uptime(r['uptime-raw']) if r['state'] == 'active' else r['state']):>11}")
     out.append(f"{len(rows)} session(s)")
+    return out
+
+
+def policers(show_policer):
+    """
+    {name: {"conform": packets, "dropped": packets}} out of VPP's `show
+    policer`: a block a policer, `Name "<name>" ...` then `conform <n>
+    packets, ...`, `exceed ...`, `violate ...`. With accel-ppp's 1r2c, past
+    the rate is `exceed`, and dropped; `violate` is counted in for a policer
+    of another type.
+    """
+    out, cur = {}, None
+    for line in show_policer.splitlines():
+        m = re.match(r'^Name "([^"]+)"', line.strip())
+        if m:
+            cur = out.setdefault(m.group(1), {"conform": 0, "dropped": 0})
+            continue
+        m = re.match(r"^(conform|exceed|violate) (\d+) packets", line.strip())
+        if cur is not None and m:
+            key = "conform" if m.group(1) == "conform" else "dropped"
+            cur[key] += int(m.group(2))
+    return out
+
+
+def session_index(show_session, mac):
+    """
+    The sw_if_index of the VPP session whose client is `mac`, or "". By the
+    MAC and not the address: VPP's own session table holds client-ip 0.0.0.0
+    for every accel-ppp session (docs/bng.md 0.3, item 1), measured in
+    lab/pppoe.sh. A block is `[n] sw-if-index <i> client-ip ...` then
+    `local-mac ...  client-mac <mac>`.
+    """
+    idx = ""
+    for line in show_session.splitlines():
+        m = re.search(r"sw-if-index (\d+)", line)
+        if m:
+            idx = m.group(1)
+        if mac and f"client-mac {mac.lower()}" in line.lower() and idx:
+            return idx
+    return ""
+
+
+def session_screen(row, sw_if_index="", pols=None):
+    """
+    `show pppoe session <id>`: one session whole - what the list has no
+    room for, and its policers as VPP counts them. accel-ppp names a
+    session's policers vyos_<sw_if_index>_<kbit>_<burst>_down|up
+    (session_hooks/vyos_vpp/vpppolicer.c), which is how they are found.
+    """
+    pols = pols or {}
+    out = [f"{'session':<14}{row['sid']}",
+           f"{'user':<14}{row['username']}",
+           f"{'address':<14}{row['ip'] or '-'}",
+           f"{'mac':<14}{row['calling-sid'] or '-'}",
+           f"{'state':<14}{row['state']}",
+           f"{'uptime':<14}{_uptime(row['uptime-raw'])}",
+           f"{'traffic':<14}{row['rx-bytes-raw'] or 0} bytes from the "
+           f"subscriber, {row['tx-bytes-raw'] or 0} to it",
+           f"{'limit':<14}" + (lambda w: "none" if w == "-" else
+                               w.replace("/", " down, ", 1) + " up")(
+               limit_words(row.get("rate-limit")))]
+    for d, word in (("down", "download"), ("up", "upload")):
+        mine = [n for n in pols if sw_if_index
+                and n.startswith(f"vyos_{sw_if_index}_")
+                and n.endswith(f"_{d}")]
+        for n in mine:
+            out.append(f"{'policer ' + d:<14}{pols[n]['conform']} packets "
+                       f"passed, {pols[n]['dropped']} dropped ({word})")
     return out
 
 
@@ -661,8 +818,13 @@ def stat_counts(text):
     return counts
 
 
-def summary_screen(held, status, counts):
-    """`show pppoe summary`: the container, the sessions, the configuration."""
+def summary_screen(held, status, counts, aaa=None, states=None):
+    """
+    `show pppoe summary`: the container, the sessions, the configuration -
+    and, with RADIUS, each server and whether accel-ppp has it marked down
+    (`states`, aaa.server_states()).
+    """
+    aaa = aaa if aaa is not None else aaa_mod.empty()
     if is_empty(held):
         return ["PPPoE is not configured"]
     word = {"running": "running", "stopped": "configured, NOT running",
@@ -674,9 +836,9 @@ def summary_screen(held, status, counts):
                    f"{counts.get('starting', 0)} starting, "
                    f"{counts.get('finishing', 0)} finishing")
     out.append(f"{'access interfaces':<22}" + ", ".join(held["interfaces"]))
-    if held["radius"]:
-        out.append(f"{'authentication':<22}RADIUS: " + ", ".join(
-            r["address"] for r in held["radius"]))
+    if uses_radius(aaa):
+        out.append(f"{'authentication':<22}RADIUS, 'aaa radius'")
+        out += aaa_mod.summary_rows(aaa, states)
     else:
         out.append(f"{'authentication':<22}{len(held['users'])} local "
                    f"user(s), for a lab")
@@ -685,6 +847,11 @@ def summary_screen(held, status, counts):
     out.append(f"{'gateway':<22}{held['gateway']}")
     if "session-limit" in held["settings"]:
         out.append(f"{'session limit':<22}{held['settings']['session-limit']}")
+    dflt = held["settings"].get("rate-limit-default")
+    out.append(f"{'rate limit':<22}from RADIUS (Prisma-Rate-Limit-*), else "
+               + (limit_words("/".join(str(rate_kbit(x))
+                                       for x in dflt.split("/")))
+                  if dflt else "none"))
     return out
 
 

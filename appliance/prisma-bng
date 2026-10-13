@@ -2,6 +2,7 @@
 # The prisma-bng container's lifecycle, on the host (#597).
 #
 #   prisma-bng apply                start it, or restart it on a new configuration
+#   prisma-bng reload               accel-ppp reads its file again; no session drops
 #   prisma-bng stop                 stop and remove it (PPPoE no longer configured)
 #   prisma-bng boot                 start it when PPPoE is configured; nothing otherwise
 #   prisma-bng status               running | stopped | not-configured | no-containers
@@ -127,6 +128,16 @@ main() {
           || { say "could not start $SERVICE"; exit 1; }
         echo "started"
       fi ;;
+    reload)
+      # #607: a RADIUS change. accel-ppp reads [radius] (and [shaper])
+      # again at `reload`, and every session stays up; the entrypoint, in
+      # the container, rebuilds the file it runs on - the generated one and
+      # the CLI section with ITS password - and asks. Not running is 3, and
+      # the VTY starts it instead.
+      running || { echo "not running"; exit 3; }
+      out=$("$DOCKER" exec "$CONTAINER" prisma-bng-entrypoint reload 2>&1) \
+        || { say "reload refused: $out"; exit 1; }
+      echo "reloaded" ;;
     stop)
       containers || { echo "stopped"; exit 0; }
       compose stop -t 20 "$SERVICE" > /dev/null 2>&1
@@ -146,7 +157,7 @@ main() {
       fi ;;
     sessions)
       running || { echo "not running"; exit 3; }
-      cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw ;;
+      cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw,rate-limit ;;
     summary)
       running || { echo "not running"; exit 3; }
       cli show stat ;;
@@ -159,7 +170,7 @@ main() {
         cli terminate "$1" "$2" hard
       fi ;;
     *)
-      say "usage: prisma-bng apply|stop|boot|status|sessions|summary|terminate"
+      say "usage: prisma-bng apply|reload|stop|boot|status|sessions|summary|terminate"
       exit 2 ;;
   esac
 }

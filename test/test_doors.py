@@ -78,7 +78,7 @@ def slot(e):
             "self.conf_on_host": [SNMPD_CONF],
             # PPPoE (#597): the host's script, and what a commit asks of it.
             "pppoe_mod.BNG_CTL": [doors.pppoe.BNG_CTL_HOST],
-            "bng_verb": ["apply", "stop"]}.get(u)
+            "bng_verb": ["apply", "stop", "reload"]}.get(u)
 
 
 #: A list joined to a name - `[ctl, "terminate"] + words` - and every tail

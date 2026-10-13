@@ -22,7 +22,7 @@
 | Class | Commands |
 |---|---|
 | typed | 778 |
-| text | 3 |
+| text | 6 |
 | none | 1 |
 | n/a | 55 |
 
@@ -155,7 +155,9 @@ screen as text, for a console.
 | `show nat64 pool` | typed | OperationalService.ListPools | every account | the pools whose level is nat64 (#572) |
 | `show nat64 subscriber <IPv6-address>` | typed | OperationalService.GetSubscriber | every account | an IPv6 address: the NAT64 subscriber (#572) |
 | `show nat64 translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | a NAT64 pool's public address answers its /56 (#572) |
+| `show aaa radius dictionary` | text | OperationalService.Show | every account |  |
 | `show pppoe sessions` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe session <session-id>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
 | `show pppoe summary` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
 | `show configuration compare` | typed | ConfigService.Compare | every account |  |
 | `show configuration pending` | typed | OperationalService.GetPendingConfiguration | every account | and the health service prisma.v1.Configuration (#575) |
@@ -251,6 +253,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `interface <interface>, or a name that creates one` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `system` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `pppoe` | text | ConfigService.Edit (lines) / GetRunning | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4); GetConfig has no area for it |
+| `aaa` | text | ConfigService.Edit (lines) / GetRunning |  |
 | `policy-options` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `hostname <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `dns server <address>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |

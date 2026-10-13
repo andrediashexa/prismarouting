@@ -129,14 +129,21 @@ container's files from it, and asks the host through its doors to apply them.
 generated files, and nobody edits those: the next commit rewrites them.
 
 ```
+prisma# [edit] aaa
+prisma# [edit aaa] radius
+prisma# [edit aaa / radius] server 192.0.2.10 secret <secret> priority 1
+prisma# [edit aaa / radius] exit
+prisma# [edit aaa] exit
 prisma# [edit] pppoe
 prisma# [edit pppoe] interface ens19
 prisma# [edit pppoe] gateway 100.64.0.1
 prisma# [edit pppoe] address-pool 100.64.0.10-100.64.0.200
-prisma# [edit pppoe] radius server 192.0.2.10 secret <secret>
 prisma# [edit pppoe] exit
 prisma# [edit] commit
 ```
+
+RADIUS has been its own hierarchy, `aaa` > `radius`, since #607 (0.6 below);
+0.154.0 held it inside `pppoe`.
 
 **Secrets.** A RADIUS shared secret and a lab user's password are held like
 SNMP's community: in the saved configuration and in `pppoe.conf` (0660, group prisma-cgnat, as `prisma-routing.conf`)
@@ -256,13 +263,14 @@ In the order they are planned, each its own step on #597:
    same MAC on two access ports (4, item 8).
 5. **The stats segment sized for the configured `session-limit`** (2.1), and
    the multi-worker attach cost measured once #597's other branch lands.
-6. A configuration change without a restart of every session (accel-ppp's
-   `reload` for what it can reload).
+6. A configuration change without a restart of every session: done for
+   RADIUS (#607, 0.6) - a change under `aaa radius` is accel-ppp's `reload`;
+   a `pppoe` change still restarts.
 
 **Out of phase 1**, each a later issue: IPv6 (IPv6CP, DHCPv6-PD), per-
-subscriber shaping (VPP has no shaper, 2.2), CoA/DM, QinQ (the plugin parses
-one tag), IPoE (VPP has no DHCP server, 1.4), lawful intercept, HA of
-sessions (3.3).
+subscriber SHAPING (VPP has no shaper, 2.2; per-subscriber POLICING is built,
+0.6), QinQ (the plugin parses one tag), IPoE (VPP has no DHCP server, 1.4),
+lawful intercept, HA of sessions (3.3). Disconnect and CoA are built (0.6).
 
 ### 0.5 Release
 
@@ -275,6 +283,183 @@ everything else: it carries `prisma-routing-images.tar.gz` (now five images,
 `prisma-bng` added by `tools/build-images.sh save`) and `compose.yaml`, and an
 upgrade adds the service - `up` creates what the new file names and leaves the
 profiled `bng` out until PPPoE is configured.
+
+### 0.6 RADIUS under `aaa`, rate limits, Disconnect and CoA (#607)
+
+Asked by the operator on 2026-10-12, after 0.154.0: RADIUS in a hierarchy of
+its own with more than one server, failover or round-robin, timers that fail
+over in seconds, the session's plan as a VPP policer, and Disconnect/CoA from
+the RADIUS side. All of it built on accel-ppp-ng at the same pin, with the
+patch grown by what is listed in `build/accel-ppp-build.sh`.
+
+**The syntax.**
+
+```
+aaa
+ radius
+  server <A.B.C.D> secret <s> [auth-port <n>] [acct-port <n>] [role auth|acct|both] [priority <1-255>]
+  mode failover | round-robin                      failover when unset
+  timeout <1-60>                                   3
+  retries <0-10>                                   1
+  dead-time <1-3600>                               30
+  nas-identifier <name>                            prisma-routing
+  interim-interval <0|60-86400>                    300
+  dynamic-authorization listen <A.B.C.D> [port <n>]          3799
+  dynamic-authorization client <A.B.C.D> secret <s>          up to 16
+  rate-profile <name> down <rate> up <rate>        a Cisco policy name's rates
+pppoe
+ rate-limit default <download>/<upload>            a session RADIUS gives none
+```
+
+A server with no `priority` takes the next after the highest, and `show
+configuration` always writes the number: the failover order is read off the
+screen, never off the order something was typed in. Up to eight servers.
+
+**How accel-ppp picks a server, read in its source at the pin**
+(`radius/serv.c` `__rad_server_get`): among the servers that have the port
+the request needs and are not inside their `fail-time`, the lowest `backup`
+level, and within a level the one with the fewest requests and sessions per
+`weight`. A server is marked down for `fail-time` seconds after `max-fail`
+consecutive timeouts; a request moves to the next server after `max-try`
+sends (`radius/req.c`). Upstream parses `backup` as a flag, so a third
+server shared the load with the second; the patch makes it a level. So:
+
+| `mode` | What accel-ppp is given | What it does |
+|---|---|---|
+| failover | each server `backup=<rank of its priority>` (none for the first), `fail-time=<dead-time>`, `max-fail=<retries+1>`; `timeout`, `max-try=<retries+1>` | a request goes to the first server alive; one that did not answer `retries+1` sends is skipped for `dead-time` and the next takes the request; two servers with one priority share their rank |
+| round-robin | every server on level 0, weight 1 | each request to the server with the fewest outstanding requests and sessions: alternates between idle servers, evens out busy ones - not a strict rotation |
+
+Accounting follows the same choice among the servers that take accounting
+(`role acct` writes `auth-port=0`, `role auth` writes `acct-port=0`, which
+accel-ppp reads as "not for that"); a session's Start, interims and Stop go to
+the server its Start went to until that one is marked down. No accounting
+server is allowed, and `show pppoe summary` then says accounting is off.
+**`acct-timeout=0`**: accel-ppp's default (3) terminated every session whose
+interim went unanswered for 3 s (`radius/acct.c` `rad_acct_timeout`), so a
+RADIUS outage longer than one interim's retries ended every subscriber; now a
+lost interim is lost and the session stays. 0.154.0 wrote `fail-time=0`, which
+marks no server down, ever.
+
+**Measured in `lab/pppoe.sh`** with two FreeRADIUS servers, the defaults'
+timers and a dead-time of 10 s: while the first lived, the second was asked
+nothing; with the first killed, a session cleared and redialled authenticated
+- and accounted - on the second 5 s after the clear, and `show pppoe summary`
+showed the first `failed`; the next session did not wait for it; restarted,
+the first was asked again once its dead-time was over. `mode round-robin`,
+committed, was a reload with every session still up, and the sessions that
+redialled afterwards authenticated and accounted on both servers.
+
+**A RADIUS change is a reload**, not a restart: accel-ppp re-reads [radius]
+and [shaper] at `reload` (both register for `EV_CONFIG_RELOAD`), and the patch
+makes a reload take a server's new level, weight and secret (a new secret is a
+new server, so no request signing with the old one is touched). Not for what
+accel-ppp reads at start only - the [modules] list (the first server, which
+loads the radius module) and the Disconnect/CoA socket - which restart it.
+`prisma-bng reload` runs the entrypoint's `reload` in the container: the file
+rebuilt with the CLI password the running daemon already has.
+
+**Migration.** A 0.154.0 file's `pppoe radius server|nas-identifier|interim-
+interval` lines are read as the `aaa radius` statements they are - the
+secret, the ports, and the file's order as priority 1, 2, ... - each said at
+load ("note: line N is now under 'aaa radius'", the secret blanked), and the
+file is written again once applied. Typed at the prompt, `radius` under
+`pppoe` is refused with where it went. A box upgraded and not committed
+since reads its RADIUS from `pppoe.conf` until `aaa.conf` exists. Generated
+files carry a format line; files from an older release are written again at
+the load and the container restarted on them once.
+
+**Rate limits are a VPP policer on the session interface**, by accel-ppp-ng's
+own VPP hooks (`session_hooks/vyos_vpp/vpppolicer.c`): the download one on the
+interface's output (`ip4-output`, after the midchain), the upload one on its
+input (`ip4-unicast`, before `bpa-in2out` - measured order: sv-reassembly,
+policer-input, tcp-mss-clamping, bpa-in2out). One rate, one bucket (1r2c):
+up to the rate passes, past it is dropped; a tenth of a second of burst each
+way. It is policing, not shaping (2.2): nothing queues.
+
+The rate comes from RADIUS, in **Prisma's own attributes, vendor 67033**
+(the product's IANA PEN, the SNMP MIB's too): `Prisma-Rate-Limit-Down` (1)
+and `Prisma-Rate-Limit-Up` (2), integers in kbit/s, 0 or absent for none.
+The dictionary is `appliance/dictionary.prisma`, carries the number plan
+(1-15 rate and QoS, 16-31 addressing, 32-47 CGNAT, 48-63 session control),
+is in the image for accel-ppp and on the box for `show aaa radius
+dictionary`, which prints it for the RADIUS server. **Cisco-AVPair** is read
+too, when no Prisma rate is in the packet: `lcp:interface-config[#n]=rate-
+limit input|output <bps> <normal> <max> conform-action transmit exceed-action
+drop` (`input` is the subscriber's upload), and `ip:` or `subscriber:sub-qos-
+policy-in|out=<name>`, a name looked up in the operator's `rate-profile`s.
+Parsed strictly by `build/prisma_rate.c` (tested alone by
+`test/test_prisma_rate.c`): a rate key whose value is not exactly one of
+those shapes makes NONE of the packet's Cisco rates apply, logged; a policy
+with no profile leaves its direction unlimited, logged. MikroTik's
+`Mikrotik-Rate-Limit` is not read, by the operator's decision.
+
+Measured in `lab/pppoe.sh`, iperf3 through real CPEs and the CGNAT: a 20/10
+Mbit/s plan from Prisma's attributes measured 19.1 down and 9.6 up; a CoA to
+50/20 measured 48.9 and 19.3 on the same session, with no redial; a session
+with no plan carried 1.4-1.6 Gbit/s; a 30/15 plan in Cisco-AVPair (a
+`rate-limit output` and a `sub-qos-policy-in` profile) measured 28.4 and 14.5,
+and a CoA's `rate-limit input` changed only the upload; VPP's policer count
+went back to 0 when the sessions were gone. `show pppoe sessions` lists each session's limit
+(download/upload); `show pppoe session <id>` its MAC, traffic and each
+policer's passed and dropped packets.
+
+**Disconnect and CoA (RFC 5176).** accel-ppp's DAE listener takes one
+secret and any source; the patch adds a client list, each with its own
+secret, and a source not on it gets no answer, as a wrong secret gets none.
+A Disconnect-Request by `User-Name` or `Acct-Session-Id` ends the session
+(Disconnect-ACK, Stop with `Acct-Terminate-Cause = Admin-Reset`); a CoA with
+a rate changes the policers on the live session; `Session-Timeout` ends it
+when it says (Stop with `Session-Timeout`). A CoA carrying an attribute
+nothing acts on - `Filter-Id`, MikroTik's rate - is refused whole with
+`Error-Cause = Unsupported-Attribute` (401) before anything changes, and one
+with a rate that is not one, or past 10 Gbit/s, is NAKed and the limit kept:
+upstream ACKed both, and a bad rate in a CoA REMOVED the session's limit.
+There is no firewall on the box for the listener to be opened in: it listens
+only when `dynamic-authorization listen` is configured, on that address, and
+the client list is what admits a request. With management in a VRF (#580),
+`udp_l3mdev_accept`, which the box already sets, is what lets the listener in
+the main table answer a request that arrives there - not measured by a lab.
+
+**Three defects found on the way**, each measured in `lab/pppoe.sh`:
+
+1. **A control plane killed with -9 crossed subscribers' downloads.** The
+   entrypoint deleted the sessions the dead daemon left while the /32 routes
+   it had added through them were still there, and each session interface's
+   midchain adjacency outlived everything that used it (`show adj` listed
+   it with no FIB entry left through the interface). VPP's pppoe plugin
+   recycles a deleted session's interface for the next session and builds
+   an adjacency's rewrite only when the adjacency is created, so the next
+   subscriber on that interface was sent the previous one's PPPoE header -
+   another CPE's MAC, VLAN and session id. A graceful teardown removes the
+   routes first and the adjacency goes with them, measured. In 0.154.0 since
+   the first crash. Fixed: the entrypoint no longer deletes a dead daemon's
+   sessions; it lists their routes and the sessions (`stale_state`, with
+   vppctl), and the next accel-pppd, before its first session, removes the
+   routes and then the sessions - the graceful order - through the API. Not
+   by dumping them from accel-ppp: a VAPI dump from its VPP module aborted
+   the daemon (`vapi_get_swap_to_host_func: Assertion id <
+   __vapi_metadata.count`), measured. The entrypoint still
+   removes the dead daemon's policers (`clean_policers`). `lab/pppoe.sh`
+   asserts, after `kill -9`, that every session's /32 is rewritten with its
+   own CPE's MAC and that VPP holds no session the dead daemon left.
+2. **The VPP hook enabled policer-input twice** - VPP 26.06's
+   `policer_input()` does it itself - and a feature enabled twice runs twice:
+   a policed session was metered twice. The patch leaves it to VPP.
+3. **accel-ppp's `G` was 10^7 kbit** (10 Gbit/s for "1G"), and its rates
+   overflowed an int past 2.1 Gbit/s; both fixed.
+
+**What is not built:** per-subscriber SHAPING (VPP has none), IPv6 rates
+(the policer is bound on ip6 too; IPv6 sessions are not phase 1), and the
+policer with VPP workers: a policer is bound to the thread that first uses it
+and hands the others' packets to it (`policer-input-handoff`), which this lab
+(single-threaded) does not exercise.
+
+**Cost at scale**, `lab/policer-scale.sh` (single-threaded, a busy build
+host, so ceilings): adding and applying a session's two policers took 46 us
+at 1,000 limited sessions and 32 us at 10,000 (0.7x); taking them off, 21
+and 22 us (1.0x); the main heap held 263 MB with 20,000 policers and 10,000
+interfaces; every policer was gone at the end. A session setup pays four
+binary-API calls more than before, none of which walks the box.
 
 ## Where every number here comes from
 
