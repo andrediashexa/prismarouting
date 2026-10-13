@@ -27,6 +27,14 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.0 - RADIUS under aaa, failover or round-robin, CoA and per-session rate limits
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.154.0). No message, field or number changes.
+* **A new `aaa` block in the configuration, which the typed API does not carry yet** (#607). RADIUS servers, their mode, dynamic authorization (Disconnect/CoA) clients and rate profiles live under `aaa` > `radius`; `pppoe` gains `rate-limit default`. `GetConfig` returns no area for them; they are in the configuration's text. Every secret is blanked (`<set, not shown>`) on every screen and in the API's echoed lines.
+* **A box upgraded from 0.154.0 rewrites `pppoe radius ...` as `aaa radius ...`** on its first load. A client that matched on the configuration's text for `pppoe radius` MUST look under `aaa radius` instead. Typing `radius` under `pppoe` is refused.
+* **`show pppoe sessions`'s columns changed:** the rate limit takes the column the MAC had; `show pppoe session <id>` has the MAC, traffic and policer counters. These are screen text and MUST NOT be parsed as a contract.
+* **This is a Y release**: the `prisma-bng` image and the installer change. The API is down for the usual upgrade window.
+
 ## 0.154.0 - PPPoE subscribers, in a container of their own
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.153.8). No message, field or number changes.

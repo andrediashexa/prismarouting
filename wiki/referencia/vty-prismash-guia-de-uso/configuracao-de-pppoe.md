@@ -62,9 +62,9 @@ O RADIUS não fica mais dentro do `pppoe`: está no `aaa` > `radius`, abaixo. Di
 | `dynamic-authorization client <endereço> secret <segredo>` | um servidor que pode mandar Disconnect e CoA, com o segredo dele. Até 16 |
 | `rate-profile <nome> down <taxa> up <taxa>` | as taxas que um `sub-qos-policy` do `Cisco-AVPair` com esse nome quer dizer (abaixo). Até 64 |
 
-**`failover`**: todo pedido vai ao servidor de menor `priority`. Se ele não responde em `timeout` segundos, `retries` vezes, o pedido vai ao seguinte, e o que não respondeu fica de fora por `dead-time` segundos: o próximo assinante já vai direto ao seguinte. Com os padrões, um servidor morto custa 6 segundos a **um** assinante e nenhum aos outros. Passado o `dead-time`, ele volta a ser o primeiro. Dois servidores com a mesma `priority` dividem a carga entre si.
+`**failover**`: todo pedido vai ao servidor de menor `priority`. Se ele não responde em `timeout` segundos, `retries` vezes, o pedido vai ao seguinte, e o que não respondeu fica de fora por `dead-time` segundos: o próximo assinante já vai direto ao seguinte. Com os padrões, um servidor morto custa 6 segundos a **um** assinante e nenhum aos outros. Passado o `dead-time`, ele volta a ser o primeiro. Dois servidores com a mesma `priority` dividem a carga entre si.
 
-**`round-robin`**: cada pedido vai ao servidor com menos pedidos e sessões em andamento, o que alterna entre servidores ociosos e equilibra os ocupados. Não é um rodízio estrito: é o que o plano de controle faz.
+`**round-robin**`: cada pedido vai ao servidor com menos pedidos e sessões em andamento, o que alterna entre servidores ociosos e equilibra os ocupados. Não é um rodízio estrito: é o que o plano de controle faz.
 
 A contabilização segue a mesma escolha, entre os servidores que recebem contabilização; os Interim e o Stop de uma sessão vão ao servidor que recebeu o Start dela, enquanto ele responder. Sem nenhum servidor de contabilização (todos `role auth`), a contabilização fica desligada, e o `show pppoe summary` diz isso.
 
@@ -84,15 +84,15 @@ O limite de cada sessão vem do RADIUS, no Access-Accept, em dois atributos do p
 
 | Atributo | Número | Tipo | O que é |
 |----------|--------|------|---------|
-| `Prisma-Rate-Limit-Down` | 1 | inteiro | download (da caixa para o assinante), em kbit/s |
-| `Prisma-Rate-Limit-Up`   | 2 | inteiro | upload (do assinante para a caixa), em kbit/s |
+| `Prisma-Rate-Limit-Down` | 1      | inteiro | download (da caixa para o assinante), em kbit/s |
+| `Prisma-Rate-Limit-Up` | 2      | inteiro | upload (do assinante para a caixa), em kbit/s |
 
 0, ou o atributo ausente, é sem limite naquele sentido. `20000` é 20 Mbit/s. O máximo é 10 Gbit/s.
 
 O `Cisco-AVPair` também é lido, quando o pacote não traz nenhum atributo do Prisma (se trouxer os dois, vale o do Prisma):
 
 | `Cisco-AVPair` | O que limita |
-|----------------|--------------|
+|--------------|--------------|
 | `lcp:interface-config=rate-limit output <bps> <burst> <burst-máx> conform-action transmit exceed-action drop` | o download, em bits por segundo |
 | `lcp:interface-config=rate-limit input <bps> ...` (o mesmo formato) | o upload: `input` é o que a caixa recebe do assinante |
 | `lcp:interface-config#1=...` | o mesmo, na forma numerada |
