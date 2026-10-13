@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.3 - PPPoE counters in the MIB; SNMP GET of optics and thresholds fixed
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.2). No message, field or number changes.
+* **Nothing the gRPC API returns changes.** SNMP gains `prBng` (`.1.3.6.1.4.1.67033.1.22`): PPPoE sessions, per-RADIUS-server counters and Disconnect/CoA answers (#597). An `snmpget` of `prTransceiver` (`.20`) and `prSensorThresholdTable` (`.21`) now answers; up to 0.155.2 only a walk did (#608). The upgrade restarts snmpd, a few seconds without SNMP. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.2 - half a second of policer bucket, so one TCP flow gets its plan
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.1). No message, field or number changes.
