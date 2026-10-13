@@ -260,6 +260,14 @@ for needle in ("interface=pppoe-cp,vpp-cp=enable",
                "dictionary=/usr/share/prisma-bng/dictionary.prisma",
                "down-burst-factor=0.5", "up-burst-factor=0.5", P.FORMAT_LINE):
     check(needle in ac, f"accel_conf carries {needle!r}")
+# The session trail (docs/bng.md 0.7): its module, its file, and each
+# access interface by the name the VTY gives it (mutation: the Linux name).
+for needle in ("\nprisma_trail\n", "[prisma-trail]",
+               "path=/var/log/prisma-routing/pppoe-sessions.log",
+               "interface-pppoe-cp=ge0", "interface-pppoe-cp.100=ge0.100"):
+    check(needle in ac, f"accel_conf carries the trail's {needle.strip()!r}")
+check(P.trail_section([]) == ["[prisma-trail]", f"path={P.TRAIL_PATH}"],
+      "trail_section: the path alone with no access interface")
 check(ac.index("\nradius\n") < ac.index("\nshaper\n"),
       "accel_conf: the shaper loaded after radius, whose events it takes")
 check("rate-limit=" not in ac, "accel_conf: no default rate unless one is set")
@@ -275,7 +283,7 @@ check("auth_chap_md5" not in ac and "[cli]" not in ac
 h2, _ = staged("interface ge0", "gateway 100.64.0.1",
                "address-pool 100.64.0.0/24", "local-user a password b")
 ac2 = P.accel_conf(h2, P.access(h2, {})[0])
-check(P.modules(h2, A_mod.empty())[-3:-1] == ["ippool", "shaper"]
+check(P.modules(h2, A_mod.empty())[-4:-2] == ["ippool", "shaper"]
       and "chap-secrets" in P.modules(h2, A_mod.empty())
       and "radius" in P.modules(h2, AA),
       "modules: RADIUS when 'aaa radius' has a server, local users else")
@@ -378,6 +386,23 @@ check(s[0].endswith("running") and "3 active" in s[1]
       and P.summary_screen(P.empty(), "x", {}) == ["PPPoE is not configured"]
       and "NOT running" in P.summary_screen(h, "stopped", {})[0],
       "summary_screen: the control plane, the sessions, the configuration")
+# The session trail's block (docs/bng.md 0.7), and the row it gives the
+# summary: what it could not write said in capitals (mutation: failed read
+# as written).
+TSTAT = STAT + "prisma-trail:\n  written: 41\n  failed: 2\n  seq: 41\n" \
+    "radius(1, 192.0.2.1):\n  state: active\n"
+check(P.trail_counts(TSTAT) == {"written": 41, "failed": 2, "seq": 41}
+      and P.trail_counts(STAT) == {},
+      "trail_counts: the trail's block, {} from a control plane without one")
+st = P.summary_screen(h, "running", {"active": 3}, AA, {}, {"written": 41,
+                                                              "failed": 2})
+st0 = P.summary_screen(h, "running", {"active": 3}, AA, {}, {})
+check(any(x.startswith("session trail") and "41 entries written, 2 NOT "
+          "written" in x for x in st)
+      and any(x.startswith("session trail") and "NOT recorded" in x
+              for x in st0)
+      and not any(x.startswith("session trail") for x in s),
+      "summary_screen: the trail's row, and none when it was not read")
 check(P.cp_taps('Interface: tap1863 (ifindex 2)\n  name "pppoe-cp"\n'
                 'Interface: tap0 (ifindex 3)\n  name "vppwan"\n') ==
       {"tap1863"}, "cp_taps: the TAP by its Linux name")

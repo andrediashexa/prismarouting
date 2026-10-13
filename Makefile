@@ -31,7 +31,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_frame $(BUILD)/test_bpa_exhaust \
       $(BUILD)/test_bpa_log_ring $(BUILD)/test_bpa_log_layout \
       $(BUILD)/test_prisma_logd \
-      $(BUILD)/test_bpa_sock $(BUILD)/test_prisma_rate
+      $(BUILD)/test_bpa_sock $(BUILD)/test_prisma_rate \
+      $(BUILD)/test_prisma_trail
 	@sh tools/run-tests.sh
 
 vectors:
@@ -188,6 +189,12 @@ $(BUILD)/test_bpa_dyn: test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
 $(BUILD)/test_prisma_rate: test/test_prisma_rate.c build/prisma_rate.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ test/test_prisma_rate.c
+
+# The PPPoE session trail's writer, which the BNG's accel-ppp is patched with
+# (#597, docs/bng.md 0.7).
+$(BUILD)/test_prisma_trail: test/test_prisma_trail.c build/prisma_trail.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ test/test_prisma_trail.c
 
 $(BUILD)/test_bpa_ports: test/test_bpa_ports.c src/plugins/bpa/bpa_ports.h \
                          test/bpa_shim.h

@@ -147,7 +147,10 @@ OPERATIONAL_RULES = [
     # #558, phase 6: the rest of `show cgnat`, each its screen read into
     # fields and carried beside them verbatim.
     (["show", "cgnat", "translation"], "typed",
-     "OperationalService.LookupTranslation", "now or any instant, as the screen says"),
+     "OperationalService.LookupTranslation",
+     "now or any instant, as the screen says; `at` and the PPPoE session "
+     "that held the address (docs/bng.md 0.7) only through "
+     "OperationalService.Show"),
     (["show", "cgnat", "top"], "typed", "OperationalService.ListTop", ""),
     (["show", "cgnat", "drops"], "typed", "OperationalService.GetDrops", ""),
     (["show", "configuration", "pending"], "typed",

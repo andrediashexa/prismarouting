@@ -10,7 +10,9 @@ against RADIUS and translated by the CGNAT. Its first increment is in section
 from the candidate, PAP/CHAP/MS-CHAPv2 against RADIUS with accounting, IPv4
 by IPCP from RADIUS or a pool, each session attached to a BPA pool,
 `show pppoe sessions|summary`, `clear pppoe session`, and `lab/pppoe.sh`
-proving it end to end. Section 0.4 is what remains of phase 1.
+proving it end to end. The box's own session trail - who held which inside
+address from when to when, hash-chained, `show pppoe history` - is 0.7.
+Section 0.4 is what remains of phase 1.
 
 **Everything from "Where every number here comes from" down is
 [#170](https://github.com/andrediashexa/hexarouting/issues/170)'s study, kept
@@ -250,10 +252,11 @@ its limits back from the engine.
 In the order they are planned, each its own step on #597:
 
 1. **RADIUS accounting retained and joined to the BPA trail** - section 3.1's
-   obligation: an append-only, fsynced, hash-chained store of who held which
-   inside address when, so a public address and port still name a subscriber.
-   The dataplane already reads RADIUS accounting for identity (`cgnat identity
-   radius`, #21); accel-ppp can copy its accounting there.
+   obligation: done (0.7) - not a copy of RADIUS accounting but the box's own
+   session trail, written by the control plane whether or not any accounting
+   server answers, append-only, fsynced and hash-chained, read by `show pppoe
+   history` and joined to a public address and port by `show cgnat
+   translation ... at <time>`.
 2. **The typed API** for the `pppoe` block and the sessions (a proto change,
    with `lab/api-grpc.sh`).
 3. **SNMP counters**: done in 0.155.3 - PRISMA-ROUTING-MIB's `prBng`
@@ -523,6 +526,185 @@ at 1,000 limited sessions and 32 us at 10,000 (0.7x); taking them off, 21
 and 22 us (1.0x); the main heap held 263 MB with 20,000 policers and 10,000
 interfaces; every policer was gone at the end. A session setup pays four
 binary-API calls more than before, none of which walks the box.
+
+### 0.7 The session trail: who held which inside address, from when to when
+
+Section 3.1's obligation, built. A BNG hands the inside address out in order
+of arrival, so the CGNAT's record of a block - the BPA log's natEvent 16/17,
+or the formula - names an **inside address**, and a court order names a
+public address, a port and an instant. The second half of the answer is a
+record of which session held that inside address at that instant, and RADIUS
+accounting is not it: this product does not run, retain or vouch for the
+operator's RADIUS, and accounting is not sent at all while every accounting
+server is down. So the box keeps its own.
+
+**Who writes it, and when.** A module of accel-ppp's (`prisma_trail`, in
+`build/accel-ppp-ng.patch`; its format, chain and file handling are
+`build/prisma_trail.c`, tested alone by `test/test_prisma_trail.c`), loaded
+by every generated `accel-ppp.conf`:
+
+| Entry | Written at | Why there |
+|---|---|---|
+| `start` | `EV_SES_ACCT_START`: the session interface is in the dataplane, the address is the subscriber's, and RADIUS has **not yet** been sent its Accounting-Start | the record does not wait on any RADIUS server: with none answering accounting, accel-ppp ends the session when its Start goes unanswered, and the trail has its start and its stop (`NAS-Error`) |
+| `stop` | `EV_SES_PRE_FINISHED`, before `ipdb_put_ipv4()` gives the address back to the pool | at `EV_SES_FINISHED` the address is already free, and the next session could be given it and write its start before this stop: two holders of one address at one instant |
+| `stop ... Control-Plane-Lost` | by the next control plane, at start, before its first session | a control plane killed with -9 writes nothing; the sessions it held are closed by the one that replaces it, and the dataplane keeps forwarding them until then (0.6, defect 1), so the time is when they really stopped |
+| `restart closed <n>` | each control-plane start | a gap in the trail is visible as one |
+| `carry` | at the first entry of a new month | the file is moved aside as `pppoe-sessions.log.<YYYY-MM>` and every session still held is restated at the head of the next one, so a month's file answers for any instant of that month alone |
+
+**The format.** One line per entry, appended, the whole line in one write
+under `O_APPEND`, `fsync`ed before the session goes on (a write that fails
+part-way is cut back, so a fragment never glues itself to the next entry):
+
+```
+2026-10-13T02:48:40.456Z stop session 7f3a0c1e00000002 user joao.silva mac 02:aa:00:00:00:02 interface ens19 address 100.64.0.11 since 2026-10-13T02:10:11.123Z cause Lost-Carrier seq 3 sha256 7a2cff61c2eb12e6409af6114eb5c1c3c86d8ca94ca907d8d1abb29e2512ab2d
+```
+
+The time is UTC with milliseconds, the BPA log's own resolution, so a line
+of one is compared with a line of the other without converting anything.
+`session` is accel-ppp's session id, the `Acct-Session-Id` RADIUS is sent;
+`interface` the access interface by the name the VTY gives it (the generated
+`[prisma-trail]` maps `pppoe-cp.100` to it); the user name and the MAC are
+escaped (`%XX` for a space, a control byte, a byte that is not ASCII or a
+`%`), so no name shifts the fields after it, and a name past 192 bytes is
+carried in part and ends in `%+`. A stop repeats its start's fields and
+`since`, so either line answers alone - the rule the BPA log's release
+follows (#397). The cause is accel-ppp's own `Acct-Terminate-Cause` word for
+word, so the box's record and RADIUS's say the same thing.
+
+**The chain** is the configuration trail's (`src/plugins/bpa/bpa_audit.c`,
+[logging.md](logging.md#tamper-evidence)), byte for byte: each entry's digest
+is SHA-256 over the previous entry's digest (zero before the first) and the
+line up to and including its `seq`. It continues across files and across
+restarts - the module reads its file back at start - and never starts again
+over a file it could not read: that would write `seq 1` into the middle of
+somebody's year.
+
+**Where, and for how long.** `/var/log/prisma-routing/pppoe-sessions.log`,
+beside `config-history.log`: the log volume, mirrored on a second disk when
+the box has one ([appliance.md](appliance.md#the-log-volume-on-two-disks-and-the-system-on-one)).
+It is retained the way the configuration trail is: **the box never deletes
+or rewrites it**. It is moved aside once a month (`.<YYYY-MM>`), so an
+operator under a one-year obligation can archive or remove whole months
+older than that, and `verify` then says the chain begins at the first entry
+still on the box rather than calling it broken. Its size is about 250 bytes a
+session - a start and a stop - so 20,000 sessions a day is about 5 MB a day,
+under 2 GB a year; nothing on the box bounds it, and a full volume is counted
+(below), never a session refused.
+
+**What it costs a session.** One `open`/`write`/`fsync`/`close` at start and
+one at stop, under one lock in accel-ppp; the dataplane is not touched.
+
+**Reading it.** The directory is root's 0750, and the VTY runs as the
+account that logged in, so the host's door reads the files
+(`src/prismash/pppoetrail.py`, `doors.answer_pppoe_history`) - any account,
+as any account may `show pppoe sessions`, and each reading is journaled with
+its filters: who looked a subscriber up, and for when.
+
+```
+prisma> show pppoe history address 100.64.0.11 at 2026-10-13T02:51:00Z
+maria.souza held 100.64.0.11
+  from 2026-10-13T02:49:02.789Z  to still held
+  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on ens19.100
+prisma> show pppoe history address 100.64.0.11
+joao.silva held 100.64.0.11
+  from 2026-10-13T02:10:11.123Z  to 2026-10-13T02:48:40.456Z  Lost-Carrier
+  session 7f3a0c1e00000002  mac 02:aa:00:00:00:02  on ens19
+maria.souza held 100.64.0.11
+  from 2026-10-13T02:49:02.789Z  to still held
+  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on ens19.100
+prisma> show pppoe history verify
+PPPoE session trail: /var/log/prisma-routing/pppoe-sessions.log
+  4 entries checked, chain intact
+  head  seq 4
+  sha256 b95e36be694b2c847cd30ef2f5bb564108645c3cb9d16457c772d41f29039730
+  a chain that verifies proves the files were not edited, not that they
+  are the same files: compare the head with a copy kept off the box
+```
+
+`show pppoe history [user <name>] [address <A.B.C.D>] [session <id>] [at
+<time> | since <time>] [last <n>]`: `at` is an instant - a session begun at
+or before it and not ended before it; an end is exclusive, so the instant one
+session ended and the next began names the next. A time is `show log`'s: an
+ISO time with `Z` or an offset (the BPA log's own, pasted), or without one in
+the box's zone, or `30m`, `2d` back from now. Without `at`, the last 50.
+
+**From a public port to the user.** Two steps, and the box does both where it
+can:
+
+* **a deterministic pool**: `show cgnat translation <public> <port> at
+  <time>` - the formula gives the inside address for any instant, and the
+  trail the session that held it then;
+* **a dynamic block**: the BPA log's `BLOCK-ALLOC` whose range holds the port
+  gives the inside address and the instant, and `show pppoe history address
+  <a> at <time>` the session. `show cgnat translation` answers a dynamic
+  block for **now** only, so it refuses `at` there rather than join today's
+  holder of the block to a past session.
+
+```
+prisma> show cgnat translation 200.150.0.19 2048 at 2026-10-13T02:51:00Z
+```
+
+prints the dataplane's answer as before and, below it, `PPPoE, at <instant>:`
+and the session; on a box with PPPoE and no session there, `PPPoE: no session
+held <address> at <instant>`; on a box without PPPoE, nothing more.
+
+**What is counted.** `show pppoe summary` has a `session trail` row: the
+entries written since the control plane started and, in capitals, any it
+could NOT write (the volume full, the directory gone) - each one a session
+the box cannot answer for. accel-ppp's own log says which and why.
+
+**What it proves, and what it does not** - the configuration trail's limits,
+and one of its own:
+
+* a chain that verifies proves the files were not edited; it does not prove
+  they are the same files. The configuration trail's digests also go to
+  VPP's log and from there to a remote syslog; the session trail's do not
+  yet leave the box, so today the head has to be copied off by the operator
+  (`show pppoe history verify` prints it whole). Sending the entries to the
+  box's remote syslog is a follow-up, not built here;
+* entries removed from the **end** verify (every remaining link is genuine),
+  and nothing on the box remembers the last sequence written except accel-ppp
+  while it runs (`show stat`'s `seq`);
+* a session's address is what accel-ppp bound; that the packets came from
+  that subscriber is the access network's to prove (uRPF, logging.md "What
+  the record cannot know");
+* only IPv4 sessions are recorded: IPv6 is not phase 1.
+
+**Measured in `lab/pppoe.sh`** (section 17, 2026-10-13, single-threaded
+and with three workers), against the files accel-ppp wrote:
+
+* `clear pppoe session user sub1`: its stop written within the clear, with
+  the user, MAC, access interface, `100.64.0.77` and `NAS-Request` - the
+  `Acct-Terminate-Cause` RADIUS received for it, read from FreeRADIUS's
+  detail file - and the redial's start after it, the same address;
+* accel-pppd killed with -9 holding three sessions: the next one wrote three
+  stops `Control-Plane-Lost` and `restart closed 3` before its first
+  session, and the first entry of the file and every one after it were still
+  there and still chained;
+* the formula: the public address and port section 6 caught on the wire,
+  asked `at` the instant it was sent, named sub1;
+* the block log: with the pool made dynamic (`mode bpa`) and its log sent to
+  a syslog collector, the one `BLOCK-ALLOC` whose range held the port sub2's
+  packet left on named sub2's inside address, and `show pppoe history
+  address <it> at <the log's instant>` named sub2; half a second before that
+  session began it named nobody; `show cgnat translation ... at` refused the
+  dynamic block;
+* `verify`: 59 entries, intact; the third line given another address,
+  `BROKEN at entry 3`; put back, intact;
+* accounting sent to two servers that do not exist, authentication
+  answering: sub3's start written, then its stop `NAS-Error` 12 s later when
+  accel-ppp gave up on the Start (3 s, two sends, two servers), and neither
+  real server was sent an Accounting-Request for it;
+* both RADIUS servers killed: sub2 cleared, its stop written; in the next
+  15 s no start for it and no session - nobody could authenticate it, so
+  nothing was held, which is the one sense in which a session "started with
+  RADIUS down" cannot be recorded: it does not exist.
+
+The lab's 25 trail checks, run against the product without this change
+(0.155.3, the same lab): 19 red. The six that pass are about what is not
+the trail - the cause RADIUS received, the block log's record, no
+Accounting-Request sent - or are what a box without one also does: nobody
+named before a session, no start while RADIUS is down, no "NOT written".
 
 ## Where every number here comes from
 

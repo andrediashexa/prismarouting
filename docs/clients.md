@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.4 - the PPPoE session trail: who held which inside address, when
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.3). No message, field or number changes.
+* **Nothing the gRPC API returns changes.** New screens `show pppoe history [...]` and `show pppoe history verify`; `show cgnat translation <pub> <port> at <t>` names the PPPoE session that held the inside address; `show pppoe summary` gains a `session trail` row. These are screen text and MUST NOT be parsed as a contract. A box upgraded with PPPoE configured restarts its PPPoE container once at the first load, so its sessions redial. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.3 - PPPoE counters in the MIB; SNMP GET of optics and thresholds fixed
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.2). No message, field or number changes.

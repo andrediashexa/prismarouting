@@ -48,6 +48,7 @@ from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR,
                     hostname_error, is_number)
 import events
 import pppoe
+import pppoetrail
 import transceiver
 from config import (LINUX_IFNAME_MAX, PROBE_COUNT_MAX, PROBE_DEADLINE,
                     VRF_RESERVED_PREFIX, probe_host_ok, probe_source_ok,
@@ -856,6 +857,8 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
             return answer_session(r, uid, execute)
         if isinstance(r, dict) and ("event" in r or "events" in r):
             return answer_event(r, uid, allowed_uids, is_operator)
+        if isinstance(r, dict) and "pppoe-history" in r:
+            return answer_pppoe_history(r)
         argv, stdin = r["argv"], r.get("stdin")
         timeout = r.get("timeout", 30)
     except (ValueError, KeyError, TypeError):
@@ -966,6 +969,21 @@ def answer_event(r, uid, allowed_uids=(0,), is_operator=account_is_operator,
     if not events.append_event(ev, path):
         return {"rc": 1, "out": "the events could not be written"}
     return {"rc": 0, "out": ""}
+
+
+def answer_pppoe_history(r, path=None):
+    """
+    answer(), for the PPPoE session trail (#597, docs/bng.md 0.7): who held
+    which inside address when, read and selected here by pppoetrail.answer().
+
+    A door and not the management container's mount, for the reason the
+    events are (answer_event): the file is in /var/log/prisma-routing, root's
+    0750, and the VTY runs as the account that logged in. Any account may
+    read it, as any account may `show pppoe sessions` - the same users and
+    addresses. It is journaled, filters and all: who looked a subscriber up,
+    and for when, is the one record a lookup in a compliance trail leaves.
+    """
+    return pppoetrail.answer(r.get("pppoe-history"), path)
 
 
 def journaled(request):

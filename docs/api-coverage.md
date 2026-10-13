@@ -22,7 +22,7 @@
 | Class | Commands |
 |---|---|
 | typed | 778 |
-| text | 6 |
+| text | 13 |
 | none | 1 |
 | n/a | 55 |
 
@@ -139,7 +139,7 @@ screen as text, for a console.
 | `monitor cgnat logging pool <name>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `monitor cgnat logging seconds <1-86400>` | typed | TelemetryService.WatchLogging | every account | the block events as a stream of LogEvent, the same filters; delivered in 0.149.25 |
 | `show cgnat subscriber <inside-address>` | typed | OperationalService.GetSubscriber | every account |  |
-| `show cgnat translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | now or any instant, as the screen says |
+| `show cgnat translation <public-address> <port> [at <time>]` | typed | OperationalService.LookupTranslation | every account | now or any instant, as the screen says; `at` and the PPPoE session that held the address (docs/bng.md 0.7) only through OperationalService.Show |
 | `show cgnat top [<n>]` | typed | OperationalService.ListTop | every account |  |
 | `show cgnat drops` | typed | OperationalService.GetDrops | every account |  |
 | `show cgnat memory` | typed | OperationalService.GetCgnatMemory | every account | heap and session figures in bytes and counts |
@@ -159,6 +159,13 @@ screen as text, for a console.
 | `show pppoe sessions` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
 | `show pppoe session <session-id>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
 | `show pppoe summary` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history user <name>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history address <A.B.C.D>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history session <session-id>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history at <time>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history since <time>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history last <n>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe history verify` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
 | `show configuration compare` | typed | ConfigService.Compare | every account |  |
 | `show configuration pending` | typed | OperationalService.GetPendingConfiguration | every account | and the health service prisma.v1.Configuration (#575) |
 | `show running-config` | typed | ConfigService.GetRunning | every account | the configuration as text, with its revision |

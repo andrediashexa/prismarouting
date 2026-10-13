@@ -69,6 +69,20 @@
 #     received it, and the ones answered with nothing as dropped;
 #   * the first server's unanswered sends are counted when it dies;
 #   * with `no pppoe`, notConfigured, zero, and no server row.
+# and the session trail (docs/bng.md 0.7), the box's own record of who held
+# which inside address from when to when:
+#   * a cleared session's stop and the next one's start, with the user, MAC,
+#     interface, address and cause, at the times they happened;
+#   * a control plane killed with -9: the sessions it held closed by the next
+#     one as Control-Plane-Lost, and nothing written before lost;
+#   * a public address and port to the PPPoE user: by the formula at an
+#     instant, and by the block log - the pool made dynamic, the
+#     BLOCK-ALLOC a syslog collector received for the port caught on the
+#     wire, joined to the trail at the log's instant;
+#   * the chain verifies, and names the entry an edit changed;
+#   * no accounting server answering: the session bound and ended is
+#     recorded though no RADIUS server got a Start; both servers down: a
+#     stop is recorded, and no start, since nobody can be authenticated.
 MODE=${1:-on}
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -455,6 +469,8 @@ timeout 8 ip netns exec inet tcpdump -ni wanp -c 3 udp port 53 > /tmp/cap.txt 2>
 TPID=$!
 sleep 2
 ip netns exec s1 python3 /tmp/send.py 12345 3 0.3
+# The instant, for section 17: this packet's public port, asked at it.
+T6=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # tcpdump writes to a file in blocks; what it caught is there once it ends.
 wait "$TPID"
 CAP=$(cat /tmp/cap.txt)
@@ -713,7 +729,10 @@ echo "  buckets: sub1 ${CB1D:-?}/${CB1U:-?} bytes, sub3 (Cisco) ${CB3D:-?}/${CB3
 # #607 the recycled interfaces kept the dead daemon's adjacencies and sent
 # one subscriber's traffic to another (docs/bng.md 0.6).
 CROSSED=0
-for ip in $(echo "$RSHOW" | awk '/^[0-9a-f]+  / && length($1) == 16 {print $3}'); do
+# Only the sessions that are up: one still authenticating (sub4, refused and
+# redialling for ever) is listed with '-' for an address, and was read as an
+# address with nobody's MAC - the check went red on a session with no route.
+for ip in $(echo "$RSHOW" | awk '/^[0-9a-f]+  / && length($1) == 16 && $NF ~ /:/ {print $3}'); do
   mac=unknown
   for n in 1 2 3; do
     a=$(ip netns exec "s$n" ip -o -4 addr show 2>/dev/null | awk '$2 ~ /^ppp/ {split($4, x, "/"); print x[1]; exit}')
@@ -890,6 +909,203 @@ done
 SQ1=$(( $(heard 1 Access-Request) - S1 )); SQ2=$(( $(heard 2 Access-Request) - S2 ))
 echo "  six logins one after the other: $SQ1 Access-Requests to server 1, $SQ2 to server 2"
 
+echo
+echo "=========== 17. THE SESSION TRAIL: WHO HELD WHICH ADDRESS, WHEN (docs/bng.md 0.7) ==========="
+# The box's own record, written by accel-ppp's prisma_trail module on the log
+# volume: a start when the session's address is bound (before RADIUS is sent
+# its Accounting-Start), a stop before the address goes back to the pool,
+# appended, fsynced, hash-chained.
+TR=/var/log/prisma-routing/pppoe-sessions.log
+# tline <session id> <kind> - the trail's <kind> line(s) for that session
+tline() { cat "$TR".* "$TR" 2>/dev/null | grep " $2 session $1 "; }
+# fld <line> <key> - the value after <key> in a trail line
+fld() { echo "$1" | awk -v k="$2" '{for (i = 2; i < NF; i++) if ($i == k) {print $(i + 1); exit}}'; }
+# epoch <trail instant> - as seconds, through the reader the VTY uses
+epoch() { python3 -c 'import sys; sys.path.insert(0, "/src/src/prismash")
+import pppoetrail as T
+v = T.parse_stamp(sys.argv[1]); print(v if v is not None else 0)' "$1"; }
+# between <a> <x> <b> - a <= x <= b, as numbers
+between() { python3 -c 'import sys; a, x, b = map(float, sys.argv[1:]); sys.exit(not a <= x <= b)' "$1" "$2" "$3"; }
+# since_t <epoch> <user> <kind> - that user's <kind> lines written after then
+since_t() {
+  cat "$TR".* "$TR" 2>/dev/null | python3 -c 'import sys
+sys.path.insert(0, "/src/src/prismash")
+import pppoetrail as T
+t, user, kind = float(sys.argv[1]), sys.argv[2], sys.argv[3]
+for line in sys.stdin:
+    r = T.parse_line(line)
+    if r and r["kind"] == kind and r["t"] > t and r["fields"].get("user") == user:
+        print(line.rstrip())' "$1" "$2" "$3"
+}
+echo "  $TR: $(cat "$TR" 2>/dev/null | wc -l) entries so far, $(grep -c ' restart closed ' "$TR" 2>/dev/null) control-plane start(s)"
+
+# A. One subscriber cleared and back: the stop and the start, with the
+# user, the address, the MAC, the interface and the times.
+wait_user sub1 > /dev/null
+OLD1=$(sid_of sub1)
+C0=$(date +%s.%N)
+$HX -c "clear pppoe session user sub1" > /dev/null 2>&1
+C1=$(date +%s.%N)
+wait_user sub1 > /dev/null
+NEW1=$(sid_of sub1)
+STOP_OLD=$(tline "${OLD1:-none}" stop)
+START_NEW=$(tline "${NEW1:-none}" start)
+echo "  sub1's session ${OLD1:-?} cleared, ${NEW1:-?} its next:"
+echo "$STOP_OLD" | sed 's/ seq .*//; s/^/    /'
+echo "$START_NEW" | sed 's/ seq .*//; s/^/    /'
+# What RADIUS was told for the same stop: `clear pppoe session` is accel-ppp's
+# `terminate ... hard`, which it calls NAS-Request.
+RAD_CAUSE1=$(stop_cause "${OLD1:-none}" | tr -d '" ')
+T_STOP=$(epoch "$(echo "$STOP_OLD" | awk '{print $1}')")
+T_START=$(epoch "$(echo "$START_NEW" | awk '{print $1}')")
+HIST1=$($HX -c "show pppoe history user sub1 last 2" 2>&1)
+echo "$HIST1" | sed 's/^/  /'
+
+# B. The control plane killed with -9 (the shim restarts it, as the
+# container's restart policy does): nothing was written for the sessions it
+# held, so the next one closes them before its first session, and every
+# entry from before is still there and still chained.
+sessions 3
+UP_SIDS=$($HX -c 'show pppoe sessions' 2>/dev/null \
+  | awk '/^[0-9a-f]+  / && length($1) == 16 && $NF ~ /:/ {print $1}')
+LINES_B0=$(cat "$TR".* "$TR" 2>/dev/null | wc -l)
+FIRST_B0=$(head -1 "$TR")
+APID=$(cat /run/prisma-routing/bng/accel-pppd.pid 2>/dev/null)
+[ -n "$APID" ] && kill -9 "$APID" 2>/dev/null
+echo "  accel-pppd ${APID:-?} killed with -9, holding: $(echo $UP_SIDS)"
+sleep 3
+sessions 3
+LOST=0
+for s in $UP_SIDS; do
+  tline "$s" stop | grep -q " cause Control-Plane-Lost " && LOST=$((LOST + 1))
+done
+RESTART_B=$(grep ' restart closed ' "$TR" | tail -1 | sed 's/ seq .*//')
+echo "  back: ${LOST} of $(echo $UP_SIDS | wc -w) closed as Control-Plane-Lost; ${RESTART_B}"
+LINES_B1=$(cat "$TR".* "$TR" 2>/dev/null | wc -l)
+
+# C1. The formula: sub1's packet of section 6, by its public address and
+# port and the instant it was sent, to the PPPoE user.
+PUB6=${PREDICTED%.*}; PORT6=${PREDICTED##*.}
+XLT6=$($HX -c "show cgnat translation $PUB6 $PORT6 at $T6" 2>&1)
+echo "  show cgnat translation $PUB6 $PORT6 at $T6"
+echo "$XLT6" | sed 's/^/    /'
+
+# C2. The block log: the pool made dynamic and its log sent to a syslog
+# collector. sub2's packet is caught on the wire with its public address and
+# port; the collector's BLOCK-ALLOC whose range holds that port gives the
+# inside address and the instant - the court order's first step - and the
+# trail the session that held that inside address then.
+TCOLR=/tmp/trail-syslog-report.txt; TCOLL=/tmp/trail-syslog-lines.txt
+rm -f "$TCOLR" "$TCOLL"
+python3 /src/tools/syslog_collector.py 601 30 "$TCOLR" "$TCOLL" > /tmp/trail-collector.out 2>&1 &
+TCOLP=$!
+sleep 1
+printf 'configure\nnat\ncgnat\npool lab\nmode bpa\nexit\nlogging syslog 127.0.0.1 enterprise 44444 port 601\nexit\nexit\ncommit\n' \
+  | $HX > /tmp/trail-dyn.txt 2>&1
+tr '#' '\n' < /tmp/trail-dyn.txt | grep -iE "error|commit" | sed 's/^ */  pool made dynamic (mode bpa): /'
+wait_user sub2 > /dev/null
+A2D=$($HX -c 'show pppoe sessions' 2>/dev/null | awk '$2 == "sub2" {print $3; exit}')
+_ppp2=$(ip netns exec s2 ip -o -4 addr show 2>/dev/null | awk '$2 ~ /^ppp/ {print $2; exit}')
+ip netns exec s2 ip route replace default dev "${_ppp2:-ppp0}" 2>/dev/null
+timeout 10 ip netns exec inet tcpdump -ni wanp -c 1 'udp and dst port 53 and src net 200.150.0.16/30' > /tmp/trail-cap.txt 2>&1 &
+TPID=$!
+sleep 2
+ip netns exec s2 python3 /tmp/send.py 23456 3 0.3
+wait "$TPID"
+WIRE=$(grep -o 'IP 200\.150\.0\.[0-9]*\.[0-9]*' /tmp/trail-cap.txt | head -1 | awk '{print $2}')
+PUBD=${WIRE%.*}; PORTD=${WIRE##*.}
+echo "  sub2 (${A2D:-?}) on the wire as ${PUBD:-?}:${PORTD:-?}"
+wait "$TCOLP"
+FOUND=$(python3 - "${PUBD:-x}" "${PORTD:-0}" "$TCOLL" <<'P'
+import re, sys
+pub, port, path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+try:
+    lines = open(path, errors="replace").read().splitlines()
+except OSError:
+    lines = []
+for line in lines:
+    if " BLOCK-ALLOC " not in line:
+        continue
+    f = dict(re.findall(r'(\w+)="([^"]*)"', line))
+    if f.get("public") == pub and int(f.get("portStart", -1)) <= port <= int(f.get("portEnd", -1)):
+        print(line.split()[1], f.get("subscriber", ""))
+        break
+P
+)
+TS_LOG=${FOUND% *}; SUB_LOG=${FOUND#* }
+echo "  the block log: ${FOUND:-no BLOCK-ALLOC holds that port} ($(grep -c BLOCK-ALLOC "$TCOLL" 2>/dev/null || echo 0) allocation(s) received)"
+TRACE=$($HX -c "show pppoe history address ${SUB_LOG:-0.0.0.0} at ${TS_LOG:-x}" 2>&1)
+echo "  show pppoe history address ${SUB_LOG:-?} at ${TS_LOG:-?}"
+echo "$TRACE" | sed 's/^/    /'
+XLTD=$($HX -c "show cgnat translation ${PUBD:-0.0.0.0} ${PORTD:-0}" 2>&1)
+echo "  show cgnat translation ${PUBD:-?} ${PORTD:-?}"
+echo "$XLTD" | sed 's/^/    /'
+XLTD_AT=$($HX -c "show cgnat translation ${PUBD:-0.0.0.0} ${PORTD:-0} at ${TS_LOG:-x}" 2>&1)
+# Before sub2's session began, the trail names nobody - not the holder now.
+S2START=$(tline "$(sid_of sub2)" start | awk '{print $1}')
+BEFORE_S2=$(python3 -c 'import sys,time; sys.path.insert(0, "/src/src/prismash")
+import pppoetrail as T; print(T.stamp(T.parse_stamp(sys.argv[1]) - 0.5))' "${S2START:-2026-01-01T00:00:00.000Z}")
+TRACE_BEFORE=$($HX -c "show pppoe history address ${SUB_LOG:-0.0.0.0} at $BEFORE_S2" 2>&1)
+echo "  half a second before that session began: $(echo "$TRACE_BEFORE" | head -1)"
+
+# D. The chain: intact, and red when an entry is edited.
+VERIFY=$($HX -c "show pppoe history verify" 2>&1)
+echo "$VERIFY" | sed 's/^/  /'
+cp -p "$TR" /tmp/trail-backup.log
+EDIT_LINE=$(grep -n ' start session ' "$TR" | sed -n 2p | cut -d: -f1)
+sed -i "${EDIT_LINE:-2}s/ address 100\.64\.0\./ address 100.64.9./" "$TR"
+TAMPERED=$($HX -c "show pppoe history verify" 2>&1)
+cp -p /tmp/trail-backup.log "$TR"
+echo "  line ${EDIT_LINE:-?} given another address:"
+echo "$TAMPERED" | sed 's/^/    /'
+VERIFY_BACK=$($HX -c "show pppoe history verify" 2>&1)
+
+# E1. No accounting server answering, authentication answering: the session
+# is bound, accel-ppp sends its Accounting-Start to nobody, and ends it
+# (NAS-Error) - the trail has both, written by the box, while no RADIUS
+# server received a Start.
+printf 'configure\naaa\nradius\nserver 127.0.0.1 secret testing123 priority 1 role auth\nno server 127.0.0.2\nserver 127.0.0.3 secret testing123 priority 2 role acct\nserver 127.0.0.4 secret testing123 priority 3 role acct\nexit\nexit\ncommit\n' \
+  | $HX > /tmp/trail-acct.txt 2>&1
+grep -o "pppoe: [a-z, ]*" /tmp/trail-acct.txt | sed 's/^/  accounting to two servers that are not there: /'
+wait_user sub3 > /dev/null
+AD0=$(date +%s.%N)
+ACCT1_0=$(heard 1 Accounting-Request sub3); ACCT2_0=$(heard 2 Accounting-Request sub3)
+$HX -c "clear pppoe session user sub3" > /dev/null 2>&1
+n=0
+until [ -n "$(since_t "$AD0" sub3 stop | grep ' cause NAS-Error ')" ] || [ "$n" -ge 60 ]; do
+  sleep 1; n=$((n + 1)); done
+AD_START=$(since_t "$AD0" sub3 start | head -1)
+AD_STOP=$(since_t "$AD0" sub3 stop | grep ' cause NAS-Error ' | head -1)
+ACCT1_1=$(heard 1 Accounting-Request sub3); ACCT2_1=$(heard 2 Accounting-Request sub3)
+echo "  sub3 redialled with no accounting server, ${n} s:"
+echo "$AD_START" | sed 's/ seq .*//; s/^/    /'
+echo "$AD_STOP" | sed 's/ seq .*//; s/^/    /'
+echo "  Accounting-Requests for sub3 at the two real servers meanwhile: $((ACCT1_1 - ACCT1_0)) and $((ACCT2_1 - ACCT2_0))"
+printf 'configure\naaa\nradius\nno server 127.0.0.3\nno server 127.0.0.4\nserver 127.0.0.1 secret testing123 priority 1\nserver 127.0.0.2 secret testing123 priority 2\nexit\nexit\ncommit\n' \
+  | $HX > /tmp/trail-acct-back.txt 2>&1
+
+# E2. Both servers down: a session that ends is recorded - RADIUS cannot be
+# sent its Stop - and none can start, since nobody can authenticate it, so
+# the trail has no start for it: nothing was held.
+wait_user sub2 > /dev/null
+kill "$R1PID" "$R2PID" 2>/dev/null; wait "$R1PID" "$R2PID" 2>/dev/null
+DN0=$(date +%s.%N)
+SID2D=$(sid_of sub2)
+$HX -c "clear pppoe session user sub2" > /dev/null 2>&1
+sleep 15
+DN_STOP=$(tline "${SID2D:-none}" stop)
+DN_STARTS=$(since_t "$DN0" sub2 start | wc -l)
+DN_LISTED=$($HX -c 'show pppoe sessions' 2>/dev/null | awk '$2 == "sub2"' | wc -l)
+echo "  both RADIUS servers killed, sub2's ${SID2D:-?} cleared:"
+echo "$DN_STOP" | sed 's/ seq .*//; s/^/    /'
+echo "  15 s later: $DN_STARTS start(s) for sub2 recorded, $DN_LISTED session(s) listed"
+radius1; radius2
+sleep 2
+DN_BACK=$(wait_user sub2 60)
+echo "  RADIUS back: sub2 again in ${DN_BACK} s"
+VERIFY_END=$($HX -c "show pppoe history verify" 2>&1)
+SUMMARY_T=$($HX -c "show pppoe summary" 2>&1)
+echo "$SUMMARY_T" | grep "session trail" | sed 's/^/  /'
 echo
 echo "=========== 11. no pppoe ==========="
 printf 'configure\nno pppoe\ncommit\n' | $HX > /tmp/nopppoe.txt 2>&1
@@ -1090,5 +1306,46 @@ expect "no pppoe: prBngState notConfigured(3) ($(bv f 1.0)), zero up ($(bv f 3.0
 expect_not_in "  and no server row" \
   ".22.20.1" "$(cat /tmp/bng-f.walk)"
 expect "  and the uptime is absent ($(bv f 2.0))" test -z "$(bv f 2.0)"
+
+# The session trail (docs/bng.md 0.7): the box's own record of who held
+# which inside address from when to when.
+expect "trail: sub1's cleared session has its stop, user, MAC, interface, address and cause" \
+  sh -c "echo '$STOP_OLD' | grep -q ' user sub1 mac 02:aa:00:00:00:01 interface host-acc0 address 100.64.0.77 since .* cause NAS-Request '"
+expect "  the cause RADIUS was sent for it, word for word (${RAD_CAUSE1:-none})" \
+  test "${RAD_CAUSE1:-none}" = NAS-Request
+expect "  written at the clear (${C0} <= ${T_STOP} <= ${C1} + 2)" \
+  between "$C0" "${T_STOP:-0}" "$(python3 -c "print(${C1:-0} + 2)")"
+expect "  the next session's start: sub1 on 100.64.0.77 again, after that stop" \
+  sh -c "echo '$START_NEW' | grep -q ' user sub1 mac 02:aa:00:00:00:01 interface host-acc0 address 100.64.0.77 seq ' && python3 -c 'import sys; sys.exit(not ${T_START:-0} >= ${T_STOP:-1})'"
+expect_in "  show pppoe history lists both" "sub1 held 100.64.0.77" "$HIST1"
+expect "a control plane killed with -9: every session it held closed as Control-Plane-Lost (${LOST})" \
+  sh -c "test '$LOST' -ge 3 && test '$LOST' -eq $(echo $UP_SIDS | wc -w)"
+expect_in "  by the next one, before its first session" "restart closed" "$RESTART_B"
+expect "  and nothing before it lost: the same first entry, the file only grew (${LINES_B0} -> ${LINES_B1})" \
+  sh -c "test '$(head -1 "$TR")' = '$FIRST_B0' && test '${LINES_B1:-0}' -gt '${LINES_B0:-0}'"
+expect_in "formula: sub1's packet of section 6, by its public port and instant, names sub1" \
+  "sub1 held 100.64.0.77" "$XLT6"
+expect "the block log: the BLOCK-ALLOC holding sub2's public port names its inside address (${SUB_LOG:-none})" \
+  sh -c "test -n '$A2D' && test '${SUB_LOG:-x}' = '$A2D'"
+expect_in "  and the trail, at the log's instant, names sub2" "sub2 held ${A2D:-none}" "$TRACE"
+expect_in "  show cgnat translation names sub2, now" "sub2 held ${A2D:-none}" "$XLTD"
+expect_in "  and refuses 'at' for a dynamic block" "'at' needs a formula" "$XLTD_AT"
+expect_not_in "  half a second before sub2's session began, not sub2" "sub2 held" "$TRACE_BEFORE"
+expect_in "verify: the chain intact" "chain intact" "$VERIFY"
+expect_in "  an entry given another address: BROKEN at that entry" "BROKEN at entry" "$TAMPERED"
+expect_in "  put back, intact again" "chain intact" "$VERIFY_BACK"
+expect "no accounting server answering: the session's start recorded all the same" \
+  sh -c "echo '$AD_START' | grep -q ' start session .* user sub3 '"
+expect "  and its stop, NAS-Error, when accel-ppp gave up on accounting" test -n "$AD_STOP"
+expect "  while no RADIUS server was sent an Accounting-Request for it" \
+  test "$((ACCT1_1 - ACCT1_0 + ACCT2_1 - ACCT2_0))" -eq 0
+expect "both RADIUS servers down: a session cleared has its stop recorded" \
+  sh -c "echo '$DN_STOP' | grep -q ' cause NAS-Request '"
+expect "  and no start: nobody could be authenticated, so nothing was held" \
+  sh -c "test '$DN_STARTS' -eq 0 && test '$DN_LISTED' -eq 0"
+expect_in "the chain verifies at the end, across every restart" "chain intact" "$VERIFY_END"
+expect_in "show pppoe summary: the trail's entries" "entries written" \
+  "$(echo "$SUMMARY_T" | grep 'session trail')"
+expect_not_in "  and none it could not write" "NOT" "$(echo "$SUMMARY_T" | grep 'session trail')"
 
 verdict

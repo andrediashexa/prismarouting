@@ -13,6 +13,257 @@ index ace4839..287f6e7 100644
  
  	return CLI_CMD_OK;
  }
+diff --git a/accel-pppd/extra/CMakeLists.txt b/accel-pppd/extra/CMakeLists.txt
+index 6badcd5..aa63bb1 100644
+--- a/accel-pppd/extra/CMakeLists.txt
++++ b/accel-pppd/extra/CMakeLists.txt
+@@ -8,8 +8,10 @@ ADD_LIBRARY(chap-secrets SHARED chap-secrets.c)
+ ADD_LIBRARY(logwtmp SHARED logwtmp.c)
+ TARGET_LINK_LIBRARIES(logwtmp util)
+ ADD_LIBRARY(connlimit SHARED connlimit.c)
++# Prisma Routing (#597): the PPPoE session trail (prisma_trail_mod.c).
++ADD_LIBRARY(prisma_trail SHARED prisma_trail_mod.c)
+ 
+-INSTALL(TARGETS pppd_compat ippool ipv6pool sigchld chap-secrets logwtmp connlimit
++INSTALL(TARGETS pppd_compat ippool ipv6pool sigchld chap-secrets logwtmp connlimit prisma_trail
+ 	LIBRARY DESTINATION lib${LIB_SUFFIX}/accel-ppp
+ )
+ 
+diff --git a/accel-pppd/extra/prisma_trail_mod.c b/accel-pppd/extra/prisma_trail_mod.c
+new file mode 100644
+index 0000000..c470b94
+--- /dev/null
++++ b/accel-pppd/extra/prisma_trail_mod.c
+@@ -0,0 +1,229 @@
++/*
++ * Prisma Routing (#597): the PPPoE session trail, written by the control
++ * plane itself - who held which inside address from when to when, appended
++ * and fsynced, hash-chained. The format, the chain and the file are
++ * prisma_trail.c's (build/prisma_trail.c in Prisma's repository, copied in
++ * by build/accel-ppp-build.sh); this is the module: the events, the lock,
++ * the configuration.
++ *
++ * WHEN A SESSION IS WRITTEN, AND WHY THERE:
++ *   start  EV_SES_ACCT_START - the session interface is in the dataplane and
++ *          the address is the subscriber's, and RADIUS has not yet been sent
++ *          its Accounting-Start. Written BEFORE it, so the box's record does
++ *          not depend on any accounting server answering: with every one of
++ *          them down, accel-ppp ends the session when the Start goes
++ *          unanswered, and the trail has its start and its stop (NAS-Error).
++ *   stop   EV_SES_PRE_FINISHED - before ipdb_put_ipv4() hands the address
++ *          back to the pool. At EV_SES_FINISHED the address is already free,
++ *          and another session could be given it and write its start before
++ *          this one's stop: two holders of one address at one instant.
++ * At start the module reads its file back: the chain continues where it
++ * ended, and every session it leaves open - a control plane killed with -9
++ * wrote no stop - is closed with cause Control-Plane-Lost, then a `restart`
++ * entry, all before the first session of this one.
++ *
++ * [prisma-trail]
++ * path=/var/log/prisma-routing/pppoe-sessions.log
++ * interface-<linux name>=<the name the VTY gives it>   (pppoe-cp.100=ens19.100)
++ */
++#include <errno.h>
++#include <pthread.h>
++#include <arpa/inet.h>
++#include <netinet/in.h>
++
++#include "prisma_trail.c"
++
++#include "triton.h"
++#include "events.h"
++#include "ap_session.h"
++#include "ipdb.h"
++#include "log.h"
++#include "cli.h"
++#include "list.h"
++
++#define TRAIL_DEFAULT_PATH "/var/log/prisma-routing/pppoe-sessions.log"
++
++struct trail_pd {
++	struct ap_private pd;
++	struct list_head open;		/* on open_sessions while it is held */
++	char fields[768];		/* session ... address <a> */
++	char since[32];
++};
++
++static void *pd_key;
++static LIST_HEAD(open_sessions);
++static pthread_mutex_t trail_lock = PTHREAD_MUTEX_INITIALIZER;
++static struct prisma_trail trail;
++static char trail_path[4096];
++static unsigned long trail_written, trail_failed;
++/* The file could not be read at start: nothing is written over it. */
++static int trail_unreadable;
++
++static void now_stamp(char out[32])
++{
++	struct timespec ts;
++
++	clock_gettime(CLOCK_REALTIME, &ts);
++	prisma_trail_stamp(&ts, out);
++}
++
++/* One entry, sealed, appended and fsynced. The lock is held. */
++static int trail_put_locked(const char *body)
++{
++	char line[PRISMA_TRAIL_LINE + 128];
++	unsigned char digest[32];
++	int len;
++
++	if (trail_unreadable) {
++		trail_failed++;
++		return -1;
++	}
++	len = prisma_trail_seal(&trail, body, line, sizeof(line), digest);
++	if (len < 0 || prisma_trail_append(trail_path, line, (size_t)len)) {
++		trail_failed++;
++		log_error("prisma-trail: %s: %s\n", trail_path,
++			  len < 0 ? "an entry too long" : strerror(errno));
++		return -1;
++	}
++	prisma_trail_commit(&trail, digest, line);
++	trail_written++;
++	return 0;
++}
++
++/*
++ * `body`, written at `stamp`: when the month has moved on, the file goes
++ * aside first and every session still held is restated (`carry`) at the head
++ * of the new one, so a month's file answers for any instant of it alone.
++ * `opens` joins the sessions held once its start is written, and `closes`
++ * leaves them once its stop is - under the one lock, so a rotation never
++ * carries a session whose start comes after the carry.
++ */
++static int trail_put(const char *stamp, const char *body, struct trail_pd *opens,
++		     struct trail_pd *closes)
++{
++	char carry[PRISMA_TRAIL_LINE + 64];
++	struct trail_pd *p;
++	int r;
++
++	pthread_mutex_lock(&trail_lock);
++	if (prisma_trail_rotate(&trail, trail_path, stamp)) {
++		list_for_each_entry(p, &open_sessions, open) {
++			snprintf(carry, sizeof(carry), "%s carry %s since %s", stamp, p->fields, p->since);
++			trail_put_locked(carry);
++		}
++	}
++	r = trail_put_locked(body);
++	/* Held whether or not the start reached the disk: its stop still says
++	 * when it began (`since`), and either line answers alone. */
++	if (opens)
++		list_add_tail(&opens->open, &open_sessions);
++	if (closes)
++		list_del(&closes->open);
++	pthread_mutex_unlock(&trail_lock);
++	return r;
++}
++
++static struct trail_pd *find_pd(struct ap_session *ses)
++{
++	struct ap_private *pd;
++
++	list_for_each_entry(pd, &ses->pd_list, entry)
++		if (pd->key == &pd_key)
++			return container_of(pd, struct trail_pd, pd);
++	return NULL;
++}
++
++static void ev_ses_acct_start(struct ap_session *ses)
++{
++	char user[PRISMA_TRAIL_FIELD + 1], mac[PRISMA_TRAIL_FIELD + 1], iface[PRISMA_TRAIL_FIELD + 1];
++	char key[300], addr[INET_ADDRSTRLEN], body[PRISMA_TRAIL_LINE + 64];
++	const char *named = NULL;
++	struct in_addr a;
++	struct trail_pd *p;
++
++	if (!ses->ipv4 || find_pd(ses))
++		return;
++	p = calloc(1, sizeof(*p));
++	if (!p) {
++		trail_failed++;
++		log_emerg("prisma-trail: out of memory: session %s not recorded\n", ses->sessionid);
++		return;
++	}
++	p->pd.key = &pd_key;
++	INIT_LIST_HEAD(&p->open);
++	prisma_trail_escape(ses->username, user, sizeof(user));
++	prisma_trail_escape(ses->ctrl ? ses->ctrl->calling_station_id : NULL, mac, sizeof(mac));
++	if (ses->ctrl && ses->ctrl->ifname) {
++		snprintf(key, sizeof(key), "interface-%s", ses->ctrl->ifname);
++		named = conf_get_opt("prisma-trail", key);
++	}
++	prisma_trail_escape(named ? named : ses->ctrl ? ses->ctrl->ifname : NULL, iface, sizeof(iface));
++	a.s_addr = ses->ipv4->peer_addr;
++	inet_ntop(AF_INET, &a, addr, sizeof(addr));
++	snprintf(p->fields, sizeof(p->fields), "session %s user %s mac %s interface %s address %s",
++		 ses->sessionid, user, mac, iface, addr);
++	now_stamp(p->since);
++	snprintf(body, sizeof(body), "%s start %s", p->since, p->fields);
++	list_add_tail(&p->pd.entry, &ses->pd_list);
++	trail_put(p->since, body, p, NULL);
++}
++
++static void ev_ses_pre_finished(struct ap_session *ses)
++{
++	char stamp[32], body[PRISMA_TRAIL_LINE + 128];
++	struct trail_pd *p = find_pd(ses);
++
++	if (!p)
++		return;
++	now_stamp(stamp);
++	snprintf(body, sizeof(body), "%s stop %s since %s cause %s", stamp, p->fields, p->since,
++		 prisma_trail_cause(ses->terminate_cause));
++	trail_put(stamp, body, NULL, p);
++	list_del(&p->pd.entry);
++	free(p);
++}
++
++/* accel-ppp's `show stat`: what was written and what could not be. */
++static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt, void *client)
++{
++	cli_send(client, "prisma-trail:\r\n");
++	cli_sendv(client, "  written: %lu\r\n", trail_written);
++	cli_sendv(client, "  failed: %lu\r\n", trail_failed);
++	cli_sendv(client, "  seq: %llu\r\n", trail.seq);
++	return CLI_CMD_OK;
++}
++
++static void init(void)
++{
++	struct prisma_trail_open *left, *o;
++	char stamp[32], body[PRISMA_TRAIL_LINE + 128];
++	const char *opt = conf_get_opt("prisma-trail", "path");
++	int closed = 0;
++
++	snprintf(trail_path, sizeof(trail_path), "%s", opt && *opt ? opt : TRAIL_DEFAULT_PATH);
++	if (prisma_trail_recover(&trail, trail_path, &left)) {
++		log_error("prisma-trail: %s cannot be read: %s; sessions are not recorded\n",
++			  trail_path, strerror(errno));
++		/* Never a new chain over a file that could not be read: an empty
++		 * head here would write seq 1 into the middle of somebody's year. */
++		trail_unreadable = 1;
++	}
++	now_stamp(stamp);
++	for (o = left; o; o = o->next) {
++		snprintf(body, sizeof(body), "%s stop %s since %s cause Control-Plane-Lost", stamp,
++			 o->fields, o->since);
++		trail_put(stamp, body, NULL, NULL);
++		closed++;
++	}
++	prisma_trail_free(left);
++	snprintf(body, sizeof(body), "%s restart closed %d", stamp, closed);
++	trail_put(stamp, body, NULL, NULL);
++	log_info1("prisma-trail: %s, seq %llu, %d session(s) a previous control plane left open closed\n",
++		  trail_path, trail.seq, closed);
++
++	triton_event_register_handler(EV_SES_ACCT_START, (triton_event_func)ev_ses_acct_start);
++	triton_event_register_handler(EV_SES_PRE_FINISHED, (triton_event_func)ev_ses_pre_finished);
++	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
++}
++
++DEFINE_INIT(200, init);
 diff --git a/accel-pppd/include/ap_session.h b/accel-pppd/include/ap_session.h
 index 97f1a69..d0b5b19 100644
 --- a/accel-pppd/include/ap_session.h
