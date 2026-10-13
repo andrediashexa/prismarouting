@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.2 - half a second of policer bucket, so one TCP flow gets its plan
+
+### Fixed
+
 * **A single TCP flow got half its plan.** ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
   0.155.1's bucket, a tenth of a second of the rate, was too small for TCP:
   on prisma-bench one flow - what a speedtest measures - got 25 Mbit/s
