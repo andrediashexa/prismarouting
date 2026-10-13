@@ -344,10 +344,46 @@ index c381451..fc1a894 100644
  	unsigned int acct_on:1;
  	unsigned int need_free:1;
 diff --git a/accel-pppd/radius/serv.c b/accel-pppd/radius/serv.c
-index 555ef44..b076bc8 100644
+index 555ef44..b4d356b 100644
 --- a/accel-pppd/radius/serv.c
 +++ b/accel-pppd/radius/serv.c
-@@ -590,7 +590,16 @@ static void __add_server(struct rad_server_t *s)
+@@ -77,6 +77,35 @@ static struct rad_server_t *__rad_server_get(int type, struct rad_server_t *excl
+ 		s0 = s1;
+ 	else if (!s0)
+ 		return NULL;
++	else {
++		/* Prisma Routing (0.155.1): a ROTATION among the servers alive on
++		 * the best level, not the least loaded. Measured on prisma-bench,
++		 * six logins one after the other with two servers on one level:
++		 * 7 Access-Requests to the first, 1 to the second - least-
++		 * outstanding with a stable tie-break sends every request to the
++		 * first while nothing is in flight, and an operator who asked for
++		 * round-robin reads 7:1 as "it does not balance". A cursor per
++		 * request type turns over the eligible servers in list order,
++		 * skipping the failed (they were never eligible above); a level of
++		 * one server - failover with distinct priorities - is that server.
++		 * Accounting Starts rotate the same way; a session's interims and
++		 * Stop stay on its Start's server (acct.c reuses the request). */
++		static unsigned int cursor[2];
++		struct rad_server_t *pick[64];
++		int n = 0;
++		unsigned int backup = s0->backup;
++
++		list_for_each_entry(s, &serv_list, entry) {
++			if (s == exclude || (s->fail_time && ts.tv_sec < s->fail_time))
++				continue;
++			if ((type == RAD_SERV_AUTH && !s->auth_port) || (type == RAD_SERV_ACCT && !s->acct_port))
++				continue;
++			if (s->backup == backup && n < 64)
++				pick[n++] = s;
++		}
++		if (n > 1)
++			s0 = pick[__sync_fetch_and_add(&cursor[type], 1) % n];
++	}
+ 
+ 	__sync_add_and_fetch(&s0->client_cnt[type], 1);
+ 
+@@ -590,7 +619,16 @@ static void __add_server(struct rad_server_t *s)
  	struct rad_server_t *s1;
  
  	list_for_each_entry(s1, &serv_list, entry) {
@@ -365,7 +401,7 @@ index 555ef44..b076bc8 100644
  			s1->fail_timeout = s->fail_timeout;
  			s1->req_limit = s->req_limit;
  			s1->max_fail = s->max_fail;
-@@ -924,10 +933,20 @@ static int parse_server2(const char *_opt, struct rad_server_t *s)
+@@ -924,10 +962,20 @@ static int parse_server2(const char *_opt, struct rad_server_t *s)
  	} else
  		s->bind_default = 1;
  
@@ -608,10 +644,40 @@ index 1bed532..c86dfca 100644
  	err = vapi_pppoe_add_del_session(ctx, req, vpppoe_s_session_del_reply_callback, NULL);
  	vpp_check_error(err);
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c b/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
-index 5c2bd31..6dae02c 100644
+index 5c2bd31..45e52e1 100644
 --- a/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
 +++ b/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
-@@ -177,50 +177,52 @@ int vpppolicer_install_limiter(struct ap_session *ses, int down_speed, int down_
+@@ -22,6 +22,8 @@
+ DEFINE_VAPI_MSG_IDS_POLICER_API_JSON
+ 
+ #define POLICER_NAME_MAX_LEN 64
++/* Prisma Routing: the smallest bucket, bytes - ten 1500-byte packets */
++#define PRISMA_BURST_MIN 15000
+ 
+ extern void vpp_check_error(vapi_error_e err);
+ 
+@@ -121,7 +123,7 @@ static vapi_error_e vpppolicer_add_del_callback(struct vapi_ctx_s *ctx,
+ 	return rv;
+ }
+ 
+-static int vpppolicer_add_del(int is_add, const char *policer_name, uint32_t cir_kbits, uint64_t cb_bits)
++static int vpppolicer_add_del(int is_add, const char *policer_name, uint32_t cir_kbits, uint64_t cb_bytes)
+ {
+ 	vapi_error_e err = -1;
+ 	struct vapi_ctx_s *ctx;
+@@ -143,9 +145,9 @@ static int vpppolicer_add_del(int is_add, const char *policer_name, uint32_t cir
+ 	req->payload.name[sizeof(req->payload.name) - 1] = 0;
+ 
+ 	req->payload.cir = cir_kbits * s_cir_factor;
+-	req->payload.cb = cb_bits * s_cb_factor;
++	req->payload.cb = cb_bytes * s_cb_factor;
+ 	req->payload.eir = cir_kbits * s_eir_factor;
+-	req->payload.eb = cb_bits * s_eb_factor;
++	req->payload.eb = cb_bytes * s_eb_factor;
+ 
+ 	req->payload.rate_type = SSE2_QOS_RATE_API_KBPS;
+ 	req->payload.round_type = SSE2_QOS_ROUND_API_TO_CLOSEST;
+@@ -177,50 +179,61 @@ int vpppolicer_install_limiter(struct ap_session *ses, int down_speed, int down_
  	char policer_output[POLICER_NAME_MAX_LEN] = {};
  	struct vpphook_private_data_t *vpphook_data = vpphook_get_pd(ses);
  
@@ -620,12 +686,21 @@ index 5c2bd31..6dae02c 100644
 -	down_burst = down_burst * 8;
 -	up_speed = up_speed * 8 / 1000;
 -	up_burst = up_burst * 8;
-+	/* convert rate to kbits/s and burst to bits - in 64 bits (Prisma
-+	 * Routing, #607): bytes * 8 overflowed an int past 2.1 Gbit/s */
++	/* convert rate to kbits/s - in 64 bits (Prisma Routing, #607): bytes *
++	 * 8 overflowed an int past 2.1 Gbit/s.
++	 *
++	 * THE BURST STAYS IN BYTES (Prisma Routing, 0.155.1). VPP's policer
++	 * takes its committed burst in bytes (plugins/policer: cb is
++	 * rb.kbps.cb_bytes); this hook multiplied it by 8 as if VPP wanted
++	 * bits, so every bucket was 8 times what accel-ppp asked for: a 20
++	 * Mbit/s plan's 0.1 s became 0.8 s, measured on prisma-bench as 21.3
++	 * Mbit/s over a 6 s iperf, and a Cisco-AVPair's 3,000,000-byte burst
++	 * became 24,000,000 (57.8 Mbit/s through a 30 Mbit/s plan). And never
++	 * under ten full-size packets, which a TCP flow needs to start. */
 +	uint32_t down_kbits = (uint64_t)down_speed * 8 / 1000;
-+	uint64_t down_bits = (uint64_t)down_burst * 8;
++	uint64_t down_cb_bytes = (uint64_t)down_burst < PRISMA_BURST_MIN ? PRISMA_BURST_MIN : (uint64_t)down_burst;
 +	uint32_t up_kbits = (uint64_t)up_speed * 8 / 1000;
-+	uint64_t up_bits = (uint64_t)up_burst * 8;
++	uint64_t up_cb_bytes = (uint64_t)up_burst < PRISMA_BURST_MIN ? PRISMA_BURST_MIN : (uint64_t)up_burst;
  
  	/* Remove previously installed limiter, if exists */
  	vpppolicer_remove_limiter(ses);
@@ -634,36 +709,36 @@ index 5c2bd31..6dae02c 100644
 -		vpppolicer_generate_name(policer_output, POLICER_NAME_MAX_LEN - 1, ses, down_speed, down_burst, 0);
 -		vpppolicer_add_del(1, policer_output, down_speed, down_burst);
 +	if (down_kbits) {
-+		vpppolicer_generate_name(policer_output, POLICER_NAME_MAX_LEN - 1, ses, down_kbits, down_bits, 0);
-+		vpppolicer_add_del(1, policer_output, down_kbits, down_bits);
++		vpppolicer_generate_name(policer_output, POLICER_NAME_MAX_LEN - 1, ses, down_kbits, down_cb_bytes, 0);
++		vpppolicer_add_del(1, policer_output, down_kbits, down_cb_bytes);
  		ret = vpppolicer_set_output(1, vpphook_data->vpp_sw_if_index, policer_output);
  		if (ret) {
 -			vpppolicer_add_del(0, policer_output, down_speed, down_burst);
-+			vpppolicer_add_del(0, policer_output, down_kbits, down_bits);
++			vpppolicer_add_del(0, policer_output, down_kbits, down_cb_bytes);
  			goto exit;
  		}
  
 -		vpphook_data->vpppolicer_down = down_speed;
 -		vpphook_data->vpppolicer_down_burst = down_burst;
 +		vpphook_data->vpppolicer_down = down_kbits;
-+		vpphook_data->vpppolicer_down_burst = down_bits;
++		vpphook_data->vpppolicer_down_burst = down_cb_bytes;
  	}
  
 -	if (up_speed) {
 -		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_speed, up_burst, 1);
 -		vpppolicer_add_del(1, policer_input, up_speed, up_burst);
 +	if (up_kbits) {
-+		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_kbits, up_bits, 1);
-+		vpppolicer_add_del(1, policer_input, up_kbits, up_bits);
++		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_kbits, up_cb_bytes, 1);
++		vpppolicer_add_del(1, policer_input, up_kbits, up_cb_bytes);
  		ret = vpppolicer_set_input(1, vpphook_data->vpp_sw_if_index, policer_input);
  		if (ret) {
 -			vpppolicer_add_del(0, policer_input, up_speed, up_burst);
 -			if (down_speed) {
-+			vpppolicer_add_del(0, policer_input, up_kbits, up_bits);
++			vpppolicer_add_del(0, policer_input, up_kbits, up_cb_bytes);
 +			if (down_kbits) {
  				vpppolicer_set_output(0, vpphook_data->vpp_sw_if_index, policer_output);
 -				vpppolicer_add_del(0, policer_output, down_speed, down_burst);
-+				vpppolicer_add_del(0, policer_output, down_kbits, down_bits);
++				vpppolicer_add_del(0, policer_output, down_kbits, down_cb_bytes);
  				vpphook_data->vpppolicer_down = 0;
  				vpphook_data->vpppolicer_down_burst = 0;
  			}
@@ -683,11 +758,11 @@ index 5c2bd31..6dae02c 100644
 -		vpphook_data->vpppolicer_up = up_speed;
 -		vpphook_data->vpppolicer_up_burst = up_burst;
 +		vpphook_data->vpppolicer_up = up_kbits;
-+		vpphook_data->vpppolicer_up_burst = up_bits;
++		vpphook_data->vpppolicer_up_burst = up_cb_bytes;
  	}
  
  exit:
-@@ -251,10 +253,11 @@ int vpppolicer_remove_limiter(struct ap_session *ses)
+@@ -251,10 +264,11 @@ int vpppolicer_remove_limiter(struct ap_session *ses)
  			goto exit;
  		vpppolicer_add_del(0, policer_input, vpphook_data->vpppolicer_up, vpphook_data->vpppolicer_up_burst);
  
@@ -852,7 +927,7 @@ index 4ee2300..7d5b9f8 100644
  		return ses->hooks->install_limiter(ses, down_speed, down_burst, up_speed, up_burst);
  	}
 diff --git a/accel-pppd/shaper/shaper.c b/accel-pppd/shaper/shaper.c
-index 3c2a1da..520d715 100644
+index 3c2a1da..ce1d65d 100644
 --- a/accel-pppd/shaper/shaper.c
 +++ b/accel-pppd/shaper/shaper.c
 @@ -22,6 +22,41 @@
@@ -918,7 +993,7 @@ index 3c2a1da..520d715 100644
  	};
  	long int val;
  	int i;
-@@ -371,31 +411,140 @@ static void clear_old_tr_pd(struct shaper_pd_t *pd)
+@@ -371,31 +411,144 @@ static void clear_old_tr_pd(struct shaper_pd_t *pd)
  	}
  }
  
@@ -1005,12 +1080,16 @@ index 3c2a1da..520d715 100644
 +			log_ppp_warn("shaper: two Cisco-AVPair rates for one direction; none applied\n");
 +			return -1;
 +		}
++		/* The burst is NOT Cisco's (0.155.1): its numbers are a Cisco
++		 * router's own bucket, and the same plan from Prisma's attributes
++		 * would get another. 0 here is accel-ppp's own rule, a tenth of a
++		 * second of the rate (down-/up-burst-factor), for both sources. */
 +		if (pr.dir == PRISMA_RATE_UP) {
 +			*up = kbit;
-+			*uburst = pr.burst;
++			*uburst = 0;
 +		} else {
 +			*down = kbit;
-+			*dburst = pr.burst;
++			*dburst = 0;
 +		}
 +	}
 +	return n;
@@ -1066,7 +1145,7 @@ index 3c2a1da..520d715 100644
  
  	list_for_each_entry(tr_pd, &pd->tr_list, entry)
  		tr_pd->act = 0;
-@@ -409,7 +558,6 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
+@@ -409,7 +562,6 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
  			continue;
  		if (attr->attr->id != conf_attr_down && attr->attr->id != conf_attr_up)
  			continue;
@@ -1074,7 +1153,7 @@ index 3c2a1da..520d715 100644
  		tr_id = 0;
  		down_speed = 0;
  		down_burst = 0;
-@@ -419,16 +567,36 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
+@@ -419,16 +571,36 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
  			parse_attr(attr, ATTR_DOWN, &down_speed, &down_burst, &tr_id);
  		if (attr->attr->id == conf_attr_up)
  			parse_attr(attr, ATTR_UP, &up_speed, &up_burst, &tr_id);
@@ -1115,7 +1194,7 @@ index 3c2a1da..520d715 100644
  
  	if (!r)
  		return 0;
-@@ -438,7 +606,7 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
+@@ -438,7 +610,7 @@ static int check_radius_attrs(struct shaper_pd_t *pd, struct rad_packet_t *pack)
  
  	clear_old_tr_pd(pd);
  
@@ -1124,7 +1203,7 @@ index 3c2a1da..520d715 100644
  }
  
  static void ev_radius_access_accept(struct ev_radius_t *ev)
-@@ -448,20 +616,32 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
+@@ -448,20 +620,32 @@ static void ev_radius_access_accept(struct ev_radius_t *ev)
  	if (!pd)
  		return;
  
@@ -1159,7 +1238,7 @@ index 3c2a1da..520d715 100644
  
  	if (pd->temp_down_speed || pd->temp_up_speed)
  		return;
-@@ -1184,6 +1364,8 @@ static void load_config(void)
+@@ -1184,6 +1368,8 @@ static void load_config(void)
  	else
  		conf_fwmark = 0;
  

@@ -4,7 +4,7 @@
 #   sh tools/lab.sh pppoe        -> LAB PASSED
 #   sh tools/lab.sh pppoe off    -> LAB FAILED (PPPoE never configured)
 #
-# OFF-RED-AT-LEAST: 69
+# OFF-RED-AT-LEAST: 75
 #
 # WHAT IS REAL HERE. Real PPPoE clients - pppd with rp-pppoe, one network
 # namespace each, behind a Linux bridge, one of them on VLAN 100 - dial the
@@ -271,8 +271,12 @@ echo "  Cisco-AVPair: a rate-limit output of 30 Mbit/s, a policy UP15 for upload
 
 echo
 echo "=========== 4. THE DATAPLANE AND THE CONFIGURATION, THROUGH THE VTY ==========="
-vpp -c /src/lab/startup-bng.conf > /tmp/vpp.log 2>&1 &
+# startup_conf, so LAB_WORKERS=3 runs the dataplane with workers as the
+# bench does (0.155.1): a policer is bound to the thread that first uses it
+# and the others hand their packets over.
+vpp -c "$(startup_conf bng)" > /tmp/vpp.log 2>&1 &
 wait_vpp /tmp/vpp.log
+echo "  dataplane workers: $(box_workers)"
 for i in acc0 wan0 lan0; do
   vppctl create host-interface name "$i" > /dev/null
   vppctl set interface state "host-$i" up
@@ -528,7 +532,11 @@ bw() {
   ip netns exec inet iperf3 -s -1 -B 200.150.0.2 > /dev/null 2>&1 &
   _isp=$!
   sleep 1
-  timeout 30 ip netns exec "s$1" iperf3 -c 200.150.0.2 -t 6 -O 1 -J ${2:-} 2>/dev/null \
+  # 6 s and NOTHING omitted (0.155.1): `-O 1` dropped the first second -
+  # the one the bucket empties in - and hid a burst eight times too large
+  # that prisma-bench measured with a plain 6 s iperf3 (57.8 Mbit/s
+  # through a 30 Mbit/s plan).
+  timeout 30 ip netns exec "s$1" iperf3 -c 200.150.0.2 -t 6 -J ${2:-} 2>/dev/null \
     | python3 -c 'import json, sys
 try:
     print(round(json.load(sys.stdin)["end"]["sum_received"]["bits_per_second"] / 1e6, 1))
@@ -536,9 +544,16 @@ except Exception:
     print(0)'
   kill "$_isp" 2>/dev/null; wait "$_isp" 2>/dev/null
 }
-# within <measured> <target> - within 10% of the target
+# within <measured> <target> - from 10% under the target to 5% over it: TCP
+# through a policer settles under the rate, and over it is the bucket (a
+# tenth of a second is 1.7% of a 6 s test; prisma-bench's +7% was 0.8 s)
 within() {
-  python3 -c 'import sys; v, t = map(float, sys.argv[1:]); sys.exit(abs(v - t) > 0.1 * t)' "$1" "$2"
+  python3 -c 'import sys; v, t = map(float, sys.argv[1:]); sys.exit(not (0.9 * t <= v <= 1.05 * t))' "$1" "$2"
+}
+# cb <name-pattern> - the committed burst, bytes, of the policer whose name
+# matches: the bucket checked against its rule, not inferred from a rate
+cb() {
+  vppctl show policer | tr -d '\r' | awk -v p="$1" '/^Name/ && $2 ~ p {for (i = 1; i <= NF; i++) if ($i == "cb") print $(i + 1); exit}'
 }
 # dae <coa|disconnect> <secret> <attribute lines> - radclient's answer
 dae() {
@@ -553,11 +568,21 @@ RSHOW=$($HX -c "show pppoe sessions" 2>&1)
 echo "$RSHOW" | sed 's/^/  /'
 SID1=$(sid_of sub1)
 DETAIL1=$($HX -c "show pppoe session ${SID1:-0}" 2>&1)
-SIF1=$(vppctl show pppoe session | tr -d '\r' \
-       | awk '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)}
-              /client-mac 02:aa:00:00:00:01/ {print idx; exit}')
-SNAME1=$(vppctl show interface | tr -d '\r' | awk -v i="${SIF1:-x}" '$2 == i {print $1; exit}')
-FEAT1=$(vppctl show interface features "${SNAME1:-none}" 2>/dev/null | tr -d '\r')
+# Read up to three times: one read in 0.155.1's lab came back empty with the
+# session there, and the three checks below are about the dataplane, not
+# about one vppctl.
+for _try in 1 2 3; do
+  SIF1=$(vppctl show pppoe session < /dev/null | tr -d '\r' \
+         | awk '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)}
+                /client-mac 02:aa:00:00:00:01/ {print idx; exit}')
+  # A name at the left edge: `$2 == 9` alone matched a counter row
+  # ("drops  9") under another interface, measured with workers.
+  SNAME1=$(vppctl show interface < /dev/null | tr -d '\r' | awk -v i="${SIF1:-x}" '/^[^ ]/ && $2 == i {print $1; exit}')
+  FEAT1=$(vppctl show interface features "${SNAME1:-none}" < /dev/null 2>/dev/null | tr -d '\r')
+  case "$FEAT1" in *policer-input*) break ;; esac
+  sleep 1
+done
+echo "  sub1 is sw_if_index ${SIF1:-?}, ${SNAME1:-?}"
 # What the dataplane holds for each session, printed: a policer feature
 # enabled twice meters every packet twice, and halves the plan.
 vppctl show pppoe session | tr -d '\r' | grep -E "sw-if|client-mac" | sed 's/^/    /'
@@ -576,6 +601,12 @@ echo "  sub3, Cisco-AVPair 30M down (output), profile UP15 up (input): ${DOWN3} 
 DETAIL1B=$($HX -c "show pppoe session ${SID1:-0}" 2>&1)
 echo "$DETAIL1B" | sed 's/^/  /'
 POL_LIVE=$(pols)
+# THE BUCKET, read off VPP (0.155.1): a tenth of a second of the rate, in
+# bytes, whichever attribute gave the rate - not Cisco's own burst numbers,
+# and not eight times either (the hook used to multiply bytes by 8).
+CB1D=$(cb "_20000_.*_down"); CB1U=$(cb "_10000_.*_up")
+CB3D=$(cb "_30000_.*_down"); CB3U=$(cb "_15000_.*_up")
+echo "  buckets: sub1 ${CB1D:-?}/${CB1U:-?} bytes, sub3 (Cisco) ${CB3D:-?}/${CB3U:-?} bytes"
 # THE DOWNLOAD GOES TO ITS OWN CPE, after section 10 killed accel-pppd with
 # -9: each session's /32 is rewritten with its own client's MAC. Before
 # #607 the recycled interfaces kept the dead daemon's adjacencies and sent
@@ -610,6 +641,12 @@ echo "$COA_BAD" | grep -E "Received" | sed 's/^/  20 Gbit\/s, past what a police
 echo "$COA_MKT" | grep -E "Received" | sed "s/^/  MikroTik's rate, not read: /"
 echo "$COA_UNKNOWN" | grep -E "Received|Error-Cause" | sed 's/^/  an attribute nothing acts on: /'
 LIMIT_KEPT=$($HX -c "show pppoe sessions" 2>&1 | awk '$2 == "sub1"')
+CB1C=$(cb "_50000_.*_down")
+# A gigabit plan, read back from VPP: no unit error at a rate where an int
+# of bytes or bits would overflow.
+COA_G=$(dae coa daesecret 'User-Name = "sub1"\nPrisma-Rate-Limit-Down = 1000000\nPrisma-Rate-Limit-Up = 1000000\n')
+GPOL=$(vppctl show policer | tr -d '\r' | grep '^Name.*_1000000_')
+echo "  1 Gbit/s each way: $(echo "$GPOL" | tr '\n' ' ')"
 # Cisco's form in a CoA: `input` is the subscriber's upload.
 COA_CISCO=$(dae coa daesecret 'User-Name = "sub3"\nCisco-AVPair = "lcp:interface-config=rate-limit input 5000000 500000 1000000 conform-action transmit exceed-action drop"\n')
 COA_CISCO_BAD=$(dae coa daesecret 'User-Name = "sub3"\nCisco-AVPair = "lcp:interface-config=rate-limit input 5000000"\n')
@@ -725,6 +762,25 @@ RC1=$(( $(heard 1 Accounting-Request) - C1 )); RC2=$(( $(heard 2 Accounting-Requ
 echo "  every session cleared and redialled: Access-Requests $RQ1 to server 1, $RQ2 to server 2;"
 echo "  Accounting-Requests $RC1 and $RC2"
 RR_SUMMARY=$($HX -c "show pppoe summary" 2>&1)
+# SEQUENTIAL LOGINS (0.155.1): one subscriber dialling six times, one session
+# at a time - prisma-bench measured 7 Access-Requests to one server and 1 to
+# the other this way, least-outstanding with nothing outstanding. A rotation
+# alternates them.
+# sub4 (a wrong password, redialling for ever) is stopped first: its Access-
+# Requests take turns in the same rotation, and one subscriber's six can then
+# land on one server by parity - the bench test had one subscriber dialling.
+for _p in $(pgrep -x pppd); do
+  tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null | grep -q 'call sub4' && kill "$_p"
+done
+sleep 2
+S1=$(heard 1 Access-Request); S2=$(heard 2 Access-Request)
+for _k in 1 2 3 4 5 6; do
+  $HX -c "clear pppoe session user sub2" > /dev/null 2>&1
+  sleep 1
+  wait_user sub2 30 > /dev/null
+done
+SQ1=$(( $(heard 1 Access-Request) - S1 )); SQ2=$(( $(heard 2 Access-Request) - S2 ))
+echo "  six logins one after the other: $SQ1 Access-Requests to server 1, $SQ2 to server 2"
 
 echo
 echo "=========== 11. no pppoe ==========="
@@ -805,6 +861,10 @@ expect_in "  show pppoe session: its limit" "20M down, 10M up" "$DETAIL1"
 expect "  and its download policer dropped what was past the plan" \
   sh -c "echo '$DETAIL1B' | grep '^policer down' | grep -qv ' 0 dropped'"
 expect "  two policers for each of the two limited sessions" test "${POL_LIVE:-0}" -eq 4
+expect "  each bucket a tenth of a second of its rate, in bytes: 250000/125000 (${CB1D}/${CB1U})" \
+  test "${CB1D:-0}/${CB1U:-0}" = 250000/125000
+expect "  and Cisco's the same rule, not its own 3,000,000-byte burst: 375000/187500 (${CB3D}/${CB3U})" \
+  test "${CB3D:-0}/${CB3U:-0}" = 375000/187500
 expect "after accel-pppd was killed, every session's download goes to its own CPE" \
   test "$CROSSED" -eq 0
 expect "  and VPP holds no session the killed daemon left" test "$VPP_SESS" -eq 3
@@ -819,6 +879,10 @@ expect_in "CoA: a new rate is ACKed" "Received CoA-ACK" "$COA_OK"
 expect "  on the same session, no redial" test "${SID1_AFTER:-x}" = "${SID1:-y}"
 expect "  download now within 10% of 50M (${DOWN1C})" within "$DOWN1C" 50
 expect "  upload now within 10% of 20M (${UP1C})" within "$UP1C" 20
+expect "  the new bucket follows the new rate: 625000 (${CB1C})" test "${CB1C:-0}" = 625000
+expect_in "  a 1 Gbit/s plan is ACKed" "Received CoA-ACK" "$COA_G"
+expect "  and VPP holds it as 1000000 kbit/s with a 12500000-byte bucket" \
+  sh -c "echo '$GPOL' | grep -q 'cir 1000000 eir 0 cb 12500000 ' && test \$(echo '$GPOL' | grep -c 'cb 12500000 ') -eq 2"
 expect_in "  a rate past 10 Gbit/s is NAKed" "Received CoA-NAK" "$COA_BAD"
 expect_in "  MikroTik's rate attribute is not read: NAKed" "Received CoA-NAK" "$COA_MKT"
 expect_in "  an attribute nothing acts on is NAKed, Unsupported-Attribute" \
@@ -858,6 +922,8 @@ expect "  sessions authenticate on server 1" test "$RQ1" -ge 1
 expect "  and on server 2" test "$RQ2" -ge 1
 expect "  accounting goes to both as well" sh -c "test $RC1 -ge 1 && test $RC2 -ge 1"
 expect_in "  the summary says round-robin" "round-robin" "$RR_SUMMARY"
+expect "  six sequential logins alternate between the servers, within one ($SQ1/$SQ2)" \
+  sh -c "test $((SQ1 + SQ2)) -eq 6 && test $((SQ1 - SQ2)) -le 1 && test $((SQ2 - SQ1)) -le 1"
 expect_in "no pppoe stopped the container" "pppoe: stopped" "$(cat /tmp/nopppoe.txt)"
 expect "  every policer gone with the sessions (${POL0:-?} -> ${POL_END:-?})" \
   test "${POL_END:-x}" = "${POL0:-y}"

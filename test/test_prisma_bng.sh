@@ -149,6 +149,8 @@ echo "=== the entrypoint: the plumbing, laid and taken out ==="
 cat > "$T/bin/vppctl" <<EOF
 #!/bin/sh
 echo "vppctl \$*" >> "$T/vlog"
+# As vppctl does: what is on stdin goes to the dataplane, so it is read.
+[ -n "\${STUB_EAT_STDIN:-}" ] && cat > /dev/null
 case "\$*" in
   "show version") echo "vpp v26.06-release" ;;
   "show hardware-interfaces ge0") printf 'ge0  1  up\n  Ethernet address 02:fe:00:00:00:01\n' ;;
@@ -199,10 +201,24 @@ check "clean_sessions: a session a dead control plane left, deleted" \
 printf '%s\n' 'Name "vyos_12_20000_2000000_down" type 1r2c cir 20000' 'conform 1 packets, 2 bytes' \
   'Name "vyos_12_10000_1000000_up" type 1r2c cir 10000' 'Name "operators_own" type 1r2c' > "$T/policers"
 : > "$T/vlog"
-n=$(clean_policers)
-check "clean_policers: a dead control plane's session policers unapplied and deleted, by direction (#607)" \
+n=$(STUB_EAT_STDIN=1 clean_policers)
+check "clean_policers: a dead control plane's session policers unapplied and deleted, by direction (#607) - with a vppctl that reads its stdin, which took the rest of the list (0.155.1)" \
   "[ '$n' = 2 ] && grep -q 'vppctl policer output unapply name vyos_12_20000_2000000_down pppoe_session3' '$T/vlog' && grep -q 'vppctl policer input unapply name vyos_12_10000_1000000_up pppoe_session3' '$T/vlog' && grep -q 'vppctl policer del name vyos_12_10000_1000000_up' '$T/vlog'"
 check "  and a policer that is not a session's is left alone" "! grep -q operators_own '$T/vlog'"
+printf '  policer-input\n' > "$T/features"; : > "$T/vlog"
+STUB_EAT_STDIN=1 clean_policers > /dev/null
+check "  and then clears what a deleted-while-applied policer left on the interfaces (unpoison)" \
+  "grep -q 'vppctl policer add name prisma_unpoison' '$T/vlog'"
+: > "$T/features"
+printf '  policer-input\n' > "$T/features"; : > "$T/vlog"
+n=$(unpoison)
+check "unpoison: a session interface still carrying a policer feature is cleared through a policer made for it, then that is deleted (0.155.1)" \
+  "[ '$n' = 1 ] && grep -q 'vppctl policer add name prisma_unpoison' '$T/vlog' && grep -q 'vppctl policer input unapply name prisma_unpoison pppoe_session3' '$T/vlog' && grep -q 'vppctl policer output unapply name prisma_unpoison pppoe_session3' '$T/vlog' && grep -q 'vppctl policer del name prisma_unpoison' '$T/vlog'"
+check "  and gives up after 16 tries rather than for ever" \
+  "[ \"\$(grep -c 'policer input unapply name prisma_unpoison' '$T/vlog')\" = 16 ]"
+: > "$T/features"; : > "$T/vlog"
+n=$(unpoison)
+check "  an interface with none is left alone" "[ '$n' = 0 ] && ! grep -q prisma_unpoison '$T/vlog'"
 # `show ip fib`'s whole table, as VPP 26.06 prints it: a prefix alone on its
 # row (measured - `show ip fib <prefix>` adds "fib:0 index:...", the table
 # does not, and the first cut of this read only the latter).

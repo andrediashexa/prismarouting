@@ -136,21 +136,60 @@ clean_sessions() {
 # lab/pppoe.sh after `kill -9`. Run BEFORE clean_sessions, while the session
 # interfaces are still listed by name.
 clean_policers() {
-  vc show policer | sed -n 's/^Name "\(vyos_[0-9]*_[0-9]*_[0-9]*_\(up\|down\)\)".*/\1/p' \
+  vc show policer < /dev/null \
+    | sed -n 's/^Name "\(vyos_[0-9]*_[0-9]*_[0-9]*_\(up\|down\)\)".*/\1/p' \
     > "$RUN_DIR/stale-policers"
+  vc show interface < /dev/null | awk '$1 ~ /^pppoe_session[0-9]+$/ {print $1, $2}' \
+    > "$RUN_DIR/session-ifs"
   _n=0
+  # Every vppctl in here reads /dev/null, not the loop's input: vppctl hands
+  # what it reads on stdin to the dataplane, and the first one in the loop
+  # took the rest of the list with it - measured on 0.155.0's lab, a
+  # session's policers deleted and never unapplied (0.155.1).
   while read -r name; do
     idx=$(echo "$name" | cut -d_ -f2)
-    ifn=$(vc show interface | awk -v i="$idx" '$2 == i {print $1; exit}')
+    ifn=$(awk -v i="$idx" '$2 == i {print $1; exit}' "$RUN_DIR/session-ifs")
     case "$name" in
       *_up) dir=input ;;
       *) dir=output ;;
     esac
-    [ -n "$ifn" ] && vc policer "$dir" unapply name "$name" "$ifn" > /dev/null
-    vc policer del name "$name" > /dev/null
+    [ -n "$ifn" ] && vc policer "$dir" unapply name "$name" "$ifn" < /dev/null > /dev/null
+    vc policer del name "$name" < /dev/null > /dev/null
     _n=$((_n + 1))
   done < "$RUN_DIR/stale-policers"
+  _n=$((_n + $(unpoison)))
   echo "$_n"
+}
+
+# unpoison - every session interface that still carries a policer feature
+# with no control plane running, cleared; prints how many interfaces.
+#
+# VPP COUNTS AN ENABLE, AND A POLICER DELETED WHILE APPLIED LEAVES ITS COUNT.
+# The next session on the recycled interface then enables it again, the node
+# runs twice, and every packet is metered twice: measured in 0.155.0's lab,
+# a session at half its plan, and one with no plan metered by another
+# session's policer (VPP reused the freed policer's index). With accel-pppd
+# not running nothing may have a policer on a session interface, so each
+# feature is disabled until none is left, through a policer made for it -
+# policer_input(apply=0) disables the feature whatever the interface was
+# bound to (plugins/policer/policer_op.c).
+unpoison() {
+  _u=0
+  while read -r ifn _idx; do
+    _f=$(vc show interface features "$ifn" < /dev/null | grep -c 'policer-')
+    [ "$_f" -gt 0 ] || continue
+    vc policer add name prisma_unpoison type 1r2c cir 1000 cb 15000 rate kbps \
+      conform-action transmit exceed-action drop < /dev/null > /dev/null
+    _k=0
+    while [ "$_k" -lt 16 ] && vc show interface features "$ifn" < /dev/null | grep -q 'policer-'; do
+      vc policer input unapply name prisma_unpoison "$ifn" < /dev/null > /dev/null
+      vc policer output unapply name prisma_unpoison "$ifn" < /dev/null > /dev/null
+      _k=$((_k + 1))
+    done
+    vc policer del name prisma_unpoison < /dev/null > /dev/null
+    _u=$((_u + 1))
+  done < "$RUN_DIR/session-ifs"
+  echo "$_u"
 }
 
 # stale_state - what a dead control plane left, for the next accel-pppd to

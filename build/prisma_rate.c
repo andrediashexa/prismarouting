@@ -39,7 +39,8 @@
 struct prisma_rate {
 	int dir;                /* PRISMA_RATE_UP or PRISMA_RATE_DOWN */
 	long kbit;              /* a rate-limit's rate; 0 for a policy name */
-	long burst;             /* its normal burst, bytes */
+	long burst;             /* its normal burst, bytes: checked, not applied -
+	                         * the bucket is accel-ppp's own rule (0.155.1) */
 	char name[PRISMA_RATE_NAME_MAX + 1]; /* a policy's name; "" otherwise */
 };
 

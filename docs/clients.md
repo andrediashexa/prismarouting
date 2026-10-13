@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.1 - a policer's burst in bytes, round-robin a real rotation
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.0). No message, field or number changes.
+* **Nothing a client reads changes.** Per-session rate limits now hold their plan (the burst was eight times too large), `aaa radius` `mode round-robin` rotates logins across servers, and a crashed PPPoE control plane no longer leaves a policer behind on a session interface. A patch release: the `prisma-bng` image changes, the API is down only for the usual upgrade window.
+
 ## 0.155.0 - RADIUS under aaa, failover or round-robin, CoA and per-session rate limits
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.154.0). No message, field or number changes.
