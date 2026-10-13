@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.2 - half a second of policer bucket, so one TCP flow gets its plan
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.1). No message, field or number changes.
+* **Nothing a client reads changes.** A session's policer bucket is now half a second of its rate, so a single TCP flow (a speedtest) reaches the plan; with 0.155.1's tenth of a second it got half. A box upgraded from 0.155.1 restarts its PPPoE container once at the first load, so its PPPoE sessions redial. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.1 - a policer's burst in bytes, round-robin a real rotation
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.0). No message, field or number changes.

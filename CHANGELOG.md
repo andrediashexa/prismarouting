@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A single TCP flow got half its plan.** ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
+  0.155.1's bucket, a tenth of a second of the rate, was too small for TCP:
+  on prisma-bench one flow - what a speedtest measures - got 25 Mbit/s
+  through a 50 Mbit/s plan and 9.8/4.7 through 20/10, while UDP passed
+  exactly. The bucket is now half a second, for both rate sources (measured
+  on the bench: 0.25 s 48.6, 0.5 s 50.5, 1.0 s 54.3 over 6 s). A box upgraded
+  from 0.155.1 restarts its PPPoE container once at the first load, on files
+  written with the new buckets. `lab/pppoe.sh` passed with the tenth because
+  its round trip is a few milliseconds; it now measures one TCP flow each way
+  for 15 s, adds a 200 ms longer path where one flow must still get 80% of
+  the plan down (74% with a tenth of a second, red), and checks the
+  policer's own exactness with UDP.
+
 ## 0.155.1 - a policer's burst in bytes, round-robin a real rotation
 
 ### Fixed

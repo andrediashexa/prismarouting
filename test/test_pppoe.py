@@ -258,7 +258,7 @@ for needle in ("interface=pppoe-cp,vpp-cp=enable",
                "attr-down=Prisma-Rate-Limit-Down",
                "attr-up=Prisma-Rate-Limit-Up", "vpp-policer-type=1r2c",
                "dictionary=/usr/share/prisma-bng/dictionary.prisma",
-               "up-burst-factor=0.1", P.FORMAT_LINE):
+               "down-burst-factor=0.5", "up-burst-factor=0.5", P.FORMAT_LINE):
     check(needle in ac, f"accel_conf carries {needle!r}")
 check(ac.index("\nradius\n") < ac.index("\nshaper\n"),
       "accel_conf: the shaper loaded after radius, whose events it takes")

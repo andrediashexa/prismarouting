@@ -4,7 +4,7 @@
 #   sh tools/lab.sh pppoe        -> LAB PASSED
 #   sh tools/lab.sh pppoe off    -> LAB FAILED (PPPoE never configured)
 #
-# OFF-RED-AT-LEAST: 75
+# OFF-RED-AT-LEAST: 77
 #
 # WHAT IS REAL HERE. Real PPPoE clients - pppd with rp-pppoe, one network
 # namespace each, behind a Linux bridge, one of them on VLAN 100 - dial the
@@ -532,11 +532,11 @@ bw() {
   ip netns exec inet iperf3 -s -1 -B 200.150.0.2 > /dev/null 2>&1 &
   _isp=$!
   sleep 1
-  # 6 s and NOTHING omitted (0.155.1): `-O 1` dropped the first second -
-  # the one the bucket empties in - and hid a burst eight times too large
-  # that prisma-bench measured with a plain 6 s iperf3 (57.8 Mbit/s
-  # through a 30 Mbit/s plan).
-  timeout 30 ip netns exec "s$1" iperf3 -c 200.150.0.2 -t 6 -J ${2:-} 2>/dev/null \
+  # As a customer's speedtest measures: ONE TCP flow, nothing omitted -
+  # `-O 1` dropped the first second, the one the bucket empties in, and
+  # hid a burst eight times too large (0.155.1). 15 s, so the bucket's
+  # half second is at most 3% of what is counted.
+  timeout 45 ip netns exec "s$1" iperf3 -c 200.150.0.2 -t 15 -J ${2:-} 2>/dev/null \
     | python3 -c 'import json, sys
 try:
     print(round(json.load(sys.stdin)["end"]["sum_received"]["bits_per_second"] / 1e6, 1))
@@ -544,9 +544,23 @@ except Exception:
     print(0)'
   kill "$_isp" 2>/dev/null; wait "$_isp" 2>/dev/null
 }
+# udp_bw <n> <Mbit/s> - what sub<n> RECEIVES of a UDP download sent at
+# that rate: the policer's own exactness, with no TCP in it
+udp_bw() {
+  ip netns exec inet iperf3 -s -1 -B 200.150.0.2 > /dev/null 2>&1 &
+  _isp=$!
+  sleep 1
+  timeout 45 ip netns exec "s$1" iperf3 -c 200.150.0.2 -u -b "${2}M" -l 1400 \
+    -t 15 -R -J 2>/dev/null | python3 -c 'import json, sys
+try:
+    print(round(json.load(sys.stdin)["end"]["sum_received"]["bits_per_second"] / 1e6, 1))
+except Exception:
+    print(0)'
+  kill "$_isp" 2>/dev/null; wait "$_isp" 2>/dev/null
+}
 # within <measured> <target> - from 10% under the target to 5% over it: TCP
-# through a policer settles under the rate, and over it is the bucket (a
-# tenth of a second is 1.7% of a 6 s test; prisma-bench's +7% was 0.8 s)
+# through a policer settles under the rate, and over it is the bucket (half
+# a second is 3.3% of a 15 s test)
 within() {
   python3 -c 'import sys; v, t = map(float, sys.argv[1:]); sys.exit(not (0.9 * t <= v <= 1.05 * t))' "$1" "$2"
 }
@@ -563,6 +577,7 @@ pols() { vppctl show policer pools 2>/dev/null | tr -d '\r' | sed -n 's/.*police
 
 echo
 echo "=========== 12. RATE LIMITS: A VPP POLICER ON THE SESSION (#607) ==========="
+
 wait_user sub1 > /dev/null; wait_user sub2 > /dev/null
 RSHOW=$($HX -c "show pppoe sessions" 2>&1)
 echo "$RSHOW" | sed 's/^/  /'
@@ -595,15 +610,32 @@ echo "$FEAT1" | sed -n '/^ip4-unicast:/,/^[a-z0-9-]*:$/p' | sed -n '2,8p' | sed 
 UP1=$(bw 1); DOWN1=$(bw 1 -R)
 echo "  sub1, plan 20M down / 10M up: measured ${DOWN1} down, ${UP1} up (Mbit/s)"
 DOWN2=$(bw 2 -R)
+UDP1=$(udp_bw 1 40)
+echo "  sub1, UDP sent at 40 Mbit/s through its 20M plan: ${UDP1} received"
+# ONE TCP FLOW OVER A LONG PATH (0.155.2). The bucket a TCP flow needs grows
+# with its round trip, and this lab's is a few milliseconds of veth: there a
+# tenth of a second of bucket measured 19.1 of 20 Mbit/s down and 9.7 of 10
+# up, so 0.155.1's passed here - and gave a single flow HALF its plan on
+# prisma-bench (7 workers, a real NIC: 25 Mbit/s through 50). The lab cannot
+# make the bench's conditions; it makes the one under which a small bucket
+# shows: 200 ms more to the "internet". Measured, 15 s each: half a second
+# 18.1 and 18.0 down single-threaded, 17.5 with three workers (87-90%); a
+# tenth 14.9 and 14.8 (74%). The upload is printed and not asserted: over
+# this path it read 9.2 and 7.9 with half a second and 6.5 and 7.7 with a
+# tenth - it does not tell the two apart.
+ip netns exec inet tc qdisc replace dev wanp root netem delay 200ms
+LONG1D=$(bw 1 -R); LONG1U=$(bw 1)
+ip netns exec inet tc qdisc del dev wanp root 2>/dev/null
+echo "  sub1 over a 200 ms longer path, one TCP flow: ${LONG1D} down, ${LONG1U} up"
 echo "  sub2, no plan: measured ${DOWN2} down"
 UP3=$(bw 3); DOWN3=$(bw 3 -R)
 echo "  sub3, Cisco-AVPair 30M down (output), profile UP15 up (input): ${DOWN3} down, ${UP3} up"
 DETAIL1B=$($HX -c "show pppoe session ${SID1:-0}" 2>&1)
 echo "$DETAIL1B" | sed 's/^/  /'
 POL_LIVE=$(pols)
-# THE BUCKET, read off VPP (0.155.1): a tenth of a second of the rate, in
-# bytes, whichever attribute gave the rate - not Cisco's own burst numbers,
-# and not eight times either (the hook used to multiply bytes by 8).
+# THE BUCKET, read off VPP: half a second of the rate, in bytes (0.155.2),
+# whichever attribute gave the rate - not Cisco's own burst numbers, and
+# not eight times either (the hook multiplied bytes by 8 until 0.155.1).
 CB1D=$(cb "_20000_.*_down"); CB1U=$(cb "_10000_.*_up")
 CB3D=$(cb "_30000_.*_down"); CB3U=$(cb "_15000_.*_up")
 echo "  buckets: sub1 ${CB1D:-?}/${CB1U:-?} bytes, sub3 (Cisco) ${CB3D:-?}/${CB3U:-?} bytes"
@@ -861,10 +893,14 @@ expect_in "  show pppoe session: its limit" "20M down, 10M up" "$DETAIL1"
 expect "  and its download policer dropped what was past the plan" \
   sh -c "echo '$DETAIL1B' | grep '^policer down' | grep -qv ' 0 dropped'"
 expect "  two policers for each of the two limited sessions" test "${POL_LIVE:-0}" -eq 4
-expect "  each bucket a tenth of a second of its rate, in bytes: 250000/125000 (${CB1D}/${CB1U})" \
-  test "${CB1D:-0}/${CB1U:-0}" = 250000/125000
-expect "  and Cisco's the same rule, not its own 3,000,000-byte burst: 375000/187500 (${CB3D}/${CB3U})" \
-  test "${CB3D:-0}/${CB3U:-0}" = 375000/187500
+expect "  each bucket half a second of its rate, in bytes: 1250000/625000 (${CB1D}/${CB1U})" \
+  test "${CB1D:-0}/${CB1U:-0}" = 1250000/625000
+expect "  and Cisco's the same rule, not its own 3,000,000-byte burst: 1875000/937500 (${CB3D}/${CB3U})" \
+  test "${CB3D:-0}/${CB3U:-0}" = 1875000/937500
+expect "  UDP through the 20M policer: the policer itself exact, within 10%/5% (${UDP1})" \
+  within "$UDP1" 20
+expect "  one TCP flow over a 200 ms longer path still gets 80% of the plan down (${LONG1D} of 20)" \
+  python3 -c "import sys; sys.exit(float('${LONG1D:-0}') < 16)"
 expect "after accel-pppd was killed, every session's download goes to its own CPE" \
   test "$CROSSED" -eq 0
 expect "  and VPP holds no session the killed daemon left" test "$VPP_SESS" -eq 3
@@ -879,10 +915,10 @@ expect_in "CoA: a new rate is ACKed" "Received CoA-ACK" "$COA_OK"
 expect "  on the same session, no redial" test "${SID1_AFTER:-x}" = "${SID1:-y}"
 expect "  download now within 10% of 50M (${DOWN1C})" within "$DOWN1C" 50
 expect "  upload now within 10% of 20M (${UP1C})" within "$UP1C" 20
-expect "  the new bucket follows the new rate: 625000 (${CB1C})" test "${CB1C:-0}" = 625000
+expect "  the new bucket follows the new rate: 3125000 (${CB1C})" test "${CB1C:-0}" = 3125000
 expect_in "  a 1 Gbit/s plan is ACKed" "Received CoA-ACK" "$COA_G"
-expect "  and VPP holds it as 1000000 kbit/s with a 12500000-byte bucket" \
-  sh -c "echo '$GPOL' | grep -q 'cir 1000000 eir 0 cb 12500000 ' && test \$(echo '$GPOL' | grep -c 'cb 12500000 ') -eq 2"
+expect "  and VPP holds it as 1000000 kbit/s with a 62500000-byte bucket" \
+  sh -c "echo '$GPOL' | grep -q 'cir 1000000 eir 0 cb 62500000 ' && test \$(echo '$GPOL' | grep -c 'cb 62500000 ') -eq 2"
 expect_in "  a rate past 10 Gbit/s is NAKed" "Received CoA-NAK" "$COA_BAD"
 expect_in "  MikroTik's rate attribute is not read: NAKed" "Received CoA-NAK" "$COA_MKT"
 expect_in "  an attribute nothing acts on is NAKed, Unsupported-Attribute" \

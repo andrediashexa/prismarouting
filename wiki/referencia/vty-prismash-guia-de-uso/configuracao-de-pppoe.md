@@ -115,7 +115,7 @@ prisma> show aaa radius dictionary
 
 No FreeRADIUS, salve o que esse comando imprime como `/usr/share/freeradius/dictionary.prisma` e acrescente `$INCLUDE /usr/share/freeradius/dictionary.prisma` ao arquivo `/etc/freeradius/3.0/dictionary`. No IXC ou em outro sistema, cadastre o fornecedor 67033 e os dois atributos da tabela.
 
-O limite é um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. A rajada aceita (o balde do policer) é um décimo de segundo da taxa, nunca menos de 15.000 bytes, venha a taxa dos atributos do Prisma ou do `Cisco-AVPair`: os números de rajada do `Cisco-AVPair` são conferidos e não usados. Até a 0.155.0 o balde era oito vezes maior, e um teste curto media de 7% a 90% acima do plano. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
+O limite é um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. A rajada aceita (o balde do policer) é meio segundo da taxa, nunca menos de 15.000 bytes, venha a taxa dos atributos do Prisma ou do `Cisco-AVPair`: os números de rajada do `Cisco-AVPair` são conferidos e não usados. Meio segundo é o que deixa **uma** conexão TCP, como a de um teste de velocidade, chegar ao plano: com um décimo de segundo (0.155.1) ela chegava à metade (25 Mbit/s num plano de 50), embora o UDP passasse exato. Até a 0.155.0 o balde era oito vezes maior, e um teste curto media de 7% a 90% acima do plano. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
 
 ## Disconnect e CoA
 
