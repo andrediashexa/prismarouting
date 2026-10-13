@@ -48,6 +48,9 @@
 # and the SNMP agent's (#597, docs/snmp-mib.md prBng): `show stat` also
 # counts sessions started and stopped, each server's Access-Accepts and
 # -Rejects, and the Disconnect/CoA listener's ACKs, NAKs and silent drops.
+# and the session trail's (#597, docs/bng.md 0.7): a module, prisma_trail,
+# that appends who held which address from when to when to a hash-chained,
+# fsynced file of the box's own, whatever RADIUS accounting got.
 #
 # THE OPTIONS: RADIUS on (the product authenticates against the operator's
 # RADIUS), the VPP hooks on, the Linux kernel driver off (VPP carries the
@@ -73,11 +76,15 @@ if [ ! -d "$SRC/.git" ]; then
 fi
 git -C "$SRC" checkout -q "$ACCEL_SHA"
 git -C "$SRC" checkout -q -- .
-rm -f "$SRC/accel-pppd/shaper/prisma_rate.c"
+rm -f "$SRC/accel-pppd/shaper/prisma_rate.c" "$SRC/accel-pppd/extra/prisma_trail.c"
 git -C "$SRC" apply "$HERE/accel-ppp-ng.patch"
 # The Cisco-AVPair rate parser (#607), a file of this repository's own that
 # the patched shaper.c includes: test/test_prisma_rate.c tests it alone.
 cp "$HERE/prisma_rate.c" "$SRC/accel-pppd/shaper/prisma_rate.c"
+# The PPPoE session trail's writer (#597, docs/bng.md 0.7), the same way:
+# the patch's module accel-pppd/extra/prisma_trail_mod.c includes it, and
+# test/test_prisma_trail.c tests it alone.
+cp "$HERE/prisma_trail.c" "$SRC/accel-pppd/extra/prisma_trail.c"
 # The pin, checked after the fact: a checkout that fell through to anything
 # else is a build of a source nobody reviewed.
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$ACCEL_SHA" ]

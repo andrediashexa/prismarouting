@@ -70,6 +70,12 @@ CP_LINUX = "pppoe-cp"
 SESSION_HOOK = "/usr/lib/prisma-bng/session"
 #: accel-ppp's own logs, on the log volume the container mounts.
 LOG_DIR = "/var/log/prisma-routing/bng"
+#: The session trail (docs/bng.md 0.7): who held which inside address from
+#: when to when, written by the control plane's prisma_trail module on the
+#: log volume beside the configuration trail - root's directory, read through
+#: the host's door (pppoetrail.py). Not under LOG_DIR: accel-ppp's own logs
+#: are a diagnosis, this is a record kept like config-history.log.
+TRAIL_PATH = "/var/log/prisma-routing/pppoe-sessions.log"
 #: The RADIUS dictionary the image installs.
 DICTIONARY = "/usr/share/accel-ppp/radius/dictionary"
 
@@ -487,7 +493,9 @@ def cp_name(vlan):
 #: again at the next load (prismash.Shell.apply_pppoe). 2: #607's [radius]
 #: and [shaper]. 3: half a second of burst (0.155.2) - a box upgraded from
 #: 0.155.1 gets the new buckets at its next load, not at its next commit.
-FORMAT = "3"
+#: 4: the session trail's module and its [prisma-trail] (docs/bng.md 0.7) - a
+#: box upgraded with PPPoE running starts recording at its next load.
+FORMAT = "4"
 FORMAT_LINE = f"# prisma-bng format {FORMAT}"
 
 
@@ -544,7 +552,22 @@ def modules(held, aaa):
     # After radius, whose Access-Accept and CoA events it takes.
     mods.append("shaper")
     mods.append("pppd_compat")
+    # The session trail (docs/bng.md 0.7). Its events are the session's own,
+    # not RADIUS's, so where it is in the list changes nothing it records.
+    mods.append("prisma_trail")
     return mods
+
+
+def trail_section(acc):
+    """
+    accel-ppp.conf's [prisma-trail]: where the session trail is written, and
+    each access interface's Linux name (what accel-ppp knows a session came
+    in on) as the name the VTY gives it - so the record says `ens19.100`,
+    which an operator configured, and not `pppoe-cp.100`, which nobody did.
+    """
+    out = ["[prisma-trail]", f"path={TRAIL_PATH}"]
+    out += [f"interface-{cp_name(v)}={name}" for name, _, v in acc]
+    return out
 
 
 def accel_conf(held, acc, aaa=None):
@@ -583,6 +606,7 @@ def accel_conf(held, acc, aaa=None):
         out += ["", "[ip-pool]", f"gw-ip-address={held['gateway']}"]
         out += held["pools"]
     out += [""] + shaper_section(held, aaa)
+    out += [""] + trail_section(acc)
     out += ["", "[pppd-compat]", f"ip-up={SESSION_HOOK}", "verbose=1",
             "", "[log]", f"log-file={LOG_DIR}/accel-ppp.log", "level=3",
             "copy=1", ""]
@@ -830,7 +854,28 @@ def stat_counts(text):
     return counts
 
 
-def summary_screen(held, status, counts, aaa=None, states=None):
+def trail_counts(text):
+    """
+    The session trail's block of accel-cmd's `show stat` (docs/bng.md 0.7):
+    {"written", "failed", "seq"}, or {} when the control plane has no trail
+    module - a container older than the trail.
+    """
+    counts, inside = {}, False
+    for line in text.splitlines():
+        s = line.strip()
+        if s == "prisma-trail:":
+            inside = True
+            continue
+        if inside:
+            k, _, v = s.partition(":")
+            if k.strip() in ("written", "failed", "seq") and is_number(v.strip()):
+                counts[k.strip()] = int(v)
+            else:
+                inside = False
+    return counts
+
+
+def summary_screen(held, status, counts, aaa=None, states=None, trail=None):
     """
     `show pppoe summary`: the container, the sessions, the configuration -
     and, with RADIUS, each server and whether accel-ppp has it marked down
@@ -847,6 +892,16 @@ def summary_screen(held, status, counts, aaa=None, states=None):
         out.append(f"{'sessions':<22}{counts.get('active', 0)} active, "
                    f"{counts.get('starting', 0)} starting, "
                    f"{counts.get('finishing', 0)} finishing")
+        # The session trail (docs/bng.md 0.7): an entry it could not write
+        # is a session the box cannot answer for, and it says so here.
+        if trail:
+            row = f"{trail.get('written', 0)} entries written"
+            if trail.get("failed"):
+                row += f", {trail['failed']} NOT written"
+            out.append(f"{'session trail':<22}{row}")
+        elif trail is not None:
+            out.append(f"{'session trail':<22}NOT recorded: the control "
+                       f"plane has no trail")
     out.append(f"{'access interfaces':<22}" + ", ".join(held["interfaces"]))
     if uses_radius(aaa):
         out.append(f"{'authentication':<22}RADIUS, 'aaa radius'")

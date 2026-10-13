@@ -90,6 +90,7 @@ import events
 import eventfwd
 import aaa as aaa_mod
 import pppoe as pppoe_mod
+import pppoetrail
 from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     hostname_error, HOSTNAME_DEFAULT,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -2396,7 +2397,7 @@ SHOW_CGNAT = {
     # the dataplane CLI to troubleshoot is one for whom this VTY is decoration.
     "subscriber": ("everything about one subscriber", "<inside-address>"),
     "translation": ("who was behind a public address and port",
-                    "<public-address> <port>"),
+                    "<public-address> <port> [at <time>]"),
     "top": ("subscribers closest to exhausting their blocks", "[<n>]"),
     "drops": ("why packets did not get through", None),
     "memory": ("the CGNAT's memory: what it holds and what still fits", None),
@@ -2459,6 +2460,24 @@ SHOW_NAT64 = {
                     "<public-address> <port>"),
 }
 
+def translation_inside(text):
+    """
+    (inside address, source) out of the dataplane's `show bpa translation`:
+    the IPv4 address after the arrow, and "formula" when the answer holds
+    for any instant, "now" when for this instant only (a dynamic or reserve
+    block) - (None, None) when nobody holds it, it is NAT64's, or the
+    dataplane said something else.
+    """
+    first = (text or "").splitlines()[:1]
+    m = re.match(r"^\S+:\d+\s+->\s+(\d+\.\d+\.\d+\.\d+)\s*$",
+                 first[0] if first else "")
+    if not m:
+        return None, None
+    if "DETERMINISTIC NAT64" in text:
+        return None, None
+    return m.group(1), ("formula" if "from the FORMULA" in text else "now")
+
+
 def nat64_pool_blocks(text):
     """
     The NAT64 pools out of `show bpa pool` (#572), each its own block as the
@@ -2518,7 +2537,20 @@ SHOW = {
         "session": ("one session: MAC, traffic, rate limit, policer counters",
                     "<session-id>"),
         "summary": ("the control plane, the session counts, the "
-                    "configuration", None)}),
+                    "configuration", None),
+        # docs/bng.md 0.7: the session trail, the second half of "who was
+        # behind this public port at that instant".
+        "history": ("who held which inside address, from when to when", {
+            "user": ("one subscriber's sessions", "<name>"),
+            "address": ("the sessions that held an inside address",
+                        "<A.B.C.D>"),
+            "session": ("one session, by its id", "<session-id>"),
+            "at": ("only the sessions held at this instant",
+                   "<time>"),
+            "since": ("only the sessions held from this time on", "<time>"),
+            "last": ("only the last n sessions", "<n>"),
+            "verify": ("check the trail's hash chain, and name the first "
+                       "entry that does not match", None)})}),
     "configuration": ("candidate configuration", {
         "compare": ("differences against the running configuration", None),
         # #575: what the boot left out for a card the box did not have.
@@ -22213,8 +22245,11 @@ class Shell:
         # `show cgnat forward` is here rather than in the map above because it
         # takes an optional pool name, and the argument travels through
         # untouched for the same reason the other three do.
-        for pfx in ("show cgnat subscriber", "show cgnat translation",
-                    "show cgnat top", "show cgnat forward"):
+        if _ha[:3] == ["show", "cgnat", "translation"]:
+            self.show_cgnat_translation(_ha[3:])
+            return
+        for pfx in ("show cgnat subscriber", "show cgnat top",
+                    "show cgnat forward"):
             if line == pfx or line.startswith(pfx + " "):
                 self.vpp("show bpa" + line[len("show cgnat"):])
                 return
@@ -25720,22 +25755,99 @@ class Shell:
             print("\n".join(pppoe_mod.session_screen(
                 rows[0], idx, pppoe_mod.policers(vp if _rc == 0 else ""))))
             return
+        if args[:1] == ["history"]:
+            self.show_pppoe_history(args[1:])
+            return
         if args == ["summary"]:
             cfg = self.running_config()
             held = cfg.pppoe
             rc, status = self.host_run([pppoe_mod.BNG_CTL, "status"])
             status = status.strip() if rc == 0 else "unknown"
-            counts, states = {}, {}
+            counts, states, trail = {}, {}, None
             if status == "running":
                 rc, out = self.host_run([pppoe_mod.BNG_CTL, "summary"])
                 counts = pppoe_mod.stat_counts(out) if rc == 0 else {}
                 # Which RADIUS servers accel-ppp has marked down (#607):
                 # the same `show stat`, its radius blocks.
                 states = aaa_mod.server_states(out) if rc == 0 else {}
+                # And the session trail's (docs/bng.md 0.7).
+                trail = pppoe_mod.trail_counts(out) if rc == 0 else None
             print("\n".join(pppoe_mod.summary_screen(held, status, counts,
-                                                     cfg.aaa, states)))
+                                                     cfg.aaa, states, trail)))
             return
-        self.err("usage: show pppoe sessions | session <id> | summary")
+        self.err("usage: show pppoe sessions | session <id> | summary | "
+                 "history")
+
+    def show_pppoe_history(self, words):
+        """
+        `show pppoe history [user <name>] [address <A.B.C.D>] [session <id>]
+        [at <time> | since <time>] [last <n>]` and `show pppoe history
+        verify` (docs/bng.md 0.7): the session trail the control plane
+        writes - who held which inside address from when to when - read on
+        the host (pppoetrail.py), and its hash chain checked.
+        """
+        if words == ["verify"]:
+            rep, why = pppoetrail.fetch_verify()
+            if why:
+                self.err_prose("show pppoe history verify: not read", why)
+                return
+            print("\n".join(pppoetrail.verify_screen(rep)))
+            return
+        f, why = pppoetrail.parse_show_args(words, events.parse_since)
+        if why:
+            self.err_prose("show pppoe history: not a filter it takes", why)
+            return
+        got, why = pppoetrail.fetch(f)
+        if why:
+            self.err_prose("show pppoe history: the trail was not read", why)
+            return
+        print("\n".join(pppoetrail.history_screen(got)))
+
+    def show_cgnat_translation(self, args):
+        """
+        `show cgnat translation <public> <port> [at <time>]`: the dataplane's
+        answer - the inside address behind it, from the formula or from the
+        block held now - and, on a box with PPPoE, the session that held that
+        inside address (docs/bng.md 0.7): now, or at the instant asked.
+
+        `at` is taken only where the dataplane's answer holds for it: the
+        formula, which holds for any instant while the pool is unchanged. A
+        dynamic block answers for now only, and joining it to a past session
+        would name whoever holds the block today; for a past instant the
+        block log gives the inside address, and `show pppoe history address
+        <a> at <time>` the session.
+        """
+        at = None
+        if len(args) == 4 and args[2] == "at":
+            try:
+                at = events.parse_since(args[3])
+            except ValueError as e:
+                self.err_prose("show cgnat translation: not a time", str(e))
+                return
+            args = args[:2]
+        rc, out = self.dp.run("show bpa translation " + " ".join(args))
+        inside, source = translation_inside(out if rc == 0 else "")
+        if at is not None and inside and source != "formula":
+            self.err_prose("show cgnat translation: 'at' needs a formula",
+                           "a dynamic block is answered for now only; for an "
+                           "earlier instant the block log names the inside "
+                           "address, and 'show pppoe history address <a> at "
+                           "<time>' the session")
+            return
+        if out:
+            print(out)
+        if rc:
+            self.failed += 1
+            return
+        if not inside:
+            return
+        when = time.time() if at is None else at
+        got, why = pppoetrail.fetch({"address": inside, "at": when})
+        rows = pppoetrail.translation_rows(
+            inside, when, (got or {}).get("sessions") or [], why,
+            not pppoe_mod.is_empty(self.running_config().pppoe))
+        if rows:
+            print("\n".join(rows))
 
     def clear_nat64(self, rest):
         """

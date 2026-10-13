@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PPPoE: the box's own record of who held which inside address, from when
+  to when.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  With a BNG the inside address is handed out in order of arrival, so the
+  CGNAT's record of a block names an inside address, not a subscriber
+  (docs/bng.md 3.1). accel-ppp now writes a session trail of its own,
+  `/var/log/prisma-routing/pppoe-sessions.log`: a `start` when the session's
+  address is bound - before RADIUS is sent its Accounting-Start, so the
+  record does not depend on any accounting server answering - and a `stop`
+  before the address goes back to the pool, each with the user, the
+  `Acct-Session-Id`, the MAC, the access interface by its VTY name, the
+  address, UTC milliseconds and the cause as RADIUS is told it; one line per
+  entry, appended, `fsync`ed, and hash-chained by the configuration trail's
+  own rule. A control plane killed with -9 has its sessions closed by the
+  next one before its first session (`Control-Plane-Lost`). Monthly the file
+  is moved aside and the sessions still held are restated in the next, so a
+  month answers for itself; the box never deletes it. `show pppoe history
+  [user|address|session] [at <time> | since <time>] [last <n>]` reads it
+  through the host's door, `show pppoe history verify` checks the chain, and
+  `show cgnat translation <public> <port> at <time>` joins a deterministic
+  pool's formula to the session that held the address then (a dynamic block
+  refuses `at`: its inside address and instant come from the block log, and
+  `show pppoe history address <a> at <time>` gives the session). `show
+  pppoe summary` counts the entries written and any it could not write.
+  docs/bng.md 0.7.
+
 ### Fixed
 
 ## 0.155.3 - PPPoE counters in the MIB; SNMP GET of optics and thresholds fixed

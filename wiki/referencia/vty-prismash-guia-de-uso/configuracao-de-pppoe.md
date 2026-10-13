@@ -160,6 +160,36 @@ O segredo de cada servidor e de cada `client` fica na configuração salva, para
 
 Uma sessão encerrada manda PADT ao CPE e Accounting-Stop ao RADIUS; o CPE disca de novo. As interfaces que o dataplane cria para as sessões nunca entram na configuração: são assinantes discando, não algo que alguém configurou.
 
+## Quem tinha o endereço: o histórico de sessões
+
+Com PPPoE, o endereço interno do assinante é entregue na hora da discagem, por ordem de chegada. O registro do CGNAT (o log de blocos, ou a fórmula) diz qual **endereço interno** estava atrás de um IP público e de uma porta; para saber **qual assinante** tinha esse endereço naquele instante, a caixa guarda o próprio histórico de sessões. Ele é escrito pelo plano de controle no início e no fim de cada sessão, responda ou não algum servidor RADIUS, em `/var/log/prisma-routing/pppoe-sessions.log`, ao lado da trilha de configuração: só cresce, cada linha vai ao disco antes de a sessão seguir, e cada uma carrega um hash encadeado na anterior.
+
+| Comando | O que mostra |
+|---------|--------------|
+| `show pppoe history address <A.B.C.D> at <hora>` | a sessão que tinha aquele endereço interno naquele instante: o usuário, de quando a quando, o id da sessão, o MAC e a interface de acesso |
+| `show pppoe history user <nome>` | as sessões de um usuário |
+| `show pppoe history since <hora>` | as sessões que estiveram de pé daquela hora em diante |
+| `show pppoe history verify` | confere a cadeia de hashes e diz a primeira linha que não confere |
+| `show cgnat translation <público> <porta> at <hora>` | num pool determinístico, as duas etapas de uma vez: o endereço interno pela fórmula e a sessão que o tinha naquele instante |
+
+A hora é a do `show log`: um horário ISO com `Z` (o do log de blocos, copiado como está), sem fuso (o da caixa), ou `30m`, `2d` para trás. As horas que o histórico mostra são sempre UTC, como as do log de blocos.
+
+```
+prisma> show pppoe history address 100.64.0.11 at 2026-10-13T02:51:00Z
+maria.souza held 100.64.0.11
+  from 2026-10-13T02:49:02.789Z  to still held
+  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on ens19.100
+```
+
+Num pool **dinâmico**, o bloco pertence a quem o tem agora: o `show cgnat translation` responde só pelo agora e recusa o `at`. Para um instante passado, a linha `BLOCK-ALLOC` do log de blocos cuja faixa contém a porta dá o endereço interno e a hora, e o `show pppoe history address <endereço> at <hora>` dá o assinante.
+
+O `show pppoe summary` tem a linha `session trail`: quantas linhas foram escritas e, em maiúsculas, quantas **não** puderam ser (volume cheio, por exemplo) - cada uma é uma sessão pela qual a caixa não consegue responder.
+
+:::warning
+Uma cadeia que confere prova que o arquivo não foi editado, não que é o mesmo arquivo. Guarde fora da caixa, de tempos em tempos, o `sha256` que o `show pppoe history verify` imprime. A caixa nunca apaga o histórico: uma vez por mês o arquivo vira `pppoe-sessions.log.<AAAA-MM>`, e os meses além do prazo de guarda podem ser arquivados ou removidos por você.
+
+:::
+
 ## Como conferir
 
 ```

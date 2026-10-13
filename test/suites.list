@@ -28,6 +28,7 @@
 .build/test_bpa_sock
 .build/test_bpa_ports
 .build/test_prisma_rate
+.build/test_prisma_trail
 .build/test_bpa_rtsp
 .build/test_bpa_mss
 .build/test_bpa_ftp
@@ -168,6 +169,7 @@ python3 test/test_events.py
 python3 test/test_eventwatch.py
 python3 test/test_eventfwd.py
 python3 test/test_pppoe.py
+python3 test/test_pppoetrail.py
 python3 test/test_aaa.py
 sh test/test_prisma_bng.sh
 python3 test/test_bfdtraps.py

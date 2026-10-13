@@ -12,7 +12,8 @@ ARG BASE
 FROM ${BASE} AS build
 ARG VPP_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
-COPY build/accel-ppp-build.sh build/accel-ppp-ng.patch build/prisma_rate.c /build/
+COPY build/accel-ppp-build.sh build/accel-ppp-ng.patch build/prisma_rate.c \
+     build/prisma_trail.c /build/
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         $(sh /build/accel-ppp-build.sh --deps) \

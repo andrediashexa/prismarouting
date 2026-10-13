@@ -109,7 +109,7 @@ cp "$REPO"/test/bpa_shim.h "$REPO"/test/bpa_vec_shim.h "$REPO"/test/bpa_tcp_shim
 # delta to it, the entrypoint, the CLI wrapper and the session hook.
 mkdir -p "$CTX/build"
 cp "$REPO/build/accel-ppp-build.sh" "$REPO/build/accel-ppp-ng.patch" \
-   "$REPO/build/prisma_rate.c" "$CTX/build/"
+   "$REPO/build/prisma_rate.c" "$REPO/build/prisma_trail.c" "$CTX/build/"
 cp "$REPO/appliance/prisma-bng-entrypoint" "$REPO/appliance/prisma-bng-cli" \
    "$REPO/appliance/prisma-bng-session" "$REPO/appliance/dictionary.prisma" \
    "$CTX/appliance/"

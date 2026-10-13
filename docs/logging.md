@@ -486,6 +486,15 @@ Delegations never overlap in the table: a new one replaces any it overlaps,
 because the prefix delegated now is that customer's and an older entry
 covering it is a Stop that never reached this box.
 
+**When this box is the BNG** (PPPoE, [bng.md](bng.md)), the record of who
+held an inside address is its own: the session trail, `show pppoe history`,
+written by the control plane at each session's start and stop whether or not
+any RADIUS server answers, hash-chained like the configuration trail below,
+and kept on the log volume beside it ([bng.md 0.7](bng.md#07-the-session-trail-who-held-which-inside-address-from-when-to-when)).
+A block record's inside address and instant are joined to it by `show pppoe
+history address <a> at <time>`, and a formula's by `show cgnat translation
+<public> <port> at <time>`.
+
 **The accounting is read every second whatever the log is doing.** It was
 read only at the end of the log's drain, so not at all while no transport was
 enabled, nor until the first IPFIX template had gone out after `logging
