@@ -508,7 +508,7 @@ for _o, _t, _v in agent.entity_rows(
         0, 0, 30000):
     if _o.startswith("1.3.6.1.4.1.99999."):
         _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
-# prBng (#597) is read only when a request reaches .22 (bng_wanted()), so
+# prBng (#597) is read only when a request reaches .22 (subtree_wanted()), so
 # oid_table() has none of it: the fixture's control plane, running, with
 # both servers - every column of the table among them.
 for _o, _t, _v in agent.bng_rows("1.3.6.1.4.1.99999.1", agent.bng_state(
@@ -1794,20 +1794,36 @@ check(agent.Bng().rows == [] and agent.Bng().at == 0.0,
 # poll of anything else must not pay a docker exec.
 _pf = agent.as_key("1.3.6.1.4.1.67033.1.22")
 _k = agent.as_key
-check(agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.22.3.0"), None, _pf)
-      and not agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.1.0"),
+check(agent.subtree_wanted("GET", _k("1.3.6.1.4.1.67033.1.22.3.0"), None, _pf)
+      and not agent.subtree_wanted("GET", _k("1.3.6.1.4.1.67033.1.1.0"),
                                ("1.3.6.1.4.1.67033.1.1.0", "gauge", 1), _pf)
-      and not agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.23.0"), None, _pf),
+      and not agent.subtree_wanted("GET", _k("1.3.6.1.4.1.67033.1.23.0"), None, _pf),
       "#597: a GET reads prBng only inside .22")
-check(agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.19.5.0"), None, _pf)
-      and agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.22.20"), None, _pf)
-      and not agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.12.1.0"),
+check(agent.subtree_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.19.5.0"), None, _pf)
+      and agent.subtree_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.22.20"), None, _pf)
+      and not agent.subtree_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.12.1.0"),
                                ("1.3.6.1.4.1.67033.1.12.2.0", "string", ""), _pf)
-      and not agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.23"), None, _pf),
+      and not agent.subtree_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.23"), None, _pf),
       "#597: a GETNEXT reads it only when the rest ran out before .22 ends: "
       "a walk reaches it, a poll of the pools does not")
-check(not agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.22.1.0"), None, None),
+check(not agent.subtree_wanted("GET", _k("1.3.6.1.4.1.67033.1.22.1.0"), None, None),
       "#597: no enterprise number, no prBng")
+# #608: prTransceiver and prSensorThresholdTable are read the same way, in
+# OID order so a GETNEXT that runs out of one reaches the next.
+check([a for a, _f in agent.LAZY] == [agent.XCVR, agent.SENSOR_TH, agent.BNG]
+      == ["20", "21", "22"],
+      "#608: .20, .21 and .22 served by the enterprise process, in order")
+check(agent.subtree_wanted("GET", _k("1.3.6.1.4.1.67033.1.20.1.1.2.1"), None,
+                           _k("1.3.6.1.4.1.67033.1.20"))
+      and agent.subtree_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.20.2.1.3.1.1"),
+                               None, _k("1.3.6.1.4.1.67033.1.21")),
+      "#608: a GET of a transceiver row reaches .20, a walk out of .20 .21")
+check(agent.in_subtree([("1.3.6.1.2.1.47.1.0", "integer", 1),
+                        ("1.3.6.1.4.1.9.1.21.1.1.1.1002", "integer", 9000)],
+                       _k("1.3.6.1.4.1.9.1.21"))
+      == [("1.3.6.1.4.1.9.1.21.1.1.1.1002", "integer", 9000)],
+      "#608: of the ENTITY reader's rows, only the thresholds are the "
+      "product's")
 _rows = [("1.3.6.1.4.1.9.1.0", "gauge", 1), ("1.3.6.1.4.1.9.2.0", "gauge", 2)]
 check(agent.find(_rows, "GET", _k("1.3.6.1.4.1.9.2.0")) == _rows[1]
       and agent.find(_rows, "GETNEXT", _k("1.3.6.1.4.1.9.1.0")) == _rows[1]

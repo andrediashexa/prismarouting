@@ -286,6 +286,8 @@ A partir da versão 0.151.15, `prTransceiver` traz o módulo de cada porta — o
 
 Um valor que o módulo não dá, e os limites de quem não tem limites, **não aparecem** — não aparecem zerados. Os mesmos módulos estão também na ENTITY-MIB e na ENTITY-SENSOR-MIB, descritas acima; esta tabela fica, em dBm, a unidade que o switch do outro lado mostra, e é nela que estão os alarmes ópticos do template do Zabbix.
 
+Até a versão 0.155.2, um `snmpget` desta tabela e de `prSensorThresholdTable` respondia *No Such Instance*, embora o `snmpwalk` funcionasse — e o Zabbix consulta com GET, então os itens ópticos do template ficavam sem valor. A partir da 0.155.3 os dois respondem ao GET; a atualização ajusta o `snmpd.conf` e reinicia o snmpd sozinha.
+
 ### O PPPoE: sessões, servidores RADIUS e CoA
 
 A partir da versão 0.155.3, `prBng` (`.1.22`) traz o plano de controle do PPPoE — o mesmo `show stat` do accel-ppp que o `show pppoe summary` lê, com os contadores que a caixa acrescenta a ele.

@@ -35,6 +35,8 @@ install -D -m 0755 /src/appliance/prisma-routing-snmp-agent /usr/lib/prisma-rout
 # doors, whether the control plane runs. This container has no compose.yaml,
 # so it answers what a box running the dataplane as units does - no PPPoE.
 install -D -m 0755 /src/appliance/prisma-bng /usr/lib/prisma-routing/prisma-bng
+# The module reader beside the agent, where install.sh puts it (#608).
+install -D -m 0644 /src/src/prismash/transceiver.py /usr/lib/prisma-routing/transceiver.py
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 wait_vpp
@@ -71,6 +73,12 @@ vppctl vrrp vr add pg0 vr_id 7 ipv6 priority 150 interval 100 fe80::7 2001:db8:7
 vppctl vrrp proto start pg0 vr_id 7 ipv6 >/dev/null
 PG0_LL=$(vppctl show ip6 interface pg0 | tr -d '\r' | sed -n '/Link-local/{n;s/^ *//;s/\/.*//;p;q}')
 vppctl create bond mode lacp >/dev/null
+# A MODULE ON pg0 (#608): the plugin's stand-in, the bytes lab/transceiver.sh
+# gives its Ethernet1 - an SFP whose RX is past its low warning - so that
+# prTransceiver and prSensorThresholdTable have rows to GET.
+vppctl bpa transceiver stand-in pg0 type sff-8472 hex "$(python3 -c "import sys; \
+sys.path.insert(0, '/src/test'); import transceiver_fixtures as F; \
+print(F.sfp_low_rx().hex())")" >/dev/null
 
 # BFD-STD-MIB (#559): bfdd, with one session nobody answers - a `peer` on a
 # dummy interface, so its state is down and stays down, which this lab knows.
@@ -250,6 +258,20 @@ VRPRI=$($PM PRISMA-ROUTING-MIB::prVrrpPriority.1 2>&1)
 BNAME=$($PM PRISMA-ROUTING-MIB::prBundleName.1 2>&1)
 BMEM=$($PM PRISMA-ROUTING-MIB::prBundleMembers.1 2>&1)
 IDENT=$($PM PRISMA-ROUTING-MIB::prIdentityEntries.0 2>&1)
+# prTransceiver and prSensorThresholdTable BY GET (#608), what Zabbix polls
+# with: on 10.40.200.166 a walk answered and an snmpget of the same OID was
+# noSuchInstance, because their registrations were nested under the
+# product's and net-snmp sends a GET to the broader one. Each is compared
+# with the walk's value at the same OID.
+XRX=".1.3.6.1.4.1.99999.1.20.2.1.3.${PG0:-0}.1"
+XNAME=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 ".1.3.6.1.4.1.99999.1.20.1.1.2.${PG0:-0}" 2>&1)
+XRXGET=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 "$XRX" 2>&1)
+XRXWALK=$(snmpwalk -v2c -c hexro -On 127.0.0.1 .1.3.6.1.4.1.99999.1.20.2.1.3 2>&1 \
+          | awk -v o="$XRX" '$1 == o { print $NF; exit }')
+TLW=".1.3.6.1.4.1.99999.1.21.1.1.3.$(( ${PG0:-0} * 1000 + 13 ))"
+TLWGET=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 "$TLW" 2>&1)
+TLWWALK=$(snmpwalk -v2c -c hexro -On 127.0.0.1 .1.3.6.1.4.1.99999.1.21 2>&1 \
+          | awk -v o="$TLW" '$1 == o { print $NF; exit }')
 # prBng (#597) on a box with no PPPoE: answered, not an error - the state,
 # zero sessions, and no RADIUS server row.
 BNGST=$($PM PRISMA-ROUTING-MIB::prBngState.0 2>&1)
@@ -307,6 +329,7 @@ echo "  subscribers $POOLSUBS, sessions $POOLSESS, ports $POOLPORTS; prSessions 
 echo "  dataplane build $BUILD, current $CURRENT; TCP transport enabled $TCPON"
 echo "  sessions that fit $FIT (show cgnat memory says ${DP_FIT:-nothing}); per worker $(printf '%s' "$WSESS" | tr '\n' ' ')"
 echo "  VRRP 1: $VRIF, $VRST, priority $VRPRI; bundle 1: $BNAME with $BMEM member(s); identity entries $IDENT"
+echo "  pg0's module by GET: prXcvrName $XNAME, RX $XRXGET (walked ${XRXWALK:-nothing}); its RX sensor's low warning $TLWGET (walked ${TLWWALK:-nothing})"
 echo "  PPPoE: $BNGST, $BNGACT session(s) up, $BNGCOA CoA ACK(s); RADIUS table: ${BNGRAD:-(empty)}"
 echo "  NATV2-MIB: instance 1 $NVALIAS, $NVPORTS port map entries, $NVSUBS address map entries, ports from $NVMIN, range $NVBEGIN - $NVEND"
 echo "  ... $(printf '%s\n' "$NVWALK" | grep -c .) NATV2-MIB rows walked"
@@ -506,6 +529,12 @@ expect "advertising the priority configured ($VRPRI)" test "$VRPRI" = "150"
 expect "the bundle is in the table ($BNAME), at zero members" \
   test "$BNAME/$BMEM" = "BondEthernet0/0"
 expect "and a box with no identity table says zero entries" test "$IDENT" = "0"
+expect "#608: prXcvrName by snmpget, not only by walk ($XNAME)" \
+  test "$XNAME" = '"pg0"'
+expect "  and pg0's RX power, -19.00 dBm, by GET as walked ($XRXGET, ${XRXWALK:-nothing})" \
+  test "$XRXGET/$XRXWALK" = "-1900/-1900"
+expect "  a sensor's threshold by snmpget as walked ($TLWGET, ${TLWWALK:-nothing})" \
+  sh -c "test -n '$TLWWALK' && test '$TLWGET' = '$TLWWALK'"
 expect "a box with no PPPoE answers prBng: noContainers, as this one runs units ($BNGST)" \
   test "$BNGST" = "noContainers"
 expect "  with zero sessions up ($BNGACT) and zero CoAs ($BNGCOA)" \

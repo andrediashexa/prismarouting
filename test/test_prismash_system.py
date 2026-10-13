@@ -811,15 +811,11 @@ check(body.splitlines()[1:] == [
     "pass_persist .1.2.840.10006.300.43 /x/agent",
     "pass_persist .1.3.6.1.2.1.222 /x/agent --bfd",
     # ENTITY-MIB and ENTITY-SENSOR-MIB (#496 phase 5): one more process.
-    "pass_persist .1.3.6.1.2.1.47 /x/agent --entity --enterprise 70000",
-    "pass_persist .1.3.6.1.2.1.99 /x/agent --entity --enterprise 70000",
-    "pass_persist .1.3.6.1.4.1.70000 /x/agent --enterprise 70000",
-    # prTransceiver (#590): its own process on its subtree.
-    "pass_persist .1.3.6.1.4.1.70000.1.20 /x/agent --transceivers "
-    "--enterprise 70000",
-    # and the sensors' thresholds (#496), from the ENTITY process.
-    "pass_persist .1.3.6.1.4.1.70000.1.21 /x/agent --entity "
-    "--enterprise 70000"],
+    "pass_persist .1.3.6.1.2.1.47 /x/agent --entity",
+    "pass_persist .1.3.6.1.2.1.99 /x/agent --entity",
+    # ONE registration for the product's subtree (#608): a nested one is
+    # never asked a GET by net-snmp 5.9.3, so .20 and .21 have none.
+    "pass_persist .1.3.6.1.4.1.70000 /x/agent --enterprise 70000"],
     f"address, both views, every community, users sorted, both agents: "
     f"{body.splitlines()}")
 check(body.endswith("\n") and "rw" not in body,
@@ -831,11 +827,7 @@ check("agentAddress udp:127.0.0.1:161" in body
       == ["view hexa included .1.3.6.1.4.1.2021",
           "view hexa included .1.3.6.1.4.1.67033",
           f"pass_persist .1.3.6.1.4.1.67033 {system.SNMP_AGENT} "
-          f"--enterprise 67033",
-          f"pass_persist .1.3.6.1.4.1.67033.1.20 {system.SNMP_AGENT} "
-          f"--transceivers --enterprise 67033",
-          f"pass_persist .1.3.6.1.4.1.67033.1.21 {system.SNMP_AGENT} "
-          f"--entity --enterprise 67033"]
+          f"--enterprise 67033"]
       and "sysdescr Prisma Routing\n" in body
       and f"pass_persist .1.3.6.1.2.1.123 {system.SNMP_AGENT}" in body,
       f"defaults: loopback 161, the product's subtree, UCD's own, a sysDescr "

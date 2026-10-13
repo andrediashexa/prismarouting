@@ -1934,7 +1934,7 @@ BFD = Bfd()
 # numbers").
 #
 # SERVED BY THE ENTERPRISE PROCESS, AND READ ONLY WHEN ASKED (main(),
-# bng_wanted()): a read is a `docker exec` into the container, which the
+# LAZY, subtree_wanted()): a read is a `docker exec` into the container, which the
 # rest of the product's objects should not wait on, so a poll that does not
 # reach .22 never makes one. Not a process of its own on a registration of
 # its own, as BFD's is: measured on Debian 12's net-snmp 5.9.3 with two
@@ -1943,7 +1943,9 @@ BFD = Bfd()
 # snmpd.conf - and the one on .22 is asked only GETNEXTs. A walk read it
 # (lab/pppoe.sh's first run) and every snmpget, which is what Zabbix polls
 # with, answered noSuchInstance (lab/snmp.sh). prTransceiver's and
-# prSensor's registrations (.20, .21) are nested the same way.
+# prSensor's registrations (.20, .21) were nested the same way, and 10.40.
+# 200.166 answered their walks and no GET (#608): they are served this way
+# now too.
 BNG = "22"
 BNG_CACHE_SECONDS = float(os.environ.get("PRISMA_SNMP_BNG_CACHE", "10"))
 #: The host's lifecycle script (src/prismash/pppoe.py BNG_CTL_HOST), and the
@@ -2097,12 +2099,12 @@ def bng_rows(base, st):
     return out
 
 
-def bng_wanted(cmd, key, hit, prefix):
+def subtree_wanted(cmd, key, hit, prefix):
     """
-    Whether a `cmd` ("GET" or "GETNEXT") for `key` needs prBng's rows, the
-    rest of the table having answered `hit` (or None): a GET inside
-    `prefix` (prBng's arcs), or a GETNEXT at or before its end that the rest
-    answered past it. Both keys are lists of arcs.
+    Whether a `cmd` ("GET" or "GETNEXT") for `key` needs the rows of the
+    subtree at `prefix` (its arcs), the rest of the table having answered
+    `hit` (or None): a GET inside it, or a GETNEXT at or before its end that
+    the rest answered past it. Both keys are lists of arcs.
     """
     if not prefix:
         return False
@@ -2177,7 +2179,7 @@ def transceiver_module():
     """
     src/prismash/transceiver.py: beside this file where install.sh puts both
     (/usr/lib/prisma-routing), or in the repository's tree for a lab and the
-    suites. Imported on first use, by the `--transceivers` process only.
+    suites. Imported on first use, by the process that reads the modules.
     """
     here = os.path.dirname(os.path.realpath(__file__))
     for d in (here, os.path.join(here, "..", "src", "prismash")):
@@ -2755,6 +2757,26 @@ def as_key(oid):
         return None
 
 
+# THE ENTERPRISE SUBTREES SERVED ONLY WHEN A REQUEST REACHES THEM, in OID
+# order (#608). prTransceiver (.20) and prSensorThresholdTable (.21) had
+# processes of their own on registrations nested under the enterprise's,
+# and net-snmp 5.9.3 sends a GET under a nested pass_persist registration
+# to the broader one: on 10.40.200.166 (0.155.2) `snmpwalk .1.20` gave
+# `.20.1.1.2.1 = "enp1s0"` and `snmpget` of that OID noSuchInstance, and
+# every Zabbix item on them - polled by GET - had no value. Each is served
+# here instead, read (a module over I2C, a `docker exec`) only by a request
+# that reaches it, so a poll of the pools still waits on neither.
+LAZY = [(XCVR, lambda: TRANSCEIVERS.refresh()),
+        (SENSOR_TH, lambda: ENTITIES.refresh()),
+        (BNG, lambda: BNG_READER.refresh())]
+
+
+def in_subtree(rows, prefix):
+    """The rows of `rows` whose OID is under `prefix` (a list of arcs)."""
+    n = len(prefix)
+    return [r for r in rows if as_key(r[0])[:n] == prefix]
+
+
 def find(rows, cmd, key):
     """The row a GET (the same OID) or a GETNEXT (the next one) for `key`
     answers with, out of `rows` in order; None when there is none."""
@@ -2798,14 +2820,17 @@ def main():
                 continue
             rows = oid_table()
             hit = find(rows, cmd, key)
-            # prBng (#597), only when the request reaches it: see BNG.
-            prefix = as_key(f"1.3.6.1.4.1.{ENTERPRISE}.1.{BNG}") \
-                if ENTERPRISE.isdigit() and not any(
+            # The subtrees read only when a request reaches them (#597,
+            # #608): see BNG and LAZY. The enterprise process only.
+            if ENTERPRISE.isdigit() and not any(
                     a.startswith("--") and a != "--enterprise"
-                    for a in sys.argv[1:]) else None
-            if bng_wanted(cmd, key, hit, prefix):
-                hit = find(sorted(rows + BNG_READER.refresh(),
-                                  key=lambda r: as_key(r[0])), cmd, key)
+                    for a in sys.argv[1:]):
+                for arc, fetch in LAZY:
+                    prefix = as_key(f"1.3.6.1.4.1.{ENTERPRISE}.1.{arc}")
+                    if subtree_wanted(cmd, key, hit, prefix):
+                        rows = sorted(rows + in_subtree(fetch(), prefix),
+                                      key=lambda r: as_key(r[0]))
+                        hit = find(rows, cmd, key)
             if hit:
                 reply(*hit)
             else:

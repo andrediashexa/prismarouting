@@ -101,11 +101,27 @@ version has a chance of seeing it.
   process that serves the rest of the product's objects, read only when a
   request reaches `.1.22`: net-snmp hands a GET under a nested
   `pass_persist` registration to the broader one, measured, so a process of
-  its own would have answered walks and no `snmpget`. An upgraded box
-  serves it once snmpd restarts its agent - the next boot, or a commit that
-  changes `snmp`.
+  its own would have answered walks and no `snmpget` (#608, below).
 
 ### Fixed
+
+* **An `snmpget` of a port's transceiver or of a sensor's threshold answered
+  noSuchInstance.** ([#608](https://github.com/andrediashexa/hexarouting/issues/608))
+  On 10.40.200.166 (0.155.2) `snmpwalk .1.3.6.1.4.1.67033.1.20` gave
+  `.20.1.1.2.1 = "enp1s0"` and an `snmpget` of that OID No Such Instance,
+  and the same for `.21` - so the Zabbix template's optics and threshold
+  items, polled by GET, never had a value. `prTransceiver` and
+  `prSensorThresholdTable` had processes of their own on registrations
+  nested under the product's, and net-snmp 5.9.3 sends a GET under a nested
+  `pass_persist` registration to the broader one, whatever the order of the
+  lines (measured with stand-in helpers); a walk worked, which is why no lab
+  saw it. The product's subtree is one registration now, and its process
+  serves both, reading the modules only for a request that reaches them. The
+  upgrade takes the two nested lines out of `snmpd.conf` and restarts a
+  running snmpd, whose agent would otherwise run the old code until the next
+  boot. `lab/snmp.sh` gets a module's name, its RX power and a sensor's
+  threshold by `snmpget` (red without the fix), and
+  `test/test_upgrade_artifact.sh` checks the file the upgrade leaves.
 
 ## 0.155.2 - half a second of policer bucket, so one TCP flow gets its plan
 

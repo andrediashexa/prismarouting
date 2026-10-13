@@ -542,9 +542,13 @@ MIBs above says how each of the three was answered. This table stays: it is
 in dBm, the unit the switch at the other end prints, and the Zabbix
 template's optical alarms are on it.
 
-**What a read costs.** The agent answers this subtree from a process of its
-own (`--transceivers`), so a module read over I2C never delays the rest of
-the product's objects, and caches it 30 seconds. The dataplane keeps each
+**What a read costs.** The agent reads the modules only for a request that
+reaches this subtree, so a module read over I2C never delays the rest of the
+product's objects, and caches it 30 seconds. Until 0.155.3 it was a process
+of its own (`--transceivers`) on a registration of its own, nested under the
+product's, and net-snmp never asks a nested registration a GET (#608, below
+under PPPoE): on 10.40.200.166 a walk of `.1.20` answered and an `snmpget` of
+the same OID was noSuchInstance, so every Zabbix item on it had no value. The dataplane keeps each
 module's identity and thresholds a minute and answers a second ask within
 2 seconds from its last read, so a poll costs the 24 bytes of readings per
 SFP. A dataplane that does not answer serves none of its ports; the cards
@@ -628,8 +632,14 @@ measured on Debian 12's net-snmp 5.9.3 with two stand-in helpers, a GET under
 `.1.3.6.1.4.1.<pen>`, whichever comes first in `snmpd.conf`, and the one on
 `.1.22` is asked GETNEXTs only - a walk read the group, and every `snmpget`,
 which is what Zabbix polls with, answered noSuchInstance.
-`prTransceiver` (`.1.20`) and `prSensorThresholdTable` (`.1.21`) are
-registered nested the same way.
+`prTransceiver` (`.1.20`) and `prSensorThresholdTable` (`.1.21`) were
+registered nested the same way, and 10.40.200.166 (0.155.2) answered their
+walks and no GET (#608). Since 0.155.3 the three are served this way, and
+`snmpd.conf` has one registration for the product's subtree: the upgrade
+takes the two nested lines out of the file the VTY wrote and restarts a
+running snmpd, whose agent helpers otherwise run the old code until the next
+boot. `lab/snmp.sh` gets a module's name, RX power and a sensor's threshold
+by `snmpget`, against the walk's value at the same OID.
 
 `lab/pppoe.sh` walks it through snmpd as Debian-snmp and the doors, against
 real sessions: the sessions up are the VTY's, the accepts and rejects are the

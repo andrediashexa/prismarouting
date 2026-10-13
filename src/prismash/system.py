@@ -1742,26 +1742,24 @@ def _snmpd_body(settings, communities, users, agent=SNMP_AGENT, release=None,
     # BFD-STD-MIB (#559), its own process: it reads bfdd, not the dataplane,
     # and answers while the dataplane does not.
     out.append(f"pass_persist .1.3.6.1.2.1.222 {agent} --bfd")
-    # ENTITY-MIB and ENTITY-SENSOR-MIB (#496 phase 5), and the sensors'
-    # thresholds under the product's number: one more process, as
-    # prTransceiver's, since it reads the same modules over I2C. The number
-    # on its command line for the thresholds' subtree; the two standard MIBs
-    # are served without one.
-    ent = f"{agent} --entity" + (f" --enterprise {pen}" if pen else "")
+    # ENTITY-MIB and ENTITY-SENSOR-MIB (#496 phase 5): one more process, as
+    # it reads the modules over I2C. With no number on its command line: the
+    # sensors' thresholds under the product's number are the enterprise
+    # process's now (#608, below).
+    ent = f"{agent} --entity"
     out.append(f"pass_persist .1.3.6.1.2.1.47 {ent}")
     out.append(f"pass_persist .1.3.6.1.2.1.99 {ent}")
     if pen:
         # The number on the agent's own command line (#499): it runs as
         # Debian-snmp and cannot read this 0600 file to find it.
+        # ONE REGISTRATION FOR THE WHOLE SUBTREE (#608). prTransceiver (.20)
+        # and prSensorThresholdTable (.21) had registrations of their own
+        # nested under this one, and net-snmp 5.9.3 sends a GET under a
+        # nested pass_persist registration to the broader one: on
+        # 10.40.200.166 a walk of .20 answered and an snmpget of the same OID
+        # was noSuchInstance. The enterprise process serves them, and prBng
+        # (.22, #597), reading each only when a request reaches it.
         out.append(f"pass_persist .1.3.6.1.4.1.{pen} {agent} --enterprise {pen}")
-        # prTransceiver (#590), its own process on its own subtree: a module
-        # is read over I2C, and the rest of the product's objects should not
-        # wait on it. The more specific registration answers its subtree.
-        out.append(f"pass_persist .1.3.6.1.4.1.{pen}.1.20 {agent} "
-                   f"--transceivers --enterprise {pen}")
-        # prSensorThresholdTable (#496 phase 5), beside the sensors whose
-        # entPhysicalIndex it is indexed by: the same process serves both.
-        out.append(f"pass_persist .1.3.6.1.4.1.{pen}.1.{SNMP_SENSOR_TH} {ent}")
     if trap_hosts:
         # NOTIFICATIONS (#507). snmpd polls its own objects to decide what to
         # send - as the user named below, read-only on the same view - and
