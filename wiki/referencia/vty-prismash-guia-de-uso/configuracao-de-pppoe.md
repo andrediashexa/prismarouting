@@ -185,6 +185,7 @@ Num pool **dinâmico**, o bloco pertence a quem o tem agora: o `show cgnat trans
 
 O `show pppoe summary` tem a linha `session trail`: quantas linhas foram escritas e, em maiúsculas, quantas **não** puderam ser (volume cheio, por exemplo) - cada uma é uma sessão pela qual a caixa não consegue responder.
 
+
 :::warning
 Uma cadeia que confere prova que o arquivo não foi editado, não que é o mesmo arquivo. Guarde fora da caixa, de tempos em tempos, o `sha256` que o `show pppoe history verify` imprime. A caixa nunca apaga o histórico: uma vez por mês o arquivo vira `pppoe-sessions.log.<AAAA-MM>`, e os meses além do prazo de guarda podem ser arquivados ou removidos por você.
 
