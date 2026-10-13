@@ -12,7 +12,7 @@
         "uuid": "aff0644b6b8a45d88c9d1e8534efef44",
         "template": "Prisma Routing by SNMP",
         "name": "Prisma Routing by SNMP",
-        "description": "Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, HA, LACP, BGP, OSPF and IS-IS, the ports' transceivers and modules, over SNMP v2c or v3 (v1 is refused). Print it with the box's enterprise number filled in: `show snmp zabbix-template`.",
+        "description": "Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, HA, LACP, BGP, OSPF and IS-IS, the ports' transceivers and modules, PPPoE and its RADIUS servers, over SNMP v2c or v3 (v1 is refused). Print it with the box's enterprise number filled in: `show snmp zabbix-template`.",
         "vendor": {
           "name": "Prisma Routing",
           "version": "0.146"
@@ -1425,6 +1425,299 @@
             ]
           },
           {
+            "uuid": "d73b473ce46941d79d08786a229d5b17",
+            "name": "PPPoE: control plane",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.1.0",
+            "key": "prisma.pppoe.state",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "prBngState: accel-pppd in the prisma-bng container. notConfigured on a box with no `pppoe`.",
+            "valuemap": {
+              "name": "PRISMA-ROUTING-MIB::prBngState"
+            },
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "6b39cfa15daf407fbf1c8c79cc634e83",
+                "expression": "last(/Prisma Routing by SNMP/prisma.pppoe.state)=2",
+                "name": "Prisma Routing: PPPoE is configured and its control plane is not running",
+                "priority": "HIGH",
+                "description": "No subscriber can dial. `show pppoe summary` on the box; the container restarts by itself after a crash, so one that stays down did not start.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "6658692be1f24c8cb32d9c83fbb088f4",
+            "name": "PPPoE: control plane uptime",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.2.0",
+            "key": "prisma.pppoe.uptime",
+            "delay": "5m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "uptime",
+            "description": "prBngUptime: the PPPoE counters count from then. Not served while the control plane does not run.",
+            "preprocessing": [
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "0.01"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "b6c3f0a8a79c4617a6e1e2d8bf0765ce",
+                "expression": "last(/Prisma Routing by SNMP/prisma.pppoe.uptime)<10m and last(/Prisma Routing by SNMP/system.hw.uptime)>15m",
+                "name": "Prisma Routing: the PPPoE control plane restarted without the box",
+                "priority": "AVERAGE",
+                "description": "A commit that changed `pppoe`, or a crash: every PPPoE session dropped and redialled.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "f53f565f48a04975a64ce0c38e25e831",
+            "name": "PPPoE: sessions up",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.3.0",
+            "key": "prisma.pppoe.sessions",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "82c71d635f7d4769903a759710acc105",
+                "expression": "last(/Prisma Routing by SNMP/prisma.pppoe.sessions)<{$PRISMA.PPPOE.DROP.PCT}/100*max(/Prisma Routing by SNMP/prisma.pppoe.sessions,1h) and max(/Prisma Routing by SNMP/prisma.pppoe.sessions,1h)>{$PRISMA.PPPOE.MIN}",
+                "name": "Prisma Routing: PPPoE sessions fell below {$PRISMA.PPPOE.DROP.PCT}% of the last hour's",
+                "priority": "HIGH",
+                "description": "Subscribers dropped together: an access link, the control plane, or the RADIUS servers refusing the redials.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "e399160bfd474f8c97beb3b054a9b487",
+            "name": "PPPoE: sessions being set up",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.4.0",
+            "key": "prisma.pppoe.starting",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "High for long is subscribers stuck at authentication.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "72f352c5989c45b99c58e16be92367bf",
+            "name": "PPPoE: sessions started per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.5.0",
+            "key": "prisma.pppoe.started.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "sps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "48efbe9737fd49b194e14be3033a95af",
+            "name": "PPPoE: sessions stopped per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.6.0",
+            "key": "prisma.pppoe.stopped.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "sps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "cee658b13c3f41619957df4d1bdefc43",
+            "name": "PPPoE: Disconnect-ACKs per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.7.0",
+            "key": "prisma.pppoe.disconnect.ack.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "23a1449324614edc861e03c85dba2ca9",
+            "name": "PPPoE: Disconnect-NAKs per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.8.0",
+            "key": "prisma.pppoe.disconnect.nak.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "475e03e3857a479a90e5af8896ba04c1",
+            "name": "PPPoE: CoA-ACKs per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.9.0",
+            "key": "prisma.pppoe.coa.ack.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "63fa7a1f49c84e7d9f17bdf3da4f1700",
+            "name": "PPPoE: CoA-NAKs per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.10.0",
+            "key": "prisma.pppoe.coa.nak.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "17a52634c9e34d93be573b62ab712058",
+            "name": "PPPoE: Disconnect and CoA requests unanswered per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.11.0",
+            "key": "prisma.pppoe.dae.dropped.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "rps",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "f25b5a8921fb43e1bb2e33a8f7fdb80d",
+                "expression": "last(/Prisma Routing by SNMP/prisma.pppoe.dae.dropped.rate)>0",
+                "name": "Prisma Routing: Disconnect or CoA requests are answered with nothing",
+                "priority": "WARNING",
+                "description": "A source that is not a `dynamic-authorization client`, or a secret that differs between it and the box: the RADIUS side waits for an answer that does not come.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "availability"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "uuid": "1a6997880384434ca8d334d252fc8a69",
             "name": "Notification: linkDown",
             "type": "SNMP_TRAP",
@@ -2825,6 +3118,227 @@
             ]
           },
           {
+            "uuid": "5f1d336e4b7d42689742e93ccf57c366",
+            "name": "PPPoE RADIUS server discovery",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "discovery[{#RADIUSSERVER},1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.2]",
+            "key": "prisma.pppoe.radius.discovery",
+            "delay": "5m",
+            "description": "PRISMA-ROUTING-MIB's prBngRadiusTable (#597): a row per `aaa radius` server while PPPoE's control plane runs, indexed by its address. Every counter starts again at a restart of the control plane.",
+            "item_prototypes": [
+              {
+                "uuid": "f86eed69a803493cb743346f9bddd032",
+                "name": "RADIUS {#RADIUSSERVER}: state",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.3.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.state[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "UNSIGNED",
+                "valuemap": {
+                  "name": "PRISMA-ROUTING-MIB::prBngRadiusState"
+                },
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "71b1ed519cb1455b81c04d3091bacdb3",
+                    "expression": "last(/Prisma Routing by SNMP/prisma.pppoe.radius.state[{#SNMPINDEX}])=2",
+                    "name": "Prisma Routing: RADIUS server {#RADIUSSERVER} is marked down",
+                    "priority": "AVERAGE",
+                    "description": "It left `retries` sends in a row unanswered and is skipped for its dead-time; requests go to the next server. With no server left, no subscriber logs in.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "uuid": "f6e2676005004880b8da890b722be5f4",
+                "name": "RADIUS {#RADIUSSERVER}: Access-Requests per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.4.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.auth.sent.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "d7a2f2591db24476a5dd6c0218b70d55",
+                "name": "RADIUS {#RADIUSSERVER}: Access-Accepts per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.5.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.auth.accept.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "fab523e74b1c4c9592b235a5915694f3",
+                "name": "RADIUS {#RADIUSSERVER}: Access-Rejects per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.6.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.auth.reject.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "description": "A wrong password, an unknown or a suspended subscriber: collected, not alarmed.",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "d960c043be654096a934a7e67d03f3fe",
+                "name": "RADIUS {#RADIUSSERVER}: Access-Requests unanswered per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.7.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.auth.timeout.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ],
+                "trigger_prototypes": [
+                  {
+                    "uuid": "2aca20fa537c4b259621bca2608392a4",
+                    "expression": "min(/Prisma Routing by SNMP/prisma.pppoe.radius.auth.timeout.rate[{#SNMPINDEX}],5m)>0",
+                    "name": "Prisma Routing: RADIUS server {#RADIUSSERVER} is not answering Access-Requests",
+                    "priority": "WARNING",
+                    "description": "Unanswered sends for five minutes: the server, the path to it, or a secret it does not share with the box.",
+                    "tags": [
+                      {
+                        "tag": "scope",
+                        "value": "availability"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "uuid": "46299b341b0e4daaa9bf05cf95518b6a",
+                "name": "RADIUS {#RADIUSSERVER}: Accounting-Requests per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.8.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.acct.sent.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ]
+              },
+              {
+                "uuid": "65f85050784d4b9d8552214b53f73238",
+                "name": "RADIUS {#RADIUSSERVER}: Accounting-Requests unanswered per second",
+                "type": "SNMP_AGENT",
+                "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.20.1.9.{#SNMPINDEX}",
+                "key": "prisma.pppoe.radius.acct.timeout.rate[{#SNMPINDEX}]",
+                "delay": "1m",
+                "history": "7d",
+                "value_type": "FLOAT",
+                "units": "rps",
+                "preprocessing": [
+                  {
+                    "type": "CHANGE_PER_SECOND"
+                  }
+                ],
+                "tags": [
+                  {
+                    "tag": "component",
+                    "value": "pppoe"
+                  },
+                  {
+                    "tag": "radius",
+                    "value": "{#RADIUSSERVER}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "uuid": "fb10171fd6784d9a8ea468d50f40ff06",
             "name": "Transceiver discovery",
             "type": "SNMP_AGENT",
@@ -4105,6 +4619,16 @@
             "description": "How long a bfdSessDown keeps its problem open after the last one arrived; the session's own state is bfdSessState."
           },
           {
+            "macro": "{$PRISMA.PPPOE.MIN}",
+            "value": "10",
+            "description": "PPPoE sessions up below which a sudden drop is not reported (a lab, or a box starting to take subscribers)."
+          },
+          {
+            "macro": "{$PRISMA.PPPOE.DROP.PCT}",
+            "value": "50",
+            "description": "PPPoE sessions up falling below this percent of their maximum over the last hour raises a high."
+          },
+          {
             "macro": "{$BGP4V2.INDEX.MATCHES}",
             "value": "^[0-9]+\\.2\\.",
             "description": "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."
@@ -4520,6 +5044,42 @@
               {
                 "value": "6",
                 "newvalue": "unknown"
+              }
+            ]
+          },
+          {
+            "uuid": "3feec0c7a0684d08bb0fc50e0b7938cc",
+            "name": "PRISMA-ROUTING-MIB::prBngState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "running"
+              },
+              {
+                "value": "2",
+                "newvalue": "stopped"
+              },
+              {
+                "value": "3",
+                "newvalue": "notConfigured"
+              },
+              {
+                "value": "4",
+                "newvalue": "noContainers"
+              }
+            ]
+          },
+          {
+            "uuid": "509b9b303e1c4914ae826fd3f5138cd4",
+            "name": "PRISMA-ROUTING-MIB::prBngRadiusState",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "active"
+              },
+              {
+                "value": "2",
+                "newvalue": "failed"
               }
             ]
           },

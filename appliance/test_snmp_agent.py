@@ -206,6 +206,38 @@ def load_agent():
 
 agent = load_agent()
 
+# accel-pppd's `show stat` with build/accel-ppp-ng.patch (#597), as
+# prisma-bng-cli prints it - CR LF, the core's blocks, two RADIUS servers
+# (the second marked down, the first listed twice as a reload with a new
+# secret leaves it), the listener's block and the pppoe module's own. The
+# counts are lab/pppoe.sh's own shape: three up, one bad login refused.
+BNG_STAT = "\r\n".join([
+    "uptime: 0.01:02:03", "cpu: 0%", "mem(rss/virt): 9632/171940 kB",
+    "core:", "  mempool_allocated: 133445", "  thread_count: 1",
+    "sessions:", "  starting: 1", "  active: 3", "  finishing: 0",
+    "  started: 7", "  stopped: 4",
+    "radius(1, 127.0.0.1):", "  state: active", "  fail count: 0",
+    "  request count: 0", "  queue length: 0", "  auth sent: 1",
+    "  auth accept: 1", "  auth reject: 0",
+    "  auth lost(total/5m/1m): 0/0/0", "  auth avg query time(5m/1m): 1/0 ms",
+    "radius(2, 127.0.0.2):", "  state: failed", "  fail count: 2",
+    "  request count: 0", "  queue length: 0", "  auth sent: 10",
+    "  auth accept: 6", "  auth reject: 1",
+    "  auth lost(total/5m/1m): 3/3/1", "  auth avg query time(5m/1m): 2/2 ms",
+    "  acct sent: 7", "  acct lost(total/5m/1m): 1/0/0",
+    "  acct avg query time(5m/1m): 1/1 ms", "  interim sent: 12",
+    "  interim lost(total/5m/1m): 2/0/0",
+    "  interim avg query time(5m/1m): 1/1 ms",
+    "radius(3, 127.0.0.1):", "  state: active", "  fail count: 0",
+    "  request count: 0", "  queue length: 0", "  auth sent: 9",
+    "  auth accept: 8", "  auth reject: 1",
+    "  auth lost(total/5m/1m): 0/0/0", "  auth avg query time(5m/1m): 1/0 ms",
+    "dae:", "  disconnect ack: 2", "  disconnect nak: 1", "  coa ack: 3",
+    "  coa nak: 4", "  dropped: 5",
+    "pppoe:", "  starting: 0", "  active: 3", "  delayed PADO: 0",
+    "  recv PADI: 10", "  drop PADI: 0", "  sent PADO: 10",
+    "  recv PADR(dup): 7(0)", "  sent PADS: 7", "  filtered: 0", ""])
+
 print("=== the enterprise number, read off snmpd.conf and nowhere else ===")
 check(agent.ENTERPRISE == "",
       f"with no snmpd.conf the agent came up with an enterprise number "
@@ -476,6 +508,12 @@ for _o, _t, _v in agent.entity_rows(
         0, 0, 30000):
     if _o.startswith("1.3.6.1.4.1.99999."):
         _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
+# prBng (#597) is read only when a request reaches .22 (bng_wanted()), so
+# oid_table() has none of it: the fixture's control plane, running, with
+# both servers - every column of the table among them.
+for _o, _t, _v in agent.bng_rows("1.3.6.1.4.1.99999.1", agent.bng_state(
+        (0, "running\n"), (0, BNG_STAT))):
+    _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
 _SYN["Integer32"] = "integer"
 _objs = {}
 for _o, _t in _served.items():
@@ -1640,6 +1678,142 @@ check(_sec and _names == _said,
       f"#496: docs/snmp-mib.md names every object served and serves every "
       f"one it names: served and not said {sorted(_names - _said)}, said "
       f"and not served {sorted(_said - _names)}")
+
+print("\n=== prBng: PPPoE's control plane, read through the doors (#597) ===")
+_bs = agent.parse_bng_stat(BNG_STAT)
+check(_bs["uptime"] == 3723,
+      f"#597: 0.01:02:03 is 3723 s of control plane: {_bs['uptime']}")
+check(_bs["sessions"] == {"starting": 1, "active": 3, "finishing": 0,
+                          "started": 7, "stopped": 4},
+      f"#597: the sessions block, the patch's two counters in it: "
+      f"{_bs['sessions']}")
+check(_bs["dae"] == {"disconnect ack": 2, "disconnect nak": 1, "coa ack": 3,
+                     "coa nak": 4, "dropped": 5},
+      f"#597: the listener's block: {_bs['dae']}")
+check(set(_bs["radius"]) == {"127.0.0.1", "127.0.0.2"}
+      and _bs["radius"]["127.0.0.1"]["auth_sent"] == 9
+      and _bs["radius"]["127.0.0.2"]["auth_lost"] == 3
+      and _bs["radius"]["127.0.0.2"]["state"] == "failed",
+      f"#597: a server per address, the later of two listings, lost's "
+      f"total: {_bs['radius']}")
+check("pppoe" not in _bs["sessions"] and _bs["sessions"]["active"] == 3,
+      "#597: the pppoe module's own `active` is not read as the core's")
+_br = {o: (t, v) for o, t, v in agent.bng_rows(
+    "1.3.6.1.4.1.99999.1", agent.bng_state((0, "running\n"), (0, BNG_STAT)))}
+B = "1.3.6.1.4.1.99999.1.22"
+check(_br.get(f"{B}.1.0") == ("integer", 1)
+      and _br.get(f"{B}.2.0") == ("timeticks", 372300)
+      and _br.get(f"{B}.3.0") == ("gauge", 3)
+      and _br.get(f"{B}.4.0") == ("gauge", 1)
+      and _br.get(f"{B}.5.0") == ("counter", 7)
+      and _br.get(f"{B}.6.0") == ("counter", 4),
+      f"#597: running, its uptime in hundredths, 3 up of 7 started, 4 "
+      f"stopped: {[(o, r) for o, r in _br.items() if '.20.' not in o]}")
+check([_br.get(f"{B}.{n}.0") for n in (7, 8, 9, 10, 11)]
+      == [("counter", 2), ("counter", 1), ("counter", 3), ("counter", 4),
+          ("counter", 5)],
+      "#597: Disconnect ACK/NAK, CoA ACK/NAK and the dropped, in that order")
+check(_br.get(f"{B}.20.1.2.127.0.0.2") == ("string", "127.0.0.2")
+      and _br.get(f"{B}.20.1.3.127.0.0.2") == ("integer", 2)
+      and _br.get(f"{B}.20.1.3.127.0.0.1") == ("integer", 1)
+      and _br.get(f"{B}.20.1.5.127.0.0.2") == ("counter", 6)
+      and _br.get(f"{B}.20.1.6.127.0.0.2") == ("counter", 1)
+      and _br.get(f"{B}.20.1.7.127.0.0.2") == ("counter", 3)
+      and _br.get(f"{B}.20.1.8.127.0.0.2") == ("counter", 19)
+      and _br.get(f"{B}.20.1.9.127.0.0.2") == ("counter", 3),
+      f"#597: the second server: failed, 6 accepts, 1 reject, 3 timeouts, "
+      f"accounting and interims together: "
+      f"{[(o, r) for o, r in _br.items() if '127.0.0.2' in o]}")
+check(_br.get(f"{B}.20.1.5.127.0.0.1") == ("counter", 8)
+      and _br.get(f"{B}.20.1.8.127.0.0.1") == ("counter", 0),
+      "#597: the first server is the later listing, and an auth-only server's "
+      "accounting is zero")
+_bo = [o for o, _t, _v in agent.bng_rows(
+    "1.3.6.1.4.1.99999.1", agent.bng_state((0, "running"), (0, BNG_STAT)))]
+check(_bo.index(f"{B}.20.1.2.127.0.0.1") < _bo.index(f"{B}.20.1.2.127.0.0.2"),
+      "#597: the rows by address, numerically")
+# A BOX WITH NO PPPoE IS ANSWERED (the requirement this group was built to):
+# its state, zero sessions and counters, no server - never an error, and no
+# uptime of a control plane that does not run.
+for _word, _n in (("not-configured", 3), ("stopped", 2),
+                  ("no-containers", 4)):
+    _nr = {o: (t, v) for o, t, v in agent.bng_rows(
+        "1.3.6.1.4.1.99999.1", agent.bng_state((0, _word + "\n"), None))}
+    check(_nr.get(f"{B}.1.0") == ("integer", _n)
+          and all(_nr.get(f"{B}.{k}.0", (None, None))[1] == 0
+                  for k in range(3, 12))
+          and f"{B}.2.0" not in _nr
+          and not any(".22.20." in o for o in _nr),
+          f"#597: {_word}: state {_n}, every count zero, no uptime, no "
+          f"server: {_nr}")
+check(agent.bng_rows("1.3.6.1.4.1.99999.1", agent.bng_state(None, None)) == []
+      and agent.bng_state((1, "prisma-bng: usage"), None) is None
+      and agent.bng_state((0, "something else"), None) is None,
+      "#597: a status nobody could read is the group left out, not a state")
+_half = {o: v for o, t, v in agent.bng_rows(
+    "1.3.6.1.4.1.99999.1", agent.bng_state((0, "running"), (3, "not running")))}
+check(_half == {f"{B}.1.0": 1},
+      f"#597: running and the summary unanswered: the state alone, no "
+      f"number it did not just give: {_half}")
+check(agent.parse_bng_stat("") == {"uptime": None, "sessions": {},
+                                   "radius": {}, "dae": {}},
+      "#597: nothing read is nothing parsed")
+check(agent._ip_index("192.0.2.10") == "192.0.2.10"
+      and agent._ip_index("192.0.2") is None
+      and agent._ip_index("192.0.2.300") is None,
+      "#597: an IPv4 address is the four arcs of its index, nothing else is")
+# The door first, as BFD's reads (#571): its exact argv, and prisma-bng run
+# here only when no door answers or the door does not know the question.
+_seen = []
+check(agent.bng_ask("summary", ask=lambda a: (_seen.append(a) or
+                                                (0, BNG_STAT))) == (0, BNG_STAT)
+      and _seen == [("/usr/lib/prisma-routing/prisma-bng", "summary")],
+      f"#597: the door is asked the doors' own argv: {_seen}")
+check(agent.bng_ask("status", ask=lambda a: (3, "not running")) == (3, "not running"),
+      "#597: the door's own failure is the answer, not a fallback")
+_bd = tempfile.mkdtemp()
+_bctl = os.path.join(_bd, "prisma-bng")
+w(_bctl, "#!/bin/sh\necho not-configured\n")
+os.chmod(_bctl, 0o755)
+_saved_ctl, agent.BNG_CTL = agent.BNG_CTL, _bctl
+try:
+    check(agent.bng_ask("status", ask=lambda a: None) == (0, "not-configured\n")
+          and agent.bng_ask("status", ask=lambda a: (126, "refused"))
+          == (0, "not-configured\n"),
+          "#597: no doors daemon, or an older one: prisma-bng is run here")
+    agent.BNG_CTL = os.path.join(_bd, "nothing")
+    check(agent.bng_ask("status", ask=lambda a: None) is None,
+          "#597: nothing to ask at all is None")
+finally:
+    agent.BNG_CTL = _saved_ctl
+check(agent.Bng().rows == [] and agent.Bng().at == 0.0,
+      "#597: a fresh reader holds nothing until it has asked")
+# SERVED BY THE ENTERPRISE PROCESS, read only when a request reaches .22:
+# net-snmp 5.9.3 hands a GET under a nested pass_persist registration to the
+# broader one (measured), so .22 cannot be a registration of its own, and a
+# poll of anything else must not pay a docker exec.
+_pf = agent.as_key("1.3.6.1.4.1.67033.1.22")
+_k = agent.as_key
+check(agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.22.3.0"), None, _pf)
+      and not agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.1.0"),
+                               ("1.3.6.1.4.1.67033.1.1.0", "gauge", 1), _pf)
+      and not agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.23.0"), None, _pf),
+      "#597: a GET reads prBng only inside .22")
+check(agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.19.5.0"), None, _pf)
+      and agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.22.20"), None, _pf)
+      and not agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.12.1.0"),
+                               ("1.3.6.1.4.1.67033.1.12.2.0", "string", ""), _pf)
+      and not agent.bng_wanted("GETNEXT", _k("1.3.6.1.4.1.67033.1.23"), None, _pf),
+      "#597: a GETNEXT reads it only when the rest ran out before .22 ends: "
+      "a walk reaches it, a poll of the pools does not")
+check(not agent.bng_wanted("GET", _k("1.3.6.1.4.1.67033.1.22.1.0"), None, None),
+      "#597: no enterprise number, no prBng")
+_rows = [("1.3.6.1.4.1.9.1.0", "gauge", 1), ("1.3.6.1.4.1.9.2.0", "gauge", 2)]
+check(agent.find(_rows, "GET", _k("1.3.6.1.4.1.9.2.0")) == _rows[1]
+      and agent.find(_rows, "GETNEXT", _k("1.3.6.1.4.1.9.1.0")) == _rows[1]
+      and agent.find(_rows, "GETNEXT", _k("1.3.6.1.4.1.9.2.0")) is None
+      and agent.find(_rows, "GET", _k("1.3.6.1.4.1.9.3.0")) is None,
+      "find: a GET the same OID, a GETNEXT the next, None past the end")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

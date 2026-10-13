@@ -31,6 +31,10 @@ cd /src
 HX="python3 /src/src/prismash/prismash.py"
 export PRISMA_CONFIG=/etc/prisma-routing/prisma-routing.conf
 install -D -m 0755 /src/appliance/prisma-routing-snmp-agent /usr/lib/prisma-routing/snmp-agent
+# PPPoE's host script where the box has it (#597): prBng asks it, through the
+# doors, whether the control plane runs. This container has no compose.yaml,
+# so it answers what a box running the dataplane as units does - no PPPoE.
+install -D -m 0755 /src/appliance/prisma-bng /usr/lib/prisma-routing/prisma-bng
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 wait_vpp
@@ -142,6 +146,10 @@ echo "  --- BFD-STD-MIB, the agent as Debian-snmp reading bfdd ---"
 printf 'getnext\n1.3.6.1.2.1.222.1.2.1.11\n' | runuser -u Debian-snmp -- \
   /usr/lib/prisma-routing/snmp-agent --bfd 2>&1 | sed 's/^/    /'
 
+echo "  --- prBng (#597), the agent as Debian-snmp asking prisma-bng through the doors ---"
+printf 'get\n1.3.6.1.4.1.99999.1.22.1.0\n' | runuser -u Debian-snmp -- \
+  /usr/lib/prisma-routing/snmp-agent --enterprise 99999 2>&1 | sed 's/^/    /'
+
 echo
 echo "=========== 2. poll it ==========="
 # BFD-STD-MIB (#559), through snmpd: the session's state, its neighbour and
@@ -242,6 +250,13 @@ VRPRI=$($PM PRISMA-ROUTING-MIB::prVrrpPriority.1 2>&1)
 BNAME=$($PM PRISMA-ROUTING-MIB::prBundleName.1 2>&1)
 BMEM=$($PM PRISMA-ROUTING-MIB::prBundleMembers.1 2>&1)
 IDENT=$($PM PRISMA-ROUTING-MIB::prIdentityEntries.0 2>&1)
+# prBng (#597) on a box with no PPPoE: answered, not an error - the state,
+# zero sessions, and no RADIUS server row.
+BNGST=$($PM PRISMA-ROUTING-MIB::prBngState.0 2>&1)
+BNGACT=$($PM PRISMA-ROUTING-MIB::prBngSessionsActive.0 2>&1)
+BNGCOA=$($PM PRISMA-ROUTING-MIB::prBngCoaAcks.0 2>&1)
+BNGRAD=$(snmpwalk -v2c -c hexro -M /tmp/mibs -m PRISMA-ROUTING-MIB 127.0.0.1 \
+         PRISMA-ROUTING-MIB::prBngRadiusTable 2>&1)
 DP_FIT=$($HX -c "show cgnat memory" 2>&1 | awk '/sessions that fit/ { gsub(",", "", $NF); print $NF }')
 # NATV2-MIB, RFC 7659 (#512): the IETF's module, loaded as an NMS loads it,
 # one instance per pool. test/mibs carries it, cut from the RFC, with the two
@@ -292,6 +307,7 @@ echo "  subscribers $POOLSUBS, sessions $POOLSESS, ports $POOLPORTS; prSessions 
 echo "  dataplane build $BUILD, current $CURRENT; TCP transport enabled $TCPON"
 echo "  sessions that fit $FIT (show cgnat memory says ${DP_FIT:-nothing}); per worker $(printf '%s' "$WSESS" | tr '\n' ' ')"
 echo "  VRRP 1: $VRIF, $VRST, priority $VRPRI; bundle 1: $BNAME with $BMEM member(s); identity entries $IDENT"
+echo "  PPPoE: $BNGST, $BNGACT session(s) up, $BNGCOA CoA ACK(s); RADIUS table: ${BNGRAD:-(empty)}"
 echo "  NATV2-MIB: instance 1 $NVALIAS, $NVPORTS port map entries, $NVSUBS address map entries, ports from $NVMIN, range $NVBEGIN - $NVEND"
 echo "  ... $(printf '%s\n' "$NVWALK" | grep -c .) NATV2-MIB rows walked"
 echo "  VRRPV3-MIB: router $VVIX $VVST, priority $VVPRI, MAC $VVMAC, $VVCNT address(es)"
@@ -490,6 +506,11 @@ expect "advertising the priority configured ($VRPRI)" test "$VRPRI" = "150"
 expect "the bundle is in the table ($BNAME), at zero members" \
   test "$BNAME/$BMEM" = "BondEthernet0/0"
 expect "and a box with no identity table says zero entries" test "$IDENT" = "0"
+expect "a box with no PPPoE answers prBng: noContainers, as this one runs units ($BNGST)" \
+  test "$BNGST" = "noContainers"
+expect "  with zero sessions up ($BNGACT) and zero CoAs ($BNGCOA)" \
+  test "$BNGACT/$BNGCOA" = "0/0"
+expect_not_in "  and no RADIUS server row" "prBngRadiusName" "$BNGRAD"
 expect "NATV2-MIB names the pool as instance 1 ($NVALIAS)" test "$NVALIAS" = "nb"
 expect "with the dataplane's three ports and one subscriber" \
   test "$NVPORTS/$NVSUBS" = "3/1"

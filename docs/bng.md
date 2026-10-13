@@ -256,9 +256,13 @@ In the order they are planned, each its own step on #597:
    radius`, #21); accel-ppp can copy its accounting there.
 2. **The typed API** for the `pppoe` block and the sessions (a proto change,
    with `lab/api-grpc.sh`).
-3. **SNMP counters** (sessions active/starting, authentications refused,
-   RADIUS reachability) and **`show log` events** for the container's starts,
-   exits and restarts.
+3. **SNMP counters**: done in 0.155.3 - PRISMA-ROUTING-MIB's `prBng`
+   (docs/snmp-mib.md): the control plane's state and uptime, sessions up,
+   starting, started and stopped, each RADIUS server's Access-Accepts,
+   -Rejects and unanswered sends, and the Disconnect/CoA answers, counted
+   by the accel-ppp patch in its own `show stat` and read by the agent
+   through the doors. Still to do: **`show log` events** for the
+   container's starts, exits and restarts.
 4. **Discovery restricted to the access interfaces** (0.3 item 7), and the
    same MAC on two access ports (4, item 8).
 5. **The stats segment sized for the configured `session-limit`** (2.1), and

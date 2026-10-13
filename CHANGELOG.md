@@ -77,6 +77,34 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PPPoE over SNMP: the sessions, each RADIUS server's answers, and
+  Disconnect/CoA.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  PRISMA-ROUTING-MIB's new `prBng` (`.1.22`) serves the PPPoE control plane's
+  state (running, stopped, notConfigured, noContainers) and uptime, the
+  sessions up and being set up, the sessions started and stopped, the
+  Disconnect and CoA requests answered ACK and NAK and the ones answered with
+  nothing, and `prBngRadiusTable`, a row per `aaa radius` server indexed by
+  its address: active or failed, Access-Requests sent, Access-Accepts,
+  Access-Rejects, sends unanswered, and the same for accounting. accel-ppp
+  counted none of started, stopped, accepts, rejects or the DAE answers;
+  the accel-ppp patch adds them to its own `show stat`, which the agent
+  reads through the host's doors, as `show pppoe summary` does. A box with
+  no PPPoE answers notConfigured with zeros and an empty table. The counters
+  start again with the control plane, and `prBngUptime` says when. The
+  Zabbix template collects all of it and alarms on a control plane
+  configured and stopped, one that restarted on its own, the sessions up
+  falling by half in an hour, a server marked down or not answering, and
+  requests the listener drops. `lab/pppoe.sh` reads it through snmpd as
+  Debian-snmp against real sessions: the sessions up as the VTY lists them,
+  the accepts and rejects as the RADIUS server's log says it sent them,
+  every CoA and Disconnect radclient received counted. Served by the
+  process that serves the rest of the product's objects, read only when a
+  request reaches `.1.22`: net-snmp hands a GET under a nested
+  `pass_persist` registration to the broader one, measured, so a process of
+  its own would have answered walks and no `snmpget`. An upgraded box
+  serves it once snmpd restarts its agent - the next boot, or a commit that
+  changes `snmp`.
+
 ### Fixed
 
 ## 0.155.2 - half a second of policer bucket, so one TCP flow gets its plan

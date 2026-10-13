@@ -45,6 +45,9 @@
 #   * the VPP policer hook enables policer-input once (VPP does it), and
 #     accel-pppd starts by removing the routes a killed predecessor left
 #     through session interfaces.
+# and the SNMP agent's (#597, docs/snmp-mib.md prBng): `show stat` also
+# counts sessions started and stopped, each server's Access-Accepts and
+# -Rejects, and the Disconnect/CoA listener's ACKs, NAKs and silent drops.
 #
 # THE OPTIONS: RADIUS on (the product authenticates against the operator's
 # RADIUS), the VPP hooks on, the Linux kernel driver off (VPP carries the
