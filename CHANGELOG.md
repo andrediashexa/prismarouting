@@ -79,6 +79,16 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A crash in the box's first five minutes was logged as a start "with
+  the boot".** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  On prisma-bench (0.155.5) accel-pppd killed 12 s after the box came up
+  was restarted by its policy, and `show log` said the PPPoE control plane
+  "started with the boot": any start within 300 s of the boot was the
+  boot's. Only the first start since the boot is now; the same kill reads
+  "started again, by its restart policy, after it exited: accel-pppd was
+  killed by signal 9 (KILL)". The dataplane's and FRR's starts follow the
+  same rule.
+
 ## 0.155.5 - PPPoE control plane events in the log; PPPoE only on access interfaces
 
 ### Added
