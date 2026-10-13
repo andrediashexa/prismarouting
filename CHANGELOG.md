@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.0 - RADIUS under aaa, failover or round-robin, CoA and per-session rate limits
+
+### Added
+
 * **RADIUS in a hierarchy of its own, `aaa` > `radius`: several servers,
   failover or round-robin, and timers that fail over in seconds.**
   ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
