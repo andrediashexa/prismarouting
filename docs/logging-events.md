@@ -657,6 +657,85 @@ own registers saw it, and nothing above them did.
 * **The cards are the PCI ones**, as `show hardware` lists them; a lab's
   veth is named by `PRISMA_WATCH_NETDEVS`, which a box never sets.
 
+## The PPPoE control plane (#597)
+
+The `prisma-bng` container (docs/bng.md) is a component like the dataplane
+and the routing daemons, and its runs are in the record:
+every start, with its cause; every exit, with its code and why; and each
+`aaa radius` server that accel-ppp marked failed, and used again.
+
+**Its runs are a record, not a state.** Docker brings the container back
+within a second (`restart: unless-stopped`), so a reading every 10 s of
+"is it running" reads `true` on both sides of a crash; and docker resets
+`State.ExitCode` to 0 at the start that follows, so the exit code is gone
+by the next reading (measured in `lab/pppoe.sh`, 2026-10-13). So the container writes
+its own: its entrypoint (`appliance/prisma-bng-entrypoint`, `run_note`)
+appends one line per start and per exit to `/run/prisma-routing/bng/runs`
+- the host's `/run`, mounted into the container, so it outlives every
+restart and not the boot:
+
+```
+3 1792015334 start
+4 1792015352 exit 1 accel-pppd was killed by signal 9 (KILL)
+5 1792015353 start
+```
+
+The exit's reason is the entrypoint's own word for what it saw: accel-pppd's
+exit code, or the signal that killed it (by name; "the OOM killer" when the
+container's cgroup counted an OOM kill since accel-pppd started), the
+dataplane losing the control-plane TAP, a start that could not finish
+(no configuration, the dataplane not answering, the plumbing refused), or a
+SIGTERM - a stop. A run killed from outside (`docker kill`, a stop that ran
+out of its 20 s) writes nothing, and the next start says so. The file keeps
+the newest 32 lines; the watcher reads every line past the last one it saw,
+and a numbering that went back is a new boot's.
+
+**A start's cause is found the way a dataplane start's is.** A commit that
+starts, restarts or stops the container writes an `asked` event naming
+component `bng` BEFORE the host is asked (`Shell.record_bng_asked`), and so
+does the load that rewrites an older release's files (`pppoe.FORMAT`); the
+watcher takes the newest `asked` before the start, after the previous one,
+as `cause_of()` does for the dataplane. Nothing asked, near the boot: the
+boot. Nothing asked otherwise: `unexpected`, and the sentence says what
+came before - the exit the restart policy answered, or a run that recorded
+no exit. An account's `asked` for `bng` alone is taken from any account,
+not only prisma-operator's: whoever may commit `pppoe` restarts it.
+
+**RADIUS is accel-ppp's own word**, its `show stat` (`prisma-bng summary`):
+each server's state - `active`, or `failed` for its dead-time - and its
+`fail count`, so a server that failed and came back between two readings
+is said too. Read only while the container's record says it runs and `aaa
+radius` has a server, so a box with no PPPoE never runs a `docker exec`;
+across a restart of accel-pppd (its uptime went back) every server is
+active again, and that is a baseline, not news. A server failed when the
+watcher starts is said once, standing.
+
+| `kind` | `component` | Severity | Sentence |
+|---|---|---|---|
+| `asked` | `bng` | notice | `PPPoE's configuration committed`, `PPPoE removed by a commit`, `PPPoE's files from an older release (format 4) written again in format 5` |
+| `start` | `bng` | notice | `the PPPoE control plane (prisma-bng) started: PPPoE's configuration committed by ana from ssh 192.0.2.7` |
+| `start` | `bng` | warning | `the PPPoE control plane (prisma-bng) started again, by its restart policy, after it exited: accel-pppd was killed by signal 9 (KILL)` |
+| `exit` | `bng` | notice | `the PPPoE control plane (prisma-bng) stopped: stopped (SIGTERM): a restart, an upgrade or no pppoe` |
+| `exit` | `bng` | warning | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
+| `radius` | | warning | `RADIUS server 192.0.2.10 failed: it did not answer, and accel-ppp uses the others for its dead-time` |
+| `radius` | | notice | `RADIUS server 192.0.2.10 is active again: its dead-time is over and accel-ppp sends to it` |
+
+Source `host`: the host's watcher says them. Starts and exits are held and
+counted like any subject's changes (`flap_admit()`), starts and exits apart,
+so a crash loop is four of each in five minutes and then one summary a
+window.
+
+```
+prisma> show log kind exit
+prisma> show log kind start since 1d
+prisma> show log kind radius
+```
+
+**What it does not do.** It does not say a session dropped: sessions are
+accel-ppp's and RADIUS accounting's, thousands a day. And a reading of
+RADIUS is a `docker exec` every 10 s while PPPoE runs with RADIUS - what
+`show pppoe summary` costs once.
+
 ## Reading it
 
 ```
@@ -677,9 +756,10 @@ With neither `last` nor `since`, the last 50. `since` takes `45s`, `30m`,
 in). `severity` is `error`, `warning`, `notice` or `info`, and shows that level
 and every one above it. `source` is `vty`, `api`, `host`, `dataplane` or
 `routing`. `kind` is what an event is: phase 1's `commit`, `rollback`,
-`confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, and
+`confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`,
 phase 2's `settings`, `link`, `transceiver`, `bgp`, `bfd`, `pool`,
-`collector`, `login`, `gave-up`. An event wider than the console folds, its continuation indented,
+`collector`, `login`, `gave-up`, and the PPPoE control plane's `exit` and
+`radius` (#597). An event wider than the console folds, its continuation indented,
 as every row the VTY prints does (test_prismash_refusals.py holds them to 79
 columns): the first row carries the time, severity, source and the start of
 the sentence, so `| match` finds an event by those; `source` and `severity`

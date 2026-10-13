@@ -69,8 +69,11 @@ DOOR = os.environ.get("PRISMA_DOORS", "/run/prisma-routing/doors.sock")
 SOURCES = ("vty", "api", "host", "dataplane", "routing")
 #: Most severe first; `severity <level>` shows that level and every one above.
 SEVERITIES = ("error", "warning", "notice", "info")
-#: The components a start is recorded for, as `show system uptime` names them.
-COMPONENTS = ("dataplane", "routing")
+#: The components a start is recorded for, as `show system uptime` names
+#: them; and the PPPoE control plane's container (#597), whose starts and
+#: exits the host's watcher records (eventwatch.bng_changes) and which a
+#: commit or a format upgrade asks to restart.
+COMPONENTS = ("dataplane", "routing", "bng")
 #: Why a component started. `operator` is `system dataplane restart`.
 CAUSES = ("boot", "operator", "upgrade", "reboot", "shutdown", "unexpected")
 #: The kinds an account that is not root may write: what it does at the VTY
@@ -87,8 +90,11 @@ ACCOUNT_KINDS = ("commit", "rollback", "confirm", "confirm-expired", "asked",
 #: failed one, and the dataplane given up on. Never an account's: no account
 #: can write that a link went down. `show log kind <kind>` selects one.
 WATCH_KINDS = ("link", "transceiver", "bgp", "bfd", "pool", "collector",
-               "login", "gave-up")
-KINDS = ACCOUNT_KINDS + ("start", "boot", "upgraded") + WATCH_KINDS
+               "login", "gave-up", "radius")
+#: A start's counterpart, for a component whose exits are seen (#597): the
+#: PPPoE control plane's, with its code and why - "start" and "exit" are the
+#: container's runs, "radius" its RADIUS servers failed and back.
+KINDS = ACCOUNT_KINDS + ("start", "exit", "boot", "upgraded") + WATCH_KINDS
 #: One sentence, not a screen.
 TEXT_MAX = 300
 WHO_MAX = 64
@@ -588,7 +594,8 @@ def cause_of(events, component, started, boot, boot_reason="", after=None):
 
 
 #: The sentence a start says, per component and cause.
-_NAMES = {"dataplane": "the dataplane", "routing": "the routing daemons (FRR)"}
+_NAMES = {"dataplane": "the dataplane", "routing": "the routing daemons (FRR)",
+          "bng": "the PPPoE control plane (prisma-bng)"}
 
 
 def start_sentence(component, cause, detail):

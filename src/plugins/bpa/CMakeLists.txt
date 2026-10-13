@@ -28,6 +28,7 @@ add_vpp_plugin(bpa
   bpa_stats.c
   bpa_transceiver.c
   bpa_linkcount.c
+  bpa_pppoe_guard.c
 
   API_FILES
   bpa.api

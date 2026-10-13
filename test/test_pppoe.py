@@ -294,6 +294,9 @@ check(P.chap_secrets(h2).splitlines()[1] == '"a" * "b" *',
 env = P.access_env(h, acc)
 check("PARENT=ge0" in env and 'VLANS="0 100"' in env and "TCP_MSS=1452" in env
       and "MTU=1492" in env, f"access_env: the plumbing's words: {env!r}")
+check('ACCESS="ge0 ge0.100"' in env,
+      f"access_env: the access interfaces by the dataplane's names, for "
+      f"its PPPoE guard (format 4): {env!r}")
 ok, msg = P.write_files(h, acc, aaa=AA)
 bng = os.environ["PRISMA_BNG_DIR"]
 check(P.file_format() == P.FORMAT and P.file_format("/proc/no") == "",
@@ -403,6 +406,24 @@ check(any(x.startswith("session trail") and "41 entries written, 2 NOT "
               for x in st0)
       and not any(x.startswith("session trail") for x in s),
       "summary_screen: the trail's row, and none when it was not read")
+GUARD = ("pppoe-access: host-acc0 host-acc0.100\nhold 60 s, macs held 3\n"
+         "discovery passed 156 not-access 5 held 6\n"
+         "session passed 910132 not-access 5 held 0\n")
+check(P.guard_counts(GUARD) == {"not-access": 10, "held": 6}
+      and P.guard_counts("show bpa: unknown input `pppoe-access'") is None
+      and P.guard_counts("pppoe-access: not set; VPP's pppoe plugin takes "
+                         "PPPoE from every interface") is None,
+      "guard_counts: the dataplane's refusals, discovery and session "
+      "together; none from a plugin without the guard")
+g = P.summary_screen(h, "running", {"active": 3}, AA, {},
+                     guard={"not-access": 2 ** 64 - 1, "held": 2 ** 64 - 1})
+check(any(x.startswith("refused") and "from outside the access "
+          "interfaces" in x for x in g)
+      and any("for a MAC another access port holds" in x for x in g)
+      and all(len(x) <= 79 for x in g)
+      and not any(x.startswith("refused") for x in s),
+      "summary_screen: what the guard refused, at its widest a console's "
+      "width; nothing without it")
 check(P.cp_taps('Interface: tap1863 (ifindex 2)\n  name "pppoe-cp"\n'
                 'Interface: tap0 (ifindex 3)\n  name "vppwan"\n') ==
       {"tap1863"}, "cp_taps: the TAP by its Linux name")

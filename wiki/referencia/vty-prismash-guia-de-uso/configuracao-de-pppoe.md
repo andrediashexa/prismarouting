@@ -191,6 +191,45 @@ Uma cadeia que confere prova que o arquivo não foi editado, não que é o mesmo
 
 :::
 
+## Onde a caixa aceita PPPoE
+
+**Só nas interfaces de acesso.** Um PADI, ou qualquer quadro PPPoE, que chega por uma interface que não está no bloco `pppoe` — o uplink, uma porta `inside` do CGNAT — é descartado no dataplane e contado; ninguém responde. Antes disso, um CPE do lado errado da caixa recebia PADO e podia abrir sessão.
+
+**Um MAC pertence à porta onde está a sessão dele.** Se o mesmo MAC aparece em duas interfaces de acesso (um CPE clonado, ou dois OLTs com o mesmo endereço), a caixa **mantém a sessão que já existe** e recusa, contando, a descoberta e o controle desse MAC vindos da outra porta enquanto a sessão estiver viva. Assim que o assinante desliga ali (o PADT dele), ou 60 s depois do último sinal de vida da sessão (o mesmo tempo em que o plano de controle a daria como morta), a outra porta pode discar. Sem isso, as duas sessões existiam juntas e cada quadro de controle ia para a porta que tinha falado por último: um assinante recebia o controle da sessão do outro.
+
+```
+prisma> show pppoe summary
+```
+
+O que foi recusado está no `show bpa pppoe-access` do dataplane, em duas linhas — `discovery` e `session` — com quantos quadros passaram, quantos chegaram por uma interface que não é de acesso (`not-access`) e quantos traziam um MAC que pertence a outra porta (`held`).
+
+
+:::info
+Dois assinantes **diferentes** com o mesmo MAC em duas portas não são atendidos ao mesmo tempo: o dataplane identifica a sessão pelo MAC e pelo número da sessão, sem a porta. O primeiro fica; o segundo espera.
+
+:::
+
+## O registro: `show log`
+
+Cada partida e cada parada do plano de controle PPPoE entra no registro da caixa com o motivo, e cada servidor RADIUS que o plano de controle dá como fora, e de volta:
+
+```
+prisma> show log kind start
+prisma> show log kind exit
+prisma> show log kind radius
+```
+
+| Evento | Exemplo |
+|--------|---------|
+| partida pedida por um commit | `the PPPoE control plane (prisma-bng) started again: PPPoE's configuration committed by ana` |
+| saída por falha, com o código ou o sinal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
+| a partida que veio depois dela, sem ninguém pedir | `the PPPoE control plane (prisma-bng) started again, by its restart policy, after it exited: ...` |
+| parada pedida (commit, atualização, `no pppoe`) | `the PPPoE control plane (prisma-bng) stopped: stopped (SIGTERM): ...` |
+| reinício numa atualização que regrava os arquivos | `... started again: PPPoE's files from an older release (format 4) written again in format 5` |
+| servidor RADIUS fora, e de volta | `RADIUS server 192.0.2.10 failed: it did not answer, ...` / `RADIUS server 192.0.2.10 is active again: ...` |
+
+Uma partida em nível `warning` é uma que ninguém pediu: é ela que vale investigar.
+
 ## Como conferir
 
 ```

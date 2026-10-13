@@ -77,7 +77,52 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The PPPoE control plane's starts, exits and restarts, and its RADIUS
+  servers, in `show log`.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  Every start of the `prisma-bng` container is an event (`kind start`,
+  `component bng`) with its cause: a commit of `pppoe`, the load that rewrites
+  an older release's files, the boot - or nothing, and then the sentence says
+  what came before it and it is a warning: "started again, by its restart
+  policy, after it exited: accel-pppd was killed by signal 9 (KILL)", or "its
+  last run recorded no exit: the container was killed from outside". Every
+  exit is one too (`kind exit`), with accel-pppd's exit code or the signal by
+  name, the OOM killer when the container's cgroup counted one, the dataplane
+  losing the TAP, a start that could not finish, or a stop. Each `aaa radius`
+  server accel-ppp marks failed, and uses again, is `kind radius` - including
+  one that failed and came back between two readings, by accel-ppp's own fail
+  count. Docker restarts the container in under 0.1 s and resets its exit
+  code to 0 at that start (measured), so the entrypoint writes its own record
+  of each run in `/run/prisma-routing/bng/runs`, and the host's watcher reads
+  it into the record; a commit or a format upgrade writes the `asked` the
+  start then names, as the dataplane's restarts do. `lab/pppoe.sh` reads all
+  of it back from `show log` after a commit's restart, `kill -9` of
+  accel-pppd, a format upgrade, `no pppoe` and RADIUS server 1 killed and
+  brought back; red on the release before (docs/logging-events.md).
+
 ### Fixed
+
+* **PPPoE was taken from every interface, and a subscriber dialling while its
+  MAC was heard on another access port had its downloads sent there.**
+  ([#597](https://github.com/andrediashexa/hexarouting/issues/597)) VPP's
+  pppoe plugin registers both PPPoE ethertypes box-wide: 5 PADIs from a CGNAT
+  inside port drew 5 PADOs (measured). And it copies a session's way down -
+  interface and VLAN tag - from where the MAC was heard LAST: sub1 redialling
+  while a CPE with its MAC sent PADIs on VLAN 100 had its session sent out of
+  VLAN 100, its ping 100% lost and its frames at the other CPE. The plugin now
+  stands between `ethernet-input` and VPP's (`set bpa pppoe-access`, laid by
+  the container at every start): PPPoE from an interface that is not access
+  is dropped and counted, and a MAC belongs to the access interface its
+  session is on - discovery and control from another one are refused,
+  counted, until a PADT from the session's port or 60 s after its last
+  control frame. Measured after: no PADO from the inside port, sub1's
+  session on its own port with 0% loss, the other CPE refused for as long as
+  sub1's session lived and given the MAC 2 s after a PADT. `show pppoe
+  summary` says what was refused. A box upgraded onto this release restarts
+  its PPPoE container once at its first load (the files' format 5 names the
+  access interfaces), so its sessions redial. Two subscribers with one MAC on
+  two ports are not served at once; closing that, and a data frame with a
+  held MAC and a guessed session id, needs the port in VPP's own session key
+  (docs/bng.md 0.3 items 7, 9 and 10).
 
 ## 0.155.4 - the PPPoE session trail: who held which inside address, when
 

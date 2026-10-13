@@ -27,6 +27,12 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.5 - PPPoE control plane events in the log; PPPoE only on access interfaces
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.4). No message, field or number changes.
+* **The events log carries new values** (#597): component `bng`, with kinds `start` and `exit` for the PPPoE control plane's container, and kind `radius` for a RADIUS server going failed and becoming active again. `kind` and `component` were documented as extensible: a client that maps them to labels MUST show an unknown value as it is rather than drop the event.
+* **PPPoE is answered only on the configured access interfaces**, and a MAC holding a session on one access port is refused on another; `show pppoe summary` gains both refusal counts (screen text, not a contract). A box upgraded with PPPoE configured restarts its PPPoE container once at the first load, so its sessions redial. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.4 - the PPPoE session trail: who held which inside address, when
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.3). No message, field or number changes.

@@ -119,7 +119,7 @@ flowchart LR
 | `prisma-bng` image | `build/Dockerfile.bng` | The dataplane image plus accel-ppp-ng, built at its pin by `build/accel-ppp-build.sh` with `build/accel-ppp-ng.patch`. 215 MB against the dataplane's 205 (measured 2026-10-12): the upgrade artifact carries about 10 MB more. |
 | `bng` service | `appliance/compose.yaml` | `network_mode: host` (the TAP and RADIUS), `/run/vpp` (the API and stats sockets, as `mgmt` has them), the generated configuration read-only. A **profile**, so `up` never starts it: docker-compose 1.29.2 (the medium's) leaves a profiled service out of `up`, starts it when named, and removes it on `down` - measured. Limits: 512 MB, 512 processes, `oom_score_adj` +500 (the dataplane is -1000), `restart: unless-stopped`. |
 | host lifecycle | `appliance/prisma-bng` | `apply` (start, or recreate on new files), `stop`, `boot` (from `prisma-routing-containers.service`, only when configured), `status`, `sessions`, `summary`, `terminate`. The only thing that runs docker-compose for the service, so a VTY upgrade (which recreates `mgmt`) touches no session. |
-| plumbing | `appliance/prisma-bng-entrypoint` | Waits for VPP, makes `tap1863` (`pppoe-cp` in Linux) with the access card's MAC, one Linux VLAN device per tag, `create pppoe cp`; deletes sessions a dead control plane left; runs accel-pppd; ends the container when accel-pppd dies or VPP loses the TAP, so the restart policy lays it again. |
+| plumbing | `appliance/prisma-bng-entrypoint` | Waits for VPP, makes `tap1863` (`pppoe-cp` in Linux) with the access card's MAC, one Linux VLAN device per tag, `create pppoe cp`, and tells the plugin's PPPoE guard the access interfaces (`set bpa pppoe-access`, 0.3 item 9); writes each start and exit in `/run/prisma-routing/bng/runs`, which `show log` is made from; deletes sessions a dead control plane left; runs accel-pppd; ends the container when accel-pppd dies or VPP loses the TAP, so the restart policy lays it again. |
 | per session | `appliance/prisma-bng-session` | accel-ppp's ip-up: the existing CGNAT attach (`set interface bpa in2out`), the PPPoE MTU, the MSS clamp. Idempotent (0.3). |
 | configuration | `src/prismash/pppoe.py` | The `pppoe` hierarchy's grammar, one rule for the prompt and the saved file; `accel-ppp.conf`, `chap-secrets` and `access.env` generated at commit into `/etc/prisma-routing/bng` (0660, the configuring group's, as `prisma-routing.conf`); the model read back from `/etc/prisma-routing/pppoe.conf`. |
 
@@ -228,10 +228,13 @@ its limits back from the engine.
    one control-plane interface and answers from the card the CPE came in on;
    the TAP carries that card's MAC. The VTY refuses access interfaces on two
    cards at commit; any number of VLANs of one card works (one tag each).
-7. **PPPoE discovery is punted from every interface**, not only the access
-   ones: `pppoe_init()` registers the ethertypes box-wide (1.5). A CPE on the
-   upstream side would be answered. Not exercised in the lab; a later step
-   (0.4) MUST restrict it.
+7. **PPPoE was taken from every interface**, not only the access ones:
+   `pppoe_init()` registers both ethertypes box-wide (1.5). Measured in
+   `lab/pppoe.sh` on 2026-10-13, before the guard (item 9): 5 PADIs from
+   `host-lan0` - a CGNAT inside port, not access - drew 5 PADOs; a CPE on
+   the wrong side of the box was a subscriber. With the guard: 0 of 5, and
+   the 5 PADIs and 5 session frames with sub1's MAC from there counted as
+   refused; a CPE on `host-acc0` still 5 of 5.
 
 8. **Two defects only an installed box showed** (the maintainer's bench,
    0.153.97 built from this branch, 2026-10-12): `prisma-bng apply` ran
@@ -246,6 +249,58 @@ its limits back from the engine.
    volume without the directory, and is red without either fix. With them the
    bench terminated PAP and CHAP against a real FreeRADIUS and carried 1.26
    Gbit/s through one session and the BPA pool.
+
+9. **One MAC on two access ports**, section 4's item 8, measured in
+   `lab/pppoe.sh` on 2026-10-13 with a CPE carrying sub1's MAC on VLAN 100
+   (`host-acc0.100`) while sub1 is on `host-acc0` - two access interfaces of
+   the one card the BNG allows (item 6). Before the guard:
+   * **A subscriber that dials while its MAC is heard on another access
+     interface gets its downloads sent there.** The plugin copies a session's
+     way down - interface and VLAN tag - from its link table when the session
+     is added, and the link table holds the interface the MAC was heard on
+     LAST (`pppoe_learn_process`'s "mac move", any discovery or control
+     frame). sub1, redialling in 3 s while the other CPE sent PADIs every
+     20 ms: its session sent out of `host-acc0.100`, its ping 100% lost, 4 of
+     its session's frames caught at the other CPE in 5 s.
+   * Both CPEs held a session at once for 40 s, sub1's never changing: the
+     plugin keys sessions by (MAC, session id), and accel-ppp sees the two on
+     two Linux devices (`pppoe-cp`, `pppoe-cp.100`).
+   * The control plane's own frames were NOT crossed: sub1's PADT, sent while
+     its MAC was heard on VLAN 100, reached sub1. The plugin hands them to
+     `interface-output` as accel-ppp built them, tag included, so the tag
+     follows the Linux device and not the link table.
+
+   **Decided: the MAC belongs to the access interface its session is on**,
+   the one safe answer that needs no change to VPP. The plugin's guard
+   (`src/plugins/bpa/bpa_pppoe_guard.c`, `set bpa pppoe-access`, laid by the
+   entrypoint at every start from `access.env`'s `ACCESS`, format 5) sits
+   between `ethernet-input` and the plugin - a second
+   `ethernet_register_input_type()` for both ethertypes replaces the
+   plugin's entry - and drops,
+   counted: any PPPoE frame from an interface that is not access; and a
+   discovery or control frame whose MAC another access interface holds. A
+   MAC is held by the interface its session's control frames last came from,
+   for 60 s after the last one (accel-ppp's echo every 20 s, three missed:
+   as long as the control plane itself believes in the session), and a PADT
+   from that interface lets it go at once. With it, the same run: sub1's
+   session out of `host-acc0`, 0% loss, nothing at the other CPE, 666 PADIs
+   refused; the other CPE dialling for 40 s got no session and sub1's never
+   changed; a PADT from sub1's port freed the MAC and the other CPE had a
+   session 2 s later. **pppd killed sends no PADT** (measured: none left its
+   interface), so a CPE that vanishes frees its MAC after the hold. Not
+   closed: a session's DATA frames are matched on (MAC, session id) with no
+   interface (`pppoe_decap.c`), so a frame with a held MAC and the right id
+   from another ACCESS interface is still taken - that needs the interface
+   in the plugin's key, a change to VPP. Two different subscribers with one
+   MAC on two ports are therefore not served at once: the first keeps it.
+10. **What the guard costs**: one node more for every PPPoE frame, a bit
+   read for the interface, and for a data frame nothing else; a discovery or
+   control frame takes a spinlock and a 4-way set of a table bounded at
+   65,536 MACs (1 MiB), where a flood of invented MACs evicts the oldest and
+   grows nothing. `show runtime` in the lab (af_packet, about 50 packets a
+   vector): the session guard 106-181 clocks a packet beside `pppoe-input`'s
+   133-199 in the same run. The first cut, a next index per packet, read 143
+   against 153; a frame that all passes is now handed on whole.
 
 ### 0.4 What remains of phase 1
 
@@ -264,10 +319,15 @@ In the order they are planned, each its own step on #597:
    starting, started and stopped, each RADIUS server's Access-Accepts,
    -Rejects and unanswered sends, and the Disconnect/CoA answers, counted
    by the accel-ppp patch in its own `show stat` and read by the agent
-   through the doors. Still to do: **`show log` events** for the
-   container's starts, exits and restarts.
+   through the doors. **`show log` events**: done - every start of the
+   container with its cause (a commit, a format upgrade, the boot, or the
+   restart policy after an exit), every exit with accel-pppd's code or
+   signal, and each RADIUS server accel-ppp marks failed and uses again,
+   read by the host's watcher from the container's own record of its runs
+   (docs/logging-events.md, "The PPPoE control plane").
 4. **Discovery restricted to the access interfaces** (0.3 item 7), and the
-   same MAC on two access ports (4, item 8).
+   same MAC on two access ports (4, item 8): done, measured, 0.3 items 9
+   and 10.
 5. **The stats segment sized for the configured `session-limit`** (2.1), and
    the multi-worker attach cost measured once #597's other branch lands.
 6. A configuration change without a restart of every session: done for

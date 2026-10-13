@@ -85,11 +85,17 @@ TICK = 10
 #: card one identity read and 24 bytes of levels, and the API's own advice
 #: for ListTransceivers is minutes, not seconds.
 CADENCE = {"link": 10, "bfd": 10, "bgp": 10, "collector": 10, "login": 10,
-           "pool": 30, "transceiver": 60}
+           "pool": 30, "transceiver": 60, "bng": 10, "radius": 10}
 #: The kinds read from the dataplane, and from the routing daemons: within
 #: SETTLE of that component's start they are not compared.
 DATAPLANE_KINDS = ("link", "transceiver", "pool", "collector")
 ROUTING_KINDS = ("bgp", "bfd")
+#: The PPPoE control plane's (#597): its runs, from a file on the host, and
+#: its RADIUS servers, from accel-ppp's `show stat` - read only while the
+#: container runs and RADIUS is configured, so a box with no PPPoE pays one
+#: stat a tick. No SETTLE: a run's record has its own times, and the
+#: servers' reading carries accel-pppd's uptime (radius_changes).
+BNG_KINDS = ("bng", "radius")
 SETTLE = 60
 #: A subject changing more than FLAP_EVENTS times in FLAP_WINDOW seconds is
 #: flapping: the rest of the window is counted, not written.
@@ -845,6 +851,243 @@ def collector_changes(prev, cur):
     return out
 
 
+# ------------------------------------------------- the PPPoE control plane
+
+#: The prisma-bng container's record of its runs (#597), written by its
+#: entrypoint (appliance/prisma-bng-entrypoint, run_note) on the host's /run.
+BNG_RUNS = os.environ.get("PRISMA_BNG_RUNS", "/run/prisma-routing/bng/runs")
+#: How the container is named in a sentence.
+BNG_WHAT = events._NAMES["bng"]
+#: accel-ppp's own uptime, read twice, differs by this much at most when
+#: it has not restarted: it prints whole seconds, and the reading takes some.
+BNG_UPTIME_SLACK = 5
+
+
+#: A count as accel-ppp and the entrypoint write one: ASCII digits only,
+#: the rule of system.is_number (#412).
+_COUNT = re.compile(r"[0-9]+")
+
+
+def parse_bng_runs(text):
+    """
+    The container's record of its runs, `<n> <epoch> start` and `<n> <epoch>
+    exit <code> <reason...>` a line, as [{"n", "t", "what", "code",
+    "reason"}] in the file's order. A line that is not one - a torn tail -
+    is passed over.
+    """
+    out = []
+    for line in (text or "").splitlines():
+        w = line.split()
+        if len(w) < 3 or not _COUNT.fullmatch(w[0]) or \
+                not _COUNT.fullmatch(w[1]):
+            continue
+        if w[2] == "start" and len(w) == 3:
+            out.append({"n": int(w[0]), "t": int(w[1]), "what": "start",
+                        "code": 0, "reason": ""})
+        elif w[2] == "exit" and len(w) >= 4 and _COUNT.fullmatch(w[3]):
+            out.append({"n": int(w[0]), "t": int(w[1]), "what": "exit",
+                        "code": int(w[3]),
+                        "reason": events._clean(" ".join(w[4:]),
+                                                events.REASON_MAX)})
+    return out
+
+
+def bng_reading(text):
+    """
+    The container's runs as the watcher compares them: {"runs": [...]},
+    parse_bng_runs()' list. A box where PPPoE never started since its boot
+    has no file, and that is a reading - nothing ran - not a missing one.
+
+    A RECORD, NOT A STATE, like the login records: docker brings the
+    container back within a second, so "running" read every 10 s is true
+    both times across a crash, and docker resets State.ExitCode to 0 at the
+    start that follows. Measured with docker 27.1.1 on 2026-10-13, a
+    container under `restart: unless-stopped` exiting 3: "restarting
+    exit=3" for under 0.1 s, running again 35-86 ms after it exited, and
+    "exit=0" from then on. What a reading compares is how far the record has
+    gone.
+    """
+    return {"runs": parse_bng_runs(text)}
+
+
+def _bng_new(prev, cur):
+    """
+    The runs of `cur` not in `prev`: past the last one `prev` saw. A record
+    whose numbering went back is a new boot's (/run is a tmpfs): all of it
+    is new.
+    """
+    runs = cur.get("runs") or []
+    seen = (prev or {}).get("runs") or []
+    if not seen:
+        return list(runs)
+    last = seen[-1]["n"]
+    if runs and runs[-1]["n"] < last:
+        return list(runs)
+    return [r for r in runs if r["n"] > last]
+
+
+def bng_start_text(cause, detail, before):
+    """
+    The sentence a start of the container says, and its severity: `cause`
+    and `detail` as events.cause_of() found them, `before` the run record
+    that came before this start (None for the first). A start nothing on
+    the box asked for is said by what preceded it: an exit the entrypoint
+    recorded, which the restart policy answered; or a run that recorded no
+    exit at all, which only a kill from outside leaves.
+    """
+    again = " again" if before is not None else ""
+    if cause == "boot":
+        return f"{BNG_WHAT} started with the boot", "notice"
+    if cause != "unexpected":
+        return (f"{BNG_WHAT} started{again}: {detail or cause}", "notice")
+    if before is not None and before["what"] == "exit" and before["code"]:
+        return (f"{BNG_WHAT} started again, by its restart policy, after it "
+                f"exited: {before['reason']}", "warning")
+    if before is not None and before["what"] == "start":
+        return (f"{BNG_WHAT} started again; its last run recorded no exit: "
+                f"the container was killed from outside (docker kill, the "
+                f"OOM killer, a stop that ran out of time)", "warning")
+    return f"{BNG_WHAT} started{again}", "notice"
+
+
+def bng_changes(prev, cur, record=None, boot=None):
+    """
+    What the container's record says happened since `prev`: each exit,
+    with its code and the entrypoint's reason, and each start, with its
+    cause - the boot, an "asked" event in `record` (the box's record of
+    events: a commit's, a format upgrade's), else what came before it.
+    Change dicts as tick() takes them, each with its own time.
+    """
+    out = []
+    runs = cur.get("runs") or []
+    seen = (prev or {}).get("runs") or []
+    # What came before the first new run: the last one seen - unless the
+    # record started again with a boot, and nothing seen came before it.
+    if seen and runs and runs[-1]["n"] < seen[-1]["n"]:
+        seen = []
+    before = seen[-1] if seen else None
+    starts = [x["t"] for x in seen if x["what"] == "start"]
+    last_start = starts[-1] if starts else None
+    base = {"source": "host", "subject": "prisma-bng", "what": BNG_WHAT,
+            "component": "bng"}
+    for r in _bng_new(prev, cur):
+        if r["what"] == "exit":
+            if r["code"] == 0:
+                text = f"{BNG_WHAT} stopped: {r['reason']}"
+                sev = "notice"
+            else:
+                text = f"{BNG_WHAT} exited with code {r['code']}: " \
+                       f"{r['reason']}"
+                sev = "warning"
+            out.append(dict(base, key="bng:exit", kind="exit",
+                            severity=sev, text=text, reason=r["reason"],
+                            state="stopped", t=r["t"]))
+        else:
+            cause, detail = events.cause_of(record or [], "bng", r["t"],
+                                            boot, after=last_start)
+            text, sev = bng_start_text(cause, detail, before)
+            out.append(dict(base, key="bng:start", kind="start",
+                            severity=sev, text=text, reason=detail,
+                            state="running", t=r["t"], cause=cause))
+            last_start = r["t"]
+        before = r
+    return out
+
+
+def bng_running(reading):
+    """Whether the container's record says it is running: its last line
+    is a start."""
+    runs = (reading or {}).get("runs") or []
+    return bool(runs) and runs[-1]["what"] == "start"
+
+
+_UPTIME = re.compile(r"^uptime:\s*(\d+)\.(\d+):(\d+):(\d+)$")
+_RADIUS = re.compile(r"^radius\(\d+,\s*([0-9a-fA-F.:]+)\):$")
+
+
+def radius_reading(stat, now):
+    """
+    accel-ppp's `show stat` (`prisma-bng summary`) as {"started", "servers":
+    {address: {"state", "fails"}}}: when accel-pppd started (now less its
+    uptime), and each RADIUS server's state - active, or failed for its
+    dead-time - and accel-ppp's count of the times it marked it failed, so
+    a server that failed and came back between two readings is seen. A
+    server listed twice (one a reload is retiring) is the later one.
+    """
+    out = {"started": None, "servers": {}}
+    cur = None
+    for raw in (stat or "").splitlines():
+        line = raw.strip()
+        m = _UPTIME.match(line)
+        if m:
+            d, h, mi, se = (int(x) for x in m.groups())
+            out["started"] = round(now - (((d * 24 + h) * 60 + mi) * 60 + se))
+            continue
+        m = _RADIUS.match(line)
+        if m:
+            cur = {"state": "", "fails": 0}
+            out["servers"][m.group(1)] = cur
+            continue
+        if not raw.startswith(" "):
+            cur = None
+            continue
+        if cur is not None and line.startswith("state:"):
+            cur["state"] = line.split(":", 1)[1].strip()
+        elif cur is not None and line.startswith("fail count:"):
+            v = line.split(":", 1)[1].strip()
+            cur["fails"] = int(v) if _COUNT.fullmatch(v) else 0
+    return out
+
+
+def radius_changes(prev, cur):
+    """
+    What changed between two radius_reading()s: a server accel-ppp marked
+    failed, one it uses again, and one that failed and came back between
+    two readings (its fail count moved, its state did not). Across a start
+    of accel-pppd - its uptime went back - every server is active again
+    and counted from zero: a baseline, not news.
+    """
+    out = []
+    ps, cs = prev.get("started"), cur.get("started")
+    if ps is None or cs is None or abs(cs - ps) > BNG_UPTIME_SLACK:
+        return out
+    for addr in sorted(set(prev["servers"]) & set(cur["servers"])):
+        p, c = prev["servers"][addr], cur["servers"][addr]
+        what = f"RADIUS server {addr}"
+        base = {"key": "radius:" + addr, "source": "host", "kind": "radius",
+                "subject": addr, "what": what, "state": c["state"]}
+        if p["state"] != "failed" and c["state"] == "failed":
+            out.append(dict(base, severity="warning", reason="no answer",
+                            text=f"{what} failed: it did not answer, and "
+                                 f"accel-ppp uses the others for its "
+                                 f"dead-time"))
+        elif p["state"] == "failed" and c["state"] == "active":
+            out.append(dict(base, severity="notice", reason="",
+                            text=f"{what} is active again: its dead-time "
+                                 f"is over and accel-ppp sends to it"))
+        elif c["fails"] > p["fails"]:
+            n = c["fails"] - p["fails"]
+            out.append(dict(base, severity="warning", reason="no answer",
+                            text=f"{what} failed and was active again "
+                                 f"between two readings ({n} time(s))"))
+    return out
+
+
+def bng_standing(cur):
+    """Nothing: a run's exit is a change, said when it happens."""
+    return []
+
+
+def radius_standing(cur):
+    """The servers of a radius_reading() failed when the watcher starts."""
+    return [{"key": "radius:" + a, "source": "host", "kind": "radius",
+             "subject": a, "severity": "warning", "reason": "no answer",
+             "text": f"RADIUS server {a} is failed: it did not answer, and "
+                     f"accel-ppp uses the others for its dead-time"}
+            for a in sorted(cur.get("servers") or {})
+            if cur["servers"][a]["state"] == "failed"]
+
+
 # ---------------------------------------------------------------- standing
 
 def link_standing(cur):
@@ -977,7 +1220,8 @@ def collector_standing(cur):
 #: Each kind's standing conditions. Logins are records, not a state.
 STANDING_OF = {"link": link_standing, "transceiver": module_standing,
                "bgp": bgp_standing, "bfd": bfd_standing,
-               "pool": pool_standing, "collector": collector_standing}
+               "pool": pool_standing, "collector": collector_standing,
+               "bng": bng_standing, "radius": radius_standing}
 
 
 def standing_due(stood, kind, boot, start, now):
@@ -1163,10 +1407,11 @@ COMPARE = {"link": (link_changes, True), "transceiver": (module_changes,
                                                           False),
            "bgp": (bgp_changes, True), "bfd": (bfd_changes, True),
            "pool": (pool_changes, True), "collector": (collector_changes,
-                                                       False)}
+                                                       False),
+           "radius": (radius_changes, False)}
 
 
-def tick(state, readings, starts, now, logins=None):
+def tick(state, readings, starts, now, logins=None, record=None):
     """
     One tick of the watcher, pure: (events, new_state).
 
@@ -1178,6 +1423,9 @@ def tick(state, readings, starts, now, logins=None):
     read, positions being read_utmp()'s. `starts["boot"]`, when given, is
     the boot what stands is said once for (#588 phase 3); standing events
     are not passed through flap_admit(): once a boot is their bound.
+    `record` is the box's record of events, for a start of the PPPoE
+    control plane to find its cause in (bng_changes); None when no new run
+    was read.
     """
     state = json.loads(json.dumps(state or {}))
     seen = state.setdefault("seen", {})
@@ -1190,7 +1438,8 @@ def tick(state, readings, starts, now, logins=None):
         last[kind] = now
         if cur is None:
             continue
-        comp = "dataplane" if kind in DATAPLANE_KINDS else "routing"
+        comp = "dataplane" if kind in DATAPLANE_KINDS else \
+            "bng" if kind in BNG_KINDS else "routing"
         start = starts.get(comp)
         if start is not None and 0 <= now - start < SETTLE:
             continue
@@ -1201,8 +1450,11 @@ def tick(state, readings, starts, now, logins=None):
         if prev is not None:
             restarted = start is not None and started.get(kind) is not None \
                 and abs(start - started[kind]) > events.START_SLACK
-            fn, takes = COMPARE[kind]
-            moved = fn(prev, cur, restarted) if takes else fn(prev, cur)
+            if kind == "bng":
+                moved = bng_changes(prev, cur, record, starts.get("boot"))
+            else:
+                fn, takes = COMPARE[kind]
+                moved = fn(prev, cur, restarted) if takes else fn(prev, cur)
             changes += moved
         # After the comparison, so a condition this tick's change already
         # says - a link that went down while the watcher was stopped - is
@@ -1229,7 +1481,8 @@ def tick(state, readings, starts, now, logins=None):
             c["source"], c["severity"], c["text"], who=c.get("who", ""),
             origin=c.get("from", ""), now=c.get("t", now), kind=c["kind"],
             subject=events._clean(c["subject"], events.SUBJECT_MAX),
-            reason=events._clean(c["reason"], events.REASON_MAX)))
+            reason=events._clean(c["reason"], events.REASON_MAX),
+            component=c.get("component"), cause=c.get("cause")))
     out += flap_summaries(flaps, now)
     return out, state
 

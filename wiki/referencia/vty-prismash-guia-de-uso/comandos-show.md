@@ -639,7 +639,7 @@ prisma> show log kind bgp
 prisma> show log kind link since 1h
 ```
 
-Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.152.0, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`. Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
+Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.152.0, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`; com PPPoE, `exit` (o plano de controle PPPoE parou, com o motivo) e `radius` (um servidor RADIUS fora, e de volta). Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
 
 O que ele registra hoje:
 
@@ -669,6 +669,8 @@ O que ele registra hoje:
 | `login`: login (por quem, de onde, na VTY ou num shell), logout, login com senha errada | `failed login as noc (from ssh 127.0.0.1)` |
 | `settings`: as configurações de SNMP e da API aplicadas ou recusadas por um commit | `the SNMP settings were refused: ...` |
 | `gave-up`: o dataplane abandonado, as placas devolvidas ao Linux, ou um `system dataplane restart` que não terminou | `system dataplane restart did not finish: the saved configuration did not load in 180 s` |
+| `start` e `exit` do plano de controle PPPoE (`component` `bng`): cada partida com a causa, cada saída com o código ou o sinal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
+| `radius`: um servidor RADIUS que o plano de controle PPPoE deu como fora, e de volta | `RADIUS server 192.0.2.10 failed: it did not answer, and accel-ppp uses the others for its dead-time` |
 
 Uma porta que fica caindo e voltando não enche o registro: quatro mudanças em 5 minutos saem uma a uma; dali em diante são contadas, e sai uma linha por janela de 5 minutos — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. Uma rajada de senhas erradas do mesmo endereço, igual. No primeiro minuto depois de o dataplane ou o FRR partir, nada disso é comparado: o reinício já é um evento, e as portas voltando são o reinício. Os logins vêm de `/var/log/wtmp` e `/var/log/btmp`, os registros que o sshd e o login(1) já escrevem; o módulo de uma placa que está com o Linux (a de gerência) ainda não é vigiado.
 
