@@ -310,8 +310,25 @@ check(r["rc"] == 126 and "prisma-operator" in r["out"],
 r = doors.answer_event({"event": asked}, 1000, path=DLOG,
                        is_operator=lambda u: True, name_of=lambda u: "carol")
 check(r["rc"] == 0, "answer_event: an operator's asked is written")
+# #597: a commit of `pppoe` restarts the PPPoE control plane, and an
+# administrator who may commit it need not be prisma-operator's. Mutation
+# shown red: the `!= "bng"` taken out of answer_event().
+_bng = events.make_event("vty", "notice", "a commit restarts the PPPoE "
+                         "control plane", kind="asked", cause="operator",
+                         affects="bng")
+r = doors.answer_event({"event": _bng}, 1000, path=DLOG,
+                       is_operator=lambda u: False, name_of=lambda u: "dave")
+check(r["rc"] == 0 and events.read_events(DLOG)[-1]["affects"] == "bng",
+      f"answer_event: any account's asked for the PPPoE control plane alone "
+      f"is written: {r}")
+r = doors.answer_event({"event": dict(_bng, affects="bng dataplane")}, 1000,
+                       path=DLOG, is_operator=lambda u: False,
+                       name_of=lambda u: "dave")
+check(r["rc"] == 126 and "prisma-operator" in r["out"],
+      "answer_event: but not one that also names the dataplane")
 r = doors.answer_event({"events": {"kind": "asked"}}, 1000, path=DLOG)
-check(r["rc"] == 0 and [e["who"] for e in json.loads(r["out"])] == ["carol"],
+check(r["rc"] == 0 and [e["who"] for e in json.loads(r["out"])]
+      == ["carol", "dave"],
       "answer_event: any account reads, filtered on the host")
 for bad in ({"events": {"rm": 1}}, {"events": {"last": "x"}},
             {"events": {"last": True}}, {"events": []}):

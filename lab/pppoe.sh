@@ -4,7 +4,7 @@
 #   sh tools/lab.sh pppoe        -> LAB PASSED
 #   sh tools/lab.sh pppoe off    -> LAB FAILED (PPPoE never configured)
 #
-# OFF-RED-AT-LEAST: 94
+# OFF-RED-AT-LEAST: 116
 #
 # WHAT IS REAL HERE. Real PPPoE clients - pppd with rp-pppoe, one network
 # namespace each, behind a Linux bridge, one of them on VLAN 100 - dial the
@@ -68,7 +68,7 @@
 #   * every CoA and Disconnect answered is counted ACK or NAK, as radclient
 #     received it, and the ones answered with nothing as dropped;
 #   * the first server's unanswered sends are counted when it dies;
-#   * with `no pppoe`, notConfigured, zero, and no server row.
+#   * with `no pppoe`, notConfigured, zero, and no server row;
 # and the session trail (docs/bng.md 0.7), the box's own record of who held
 # which inside address from when to when:
 #   * a cleared session's stop and the next one's start, with the user, MAC,
@@ -83,6 +83,18 @@
 #   * no accounting server answering: the session bound and ended is
 #     recorded though no RADIUS server got a Start; both servers down: a
 #     stop is recorded, and no start, since nobody can be authenticated.
+# and for docs/bng.md 0.4 items 3 and 4 (#597), read through the
+# host's watcher (`prismash --watch-events once`) and `show log`:
+#   * every start and exit of the container is an event with its reason:
+#     the commit's start, the commit's restart (a stop, then a start the
+#     commit asked for), accel-pppd killed with -9 (the exit with signal 9,
+#     the restart policy's start), the format upgrade's restart, `no pppoe`;
+#   * RADIUS server 1 failed and active again;
+#   * a PADI from an interface that is not access gets no PADO, and is
+#     counted; one from an access interface does;
+#   * sub1's MAC dialling on a second access port (VLAN 100) is refused,
+#     counted, while sub1's session lives - sub1's session never changes -
+#     and gets the MAC once sub1 hangs up.
 MODE=${1:-on}
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -145,9 +157,13 @@ echo "=========== 2. TOPOLOGY ==========="
 # acc0 is the access card (VPP host-acc0), behind a bridge every CPE is on;
 # wan0 the upstream, with the "internet" in netns inet; lan0 a subscriber
 # that is NOT on PPPoE, for what a restart of the container must not touch.
-ip link add br0 type bridge; ip link set br0 up
+# VLAN-AWARE, so that one MAC on two VLANs is two entries of the bridge's
+# table and not one that flaps between two ports: section 19 puts sub1's MAC
+# on VLAN 100 too, as a cloned CPE on another OLT port would be.
+ip link add br0 type bridge vlan_filtering 1; ip link set br0 up
 ip link add acc0 type veth peer name accb
 ip link set acc0 up; ip link set accb master br0; ip link set accb up
+bridge vlan add dev accb vid 100
 ip link add wan0 type veth peer name wanp; ip link set wan0 up
 ip netns add inet
 ip link set wanp netns inet
@@ -174,7 +190,8 @@ ip netns exec plain ip route add default via 100.64.1.1
 # VLAN 100, from the pool; sub4 a wrong password. Every CPE probes its link
 # with LCP echoes, as a real one does (faster here): a control plane killed
 # with -9 sends no PADT, and the echo is how a CPE learns to redial.
-for i in 1 2 3 4; do
+# s5 is sub1's MAC again, on VLAN 100 (section 19); s6 only sends PADIs.
+for i in 1 2 3 4 5 6; do
   ip netns add "s$i"
   ip link add "cli$i" type veth peer name "br$i"
   ip link set "br$i" master br0; ip link set "br$i" up
@@ -185,6 +202,12 @@ for i in 1 2 3 4; do
 done
 ip netns exec s3 ip link add link cli3 name cli3.100 type vlan id 100
 ip netns exec s3 ip link set cli3.100 up
+bridge vlan add dev br3 vid 100
+ip netns exec s5 ip link set cli5 address 02:aa:00:00:00:01
+ip netns exec s5 ip link add link cli5 name cli5.100 type vlan id 100
+ip netns exec s5 ip link set cli5.100 up
+bridge vlan add dev br5 vid 100
+bridge vlan del dev br5 vid 1
 peer() {  # <n> <nic> <auth options>
   cat > "/etc/ppp/peers/sub$1" <<P
 plugin rp-pppoe.so
@@ -212,11 +235,13 @@ peer 3 cli3.100 "refuse-pap
 refuse-chap
 refuse-mschap"
 peer 4 cli4 ""
-printf '"sub1" * "pw1" *\n"sub2" * "pw2" *\n"sub3" * "pw3" *\n"sub4" * "WRONG" *\n' \
+peer 5 cli5.100 ""
+printf '"sub1" * "pw1" *\n"sub2" * "pw2" *\n"sub3" * "pw3" *\n"sub4" * "WRONG" *\n"sub5" * "pw5" *\n' \
   > /etc/ppp/pap-secrets
 cp /etc/ppp/pap-secrets /etc/ppp/chap-secrets
 
-echo "  br0: acc0 (VPP host-acc0, VLAN 100 = host-acc0.100) + four CPEs"
+echo "  br0: acc0 (VPP host-acc0, VLAN 100 = host-acc0.100) + four CPEs, s5 (sub1's"
+echo "  MAC on VLAN 100) and s6 (PADIs only)"
 echo "  wan0: the internet (netns inet); lan0: a subscriber not on PPPoE"
 
 echo
@@ -241,6 +266,7 @@ sub3 Cleartext-Password := "pw3"
      Cisco-AVPair = "lcp:interface-config#1=rate-limit output 30000000 3000000 6000000 conform-action transmit exceed-action drop",
      Cisco-AVPair += "ip:sub-qos-policy-in=UP15"
 sub4 Cleartext-Password := "pw4"
+sub5 Cleartext-Password := "pw5"
 U
 rm -rf /var/log/freeradius/radacct
 # Two servers, one configuration copied twice, each listening on its own
@@ -360,6 +386,15 @@ V
   printf 'snmp enabled yes\nsnmp listen-address 127.0.0.1\nsnmp community hexro\n'
   echo commit
 } > /tmp/config.vty
+# THE BOX'S RECORD OF EVENTS (#588), from nothing, and the host's watcher's
+# first reading taken before PPPoE is configured: a first reading is a
+# baseline and says nothing, so the container's first start is a change the
+# next one sees. `tick` is one pass of prisma-routing-events-watch.service's
+# loop, as lab/show-log-watch.sh drives it.
+rm -f /var/log/prisma-routing/events.log /var/log/prisma-routing/events.log.1 \
+  /var/log/prisma-routing/events.state /var/log/prisma-routing/events-watch.state
+tick() { $HX --watch-events once 2>&1 | tail -1; }
+tick > /dev/null
 COMMIT=$($HX < /tmp/config.vty 2>&1)
 echo "$COMMIT" | tr '#' '\n' | grep -E "pppoe:|aaa:|commit|error" | sed 's/^/  /'
 [ "$MODE" = off ] && echo "  OFF: no 'pppoe' block was committed"
@@ -592,6 +627,10 @@ NOW=$(echo "$AFTER" | awk '/^[0-9a-f]+  / && length($1) == 16 && $NF ~ /:/ {prin
 echo "  sessions before: $BEFORE"
 echo "  sessions after:  $NOW"
 grep -c "== start" /var/log/pppoe-shim.log | sed 's/^/  container starts: /'
+# The watcher's reading after both restarts: one pass, as a box's loop would
+# take 10 s after them - the container's own record of its runs is what
+# carries the two exits a state compared every 10 s would never see.
+echo "  the host's watcher: $(tick)"
 
 # THE SESSIONS BY USER (#607): sid_of <user> - the id of its active session
 sid_of() {
@@ -849,6 +888,7 @@ FO_SECS=$(wait_user sub2 60)
 echo "  sub2 cleared, and back in ${FO_SECS} s: authenticated by server 2 ($(heard 2 Access-Request sub2) asks for it there)"
 FO_SUMMARY=$($HX -c "show pppoe summary" 2>&1)
 echo "$FO_SUMMARY" | grep -E "radius|127\.0\.0" | sed 's/^/  /'
+echo "  the host's watcher, server 1 failed: $(tick)"
 # The next one goes straight to server 2: server 1 is marked down.
 $HX -c "clear pppoe session user sub3" > /dev/null 2>&1
 T1=$(date +%s)
@@ -862,6 +902,7 @@ $HX -c "clear pppoe session user sub2" > /dev/null 2>&1
 BACK_SECS=$(wait_user sub2 60)
 A1_1=$(heard 1 Access-Request sub2)
 echo "  server 1 back, its dead-time (10 s) over: sub2 again in ${BACK_SECS} s, asked of server 1 ($A1_0 -> $A1_1)"
+echo "  the host's watcher, server 1 back: $(tick)"
 echo "  SNMP after the failover:"
 snmp_bng e
 
@@ -1106,6 +1147,230 @@ echo "  RADIUS back: sub2 again in ${DN_BACK} s"
 VERIFY_END=$($HX -c "show pppoe history verify" 2>&1)
 SUMMARY_T=$($HX -c "show pppoe summary" 2>&1)
 echo "$SUMMARY_T" | grep "session trail" | sed 's/^/  /'
+echo "=========== 18. PPPoE ONLY ON THE ACCESS INTERFACES ==========="
+# padi.py <iface> <count> [<src mac>] - PADIs sent from <iface>, one a
+# second; prints how many came back with a PADO for them (Host-Uniq)
+cat > /tmp/padi.py <<'S'
+import os, socket, struct, sys, time
+ifc, count = sys.argv[1], int(sys.argv[2])
+s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x8863))
+s.bind((ifc, 0))
+mac = bytes.fromhex(sys.argv[3].replace(":", "")) if len(sys.argv) > 3 \
+    else s.getsockname()[4][:6]
+got = 0
+for _ in range(count):
+    uniq = os.urandom(4)
+    tags = struct.pack("!HH", 0x0101, 0) + struct.pack("!HH", 0x0103, 4) + uniq
+    s.send(b"\xff" * 6 + mac + struct.pack("!HBBHH", 0x8863, 0x11, 0x09, 0,
+                                           len(tags)) + tags)
+    end = time.time() + 1
+    s.settimeout(0.2)
+    while time.time() < end:
+        try:
+            f = s.recv(2048)
+        except socket.timeout:
+            continue
+        if len(f) > 20 and f[15] == 0x07 and uniq in f[20:]:
+            got += 1
+            break
+print(got)
+S
+# lcp.py <iface> <src mac> <session id> <count> - LCP Echo-Requests in a
+# session frame, as a CPE sends them, from somebody else's MAC
+cat > /tmp/lcp.py <<'S'
+import socket, struct, sys, time
+ifc, mac, sid, count = sys.argv[1], sys.argv[2], int(sys.argv[3], 16), int(sys.argv[4])
+s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+s.bind((ifc, 0))
+src = bytes.fromhex(mac.replace(":", ""))
+lcp = struct.pack("!BBHI", 9, 1, 8, 0)
+for _ in range(count):
+    s.send(b"\xff" * 6 + src + struct.pack("!HBBHHH", 0x8864, 0x11, 0, sid,
+                                           len(lcp) + 2, 0xc021) + lcp)
+    time.sleep(0.2)
+S
+# guard <field> - one number of `show bpa pppoe-access`
+guard() {
+  vppctl show bpa pppoe-access 2>/dev/null | tr -d '\r' | awk -v f="$1" '
+    { for (i = 1; i < NF; i++) if ($1 " " $i == f) { print $(i + 1); exit } }'
+}
+vppctl show bpa pppoe-access 2>&1 | tr -d '\r' | sed 's/^/  /'
+NA0=$(guard "discovery not-access"); SNA0=$(guard "session not-access")
+# From the CGNAT inside port (host-lan0), a routed interface that is not
+# access: what a CPE on the wrong side of the box sends.
+WRONG=$(ip netns exec plain python3 /tmp/padi.py lanp 5)
+# The same from a CPE on the access bridge: the control is that a PADI is
+# answered at all.
+RIGHT=$(ip netns exec s6 python3 /tmp/padi.py cli6 5)
+# And sub1's MAC in a session frame from the upstream side, with its session
+# id: without the guard this frame moves sub1's control plane to host-lan0.
+SESS1=$(vppctl show pppoe session | tr -d '\r' | awk '
+  /session-id/ { for (i = 1; i <= NF; i++) if ($i == "session-id") s = $(i + 1) }
+  /client-mac 02:aa:00:00:00:01/ { print s; exit }')
+ip netns exec plain python3 /tmp/lcp.py lanp 02:aa:00:00:00:01 "$(printf '%x' "${SESS1:-1}")" 5
+sleep 1
+NA1=$(guard "discovery not-access"); SNA1=$(guard "session not-access")
+echo "  5 PADIs from host-lan0 (not access): ${WRONG:-?} PADO(s) back"
+echo "  5 PADIs from a CPE on host-acc0 (access): ${RIGHT:-?} PADO(s) back"
+echo "  refused, not an access interface: discovery ${NA0:-?} -> ${NA1:-?}, session ${SNA0:-?} -> ${SNA1:-?}"
+SUM17=$($HX -c "show pppoe summary" 2>&1)
+echo "$SUM17" | grep -A1 "^refused" | sed 's/^/  /'
+vppctl show runtime | tr -d '\r' | grep -E "bpa-pppoe-(discovery|session)-guard|pppoe-input |pppoe-cp-dispatch" | sed 's/^/  runtime: /'
+
+echo
+echo "=========== 19. ONE MAC ON TWO ACCESS PORTS ==========="
+# s5 is sub1's MAC on VLAN 100 - host-acc0.100, another access interface -
+# dialling as sub5, as a cloned CPE on another OLT port would. sub1 keeps
+# its session on host-acc0 while s5 dials for 40 s; then sub1 hangs up and
+# s5 may have the MAC.
+# sniff.py <iface> <seconds> <ethertype> <in|out> [<session id>|-] [<code>]
+# - how many PPPoE frames of that ethertype (hex), session id and code (hex)
+# cross <iface> in that direction
+cat > /tmp/sniff.py <<'S'
+import socket, struct, sys, time
+ifc, secs, et, d = sys.argv[1], float(sys.argv[2]), int(sys.argv[3], 16), sys.argv[4]
+sid = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] != "-" else None
+code = int(sys.argv[6], 16) if len(sys.argv) > 6 else None
+s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(et))
+s.bind((ifc, 0))
+s.settimeout(0.3)
+n, end = 0, time.time() + secs
+while time.time() < end:
+    try:
+        f, a = s.recvfrom(2048)
+    except socket.timeout:
+        continue
+    if (a[2] == socket.PACKET_OUTGOING) != (d == "out") or len(f) < 20:
+        continue
+    if sid is not None and struct.unpack("!H", f[16:18])[0] != sid:
+        continue
+    if code is not None and f[15] != code:
+        continue
+    n += 1
+print(n)
+S
+# padiflood.py <iface> <seconds> - a PADI every 20 ms, answered or not
+cat > /tmp/padiflood.py <<'S'
+import socket, struct, sys, time
+s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+s.bind((sys.argv[1], 0))
+mac = s.getsockname()[4][:6]
+tags = struct.pack("!HH", 0x0101, 0)
+end = time.time() + float(sys.argv[2])
+while time.time() < end:
+    s.send(b"\xff" * 6 + mac + struct.pack("!HBBHH", 0x8863, 0x11, 0x09, 0,
+                                           len(tags)) + tags)
+    time.sleep(0.02)
+S
+# psid <mac> - the PPPoE session id the dataplane holds for a client MAC
+psid() {
+  vppctl show pppoe session | tr -d '\r' | awk -v m="$1" '
+    /session-id/ { for (i = 1; i <= NF; i++) if ($i == "session-id") s = $(i + 1) }
+    $0 ~ "client-mac " m { print s; exit }'
+}
+# padt.py <iface> <dst mac> <session id> - the PADT a CPE sends when it
+# hangs up
+cat > /tmp/padt.py <<'S'
+import socket, struct, sys
+s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+s.bind((sys.argv[1], 0))
+mac = s.getsockname()[4][:6]
+dst = bytes.fromhex(sys.argv[2].replace(":", ""))
+s.send(dst + mac + struct.pack("!HBBHH", 0x8863, 0x11, 0xa7,
+                               int(sys.argv[3]), 0))
+S
+ACC_MAC=$(vppctl show hardware-interfaces host-acc0 | tr -d '\r' \
+  | sed -n 's/.*Ethernet address \([0-9a-f:]*\).*/\1/p' | head -1)
+H0=$(guard "discovery held")
+# sub1 DIALS WHILE ITS MAC IS HEARD ON THE OTHER PORT. The plugin takes a
+# session's way down - its interface, VLAN tag and all - from where its MAC
+# was heard last, at the moment the session is added (pppoe.c, the link
+# table lookup in vnet_pppoe_add_del_session). s5 sends PADIs with sub1's
+# MAC on VLAN 100 every 20 ms while sub1's session is cleared and sub1
+# redials; then where do sub1's downloads go?
+wait_user sub1 > /dev/null
+SID1_R=$(sid_of sub1)
+ip netns exec s5 python3 /tmp/padiflood.py cli5.100 25 &
+PF=$!
+sleep 1
+$HX -c "clear pppoe session ${SID1_R:-0000000000000000}" > /dev/null 2>&1
+sleep 2
+REDIAL_R=$(wait_user sub1 20)
+PSID1_R=$(psid 02:aa:00:00:00:01)
+ENCAP=$(vppctl show pppoe session | tr -d '\r' | awk '
+  /encap-if-index/ { for (i = 1; i <= NF; i++) if ($i == "encap-if-index") e = $(i + 1) }
+  /client-mac 02:aa:00:00:00:01/ { print e; exit }')
+ENCAP_NAME=$(vppctl show interface | tr -d '\r' | awk -v i="${ENCAP:-x}" '/^[^ ]/ && $2 == i {print $1; exit}')
+_ppp=$(ip netns exec s1 ip -o -4 addr show 2>/dev/null | awk '$2 ~ /^ppp/ {print $2; exit}')
+ip netns exec s1 ip route replace default dev "${_ppp:-ppp0}" 2>/dev/null
+ip netns exec s5 python3 /tmp/sniff.py cli5.100 5 8864 in "${PSID1_R:-0}" > /tmp/stolen5.txt &
+SN=$!
+PING_R=$(ip netns exec s1 ping -c 5 -i 0.3 -W 1 200.150.0.2 2>&1 | grep -o '[0-9]*% packet loss')
+wait "$SN"
+STOLEN=$(cat /tmp/stolen5.txt)
+kill "$PF" 2>/dev/null; wait "$PF" 2>/dev/null
+H1=$(guard "discovery held")
+echo "  sub1 redialled in ${REDIAL_R} s while its MAC was heard on VLAN 100 every 20 ms:"
+echo "  the dataplane sends its session's frames out of ${ENCAP_NAME:-?} (encap-if-index ${ENCAP:-?})"
+echo "  sub1 pinging the internet: ${PING_R:-no answer}; its session's frames reaching the CPE on VLAN 100: ${STOLEN:-?}"
+echo "  refused, MAC held by another access interface: discovery ${H0:-?} -> ${H1:-?}"
+
+# A CPE WITH sub1's MAC DIALLING ON THE OTHER PORT, as sub5, for 40 s.
+wait_user sub1 > /dev/null
+SID1_18=$(sid_of sub1)
+H2=$(guard "discovery held"); HS2=$(guard "session held")
+timeout 3600 ip netns exec s5 pppd call sub5 > /tmp/pppd5.log 2>&1 &
+CHANGES=0; LAST=$SID1_18; SEEN5=""
+for _k in $(seq 1 20); do
+  sleep 2
+  _cur=$(sid_of sub1)
+  [ "$_cur" != "$LAST" ] && CHANGES=$((CHANGES + 1))
+  LAST=$_cur
+  [ -n "$(sid_of sub5)" ] && SEEN5=yes
+done
+H3=$(guard "discovery held"); HS3=$(guard "session held")
+echo "  sub1's session ${SID1_18:-?}: changed $CHANGES time(s) in 40 s while sub5 dialled, now ${LAST:-none}"
+echo "  sub5 (sub1's MAC on VLAN 100) had a session at some point: ${SEEN5:-no}"
+echo "  refused, MAC held by another access interface: discovery ${H2:-?} -> ${H3:-?}, session ${HS2:-?} -> ${HS3:-?}"
+# sub1 hangs up where its session is, and the MAC is the other port's at
+# once. pppd killed sends LCP's Terminate-Request and NO PADT (measured
+# here: none left the CPE's interface), so the PADT a CPE's hang-up sends
+# is sent for it; then the other port is asked with PADIs of the lab's own,
+# sub5's pppd stopped first - after 40 s of refusals it is in its discovery
+# back-off, and what it took to dial in the first cut of this section was
+# that back-off, not the box.
+for _p in $(pgrep -x pppd); do
+  tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null | grep -q 'call sub5' && kill "$_p"
+done
+PSID1_H=$(psid 02:aa:00:00:00:01)
+ip netns exec s1 python3 /tmp/sniff.py cli1 4 8863 out - a7 > /tmp/padtout.txt &
+PO=$!
+for _p in $(pgrep -x pppd); do
+  tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null | grep -q 'call sub1' && kill "$_p"
+done
+wait "$PO"
+PADTOUT=$(cat /tmp/padtout.txt)
+NOTFREE=$(ip netns exec s5 python3 /tmp/padi.py cli5.100 2)
+ip netns exec s1 python3 /tmp/padt.py cli1 "${ACC_MAC:-ff:ff:ff:ff:ff:ff}" "${PSID1_H:-0}"
+FREED=$(ip netns exec s5 python3 /tmp/padi.py cli5.100 3)
+timeout 3600 ip netns exec s5 pppd call sub5 >> /tmp/pppd5.log 2>&1 &
+MOVED=$(wait_user sub5 60)
+echo "  sub1's pppd killed: ${PADTOUT:-?} PADT(s) left its CPE; the other port's PADIs answered: ${NOTFREE:-?} of 2"
+echo "  a PADT from sub1's port for its session, then: ${FREED:-?} of 3 answered; sub5 has a session ${MOVED} s later"
+
+echo
+echo "=========== 20. A FORMAT UPGRADE RESTARTS THE CONTAINER, AND SAYS SO ==========="
+# What a box upgraded from 0.155.3 finds at its next load: the container's
+# files in an older format. The load writes them again and restarts it.
+# The load replays the SAVED file, which only `save` writes.
+$HX -c save > /dev/null 2>&1
+sed -i 's/^# prisma-bng format .*/# prisma-bng format 3/' /etc/prisma-routing/bng/accel-ppp.conf
+FMT_LOAD=$($HX --load 2>&1)
+echo "$FMT_LOAD" | grep -iE "pppoe|older|error" | sed 's/^/  load: /'
+FMT_NOW=$(sed -n 's/^# prisma-bng format //p' /etc/prisma-routing/bng/accel-ppp.conf)
+sleep 4
+echo "  the files are format ${FMT_NOW:-?} now; the host's watcher: $(tick)"
+
 echo
 echo "=========== 11. no pppoe ==========="
 printf 'configure\nno pppoe\ncommit\n' | $HX > /tmp/nopppoe.txt 2>&1
@@ -1124,6 +1389,27 @@ POL_END=$(pols)
 echo "  VPP's policers: ${POL0:-?} before any session, ${POL_END:-?} now"
 echo "  SNMP with PPPoE gone:"
 snmp_bng f
+echo "  the host's watcher, PPPoE gone: $(tick)"
+
+echo
+echo "=========== 21. show log: THE CONTROL PLANE'S RUNS, AND RADIUS ==========="
+LOG_ALL=$($HX -c "show log last 300" 2>&1)
+LOG_START=$($HX -c "show log kind start last 50" 2>&1)
+LOG_EXIT=$($HX -c "show log kind exit last 50" 2>&1)
+LOG_RADIUS=$($HX -c "show log kind radius last 50" 2>&1)
+LOG_ASKED=$($HX -c "show log kind asked last 50" 2>&1)
+echo "$LOG_START" | sed 's/^/  /'
+echo "$LOG_EXIT" | sed 's/^/  /'
+echo "$LOG_RADIUS" | sed 's/^/  /'
+echo "$LOG_ASKED" | sed 's/^/  /'
+cat /run/prisma-routing/bng/runs 2>/dev/null | sed 's/^/  runs: /'
+# A sentence as the record holds it, unfolded: `show log` folds at 79.
+REC=$(python3 -c 'import json, sys
+for l in open("/var/log/prisma-routing/events.log"):
+    e = json.loads(l)
+    print(e.get("kind", ""), e.get("component") or e.get("affects", ""),
+          e.get("cause", ""), "|", e["text"])' 2>/dev/null)
+echo "$REC" | grep -E "^(start|exit|radius|asked)" | sed 's/^/  record: /'
 
 echo
 cat /tmp/radius1.log /tmp/radius2.log > /tmp/radius.log
@@ -1347,5 +1633,60 @@ expect_in "the chain verifies at the end, across every restart" "chain intact" "
 expect_in "show pppoe summary: the trail's entries" "entries written" \
   "$(echo "$SUMMARY_T" | grep 'session trail')"
 expect_not_in "  and none it could not write" "NOT" "$(echo "$SUMMARY_T" | grep 'session trail')"
+# #597 0.4 item 3: the container's runs in `show log`, each with its reason.
+expect_in "show log: the container's first start, by the commit of section 4" \
+  "start bng operator | the PPPoE control plane (prisma-bng) started: PPPoE's configuration committed" "$REC"
+expect_in "  its stop at section 10's commit, said as a stop" \
+  "exit bng  | the PPPoE control plane (prisma-bng) stopped: stopped (SIGTERM)" "$REC"
+expect_in "  and the start after it, the commit's" \
+  "start bng operator | the PPPoE control plane (prisma-bng) started again: PPPoE's configuration committed" "$REC"
+expect_in "  accel-pppd killed with -9: the exit, with the signal" \
+  "exit bng  | the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)" "$REC"
+expect_in "  and the restart the restart policy made of it, a warning with the reason" \
+  "start bng unexpected | the PPPoE control plane (prisma-bng) started again, by its restart policy, after it exited: accel-pppd was killed by signal 9 (KILL)" "$REC"
+expect_in "  the format upgrade's restart, asked by the load" \
+  "start bng upgrade | the PPPoE control plane (prisma-bng) started again: PPPoE's files from an older release (format 3) written again in format" "$REC"
+expect_in "  and no pppoe: the commit asked, the container stopped" \
+  "asked bng operator | PPPoE removed by a commit" "$REC"
+expect "  each start and exit the container recorded is in the record once" \
+  test "$(echo "$REC" | grep -cE '^(start|exit) bng')" -eq "$(wc -l < /run/prisma-routing/bng/runs)"
+expect_in "  show log kind exit lists them" "exited with code 1" "$LOG_EXIT"
+expect_in "RADIUS: server 1 failed, in show log" \
+  "radius   | RADIUS server 127.0.0.1 failed" "$REC"
+# Its dead-time is 10 s: a reading can find it failed, or already back with
+# its fail count moved - either is the failure said once.
+expect "  and in use again" sh -c "echo \"\$1\" | grep -qE 'RADIUS server 127.0.0.1 (is active again|failed and was active again)'" _ "$REC"
+expect_not_in "  and server 2 never said failed" "RADIUS server 127.0.0.2 failed" "$REC"
+# #597 0.4 item 4: PPPoE only on the access interfaces.
+expect "a PADI from an interface that is not access gets no PADO (${WRONG})" \
+  test "${WRONG:-x}" = 0
+expect "  and it was counted, refused where it arrived (${NA0} -> ${NA1})" \
+  test "$(( ${NA1:-0} - ${NA0:-0} ))" -ge 5
+expect "  sub1's MAC in a session frame from there, refused and counted (${SNA0} -> ${SNA1})" \
+  test "$(( ${SNA1:-0} - ${SNA0:-0} ))" -ge 5
+expect "  and show pppoe summary says so" sh -c \
+  "echo \"\$1\" | awk '/^refused/ && \$2 >= 10 {f = 1} END {exit !f}'" _ "$SUM17"
+expect "a PADI from an access interface is answered (${RIGHT} of 5)" \
+  test "${RIGHT:-0}" -ge 4
+expect "one MAC on two access ports: sub1 dialling while its MAC is heard on VLAN 100 keeps its downloads on its own port (${ENCAP_NAME})" \
+  test "${ENCAP_NAME:-x}" = host-acc0
+expect "  sub1 reaches the internet (${PING_R})" test "${PING_R:-x}" = "0% packet loss"
+expect "  and none of its session's frames reach the other port's CPE (${STOLEN})" \
+  test "${STOLEN:-x}" = 0
+expect "  the PADIs on VLAN 100 were refused, counted (${H0} -> ${H1})" \
+  test "$(( ${H1:-0} - ${H0:-0} ))" -ge 100
+expect "a CPE with sub1's MAC dialling on the other port: sub1's session never changed ($CHANGES)" \
+  test "$CHANGES" -eq 0
+expect "  the other port got no session while sub1's lived" test -z "$SEEN5"
+expect "  its discovery was refused, counted (${H2} -> ${H3})" \
+  test "$(( ${H3:-0} - ${H2:-0} ))" -ge 1
+expect "  sub1's pppd gone without a PADT, the MAC is still held (${NOTFREE} of 2 answered)" \
+  test "${NOTFREE:-x}" = 0
+expect "  a PADT from sub1's port frees it at once (${FREED} of 3 answered)" \
+  test "${FREED:-0}" -ge 2
+expect "  and its CPE, dialling again, has the MAC's session (${MOVED} s)" \
+  sh -c "test '$MOVED' != none && test '$MOVED' -le 20"
+expect "the format upgrade wrote the files again (format ${FMT_NOW})" \
+  sh -c "test -n '${FMT_NOW}' && test '${FMT_NOW}' != 3"
 
 verdict

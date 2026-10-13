@@ -20,6 +20,15 @@
 #      plumbing (a VPP restart takes the TAP with it), ends the container
 #      with a failure, and the restart policy starts it again from step 1.
 #
+# EVERY START AND EVERY EXIT IT CAN SEE IS WRITTEN DOWN (run_note), with
+# accel-pppd's exit code or signal, in $RUN_DIR/runs - the host's /run, so
+# it outlives the container and not the boot. The host's watcher reads it
+# into `show log` (src/prismash/eventwatch.py, bng_changes): docker brings
+# the container back within a second, so two readings 10 s apart of
+# "is it running" see nothing of a crash, and docker's own State.ExitCode is
+# reset to 0 by the start that follows (measured with docker 27.1.1: the
+# exit code readable for under 0.1 s, the restart 35-86 ms after the exit).
+#
 # The plumbing lives here because it belongs to the container's lifetime, not
 # to a commit: a dataplane restart removes it, and the only process that is
 # guaranteed to notice is the one using it. The VTY writes WHAT is wanted
@@ -108,7 +117,89 @@ plumb() {
     *pppoe-input*) ;;
     *) vc create pppoe cp cp-if-index "$idx" > /dev/null ;;
   esac
+  guard "$(access_names)" || return 1
   return 0
+}
+
+# access_names - the access interfaces' dataplane names, from access.env:
+# ACCESS since format 5; an older file's PARENT and VLANS otherwise, named
+# as the VTY names a VLAN's sub-interface (<card>.<vlan>)
+access_names() {
+  if [ -n "${ACCESS:-}" ]; then
+    echo "$ACCESS"
+    return 0
+  fi
+  _names=""
+  for v in ${VLANS:-0}; do
+    if [ "$v" = 0 ]; then _names="$_names $PARENT"
+    else _names="$_names $PARENT.$v"; fi
+  done
+  echo $_names
+}
+
+# guard <names> - PPPoE taken by the dataplane only on these interfaces, and
+# a subscriber's MAC held by the one its session is on (the plugin's
+# bpa_pppoe_guard.c, docs/bng.md 0.3 item 7): `set bpa pppoe-access`, which
+# replaces the whole set. Empty refuses every PPPoE frame. 0 or 1.
+#
+# MEASURED BEFORE IT (lab/pppoe.sh, 0.155.3): a PADI from the upstream was
+# answered with a PADO, and sub1's MAC on VLAN 100 took sub1's session down
+# again and again. VPP's plugin takes PPPoE from every interface and keys
+# its control plane's way back by the MAC alone.
+guard() {
+  # shellcheck disable=SC2086
+  _out=$(vc set bpa pppoe-access $1)
+  case "$_out" in
+    "") return 0 ;;
+    # A plugin older than the guard: PPPoE works as it did, from every
+    # interface, and that is said rather than the container ending.
+    *"unknown input"*|*"parse error"*)
+      say "the dataplane's plugin has no 'set bpa pppoe-access': PPPoE is taken from every interface"
+      return 0 ;;
+  esac
+  say "the dataplane refused the access interfaces '$1': $_out"
+  return 1
+}
+
+# oom_kills - the container's cgroup's count of OOM kills, or 0
+oom_kills() {
+  sed -n 's/^oom_kill //p' "${PRISMA_BNG_MEMEVENTS:-/sys/fs/cgroup/memory.events}" 2>/dev/null \
+    | head -1 | grep -E '^[0-9]+$' || echo 0
+}
+
+# exit_reason <status> <oom kills at start> - why accel-pppd ended, in words
+exit_reason() {
+  if [ "$1" -gt 128 ]; then
+    _sig=$(kill -l "$(($1 - 128))" 2>/dev/null)
+    if [ "$(oom_kills)" -gt "$2" ]; then
+      echo "accel-pppd was killed by the OOM killer (signal $(($1 - 128)), the container's memory limit)"
+    else
+      echo "accel-pppd was killed by signal $(($1 - 128))${_sig:+ ($_sig)}"
+    fi
+  else
+    echo "accel-pppd exited with code $1"
+  fi
+}
+
+# run_note start | exit <code> <reason...> - one line of this container's
+# record of its runs, "<n> <epoch> <words>", the newest RUNS_KEPT kept. The
+# host's watcher reads every line past the last <n> it saw; <n> going back
+# is a new boot's record (/run is a tmpfs). Through a rename, so a reader
+# never sees half a line.
+RUNS_KEPT=32
+run_note() {
+  _f="$RUN_DIR/runs"
+  _n=$(tail -n 1 "$_f" 2>/dev/null | awk '{print $1 + 0}')
+  _n=$(( ${_n:-0} + 1 ))
+  { tail -n $((RUNS_KEPT - 1)) "$_f" 2>/dev/null
+    echo "$_n $(date +%s) $*"; } > "$_f.new" && mv -f "$_f.new" "$_f"
+}
+
+# die <reason> - said, written down as this run's exit, and the container ends
+die() {
+  say "$1"
+  run_note exit 1 "$1"
+  exit 1
 }
 
 # clean_sessions - every PPPoE session VPP holds, deleted; prints how many
@@ -216,7 +307,8 @@ stale_state() {
   wc -l < "$RUN_DIR/stale-state" | tr -d ' '
 }
 
-# unplumb - the Linux VLAN devices out; the TAP and the cp STAY.
+# unplumb - the Linux VLAN devices out, and no interface the dataplane
+# takes PPPoE from; the TAP and the cp STAY.
 #
 # MEASURED, AND IT TAKES THE DATAPLANE DOWN: `create pppoe cp ... del` sets
 # the plugin's control-plane interface to ~0 and the plugin goes on punting
@@ -232,6 +324,9 @@ unplumb() {
   for v in ${VLANS:-}; do
     [ "$v" = 0 ] || "$IP" link del "$CP.$v" 2>/dev/null
   done
+  # With nothing reading the TAP, a PADI the dataplane punted would be
+  # dropped by the kernel; refused here, it is counted where it arrives.
+  guard "" > /dev/null 2>&1
   return 0
 }
 
@@ -264,6 +359,7 @@ stop_all() {
   [ "$_n" -gt 0 ] && say "removed $_n session(s) accel-pppd left in the dataplane"
   unplumb
   rm -f "$RUN_DIR/cli.password" "$RUN_DIR/accel-ppp.conf"
+  run_note exit 0 "stopped (SIGTERM): a restart, an upgrade or no pppoe"
   exit 0
 }
 
@@ -295,11 +391,12 @@ reload() {
 # not a unit: the container's main loop, driven end to end by lab/pppoe.sh
 main() {
   mkdir -p "$RUN_DIR"
-  log_dir || exit 1
-  [ -f "$CONF_DIR/accel-ppp.conf" ] || {
-    say "no $CONF_DIR/accel-ppp.conf: PPPoE is not configured"; exit 1; }
-  wait_vpp || { say "the dataplane did not answer in ${WAIT_VPP}s"; exit 1; }
-  plumb || { say "could not lay the plumbing"; exit 1; }
+  run_note start
+  log_dir || die "could not make $LOG_DIR"
+  [ -f "$CONF_DIR/accel-ppp.conf" ] || \
+    die "no $CONF_DIR/accel-ppp.conf: PPPoE is not configured"
+  wait_vpp || die "the dataplane did not answer in ${WAIT_VPP}s"
+  plumb || die "could not lay the plumbing"
   _n=$(clean_policers)
   [ "$_n" -gt 0 ] && say "removed $_n stale policer(s) from the dataplane"
   # NOT clean_sessions here (#607): a dead control plane's sessions are
@@ -314,6 +411,7 @@ main() {
   trap stop_all TERM INT
   # accel-pppd in the FOREGROUND (no -d), as this script's child, so that
   # its death is this script's to see.
+  oom0=$(oom_kills)
   "$ACCEL" -c "$RUN_DIR/accel-ppp.conf" -p "$RUN_DIR/accel-pppd.pid" &
   APID=$!
   say "accel-pppd started (pid $APID)"
@@ -321,17 +419,23 @@ main() {
     sleep "$WATCH_EVERY" &
     wait $!
     if ! kill -0 "$APID" 2>/dev/null; then
-      say "accel-pppd exited; the container ends so it is restarted"
+      # Its status is the shell's still: the sleep's `wait` reaped it, and
+      # dash keeps a job's status until it is waited for (measured).
+      wait "$APID"
+      why=$(exit_reason $? "$oom0")
+      say "$why; the container ends so it is restarted"
       unset APID
       # Its policers; its sessions and their routes are the next accel-
       # pppd's to remove, in that order (see main's start).
       clean_policers > /dev/null
+      run_note exit 1 "$why"
       exit 1
     fi
     if [ -z "$(sw_index "$TAP")" ]; then
       say "the dataplane lost $TAP (restarted?); starting again"
       kill -TERM "$APID" 2>/dev/null
       wait "$APID" 2>/dev/null
+      run_note exit 1 "the dataplane lost $TAP (restarted?)"
       exit 1
     fi
   done

@@ -62,7 +62,9 @@ for k, v in (("PRISMA_CONFIG", "prisma-routing.conf"),
              ("PRISMA_BFD_NOTIFY_STATE", "bfd-notifications"),
              # The cards Linux holds (#588): this machine's own are not the
              # box's; the tests that read some build a sysfs of their own.
-             ("PRISMA_SYS_CLASS_NET", "no-sys-class-net")):
+             ("PRISMA_SYS_CLASS_NET", "no-sys-class-net"),
+             # The PPPoE control plane's record of its runs (#597).
+             ("PRISMA_BNG_RUNS", "bng-runs")):
     os.environ[k] = os.path.join(_root, v)
 os.environ.pop("PRISMA_WATCH_NETDEVS", None)
 
@@ -701,8 +703,13 @@ check(set(r["link"]) == set(up) and r["transceiver"]["GigabitEthernet0/8/0"]
       f"{sorted(k for k, v in r.items() if v is not None)}")
 sh.dp = Dp({})
 sh.frr = type("F", (prismash.Frr,), {"show": lambda self, c: (1, "")})()
-check(all(sh.watch_read(k) is None for k in W.CADENCE if k != "login"),
+check(all(sh.watch_read(k) is None for k in W.CADENCE
+          if k not in ("login",) + W.BNG_KINDS),
       "watch_read: nothing answering is None for every kind, not empty")
+check(sh.watch_read("bng") == {"runs": []}
+      and sh.watch_read("radius") == {"started": None, "servers": {}},
+      "watch_read: no record of the PPPoE control plane's runs is a box "
+      "where it has not run - a reading, with no RADIUS server asked")
 _boom = sh.watch_read
 sh.watch_read = lambda kind: 1 / 0
 _err = io.StringIO()
@@ -728,7 +735,7 @@ sh.watch_starts = lambda: {"dataplane": None, "routing": None}
 sh.frr = frr()
 got, s = sh.watch_tick({}, NOW)
 check(got == [] and set(s["seen"]) == {"link", "transceiver", "bgp", "bfd",
-                                       "pool", "collector"}
+                                       "pool", "collector", "bng", "radius"}
       and "logins" in s, f"watch_tick: a first tick is a baseline of every "
       f"kind: {sorted(s['seen'])}")
 got, s1 = sh.watch_tick(s, NOW + 3)
@@ -1095,6 +1102,186 @@ check([(e["text"], e["severity"], e["source"], e["subject"]) for e in rec] ==
        ("the SNMP settings were applied once the interfaces were up",
         "notice", "host", "snmp")],
       f"record_settings: {[e['text'] for e in rec]}")
+
+print("\n=== the PPPoE control plane: its runs, and RADIUS (#597) ===")
+RUNS = ("1 1000 start\n"
+        "2 1100 exit 0 stopped (SIGTERM): a restart, an upgrade or no pppoe\n"
+        "3 1102 start\n"
+        "4 1200 exit 1 accel-pppd was killed by signal 9 (KILL)\n"
+        "5 1201 start\n"
+        "garbage line\n6 x start\n")
+runs = W.parse_bng_runs(RUNS)
+check([(r["n"], r["what"], r["code"]) for r in runs]
+      == [(1, "start", 0), (2, "exit", 0), (3, "start", 0), (4, "exit", 1),
+          (5, "start", 0)]
+      and runs[3]["reason"] == "accel-pppd was killed by signal 9 (KILL)"
+      and runs[3]["t"] == 1200,
+      f"parse_bng_runs: starts and exits, a torn line passed over: {runs}")
+check(W.bng_reading("") == {"runs": []} and W.bng_running(W.bng_reading(RUNS))
+      and not W.bng_running(W.bng_reading("1 5 start\n2 6 exit 0 x\n"))
+      and not W.bng_running(None),
+      "bng_reading, bng_running: running when its last line is a start")
+first = W.bng_reading("1 1000 start\n")
+check(W._bng_new(first, W.bng_reading(RUNS)) == runs[1:]
+      and W._bng_new({"runs": []}, first) == first["runs"]
+      and W._bng_new(W.bng_reading(RUNS), first) == first["runs"],
+      "_bng_new: past the last seen; all of it when the numbering went "
+      "back (a new boot's /run)")
+commit_asked = events.make_event("vty", "notice",
+                                 "PPPoE's configuration committed",
+                                 who="ana", origin="ssh 192.0.2.7", now=1099,
+                                 kind="asked", cause="operator",
+                                 affects="bng")
+ch = W.bng_changes(first, W.bng_reading(RUNS), [commit_asked], boot=None)
+check([(c["kind"], c.get("cause"), c["severity"]) for c in ch]
+      == [("exit", None, "notice"), ("start", "operator", "notice"),
+          ("exit", None, "warning"), ("start", "unexpected", "warning")],
+      f"bng_changes: a commit's restart and a crash: "
+      f"{[(c['kind'], c.get('cause'), c['severity']) for c in ch]}")
+check(ch[1]["text"] == "the PPPoE control plane (prisma-bng) started again: "
+      "PPPoE's configuration committed by ana from ssh 192.0.2.7"
+      and ch[2]["text"] == "the PPPoE control plane (prisma-bng) exited with "
+      "code 1: accel-pppd was killed by signal 9 (KILL)"
+      and ch[3]["text"] == "the PPPoE control plane (prisma-bng) started "
+      "again, by its restart policy, after it exited: accel-pppd was killed "
+      "by signal 9 (KILL)" and ch[3]["t"] == 1201,
+      f"bng_changes: the sentences, each with its own time: {texts(ch)}")
+check(all(c["component"] == "bng" and c["subject"] == "prisma-bng"
+          for c in ch) and ch[0]["reason"].startswith("stopped (SIGTERM)"),
+      "bng_changes: about the container, the reason the entrypoint gave")
+# One request is one start's cause: the crash's start, after the commit's,
+# is not the commit's (cause_of's `after`). Mutation shown red: `after`
+# dropped from bng_changes().
+check(W.bng_changes(W.bng_reading("1 1000 start\n2 1100 exit 0 x\n"
+                                  "3 1102 start\n"),
+                    W.bng_reading(RUNS), [commit_asked])[-1]["cause"]
+      == "unexpected", "bng_changes: an asked is one start's cause, not two")
+killed = W.bng_changes(first, W.bng_reading("1 1000 start\n2 1300 start\n"))
+check(killed[0]["severity"] == "warning" and "recorded no exit" in
+      killed[0]["text"],
+      f"bng_changes: a run with no exit recorded was killed from outside: "
+      f"{texts(killed)}")
+check(W.bng_changes({"runs": []}, first, [], boot=990)[0]["text"]
+      == "the PPPoE control plane (prisma-bng) started with the boot"
+      and W.bng_changes({"runs": []}, first, [])[0]["text"]
+      == "the PPPoE control plane (prisma-bng) started",
+      "bng_changes: the first start, the boot's or not")
+upg = events.make_event("host", "notice", "PPPoE's files from an older "
+                        "release (format 3) written again in format 4",
+                        now=1300, kind="asked", cause="upgrade",
+                        affects="bng")
+up_ch = W.bng_changes(W.bng_reading(RUNS), W.bng_reading(
+    RUNS + "7 1301 exit 0 stopped (SIGTERM): x\n8 1303 start\n"), [upg])
+check([c.get("cause") for c in up_ch] == [None, "upgrade"]
+      and "written again in format 4" in up_ch[1]["text"],
+      f"bng_changes: a format upgrade's restart says so: {texts(up_ch)}")
+check(W.bng_start_text("unexpected", "", None)
+      == ("the PPPoE control plane (prisma-bng) started", "notice")
+      and W.bng_start_text("unexpected", "", {"what": "exit", "code": 0,
+                                              "reason": "x"})[1] == "notice",
+      "bng_start_text: a start after a clean stop, nobody asking, is not a "
+      "warning")
+
+STAT = """uptime: 0.00:10:05
+radius(1, 127.0.0.1):
+  state: {s1}
+  fail count: {f1}
+  request count: 0
+radius(2, 127.0.0.2):
+  state: active
+  fail count: 0
+sessions:
+  active: 3
+"""
+
+
+def rad(s1="active", f1=0, now=NOW):
+    return W.radius_reading(STAT.format(s1=s1, f1=f1), now)
+
+
+r0 = rad()
+check(r0 == {"started": round(NOW - 605), "servers": {
+    "127.0.0.1": {"state": "active", "fails": 0},
+    "127.0.0.2": {"state": "active", "fails": 0}}},
+      f"radius_reading: accel-pppd's start and each server: {r0}")
+fl = W.radius_changes(r0, rad("failed", 1, NOW + 3))
+check(len(fl) == 1 and fl[0]["severity"] == "warning"
+      and fl[0]["text"].startswith("RADIUS server 127.0.0.1 failed")
+      and fl[0]["subject"] == "127.0.0.1" and fl[0]["kind"] == "radius",
+      f"radius_changes: active to failed: {texts(fl)}")
+bk = W.radius_changes(rad("failed", 1), rad("active", 1, NOW + 1))
+check(len(bk) == 1 and bk[0]["severity"] == "notice"
+      and "active again" in bk[0]["text"],
+      f"radius_changes: failed to active: {texts(bk)}")
+bt = W.radius_changes(r0, rad("active", 2, NOW + 2))
+check(len(bt) == 1 and "between two readings (2 time(s))" in bt[0]["text"],
+      f"radius_changes: failed and back between two readings: {texts(bt)}")
+check(W.radius_changes(rad("failed", 3), rad("active", 0, NOW + 400)) == []
+      and W.radius_changes({"started": None, "servers": {}}, r0) == [],
+      "radius_changes: across a start of accel-pppd, or from not running, "
+      "a baseline")
+check(texts(W.radius_standing(rad("failed", 1))) ==
+      ["RADIUS server 127.0.0.1 is failed: it did not answer, and accel-ppp "
+       "uses the others for its dead-time"]
+      and W.radius_standing(r0) == [] and W.bng_standing({"runs": []}) == [],
+      "radius_standing: a server failed when the watcher starts")
+# The whole tick: a bng reading's changes become events the record takes,
+# carrying their component and cause.
+_st = {"seen": {"bng": first, "radius": r0}, "last": {}}
+evs, _st2 = W.tick(_st, {"bng": W.bng_reading(RUNS),
+                         "radius": rad("failed", 1, NOW)},
+                   {"dataplane": None, "routing": None}, NOW,
+                   record=[commit_asked])
+check([(e["kind"], e.get("component"), e.get("cause")) for e in evs]
+      == [("exit", "bng", None), ("start", "bng", "operator"),
+          ("exit", "bng", None), ("start", "bng", "unexpected"),
+          ("radius", None, None)]
+      and all(events.event_error(e) is None for e in evs)
+      and _st2["seen"]["bng"]["runs"][-1]["n"] == 5,
+      f"tick: the runs and RADIUS, as events the record takes: "
+      f"{[(e['kind'], e.get('component'), e.get('cause')) for e in evs]}")
+check(events.make_event("host", "warning", "x", kind="exit",
+                        component="bng") and
+      events.event_error(events.make_event("host", "notice", "x",
+                                           kind="exit", component="bng"))
+      is None,
+      "events: `exit` is a kind, `bng` a component")
+# The Shell's readings, from a record on disk and a stand-in prisma-bng.
+with open(os.environ["PRISMA_BNG_RUNS"], "w") as fh:
+    fh.write(RUNS)
+sh = prismash.Shell()
+check(sh.watch_read("bng") == W.bng_reading(RUNS),
+      "watch_read bng: the container's record, read off /run")
+_ctl = os.path.join(_root, "prisma-bng")
+with open(_ctl, "w") as fh:
+    fh.write("#!/bin/sh\necho \"$@\" >> '%s.argv'\n"
+             "[ \"$1\" = summary ] && cat <<'E'\n%s\nE\n" %
+             (_ctl, STAT.format(s1="failed", f1=1)))
+os.chmod(_ctl, 0o755)
+_old_ctl, _old_conf = prismash.pppoe_mod.BNG_CTL, prismash.aaa_mod.read_conf
+prismash.pppoe_mod.BNG_CTL = _ctl
+prismash.aaa_mod.read_conf = lambda *a, **k: {"servers": []}
+check(sh.watch_radius() == {"started": None, "servers": {}}
+      and not os.path.exists(_ctl + ".argv"),
+      "watch_radius: no RADIUS server configured, nothing asked")
+prismash.aaa_mod.read_conf = lambda *a, **k: {"servers": [{"address": "x"}]}
+got_r = sh.watch_radius()
+check(got_r and got_r["servers"]["127.0.0.1"]["state"] == "failed"
+      and open(_ctl + ".argv").read().split() == ["summary"],
+      f"watch_radius: running and configured, accel-ppp's summary: {got_r}")
+with open(os.environ["PRISMA_BNG_RUNS"], "w") as fh:
+    fh.write("1 1000 start\n2 1001 exit 1 x\n")
+os.remove(_ctl + ".argv")
+check(sh.watch_radius() == {"started": None, "servers": {}}
+      and not os.path.exists(_ctl + ".argv"),
+      "watch_radius: a container whose last run exited is not asked")
+prismash.pppoe_mod.BNG_CTL = "/proc/no/such/prisma-bng"
+with open(os.environ["PRISMA_BNG_RUNS"], "w") as fh:
+    fh.write("1 1000 start\n")
+check(sh.watch_radius() is None,
+      "watch_radius: a summary that cannot be had is no reading")
+prismash.pppoe_mod.BNG_CTL, prismash.aaa_mod.read_conf = _old_ctl, _old_conf
+os.remove(os.environ["PRISMA_BNG_RUNS"])
 
 print("\n=== show log kind ===")
 f, why = events.parse_show_args(["kind", "link"])

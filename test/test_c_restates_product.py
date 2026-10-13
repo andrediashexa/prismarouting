@@ -259,12 +259,13 @@ harnesses = sorted(glob.glob(os.path.join(TEST, "test_bpa_*.c")))
 # gave NAT64's arithmetic one, and 34 since #485's phase 5 gave FTP64
 # one, and 35 since #590 gave a transceiver read's ranges and build-id
 # one, and 36 since #588 gave a port's count of link changes one, and 37
-# since #606 gave the segment the plugin lays out one. The number is written down so that a glob that stops
+# since #606 gave the segment the plugin lays out one, and 38 since #597
+# gave the PPPoE guard's verdict one. The number is written down so that a glob that stops
 # matching goes red instead of quietly reading fewer files than the
 # repository has - which is what this line is for, and why it moves with the
 # harnesses rather than being loosened to a floor.
-check(len(harnesses) == 37,
-      f"{len(harnesses)} C harnesses found, not the 37 this repository has - "
+check(len(harnesses) == 38,
+      f"{len(harnesses)} C harnesses found, not the 38 this repository has - "
       f"the glob is probably wrong and this suite is reading too little")
 
 n_checks = 0

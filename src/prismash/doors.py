@@ -957,8 +957,14 @@ def answer_event(r, uid, allowed_uids=(0,), is_operator=account_is_operator,
         ev = dict(ev, who=name_of(uid),
                   t=round(time.time() if now is None else now, 3))
     why = events.event_error(ev, privileged=root)
+    # A commit of the `pppoe` block restarts the PPPoE control plane, and
+    # whoever may commit it asks for that restart (#597): an administrator
+    # need not be prisma-operator's to change PPPoE, so its "asked" is
+    # taken from any account. It names that container only - never the
+    # dataplane or the routing daemons, whose restart is the box's.
     if why is None and not root and ev.get("kind") == "asked" \
-            and ev.get("affects") and not is_operator(uid):
+            and ev.get("affects") and ev.get("affects") != "bng" \
+            and not is_operator(uid):
         why = "only root and prisma-operator's members ask for a restart"
     if why is None and not root and not account_rate_ok(
             uid, time.time() if now is None else now):

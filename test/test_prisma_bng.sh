@@ -162,6 +162,7 @@ case "\$*" in
   "show policer") cat "$T/policers" 2>/dev/null ;;
   "show ip fib") cat "$T/fib" 2>/dev/null ;;
   "show interface") printf '%s\n' "              Name               Idx    State" "pppoe_session3                    12     up" ;;
+  "set bpa pppoe-access"*) cat "$T/guardout" 2>/dev/null ;;
 esac
 EOF
 cat > "$T/bin/ip" <<EOF
@@ -191,7 +192,38 @@ check "  one VLAN device for the tag, none for untagged" \
   "grep -q 'ip link add link pppoe-cp name pppoe-cp.100 type vlan id 100' '$T/vlog' && ! grep -q 'pppoe-cp.0' '$T/vlog'"
 check "  and the plugin told the TAP is its control plane" \
   "grep -q 'vppctl create pppoe cp cp-if-index 9' '$T/vlog'"
+check "  and the dataplane told which interfaces PPPoE is taken from: an old access.env's card and its VLAN, by name" \
+  "grep -qx 'vppctl set bpa pppoe-access ge0 ge0.100' '$T/vlog'"
 check "sw_index: the TAP's index" "[ \"\$(sw_index tap1863)\" = 9 ]"
+check "access_names: format 4's ACCESS, as written" \
+  "[ \"\$(ACCESS='ge0 ge0.300' access_names)\" = 'ge0 ge0.300' ]"
+: > "$T/vlog"
+check "guard: the set replaced, 0 when the dataplane says nothing" \
+  "guard 'ge0' && grep -qx 'vppctl set bpa pppoe-access ge0' '$T/vlog'"
+echo "set bpa pppoe-access: unknown interface 'ge9'" > "$T/guardout"
+check "guard: a refusal is a failure, said" "! guard ge9 2>/dev/null"
+echo "set bpa pppoe-access: unknown input 'ge0'" > "$T/guardout"
+check "guard: a plugin older than the guard is said and passed, not a crash loop" \
+  "guard ge0 2>&1 | grep -q 'from every interface' && guard ge0 2>/dev/null"
+rm -f "$T/guardout"
+check "exit_reason: a code" "[ \"\$(exit_reason 1 0)\" = 'accel-pppd exited with code 1' ]"
+check "exit_reason: a signal, named" \
+  "[ \"\$(exit_reason 137 0)\" = 'accel-pppd was killed by signal 9 (KILL)' ]"
+printf 'low 0\noom 1\noom_kill 1\n' > "$T/memevents"
+check "exit_reason: the cgroup's OOM count moved, so it was the OOM killer" \
+  "[ \"\$(PRISMA_BNG_MEMEVENTS='$T/memevents' exit_reason 137 0)\" = \"accel-pppd was killed by the OOM killer (signal 9, the container's memory limit)\" ]"
+check "oom_kills: the count, and 0 with no cgroup file" \
+  "[ \"\$(PRISMA_BNG_MEMEVENTS='$T/memevents' oom_kills)\" = 1 ] && [ \"\$(PRISMA_BNG_MEMEVENTS='$T/none' oom_kills)\" = 0 ]"
+rm -f "$T/run/bng/runs"
+run_note start; run_note exit 1 "accel-pppd was killed by signal 9 (KILL)"
+check "run_note: numbered lines, a time, the words" \
+  "awk 'NR == 1 && \$1 == 1 && \$2 ~ /^[0-9]+\$/ && \$3 == \"start\"' '$T/run/bng/runs' | grep -q . && sed -n 2p '$T/run/bng/runs' | grep -q '^2 [0-9]* exit 1 accel-pppd was killed by signal 9 (KILL)\$'"
+i=0; while [ $i -lt 40 ]; do run_note start; i=$((i + 1)); done
+check "  the newest $RUNS_KEPT kept, the numbering going on" \
+  "[ \"\$(wc -l < '$T/run/bng/runs')\" = $RUNS_KEPT ] && tail -n 1 '$T/run/bng/runs' | grep -q '^42 '"
+out=$( (die "the dataplane did not answer in 120s") 2>&1); rc=$?
+check "die: said, written down as the run's exit, and 1" \
+  "[ $rc -eq 1 ] && tail -n 1 '$T/run/bng/runs' | grep -q 'exit 1 the dataplane did not answer in 120s\$'"
 printf '%s\n' "[0] sw-if-index 5 client-ip 0.0.0.0 session-id 448 encap-if-index 1 decap-fib-index 0" \
   "    local-mac 02:fe:de:42:1f:19  client-mac 02:aa:00:00:00:02" > "$T/sessions"
 : > "$T/vlog"
@@ -263,6 +295,8 @@ mv "$T/run/bng/cli.password.x" "$T/run/bng/cli.password"
 unplumb
 check "unplumb: the VLAN device out, and the cp and the TAP LEFT - taking them out crashes VPP" \
   "grep -q 'ip link del pppoe-cp.100' '$T/vlog' && ! grep -q 'cp-if-index 9 del' '$T/vlog' && ! grep -q 'delete tap' '$T/vlog'"
+check "  and no interface is access any more: PPPoE refused where it arrives" \
+  "grep -qx 'vppctl set bpa pppoe-access' '$T/vlog'"
 printf '  pppoe-input\n' > "$T/features"; : > "$T/vlog"
 plumb
 check "plumb on a TAP already laid: the cp not enabled a second time" \

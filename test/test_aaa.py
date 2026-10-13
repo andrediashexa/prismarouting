@@ -691,5 +691,47 @@ rv, out = said(lambda: shell(Dp({"show interface": IFS})).apply_pppoe(
     Config.parse(BASE), refresh=True))
 check(rv, "apply_pppoe(refresh): the files of an older release written again")
 
+print("\n=== the PPPoE control plane's restarts, asked in the record (#597) ===")
+import events as E  # noqa: E402
+
+
+def asked_bng():
+    return [e for e in E.read_events() if e.get("kind") == "asked"
+            and e.get("affects") == "bng"]
+
+
+for f in (os.environ["PRISMA_EVENTS"], os.environ["PRISMA_EVENTS"] + ".1"):
+    if os.path.exists(f):
+        os.remove(f)
+tgt = Config.parse(BASE)
+P.stage(tgt.pppoe, "pppoe mtu 1480".split())
+commit(tgt)
+tgt = Config.parse(BASE)
+A.stage(tgt.aaa, "aaa radius timeout 7".split())
+commit(tgt)
+commit(Config.parse(""))
+got = asked_bng()
+check([(e["cause"], e["text"], e["source"]) for e in got]
+      == [("operator", "PPPoE's configuration committed", "vty"),
+          ("operator", "PPPoE removed by a commit", "vty")],
+      f"record_bng_asked: a restart and a stop asked before the host is, a "
+      f"reload asks nothing: {[(e['cause'], e['text']) for e in got]}")
+log = ctl(OK)
+_sh = shell(Dp({"show interface": IFS}), run)
+_sh.booting = True
+said(lambda: _sh.apply_pppoe(Config.parse(BASE), refresh=True))
+got = asked_bng()[-1]
+check(got["cause"] == "upgrade" and got["source"] == "host"
+      and got["from"] == "the box"
+      and got["text"] == f"PPPoE's files from an older release (format "
+      f"unknown) written again in format {P.FORMAT}",
+      f"record_bng_asked: the load's rewrite of an older release's files is "
+      f"an upgrade, the box's - here after the stop took the files, so no "
+      f"format is read: {got}")
+check(_sh.record_bng_asked("apply", True, "3") is not None
+      and asked_bng()[-1]["text"].startswith("PPPoE's files from an older "
+                                             "release (format 3)"),
+      "record_bng_asked: names the format the files were in")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -16455,6 +16455,7 @@ class Shell:
         is not a reason for the rest of the box not to come up (#593's rule).
         """
         held, aaa = target.pppoe, target.aaa
+        was_format = pppoe_mod.file_format()
         why = aaa_mod.check(aaa) + pppoe_mod.check(held, aaa)
         acc = []
         if not why and not pppoe_mod.is_empty(held):
@@ -16497,11 +16498,14 @@ class Shell:
             bng_verb = "reload"
         else:
             bng_verb = "apply"
+        if bng_verb != "reload":
+            self.record_bng_asked(bng_verb, refresh, was_format)
         rc, out = self.host_run([pppoe_mod.BNG_CTL, bng_verb])
         if bng_verb == "reload" and rc == 3:
             # Not running: there is nothing to reload, so it is started -
             # on the files just written.
             bng_verb = "apply"
+            self.record_bng_asked(bng_verb, refresh, was_format)
             rc, out = self.host_run([pppoe_mod.BNG_CTL, bng_verb])
         said = " ".join(out.split())
         self.record_settings("PPPoE", rc == 0, said)
@@ -16518,6 +16522,32 @@ class Shell:
                                   ", no session dropped"
                                   if said == "reloaded" else ""))
         return True
+
+    def record_bng_asked(self, verb, refresh=False, was_format=""):
+        """
+        The PPPoE control plane's start, restart or stop asked for, in the
+        box's record BEFORE the host is asked (#597), as #588 records every
+        restart's cause: the host's watcher then finds it as the cause of
+        the start it sees in the container's record of its runs
+        (eventwatch.bng_changes). `verb` is prisma-bng's - apply or stop -
+        `refresh` the load's rewrite of an older release's files. A
+        reload restarts nothing and asks nothing.
+        """
+        # Short, because the start it causes says it after its own words:
+        # "... started again: PPPoE's configuration committed by ana".
+        if refresh:
+            cause = "upgrade"
+            text = (f"PPPoE's files from an older release (format "
+                    f"{was_format or 'unknown'}) written again in format "
+                    f"{pppoe_mod.FORMAT}")
+        elif verb == "stop":
+            cause, text = "operator", "PPPoE removed by a commit"
+        else:
+            cause, text = "operator", "PPPoE's configuration committed"
+        return self.record_event(
+            "notice", text, kind="asked", cause=cause, affects="bng",
+            source="host" if self.booting else None,
+            origin="the box" if self.booting else None)
 
     def record_settings(self, what, ok, msg, retried=False):
         """
@@ -16670,7 +16700,45 @@ class Shell:
                 self.log_watch = logstate.LogWatch()
             self.log_watch.observe(out)
             return eventwatch.collector_reading(self.log_watch.snapshot()[1])
+        if kind == "bng":
+            # The container's own record of its runs, on the host's /run
+            # (#597): no file is a box where PPPoE has not run since boot.
+            try:
+                with open(eventwatch.BNG_RUNS) as fh:
+                    return eventwatch.bng_reading(fh.read())
+            except FileNotFoundError:
+                return eventwatch.bng_reading("")
+        if kind == "radius":
+            return self.watch_radius()
         return None
+
+    def watch_radius(self):
+        """
+        accel-ppp's RADIUS servers for the watcher (#597): `prisma-bng
+        summary` - a `docker exec` - only while the container's record says
+        it runs and `aaa radius` has a server; else a reading with none, so
+        a box with no PPPoE, or PPPoE with local users, never execs. Run
+        here, not through the doors: the watcher is root on the host, and a
+        door call every 10 s is the journal noise #588 took out.
+        """
+        import eventwatch
+        empty = {"started": None, "servers": {}}
+        try:
+            with open(eventwatch.BNG_RUNS) as fh:
+                runs = eventwatch.bng_reading(fh.read())
+        except OSError:
+            return empty
+        if not eventwatch.bng_running(runs) or \
+                not aaa_mod.read_conf()["servers"]:
+            return empty
+        try:
+            p = subprocess.run([pppoe_mod.BNG_CTL, "summary"],
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if p.returncode != 0:
+            return None
+        return eventwatch.radius_reading(p.stdout, time.time())
 
     def watch_read_safe(self, kind):
         """
@@ -16706,8 +16774,15 @@ class Shell:
             wtmp, wpos = eventwatch.read_utmp(eventwatch.WTMP, pos.get("wtmp"))
             btmp, bpos = eventwatch.read_utmp(eventwatch.BTMP, pos.get("btmp"))
             logins = (wtmp, btmp, {"wtmp": wpos, "btmp": bpos})
+        # The record of events, for a start of the PPPoE control plane to
+        # find what asked for it (#597) - read only when its runs moved.
+        record = None
+        runs = (readings.get("bng") or {}).get("runs") or []
+        seen = ((state.get("seen") or {}).get("bng") or {}).get("runs") or []
+        if runs and (not seen or runs[-1]["n"] != seen[-1]["n"]):
+            record = events.read_events()
         return eventwatch.tick(state, readings, self.watch_starts(), now,
-                               logins)
+                               logins, record)
 
     def watch_events(self, once=False, sleep=time.sleep):
         """
@@ -25772,8 +25847,14 @@ class Shell:
                 states = aaa_mod.server_states(out) if rc == 0 else {}
                 # And the session trail's (docs/bng.md 0.7).
                 trail = pppoe_mod.trail_counts(out) if rc == 0 else None
+            # What the dataplane refused before it reached the control
+            # plane (#597): PPPoE from outside the access interfaces, and
+            # a MAC another access port holds.
+            rc, out = self.dp.run("show bpa pppoe-access")
+            guard = pppoe_mod.guard_counts(out) if rc == 0 else None
             print("\n".join(pppoe_mod.summary_screen(held, status, counts,
-                                                     cfg.aaa, states, trail)))
+                                                     cfg.aaa, states, trail,
+                                                     guard)))
             return
         self.err("usage: show pppoe sessions | session <id> | summary | "
                  "history")
