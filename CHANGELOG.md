@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.3 - PPPoE counters in the MIB; SNMP GET of optics and thresholds fixed
+
+### Added
+
 * **PPPoE over SNMP: the sessions, each RADIUS server's answers, and
   Disconnect/CoA.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   PRISMA-ROUTING-MIB's new `prBng` (`.1.22`) serves the PPPoE control plane's
