@@ -575,7 +575,9 @@ for _try in 1 2 3; do
   SIF1=$(vppctl show pppoe session < /dev/null | tr -d '\r' \
          | awk '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)}
                 /client-mac 02:aa:00:00:00:01/ {print idx; exit}')
-  SNAME1=$(vppctl show interface < /dev/null | tr -d '\r' | awk -v i="${SIF1:-x}" '$2 == i {print $1; exit}')
+  # A name at the left edge: `$2 == 9` alone matched a counter row
+  # ("drops  9") under another interface, measured with workers.
+  SNAME1=$(vppctl show interface < /dev/null | tr -d '\r' | awk -v i="${SIF1:-x}" '/^[^ ]/ && $2 == i {print $1; exit}')
   FEAT1=$(vppctl show interface features "${SNAME1:-none}" < /dev/null 2>/dev/null | tr -d '\r')
   case "$FEAT1" in *policer-input*) break ;; esac
   sleep 1
