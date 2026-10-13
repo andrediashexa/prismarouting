@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.6 - a crash soon after boot is no longer logged as the boot's start
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.5). No message, field or number changes.
+* **An event's `cause` is more often right.** A start event in the box's first five minutes used to carry `cause` `boot` even when it was a second start (a restart after a crash); only the first start since the boot carries it now. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.5 - PPPoE control plane events in the log; PPPoE only on access interfaces
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.4). No message, field or number changes.
