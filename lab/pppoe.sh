@@ -4,7 +4,7 @@
 #   sh tools/lab.sh pppoe        -> LAB PASSED
 #   sh tools/lab.sh pppoe off    -> LAB FAILED (PPPoE never configured)
 #
-# OFF-RED-AT-LEAST: 22
+# OFF-RED-AT-LEAST: 69
 #
 # WHAT IS REAL HERE. Real PPPoE clients - pppd with rp-pppoe, one network
 # namespace each, behind a Linux bridge, one of them on VLAN 100 - dial the
