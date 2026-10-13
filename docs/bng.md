@@ -381,19 +381,46 @@ policer-input, tcp-mss-clamping, bpa-in2out). One rate, one bucket (1r2c):
 up to the rate passes, past it is dropped. It is policing, not shaping (2.2):
 nothing queues.
 
-**The bucket** is a tenth of a second of the rate, in bytes, and never under
-15,000 (ten full-size packets) - for either source: a Cisco-AVPair's own
-burst numbers are checked and not used, because the same plan from Prisma's
-attributes would otherwise get another bucket. **Until 0.155.1 every bucket
-was eight times that**: accel-ppp-ng's VPP hook multiplied the burst by 8 as
-if VPP took bits, and VPP's `cb` is bytes (`rb.kbps.cb_bytes`). prisma-bench
-measured it - a 20/10 plan at 21.3/10.7 and 50/20 at 53.6/21.7 over a 6 s
-iperf3, and a Cisco 30 Mbit/s plan, whose 3,000,000-byte burst became
-24,000,000, at 57.8. `lab/pppoe.sh` hid it: its iperf3 omitted the first
-second, the one the bucket empties in. It now runs 6 s with nothing omitted,
-accepts 10% under the plan and 5% over it, and reads every policer's `cb`
-back from VPP - including a 1 Gbit/s plan's (`cir 1000000`, `cb 12500000`),
-where an int of bytes or bits would have overflowed.
+**The bucket** is half a second of the rate, in bytes (since 0.155.2), and
+never under 15,000 (ten full-size packets) - for either source: a Cisco-
+AVPair's own burst numbers are checked and not used, because the same plan
+from Prisma's attributes would otherwise get another bucket.
+
+*Why half a second.* 0.155.1 gave a tenth, and prisma-bench (7 workers)
+measured what a speedtest would show: ONE TCP flow got half its plan - 50
+Mbit/s at 25.5 (6 s) and 24.9 (20 s), 20/10 at 9.8/4.7, a Cisco 30/15 at
+14.2/7.5, four parallel flows 42 - while UDP passed exactly (49.1 through
+50). A policer drops what a TCP flow's window overshoots by; the bucket has
+to absorb that, and how much is needed grows with the round trip. Changing
+the live policer's `cb` on the bench, one flow through 50 Mbit/s: 0.1 s
+25.5/24.9 (6 s/20 s), 0.25 s 48.6/47.3, 0.5 s 50.5/47.8, 1.0 s 54.3/47.8,
+1.5 s 58.5/47.6; through 10/5 Mbit/s: 0.1 s 4.72/2.27, 0.25 s 9.78/4.72,
+0.5 s 10.1/5.07. Half a second gives one flow its plan without a short
+test reading well over it.
+
+*Why the lab had passed with a tenth.* Its round trip is a few
+milliseconds of veth, and there one flow fits a small bucket. Measured in
+`lab/pppoe.sh`, one TCP flow for 15 s through 20/10 Mbit/s: a tenth of a
+second gave 19.1/9.7 at the lab's own round trip and 14.8-14.9 down (74%)
+with 200 ms added; half a second gave 19.6/10.0 and 17.5-18.1 down
+(87-90%, three workers included). The upload over that path does not tell
+the two apart (6.5-7.7 with a tenth, 7.9-9.2 with half a second) and is
+printed, not asserted.
+The lab does not reproduce the bench's conditions (a real NIC, 7 workers);
+it measures what a speedtest does - one TCP flow each way, 15 s counted
+whole - within 10% under to 5% over the plan, adds the one condition under
+which a small bucket shows, a 200 ms longer path, where one flow must still
+get 80% down (red with a tenth of a second), and sends one UDP download at twice
+the plan for the policer's own exactness.
+
+**Until 0.155.1 every bucket was eight times what it was meant to be**:
+accel-ppp-ng's VPP hook multiplied the burst by 8 as if VPP took bits, and
+VPP's `cb` is bytes (`rb.kbps.cb_bytes`). prisma-bench measured it - a 20/10
+plan at 21.3/10.7 and 50/20 at 53.6/21.7 over a 6 s iperf3, and a Cisco 30
+Mbit/s plan, whose 3,000,000-byte burst became 24,000,000, at 57.8. The lab
+reads every policer's `cb` back from VPP - a 1 Gbit/s plan's included
+(`cir 1000000`, `cb 62500000`), where an int of bytes or bits would have
+overflowed.
 
 The rate comes from RADIUS, in **Prisma's own attributes, vendor 67033**
 (the product's IANA PEN, the SNMP MIB's too): `Prisma-Rate-Limit-Down` (1)
