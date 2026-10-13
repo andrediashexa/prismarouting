@@ -396,8 +396,10 @@ with no profile leaves its direction unlimited, logged. MikroTik's
 Measured in `lab/pppoe.sh`, iperf3 through real CPEs and the CGNAT: a 20/10
 Mbit/s plan from Prisma's attributes measured 19.1 down and 9.6 up; a CoA to
 50/20 measured 48.9 and 19.3 on the same session, with no redial; a session
-with no plan carried 1.42 Gbit/s; VPP's policer count went back to 0 when the
-sessions were gone. `show pppoe sessions` lists each session's limit
+with no plan carried 1.4-1.6 Gbit/s; a 30/15 plan in Cisco-AVPair (a
+`rate-limit output` and a `sub-qos-policy-in` profile) measured 28.4 and 14.5,
+and a CoA's `rate-limit input` changed only the upload; VPP's policer count
+went back to 0 when the sessions were gone. `show pppoe sessions` lists each session's limit
 (download/upload); `show pppoe session <id>` its MAC, traffic and each
 policer's passed and dropped packets.
 
@@ -450,9 +452,14 @@ the main table answer a request that arrives there - not measured by a lab.
 (the policer is bound on ip6 too; IPv6 sessions are not phase 1), and the
 policer with VPP workers: a policer is bound to the thread that first uses it
 and hands the others' packets to it (`policer-input-handoff`), which this lab
-(single-threaded) does not exercise. `lab/policer-scale.sh` measures the
-dataplane's cost of a session's policers at 1,000 and 10,000 limited
-sessions.
+(single-threaded) does not exercise.
+
+**Cost at scale**, `lab/policer-scale.sh` (single-threaded, a busy build
+host, so ceilings): adding and applying a session's two policers took 46 us
+at 1,000 limited sessions and 32 us at 10,000 (0.7x); taking them off, 21
+and 22 us (1.0x); the main heap held 263 MB with 20,000 policers and 10,000
+interfaces; every policer was gone at the end. A session setup pays four
+binary-API calls more than before, none of which walks the box.
 
 ## Where every number here comes from
 
