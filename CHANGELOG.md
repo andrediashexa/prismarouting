@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.6 - a crash soon after boot is no longer logged as the boot's start
+
+### Fixed
+
 * **A crash in the box's first five minutes was logged as a start "with
   the boot".** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   On prisma-bench (0.155.5) accel-pppd killed 12 s after the box came up
