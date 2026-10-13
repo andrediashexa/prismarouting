@@ -31,7 +31,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_frame $(BUILD)/test_bpa_exhaust \
       $(BUILD)/test_bpa_log_ring $(BUILD)/test_bpa_log_layout \
       $(BUILD)/test_prisma_logd \
-      $(BUILD)/test_bpa_sock
+      $(BUILD)/test_bpa_sock $(BUILD)/test_prisma_rate
 	@sh tools/run-tests.sh
 
 vectors:
@@ -183,6 +183,11 @@ $(BUILD)/test_bpa_dyn: test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_dyn.c src/plugins/bpa/bpa_pool.c
+
+# The Cisco-AVPair rate parser the BNG's shaper is patched with (#607).
+$(BUILD)/test_prisma_rate: test/test_prisma_rate.c build/prisma_rate.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ test/test_prisma_rate.c
 
 $(BUILD)/test_bpa_ports: test/test_bpa_ports.c src/plugins/bpa/bpa_ports.h \
                          test/bpa_shim.h
