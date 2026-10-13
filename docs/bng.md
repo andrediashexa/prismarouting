@@ -318,8 +318,8 @@ screen, never off the order something was typed in. Up to eight servers.
 **How accel-ppp picks a server, read in its source at the pin**
 (`radius/serv.c` `__rad_server_get`): among the servers that have the port
 the request needs and are not inside their `fail-time`, the lowest `backup`
-level, and within a level the one with the fewest requests and sessions per
-`weight`. A server is marked down for `fail-time` seconds after `max-fail`
+level, and within a level - upstream - the one with the fewest requests and
+sessions per `weight`; since 0.155.1 the patch makes that a rotation. A server is marked down for `fail-time` seconds after `max-fail`
 consecutive timeouts; a request moves to the next server after `max-try`
 sends (`radius/req.c`). Upstream parses `backup` as a flag, so a third
 server shared the load with the second; the patch makes it a level. So:
@@ -327,12 +327,15 @@ server shared the load with the second; the patch makes it a level. So:
 | `mode` | What accel-ppp is given | What it does |
 |---|---|---|
 | failover | each server `backup=<rank of its priority>` (none for the first), `fail-time=<dead-time>`, `max-fail=<retries+1>`; `timeout`, `max-try=<retries+1>` | a request goes to the first server alive; one that did not answer `retries+1` sends is skipped for `dead-time` and the next takes the request; two servers with one priority share their rank |
-| round-robin | every server on level 0, weight 1 | each request to the server with the fewest outstanding requests and sessions: alternates between idle servers, evens out busy ones - not a strict rotation |
+| round-robin | every server on level 0, weight 1 | each request to the next server alive, in turn (the patch's cursor, 0.155.1); upstream's least-outstanding sent six sequential logins 7:1 to the first server on prisma-bench |
 
 Accounting follows the same choice among the servers that take accounting
 (`role acct` writes `auth-port=0`, `role auth` writes `acct-port=0`, which
-accel-ppp reads as "not for that"); a session's Start, interims and Stop go to
-the server its Start went to until that one is marked down. No accounting
+accel-ppp reads as "not for that"): in round-robin the Starts rotate as the
+Access-Requests do, on a cursor of their own, so a session's Start need not
+go where its Access-Request went; its interims and Stop go to the server its
+Start went to until that one is marked down - accounting of one session is
+never split between servers. No accounting
 server is allowed, and `show pppoe summary` then says accounting is off.
 **`acct-timeout=0`**: accel-ppp's default (3) terminated every session whose
 interim went unanswered for 3 s (`radius/acct.c` `rad_acct_timeout`), so a
@@ -347,7 +350,9 @@ nothing; with the first killed, a session cleared and redialled authenticated
 showed the first `failed`; the next session did not wait for it; restarted,
 the first was asked again once its dead-time was over. `mode round-robin`,
 committed, was a reload with every session still up, and the sessions that
-redialled afterwards authenticated and accounted on both servers.
+redialled afterwards authenticated and accounted on both servers; since
+0.155.1, six logins of one subscriber one after the other split within one
+between the two.
 
 **A RADIUS change is a reload**, not a restart: accel-ppp re-reads [radius]
 and [shaper] at `reload` (both register for `EV_CONFIG_RELOAD`), and the patch
@@ -373,8 +378,22 @@ own VPP hooks (`session_hooks/vyos_vpp/vpppolicer.c`): the download one on the
 interface's output (`ip4-output`, after the midchain), the upload one on its
 input (`ip4-unicast`, before `bpa-in2out` - measured order: sv-reassembly,
 policer-input, tcp-mss-clamping, bpa-in2out). One rate, one bucket (1r2c):
-up to the rate passes, past it is dropped; a tenth of a second of burst each
-way. It is policing, not shaping (2.2): nothing queues.
+up to the rate passes, past it is dropped. It is policing, not shaping (2.2):
+nothing queues.
+
+**The bucket** is a tenth of a second of the rate, in bytes, and never under
+15,000 (ten full-size packets) - for either source: a Cisco-AVPair's own
+burst numbers are checked and not used, because the same plan from Prisma's
+attributes would otherwise get another bucket. **Until 0.155.1 every bucket
+was eight times that**: accel-ppp-ng's VPP hook multiplied the burst by 8 as
+if VPP took bits, and VPP's `cb` is bytes (`rb.kbps.cb_bytes`). prisma-bench
+measured it - a 20/10 plan at 21.3/10.7 and 50/20 at 53.6/21.7 over a 6 s
+iperf3, and a Cisco 30 Mbit/s plan, whose 3,000,000-byte burst became
+24,000,000, at 57.8. `lab/pppoe.sh` hid it: its iperf3 omitted the first
+second, the one the bucket empties in. It now runs 6 s with nothing omitted,
+accepts 10% under the plan and 5% over it, and reads every policer's `cb`
+back from VPP - including a 1 Gbit/s plan's (`cir 1000000`, `cb 12500000`),
+where an int of bytes or bits would have overflowed.
 
 The rate comes from RADIUS, in **Prisma's own attributes, vendor 67033**
 (the product's IANA PEN, the SNMP MIB's too): `Prisma-Rate-Limit-Down` (1)
@@ -419,6 +438,19 @@ only when `dynamic-authorization listen` is configured, on that address, and
 the client list is what admits a request. With management in a VRF (#580),
 `udp_l3mdev_accept`, which the box already sets, is what lets the listener in
 the main table answer a request that arrives there - not measured by a lab.
+
+**0.155.1: a policer counted twice after a crash.** The entrypoint's
+`clean_policers` ran vppctl inside a `while read` over the list of a dead
+daemon's policers; vppctl passes its stdin to the dataplane, read the rest of
+the list, and those policers were deleted while still applied. VPP counts a
+feature's enables per interface, so the recycled interface kept one, and the
+next session's own enable made two: every packet metered twice - a 30/15
+plan measured at half - or, when VPP gave the freed policer's index to
+another session's policer, a session with no plan held at that one's rate
+(measured with three workers). vppctl now reads `/dev/null` there, and
+`unpoison` clears any policer feature still on a session interface while no
+control plane runs, through a policer made for it (`policer_input(apply=0)`
+disables the feature whatever the interface was bound to).
 
 **Three defects found on the way**, each measured in `lab/pppoe.sh`:
 

@@ -64,7 +64,7 @@ O RADIUS não fica mais dentro do `pppoe`: está no `aaa` > `radius`, abaixo. Di
 
 `**failover**`: todo pedido vai ao servidor de menor `priority`. Se ele não responde em `timeout` segundos, `retries` vezes, o pedido vai ao seguinte, e o que não respondeu fica de fora por `dead-time` segundos: o próximo assinante já vai direto ao seguinte. Com os padrões, um servidor morto custa 6 segundos a **um** assinante e nenhum aos outros. Passado o `dead-time`, ele volta a ser o primeiro. Dois servidores com a mesma `priority` dividem a carga entre si.
 
-`**round-robin**`: cada pedido vai ao servidor com menos pedidos e sessões em andamento, o que alterna entre servidores ociosos e equilibra os ocupados. Não é um rodízio estrito: é o que o plano de controle faz.
+`**round-robin**`: cada pedido vai ao próximo servidor ativo, em rodízio. Os Accounting-Start também se revezam; os Interim e o Stop de uma sessão vão sempre ao servidor que recebeu o Start dela.
 
 A contabilização segue a mesma escolha, entre os servidores que recebem contabilização; os Interim e o Stop de uma sessão vão ao servidor que recebeu o Start dela, enquanto ele responder. Sem nenhum servidor de contabilização (todos `role auth`), a contabilização fica desligada, e o `show pppoe summary` diz isso.
 
@@ -115,7 +115,7 @@ prisma> show aaa radius dictionary
 
 No FreeRADIUS, salve o que esse comando imprime como `/usr/share/freeradius/dictionary.prisma` e acrescente `$INCLUDE /usr/share/freeradius/dictionary.prisma` ao arquivo `/etc/freeradius/3.0/dictionary`. No IXC ou em outro sistema, cadastre o fornecedor 67033 e os dois atributos da tabela.
 
-O limite é um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
+O limite é um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. A rajada aceita (o balde do policer) é um décimo de segundo da taxa, nunca menos de 15.000 bytes, venha a taxa dos atributos do Prisma ou do `Cisco-AVPair`: os números de rajada do `Cisco-AVPair` são conferidos e não usados. Até a 0.155.0 o balde era oito vezes maior, e um teste curto media de 7% a 90% acima do plano. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
 
 ## Disconnect e CoA
 

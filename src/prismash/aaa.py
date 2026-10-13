@@ -13,8 +13,9 @@ fail over in seconds.
 HOW ACCEL-PPP CHOOSES A SERVER, read in its source at the pin
 (build/accel-ppp-build.sh, radius/serv.c __rad_server_get): among the servers
 that have the port the request needs (auth or acct) and are not inside their
-`fail-time`, the LOWEST `backup` level wins; within one level, the one with
-the fewest requests and sessions in flight per `weight`. A server is marked
+`fail-time`, the LOWEST `backup` level wins; within one level, upstream
+took the one with the fewest requests and sessions in flight per `weight`,
+and the patch makes it a ROTATION (0.155.1, below). A server is marked
 down for `fail-time` seconds after `max-fail` consecutive timeouts; a request
 moves to the next server after `max-try` sends to one (radius/req.c
 rad_req_send). Upstream holds `backup` to 0 or 1, so a third server shared
@@ -27,10 +28,13 @@ SO THE TWO MODES ARE:
     first); a request goes to the first server alive, the next only when the
     first is marked down or did not answer `retries` + 1 sends. Two servers
     with one priority share that rank, as round-robin would.
-  * round-robin: every server on one level, weight 1 - accel-ppp gives each
-    new request to the server with the fewest outstanding, which alternates
-    between idle servers and evens out busy ones. Not a strict rotation:
-    that is what accel-ppp does, and it is the honest name for it.
+  * round-robin: every server on one level - each new request to the next
+    server alive, in turn. Upstream's least-outstanding is not that: with
+    nothing in flight its tie-break sent every request to the first server,
+    measured on prisma-bench as 7 Access-Requests to 1 over six sequential
+    logins; the patch turns a cursor over the servers alive on the level
+    (radius/serv.c), and lab/pppoe.sh asserts six sequential logins split
+    within one.
 
 Accounting follows the same choice: an Accounting-Request is placed by the
 same rule among the servers that take accounting, and a session's Start,

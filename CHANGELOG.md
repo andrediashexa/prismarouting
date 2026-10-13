@@ -79,6 +79,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A session's rate limit let eight times its burst through.**
+  ([#607](https://github.com/andrediashexa/hexarouting/issues/607))
+  accel-ppp-ng's VPP hook multiplied the bucket by 8 as if VPP took bits; VPP
+  takes bytes. Measured on prisma-bench over a 6 s iperf3: a 20/10 plan at
+  21.3/10.7, and a Cisco-AVPair 30 Mbit/s plan - whose own 3,000,000-byte
+  burst became 24,000,000 - at 57.8. The bucket is now a tenth of a second of
+  the rate, never under 15,000 bytes, for both attribute sources; Cisco's
+  burst numbers are checked and no longer used. `lab/pppoe.sh` hid it by
+  omitting iperf3's first second; it now measures all six, allows 5% over the
+  plan, and reads every policer's bucket back from VPP, a 1 Gbit/s plan's
+  included. It also runs with VPP workers (`LAB_WORKERS=3`).
+* **A session's policer could be counted twice, or another session's
+  used, after the PPPoE control plane died.** The entrypoint's clean-up of a
+  dead daemon's policers ran vppctl inside a loop reading the list, vppctl
+  read the rest of the list as its own input, and policers were deleted
+  while still applied - leaving VPP's enable count behind. The next session
+  on the recycled interface was then metered twice (half its plan, measured)
+  or by another session's policer (a session with no plan held at 20 Mbit/s,
+  measured with VPP workers). vppctl now reads nothing there, and any policer
+  feature left on a session interface while no control plane runs is cleared
+  (`unpoison`).
+* **`mode round-robin` sent six sequential logins 7:1 to one server**
+  (prisma-bench). accel-ppp took the least-loaded server, and with nothing in
+  flight its tie-break was always the first. Requests now rotate among the
+  servers alive on the level; accounting Starts rotate too, and a session's
+  interims and Stop stay with its Start's server. The lab asserts six
+  sequential logins split within one.
+
 ## 0.155.0 - RADIUS under aaa, failover or round-robin, CoA and per-session rate limits
 
 ### Added
