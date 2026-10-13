@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.5 - PPPoE control plane events in the log; PPPoE only on access interfaces
+
+### Added
+
 * **The PPPoE control plane's starts, exits and restarts, and its RADIUS
   servers, in `show log`.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   Every start of the `prisma-bng` container is an event (`kind start`,
