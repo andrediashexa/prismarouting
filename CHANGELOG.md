@@ -77,7 +77,51 @@ version has a chance of seeing it.
 
 ### Added
 
+* **PPPoE over SNMP: the sessions, each RADIUS server's answers, and
+  Disconnect/CoA.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  PRISMA-ROUTING-MIB's new `prBng` (`.1.22`) serves the PPPoE control plane's
+  state (running, stopped, notConfigured, noContainers) and uptime, the
+  sessions up and being set up, the sessions started and stopped, the
+  Disconnect and CoA requests answered ACK and NAK and the ones answered with
+  nothing, and `prBngRadiusTable`, a row per `aaa radius` server indexed by
+  its address: active or failed, Access-Requests sent, Access-Accepts,
+  Access-Rejects, sends unanswered, and the same for accounting. accel-ppp
+  counted none of started, stopped, accepts, rejects or the DAE answers;
+  the accel-ppp patch adds them to its own `show stat`, which the agent
+  reads through the host's doors, as `show pppoe summary` does. A box with
+  no PPPoE answers notConfigured with zeros and an empty table. The counters
+  start again with the control plane, and `prBngUptime` says when. The
+  Zabbix template collects all of it and alarms on a control plane
+  configured and stopped, one that restarted on its own, the sessions up
+  falling by half in an hour, a server marked down or not answering, and
+  requests the listener drops. `lab/pppoe.sh` reads it through snmpd as
+  Debian-snmp against real sessions: the sessions up as the VTY lists them,
+  the accepts and rejects as the RADIUS server's log says it sent them,
+  every CoA and Disconnect radclient received counted. Served by the
+  process that serves the rest of the product's objects, read only when a
+  request reaches `.1.22`: net-snmp hands a GET under a nested
+  `pass_persist` registration to the broader one, measured, so a process of
+  its own would have answered walks and no `snmpget` (#608, below).
+
 ### Fixed
+
+* **An `snmpget` of a port's transceiver or of a sensor's threshold answered
+  noSuchInstance.** ([#608](https://github.com/andrediashexa/hexarouting/issues/608))
+  On 10.40.200.166 (0.155.2) `snmpwalk .1.3.6.1.4.1.67033.1.20` gave
+  `.20.1.1.2.1 = "enp1s0"` and an `snmpget` of that OID No Such Instance,
+  and the same for `.21` - so the Zabbix template's optics and threshold
+  items, polled by GET, never had a value. `prTransceiver` and
+  `prSensorThresholdTable` had processes of their own on registrations
+  nested under the product's, and net-snmp 5.9.3 sends a GET under a nested
+  `pass_persist` registration to the broader one, whatever the order of the
+  lines (measured with stand-in helpers); a walk worked, which is why no lab
+  saw it. The product's subtree is one registration now, and its process
+  serves both, reading the modules only for a request that reaches them. The
+  upgrade takes the two nested lines out of `snmpd.conf` and restarts a
+  running snmpd, whose agent would otherwise run the old code until the next
+  boot. `lab/snmp.sh` gets a module's name, its RX power and a sensor's
+  threshold by `snmpget` (red without the fix), and
+  `test/test_upgrade_artifact.sh` checks the file the upgrade leaves.
 
 ## 0.155.2 - half a second of policer bucket, so one TCP flow gets its plan
 

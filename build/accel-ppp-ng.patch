@@ -1,3 +1,34 @@
+diff --git a/accel-pppd/cli/std_cmd.c b/accel-pppd/cli/std_cmd.c
+index ace4839..287f6e7 100644
+--- a/accel-pppd/cli/std_cmd.c
++++ b/accel-pppd/cli/std_cmd.c
+@@ -74,6 +74,10 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
+ 	cli_sendv(client, "  starting: %u\r\n", ap_session_stat.starting);
+ 	cli_sendv(client, "  active: %u\r\n", ap_session_stat.active);
+ 	cli_sendv(client, "  finishing: %u\r\n", ap_session_stat.finishing);
++	/* Prisma Routing (#597): read by the SNMP agent, prBngSessionsStarted
++	 * and prBngSessionsStopped. */
++	cli_sendv(client, "  started: %u\r\n", ap_session_stat.started);
++	cli_sendv(client, "  stopped: %u\r\n", ap_session_stat.stopped);
+ 
+ 	return CLI_CMD_OK;
+ }
+diff --git a/accel-pppd/include/ap_session.h b/accel-pppd/include/ap_session.h
+index 97f1a69..d0b5b19 100644
+--- a/accel-pppd/include/ap_session.h
++++ b/accel-pppd/include/ap_session.h
+@@ -138,6 +138,11 @@ struct ap_session_stat
+ 	unsigned int active;
+ 	unsigned int starting;
+ 	unsigned int finishing;
++	/* Prisma Routing (#597, SNMP): sessions that came up, and sessions
++	 * that were up and ended, since accel-pppd started - so active is
++	 * always started - stopped, and an NMS sees the churn a gauge hides. */
++	unsigned int started;
++	unsigned int stopped;
+ };
+ 
+ 
 diff --git a/accel-pppd/include/ap_session_hooks.h b/accel-pppd/include/ap_session_hooks.h
 index b15772a..738b021 100644
 --- a/accel-pppd/include/ap_session_hooks.h
@@ -53,14 +84,34 @@ index 235b4b6..c22059e 100644
  		close(ppp->unit_fd);
  
  	ppp->unit_fd = -1;
+diff --git a/accel-pppd/radius/auth.c b/accel-pppd/radius/auth.c
+index d47325a..4023580 100644
+--- a/accel-pppd/radius/auth.c
++++ b/accel-pppd/radius/auth.c
+@@ -312,6 +312,13 @@ static void rad_auth_recv(struct rad_req_t *req)
+ 	stat_accm_add(req->serv->stat_auth_query_1m, dt);
+ 	stat_accm_add(req->serv->stat_auth_query_5m, dt);
+ 
++	/* Prisma Routing (#597): the server's answer, counted as it gave it -
++	 * an Accept whose attributes are then refused below is still one. */
++	if (pack->code == CODE_ACCESS_ACCEPT)
++		__sync_add_and_fetch(&req->serv->stat_auth_accept, 1);
++	else if (pack->code == CODE_ACCESS_REJECT)
++		__sync_add_and_fetch(&req->serv->stat_auth_reject, 1);
++
+ 	if (pack->code == CODE_ACCESS_ACCEPT) {
+ 		if (rad_proc_attrs(req)) {
+ 			rad_auth_finalize(req->rpd, PWDB_DENIED);
 diff --git a/accel-pppd/radius/dm_coa.c b/accel-pppd/radius/dm_coa.c
-index e1d32c6..fbf0f16 100644
+index e1d32c6..d8fc75a 100644
 --- a/accel-pppd/radius/dm_coa.c
 +++ b/accel-pppd/radius/dm_coa.c
-@@ -31,6 +31,66 @@ struct dm_coa_serv_t
+@@ -31,6 +31,68 @@ struct dm_coa_serv_t
  
  static struct dm_coa_serv_t serv;
  
++struct rad_dae_stat_t rad_dae_stat;
++
 +/* Prisma Routing (#607): the clients that may send a Disconnect or a CoA,
 + * each with its own secret - `dae-client=<address>,<secret>`, as many as
 + * configured. accel-ppp had one secret for the listener and took a request
@@ -124,7 +175,7 @@ index e1d32c6..fbf0f16 100644
  static int dm_coa_check_RA(struct rad_packet_t *pack, const char *secret)
  {
  	uint8_t RA[16];
-@@ -88,7 +148,7 @@ static int dm_coa_send_ack(int fd, struct rad_packet_t *req, struct sockaddr_in
+@@ -88,7 +150,7 @@ static int dm_coa_send_ack(int fd, struct rad_packet_t *req, struct sockaddr_in
  		return -1;
  	}
  
@@ -133,7 +184,15 @@ index e1d32c6..fbf0f16 100644
  		rad_packet_free(reply);
  		return -1;
  	}
-@@ -126,7 +186,7 @@ static int dm_coa_send_nak(int fd, struct rad_packet_t *req, struct sockaddr_in
+@@ -99,6 +161,7 @@ static int dm_coa_send_ack(int fd, struct rad_packet_t *req, struct sockaddr_in
+ 	}
+ 
+ 	rad_packet_send(reply, fd, addr);
++	__sync_add_and_fetch(req->code == CODE_COA_REQUEST ? &rad_dae_stat.coa_ack : &rad_dae_stat.disconnect_ack, 1);
+ 
+ 	rad_packet_free(reply);
+ 
+@@ -126,7 +189,7 @@ static int dm_coa_send_nak(int fd, struct rad_packet_t *req, struct sockaddr_in
  		return -1;
  	}
  
@@ -142,7 +201,15 @@ index e1d32c6..fbf0f16 100644
  		rad_packet_free(reply);
  		return -1;
  	}
-@@ -180,6 +240,32 @@ int rad_update_vrf(struct radius_pd_t *rpd, const char *vrf_name)
+@@ -137,6 +200,7 @@ static int dm_coa_send_nak(int fd, struct rad_packet_t *req, struct sockaddr_in
+ 	}
+ 
+ 	rad_packet_send(reply, fd, addr);
++	__sync_add_and_fetch(req->code == CODE_COA_REQUEST ? &rad_dae_stat.coa_nak : &rad_dae_stat.disconnect_nak, 1);
+ 
+ 	rad_packet_free(reply);
+ 
+@@ -180,6 +244,32 @@ int rad_update_vrf(struct radius_pd_t *rpd, const char *vrf_name)
  }
  #endif
  
@@ -175,7 +242,7 @@ index e1d32c6..fbf0f16 100644
  static void coa_request(struct radius_pd_t *rpd)
  {
  	struct rad_attr_t *class;
-@@ -189,62 +275,97 @@ static void coa_request(struct radius_pd_t *rpd)
+@@ -189,62 +279,97 @@ static void coa_request(struct radius_pd_t *rpd)
  		.ses = rpd->ses,
  		.request = rpd->dm_coa_req,
  	};
@@ -307,7 +374,7 @@ index e1d32c6..fbf0f16 100644
  
  	rad_packet_free(rpd->dm_coa_req);
  
-@@ -284,7 +405,12 @@ static int dm_coa_read(struct triton_md_handler_t *h)
+@@ -284,7 +409,12 @@ static int dm_coa_read(struct triton_md_handler_t *h)
  			rad_packet_print(pack, NULL, log_debug);
  		}
  
@@ -321,7 +388,19 @@ index e1d32c6..fbf0f16 100644
  			log_warn("radius:dm_coa: RA validation failed\n");
  			goto out_err_no_reply;
  		}
-@@ -349,6 +475,8 @@ static void init(void)
+@@ -322,7 +452,11 @@ static int dm_coa_read(struct triton_md_handler_t *h)
+ 	out_err:
+ 		dm_coa_send_nak(h->fd, pack, &addr, err_code);
+ 
++		rad_packet_free(pack);
++		continue;
++
+ 	out_err_no_reply:
++		__sync_add_and_fetch(&rad_dae_stat.dropped, 1);
+ 		rad_packet_free(pack);
+ 	}
+ }
+@@ -349,6 +483,8 @@ static void init(void)
  		return;
  	}
  
@@ -331,10 +410,21 @@ index e1d32c6..fbf0f16 100644
  	if (serv.hnd.fd < 0) {
  		log_emerg("radius:dm_coa: socket: %s\n", strerror(errno));
 diff --git a/accel-pppd/radius/radius_p.h b/accel-pppd/radius/radius_p.h
-index c381451..fc1a894 100644
+index c381451..d8713d0 100644
 --- a/accel-pppd/radius/radius_p.h
 +++ b/accel-pppd/radius/radius_p.h
-@@ -168,7 +168,7 @@ struct rad_server_t {
+@@ -152,6 +152,10 @@ struct rad_server_t {
+ 	unsigned long stat_interim_sent;
+ 	unsigned long stat_interim_lost;
+ 	unsigned long stat_fail_cnt;
++	/* Prisma Routing (#597, SNMP): the server's answers to Access-Requests,
++	 * by code; stat_auth_lost is the sends it did not answer in time. */
++	unsigned long stat_auth_accept;
++	unsigned long stat_auth_reject;
+ 
+ 	struct stat_accm_t *stat_auth_lost_1m;
+ 	struct stat_accm_t *stat_auth_lost_5m;
+@@ -168,7 +172,7 @@ struct rad_server_t {
  	struct stat_accm_t *stat_interim_query_1m;
  	struct stat_accm_t *stat_interim_query_5m;
  
@@ -343,8 +433,27 @@ index c381451..fc1a894 100644
  	unsigned int starting:1;
  	unsigned int acct_on:1;
  	unsigned int need_free:1;
+@@ -269,6 +273,18 @@ void radius_restore_session(struct ap_session *ses, struct radius_pd_t *rpd);
+ struct rtnl_link_stats;
+ int rad_read_stats(struct radius_pd_t *rpd, struct rtnl_link_stats *stats);
+ 
++/* Prisma Routing (#597, SNMP): what the Disconnect/CoA listener answered,
++ * by request and answer, and the requests it answered with nothing (a
++ * source that is not a client, a wrong secret, a request already pending). */
++struct rad_dae_stat_t {
++	unsigned long disconnect_ack;
++	unsigned long disconnect_nak;
++	unsigned long coa_ack;
++	unsigned long coa_nak;
++	unsigned long dropped;
++};
++extern struct rad_dae_stat_t rad_dae_stat;
++
+ struct stat_accm_t;
+ struct stat_accm_t *stat_accm_create(unsigned int time);
+ void stat_accm_free(struct stat_accm_t *);
 diff --git a/accel-pppd/radius/serv.c b/accel-pppd/radius/serv.c
-index 555ef44..b4d356b 100644
+index 555ef44..29e146e 100644
 --- a/accel-pppd/radius/serv.c
 +++ b/accel-pppd/radius/serv.c
 @@ -77,6 +77,35 @@ static struct rad_server_t *__rad_server_get(int type, struct rad_server_t *excl
@@ -383,7 +492,32 @@ index 555ef44..b4d356b 100644
  
  	__sync_add_and_fetch(&s0->client_cnt[type], 1);
  
-@@ -590,7 +619,16 @@ static void __add_server(struct rad_server_t *s)
+@@ -554,6 +583,8 @@ static void show_stat(struct rad_server_t *s, void *client)
+ 
+ 	if (s->auth_port) {
+ 		cli_sendv(client, "  auth sent: %lu\r\n", s->stat_auth_sent);
++		cli_sendv(client, "  auth accept: %lu\r\n", s->stat_auth_accept);
++		cli_sendv(client, "  auth reject: %lu\r\n", s->stat_auth_reject);
+ 		cli_sendv(client, "  auth lost(total/5m/1m): %lu/%lu/%lu\r\n",
+ 			s->stat_auth_lost, stat_accm_get_cnt(s->stat_auth_lost_5m), stat_accm_get_cnt(s->stat_auth_lost_1m));
+ 		cli_sendv(client, "  auth avg query time(5m/1m): %lu/%lu ms\r\n",
+@@ -582,6 +613,15 @@ static int show_stat_exec(const char *cmd, char * const *fields, int fields_cnt,
+ 	list_for_each_entry(s, &serv_list, entry)
+ 		show_stat(s, client);
+ 
++	/* Prisma Routing (#597): the Disconnect/CoA listener's answers, zero
++	 * when it does not listen. */
++	cli_send(client, "dae:\r\n");
++	cli_sendv(client, "  disconnect ack: %lu\r\n", rad_dae_stat.disconnect_ack);
++	cli_sendv(client, "  disconnect nak: %lu\r\n", rad_dae_stat.disconnect_nak);
++	cli_sendv(client, "  coa ack: %lu\r\n", rad_dae_stat.coa_ack);
++	cli_sendv(client, "  coa nak: %lu\r\n", rad_dae_stat.coa_nak);
++	cli_sendv(client, "  dropped: %lu\r\n", rad_dae_stat.dropped);
++
+ 	return CLI_CMD_OK;
+ }
+ 
+@@ -590,7 +630,16 @@ static void __add_server(struct rad_server_t *s)
  	struct rad_server_t *s1;
  
  	list_for_each_entry(s1, &serv_list, entry) {
@@ -401,7 +535,7 @@ index 555ef44..b4d356b 100644
  			s1->fail_timeout = s->fail_timeout;
  			s1->req_limit = s->req_limit;
  			s1->max_fail = s->max_fail;
-@@ -924,10 +962,20 @@ static int parse_server2(const char *_opt, struct rad_server_t *s)
+@@ -924,10 +973,20 @@ static int parse_server2(const char *_opt, struct rad_server_t *s)
  	} else
  		s->bind_default = 1;
  
@@ -425,10 +559,39 @@ index 555ef44..b4d356b 100644
  
  	*ptr2 = 0;
 diff --git a/accel-pppd/session.c b/accel-pppd/session.c
-index 4b236e1..a42d6b4 100644
+index 4b236e1..e316575 100644
 --- a/accel-pppd/session.c
 +++ b/accel-pppd/session.c
-@@ -417,13 +417,17 @@ int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stat
+@@ -180,6 +180,7 @@ void __export ap_session_activate(struct ap_session *ses)
+ 	ses->state = AP_STATE_ACTIVE;
+ 	__sync_sub_and_fetch(&ap_session_stat.starting, 1);
+ 	__sync_add_and_fetch(&ap_session_stat.active, 1);
++	__sync_add_and_fetch(&ap_session_stat.started, 1);
+ 
+ 	if (!ses->session_timeout && conf_session_timeout)
+ 		ses->session_timeout = conf_session_timeout;
+@@ -222,6 +223,7 @@ void __export ap_session_finished(struct ap_session *ses)
+ 	switch (ses->state) {
+ 		case AP_STATE_ACTIVE:
+ 			__sync_sub_and_fetch(&ap_session_stat.active, 1);
++			__sync_add_and_fetch(&ap_session_stat.stopped, 1);
+ 			break;
+ 		case AP_STATE_RESTORE:
+ 		case AP_STATE_STARTING:
+@@ -326,9 +328,10 @@ void __export ap_session_terminate(struct ap_session *ses, int cause, int hard)
+ 		return;
+ 	}
+ 
+-	if (ses->state == AP_STATE_ACTIVE)
++	if (ses->state == AP_STATE_ACTIVE) {
+ 		__sync_sub_and_fetch(&ap_session_stat.active, 1);
+-	else
++		__sync_add_and_fetch(&ap_session_stat.stopped, 1);
++	} else
+ 		__sync_sub_and_fetch(&ap_session_stat.starting, 1);
+ 
+ 	__sync_add_and_fetch(&ap_session_stat.finishing, 1);
+@@ -417,13 +420,17 @@ int __export ap_session_read_stats(struct ap_session *ses, struct rtnl_link_stat
  {
  	struct rtnl_link_stats64 lstats;
  

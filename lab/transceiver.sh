@@ -135,7 +135,7 @@ echo
 echo "=========== 3. SNMP: prTransceiver through snmpd ==========="
 $HX -c "configure" -c "snmp enabled yes" -c "snmp listen-address 127.0.0.1" \
     -c "snmp community hexro" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
-grep "transceivers" /etc/snmp/snmpd.conf | sed 's/^/  |/'
+grep "1.3.6.1.4.1.67033" /etc/snmp/snmpd.conf | sed 's/^/  |/'
 chgrp vpp /run/vpp/cli.sock /run/vpp/api.sock /run/vpp/stats.sock 2>/dev/null
 chown Debian-snmp:Debian-snmp /var/lib/snmp
 pkill snmpd 2>/dev/null; sleep 0.5
@@ -204,7 +204,11 @@ expect_in "control: the plugin itself does not read a Linux card" "unread not-dp
 expect_in "control: a name that is neither a port nor a card" "no interface matches nosuch9" "$NONE"
 expect_in "control: a stand-in of a type no document has is refused" "a type sff-8079" "$BAD"
 expect "control: every screen fits 79 columns" test -z "$WIDE"
-expect_in "control: snmpd carries the transceivers' registration" "--transceivers" \
+# One registration for the product's subtree, none nested under it (#608):
+# net-snmp sends a GET under a nested one to the broader registration.
+expect_in "control: snmpd carries the product's registration" \
+  "pass_persist .1.3.6.1.4.1.67033 " "$(cat /etc/snmp/snmpd.conf 2>/dev/null)"
+expect_not_in "control: and none nested under it (#608)" ".1.3.6.1.4.1.67033.1." \
   "$(cat /etc/snmp/snmpd.conf 2>/dev/null)"
 # What the modules say.
 expect_in "the plugin hands the stand-in's bytes over, marked" \

@@ -286,9 +286,27 @@ A partir da versão 0.151.15, `prTransceiver` traz o módulo de cada porta — o
 
 Um valor que o módulo não dá, e os limites de quem não tem limites, **não aparecem** — não aparecem zerados. Os mesmos módulos estão também na ENTITY-MIB e na ENTITY-SENSOR-MIB, descritas acima; esta tabela fica, em dBm, a unidade que o switch do outro lado mostra, e é nela que estão os alarmes ópticos do template do Zabbix.
 
+Até a versão 0.155.2, um `snmpget` desta tabela e de `prSensorThresholdTable` respondia *No Such Instance*, embora o `snmpwalk` funcionasse — e o Zabbix consulta com GET, então os itens ópticos do template ficavam sem valor. A partir da 0.155.3 os dois respondem ao GET; a atualização ajusta o `snmpd.conf` e reinicia o snmpd sozinha.
+
+### O PPPoE: sessões, servidores RADIUS e CoA
+
+A partir da versão 0.155.3, `prBng` (`.1.22`) traz o plano de controle do PPPoE — o mesmo `show stat` do accel-ppp que o `show pppoe summary` lê, com os contadores que a caixa acrescenta a ele.
+
+| Objeto | O que traz |
+|--------|------------|
+| `prBngState` | `running`, `stopped` (PPPoE configurado e o plano de controle parado: ninguém consegue discar), `notConfigured`, ou `noContainers` (caixa que roda o dataplane como unidades do systemd) |
+| `prBngUptime` | há quanto tempo o plano de controle está no ar: os contadores abaixo contam a partir daí |
+| `prBngSessionsActive`, `prBngSessionsStarting` | sessões no ar, e sessões em negociação. `prBngSessionsActive` é sempre `prBngSessionsStarted` menos `prBngSessionsStopped` |
+| `prBngSessionsStarted`, `prBngSessionsStopped` | sessões que subiram, e que caíram depois de subir |
+| `prBngCoaAcks`, `prBngCoaNaks`, `prBngDisconnectAcks`, `prBngDisconnectNaks` | os CoA e os Disconnect (RFC 5176) respondidos com ACK e com NAK |
+| `prBngDaeDropped` | os pedidos de CoA ou Disconnect que não tiveram resposta nenhuma: origem que não é um `dynamic-authorization client`, ou segredo errado |
+| `prBngRadiusTable` (`.1.22.20`) | uma linha por servidor de `aaa radius`, indexada pelo endereço: o estado (`active` ou `failed`, durante o `dead-time`), os Access-Request enviados, os **Access-Accept**, os **Access-Reject**, os sem resposta no `timeout`, e o mesmo para o accounting |
+
+Os contadores **recomeçam do zero quando o plano de controle reinicia** — um commit que muda o bloco `pppoe`, ou uma queda —, e `prBngUptime` mostra quando foi. Numa caixa **sem PPPoE**, `prBngState` diz `notConfigured`, os contadores ficam em zero e a tabela de servidores fica vazia: a caixa responde, não dá erro. Um Access-Reject é a resposta do servidor — senha errada, assinante desconhecido ou suspenso —, por isso o template coleta e não alarma; o que alarma é servidor sem responder.
+
 ## Zabbix: o template pronto
 
-A partir da versão 0.146.0 a caixa entrega um **template para o Zabbix 7.0** que monitora tudo o que está nesta página: as portas do dataplane, os totais, os pools e os workers do CGNAT, os registros de conexão, o VRRP, o LACP, o BGP, o OSPF, o OSPFv3, o IS-IS, o tamanho da FIB, a CPU, a memória e os discos, o estado da própria caixa (tuning, self-test, commits e trilha, a partir da 0.147.1), os módulos ópticos das portas (a partir da 0.151.15), e os avisos que a caixa envia. Ele sai da própria caixa, já com o número da MIB do Prisma preenchido:
+A partir da versão 0.146.0 a caixa entrega um **template para o Zabbix 7.0** que monitora tudo o que está nesta página: as portas do dataplane, os totais, os pools e os workers do CGNAT, os registros de conexão, o VRRP, o LACP, o BGP, o OSPF, o OSPFv3, o IS-IS, o tamanho da FIB, a CPU, a memória e os discos, o estado da própria caixa (tuning, self-test, commits e trilha, a partir da 0.147.1), os módulos ópticos das portas (a partir da 0.151.15), o PPPoE e os seus servidores RADIUS (a partir da 0.155.3), e os avisos que a caixa envia. Ele sai da própria caixa, já com o número da MIB do Prisma preenchido:
 
 ```
 show snmp zabbix-template
@@ -299,6 +317,8 @@ Salve a saída como `prisma-routing-zabbix.json` e importe no Zabbix, em *Coleta
 Os alarmes já vêm prontos: porta administrativamente ligada e operacionalmente fora, porta acima de 90% da velocidade ou com erros, pool acima de 80% e de 95% dos blocos, assinantes perto de esgotar as portas, portas recusadas, memória do CGNAT acabando, vizinho BGP fora de *established*, vizinho OSPF que não chega a *full*, adjacência IS-IS fora de *up*, troca de estado do VRRP, bundle LACP com menos membros ativos que configurados, a FIB perdendo metade das rotas em uma hora, registros de conexão perdidos ou transporte desconectado, dataplane rodando a versão antiga depois de uma atualização e a caixa sem responder SNMP. Os limites são macros do template, que você ajusta no host: `{$IF.UTIL.MAX}`, `{$PRISMA.POOL.UTIL.WARN}`, `{$PRISMA.POOL.UTIL.CRIT}`, `{$PRISMA.SESSIONS.FIT.WARN}` e as demais. Para uma porta que pode ficar fora sem alarme, use `{$IFCONTROL:"<nome da porta>"}` = 0.
 
 Os módulos ópticos (0.151.15) têm os seus: potência de RX abaixo do aviso baixo ou acima do aviso alto **do próprio módulo**, temperatura alta, e qualquer leitura além de um limite de alarme. `{$PRISMA.XCVR.RX.MIN}` e `{$PRISMA.XCVR.RX.MAX}` (dBm) e `{$PRISMA.XCVR.TEMP.MAX}` (°C) disparam ao lado dos limites do módulo — para vigiar um nível que o módulo não vigia —, e `{$PRISMA.XCVR.CONTROL:"<porta>"}` = 0 silencia uma porta (uma faixa de QSFP é `"<porta> lane <n>"`).
+
+O PPPoE (0.155.3) tem os seus: plano de controle configurado e parado, plano de controle reiniciado sozinho, as sessões no ar caindo abaixo de `{$PRISMA.PPPOE.DROP.PCT}` (50%) do máximo da última hora — só acima de `{$PRISMA.PPPOE.MIN}` (10) sessões —, servidor RADIUS marcado como fora, servidor RADIUS sem responder Access-Request por cinco minutos, e pedidos de CoA ou Disconnect respondidos com nada.
 
 Três escolhas do template:
 
@@ -381,6 +401,9 @@ Os avisos com nome (`vrrpStateChange` e os demais) chegam como `mteTriggerFired`
 | `prBundleActiveMembers` menor que `prBundleMembers` | o bundle está rodando com menos pernas do que tem |
 | `prRadiusRefused` subindo | o BNG está mandando accounting que a caixa não aceita |
 | pacotes não passados (`prPacketsDropped`) | subida súbita costuma ser mudança de configuração ou rota; `prDropTable` diz o motivo |
+| sessões PPPoE no ar (`prBngSessionsActive`) caindo de uma vez | um enlace de acesso, o plano de controle, ou o RADIUS recusando os assinantes que voltam |
+| Access-Request sem resposta (`prBngRadiusAuthTimeouts`) subindo | o servidor RADIUS, o caminho até ele, ou um segredo diferente |
+| `prBngRadiusState` em `failed` | o servidor está sendo pulado; sem nenhum servidor vivo, ninguém entra |
 
 O mesmo se vê pela VTY, sem NMS:
 

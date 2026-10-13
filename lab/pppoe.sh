@@ -1,10 +1,10 @@
 #!/bin/sh
-# PPPoE subscribers end to end: prisma-bng, RADIUS, CGNAT, rate limits (#597, #607).
+# PPPoE subscribers end to end: prisma-bng, RADIUS, CGNAT, rate limits, SNMP (#597, #607).
 #
 #   sh tools/lab.sh pppoe        -> LAB PASSED
 #   sh tools/lab.sh pppoe off    -> LAB FAILED (PPPoE never configured)
 #
-# OFF-RED-AT-LEAST: 77
+# OFF-RED-AT-LEAST: 94
 #
 # WHAT IS REAL HERE. Real PPPoE clients - pppd with rp-pppoe, one network
 # namespace each, behind a Linux bridge, one of them on VLAN 100 - dial the
@@ -58,7 +58,17 @@
 #     shown failed; back, it is used again once its dead-time is over;
 #   * round-robin, by a commit that is a RELOAD (no session drops): sessions
 #     authenticate and account on both servers;
-#   * the policers are gone with the sessions: VPP's count is back to zero.
+#   * the policers are gone with the sessions: VPP's count is back to zero;
+# and the SNMP agent's prBng (#597), read by snmpwalk from a real snmpd
+# running as Debian-snmp, through the host's doors, as on a box:
+#   * the sessions up are the ones the VTY lists, and started minus stopped;
+#   * the RADIUS server's Access-Accepts and -Rejects are the ones its own
+#     log says it sent, and move with a login and a refused one;
+#   * the counters start again with the control plane, and say so;
+#   * every CoA and Disconnect answered is counted ACK or NAK, as radclient
+#     received it, and the ones answered with nothing as dropped;
+#   * the first server's unanswered sends are counted when it dies;
+#   * with `no pppoe`, notConfigured, zero, and no server row.
 MODE=${1:-on}
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -107,6 +117,14 @@ printf 'PRISMA_VERSION=%s\nPRISMA_VPP_GID=%s\n' "$(cat /src/VERSION)" \
 unset PRISMA_VERSION
 export PRISMA_COMPOSE=/opt/shim/docker-compose PRISMA_DOCKER=/opt/shim/docker
 export PRISMA_BNG_CTL=/src/appliance/prisma-bng
+# THE SNMP AGENT (#597, prBng), where the box installs it, and the host's
+# prisma-bng where the doors run it. The doors run it with their own
+# environment, not this lab's, so the stand-in hands it the docker shim the
+# VTY is given above; the script it runs is the product's.
+install -D -m 0755 /src/appliance/prisma-routing-snmp-agent /usr/lib/prisma-routing/snmp-agent
+printf '#!/bin/sh\nPRISMA_COMPOSE=/opt/shim/docker-compose PRISMA_DOCKER=/opt/shim/docker exec sh /src/appliance/prisma-bng "$@"\n' \
+  > /usr/lib/prisma-routing/prisma-bng
+chmod 0755 /usr/lib/prisma-routing/prisma-bng
 
 echo
 echo "=========== 2. TOPOLOGY ==========="
@@ -323,6 +341,9 @@ tcp-mss 1452
 exit
 V
   fi
+  # SNMP (#597), in both modes: the agent's prBng answers a box with no
+  # PPPoE too, and `off` reads what it says then.
+  printf 'snmp enabled yes\nsnmp listen-address 127.0.0.1\nsnmp community hexro\n'
   echo commit
 } > /tmp/config.vty
 COMMIT=$($HX < /tmp/config.vty 2>&1)
@@ -366,11 +387,54 @@ sessions() {
   done
   return 1
 }
+# snmp_bng <tag> - prBng walked through snmpd into /tmp/bng-<tag>.walk, the
+# way a box answers it: snmpd as Debian-snmp, its agent asking the host's
+# doors (root) for `prisma-bng status` and `summary`. Both are started for
+# the read and stopped after it, so each read is a fresh agent with nothing
+# cached, and the doors listen only while nothing else here asks the host.
+PEN=1.3.6.1.4.1.67033.1.22
+snmp_bng() {
+  pkill -x snmpd 2>/dev/null
+  rm -f /run/prisma-routing/doors.sock
+  python3 /src/src/prismash/doors.py --serve > /tmp/doors.log 2>&1 &
+  _dp=$!
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S /run/prisma-routing/doors.sock ] && break; sleep 0.5
+  done
+  snmpd -Lo -f -C -u Debian-snmp -g Debian-snmp -c /etc/snmp/snmpd.conf \
+    > "/tmp/snmpd-$1.log" 2>&1 &
+  _sp=$!
+  for _i in 1 2 3 4 5 6 7 8 9 10; do
+    snmpget -v2c -c hexro -t 1 -r 0 127.0.0.1 1.3.6.1.2.1.1.3.0 > /dev/null 2>&1 && break
+    sleep 0.5
+  done
+  date +%s > "/tmp/bng-$1.at"
+  snmpwalk -v2c -c hexro -On -Oq -Ot -Oe -t 15 127.0.0.1 "$PEN" > "/tmp/bng-$1.walk" 2>&1
+  snmpget -v2c -c hexro -Ovq -t 15 127.0.0.1 "$PEN.3.0" > "/tmp/bng-$1.get" 2>&1
+  kill "$_sp" 2>/dev/null; wait "$_sp" 2>/dev/null
+  kill "$_dp" 2>/dev/null; wait "$_dp" 2>/dev/null
+  rm -f /run/prisma-routing/doors.sock
+  sed 's/^/    /' "/tmp/bng-$1.walk"
+}
+# bv <tag> <arcs after prBng> - one value of that walk, quotes off
+bv() {
+  awk -v o=".$PEN.$2" '$1 == o { $1 = ""; sub(/^ /, ""); gsub(/"/, ""); print; exit }' "/tmp/bng-$1.walk"
+}
+# sent <code> - how many <code>s the first RADIUS server says it sent
+sent() { grep -c "Sent $1 " /tmp/radius1.log; }
+
 sessions 3
 SHOW=$($HX -c "show pppoe sessions" 2>&1)
 echo "$SHOW" | sed 's/^/  /'
 SUMMARY=$($HX -c "show pppoe summary" 2>&1)
 echo "$SUMMARY" | sed 's/^/  /'
+UP_VTY=$(active)
+echo "  SNMP, prBng ($PEN), with $UP_VTY session(s) up in the VTY:"
+ACC_A0=$(sent Access-Accept); REJ_A0=$(sent Access-Reject)
+snmp_bng a
+ACC_A1=$(sent Access-Accept); REJ_A1=$(sent Access-Reject)
+echo "  server 1's log: $ACC_A0-$ACC_A1 Access-Accept(s), $REJ_A0-$REJ_A1 Access-Reject(s) sent around the read"
+GET_UP=$(cat /tmp/bng-a.get)
 addr() { ip netns exec "s$1" ip -4 -br addr show ppp0 2>/dev/null | awk '{print $3}'; }
 A1=$(addr 1); A2=$(addr 2); A3=$(addr 3); A4=$(addr 4)
 echo "  sub1 ${A1:-none}  sub2 ${A2:-none}  sub3 ${A3:-none}  sub4 ${A4:-none}"
@@ -456,6 +520,11 @@ STOP2=$(cat /var/log/freeradius/radacct/127.0.0.1/detail-* 2>/dev/null \
 sessions 3
 REDIAL=$($HX -c "show pppoe sessions" 2>&1)
 echo "$REDIAL" | grep sub2 | sed 's/^/  sub2 again: /'
+echo "  SNMP after sub2 was cleared and redialled:"
+ACC_B0=$(sent Access-Accept); REJ_B0=$(sent Access-Reject)
+snmp_bng b
+ACC_B1=$(sent Access-Accept); REJ_B1=$(sent Access-Reject)
+echo "  server 1's log: $ACC_B0-$ACC_B1 Access-Accept(s), $REJ_B0-$REJ_B1 Access-Reject(s) sent around the read"
 
 echo
 echo "=========== 10. THE CONTAINER RESTARTS; EVERYBODY ELSE FORWARDS ==========="
@@ -658,6 +727,9 @@ VPP_SESS=$(vppctl show pppoe session | tr -d '\r' | grep -c sw-if-index)
 echo "  sessions VPP holds: $VPP_SESS (the killed daemon's removed by the next one)"
 echo "  VPP holds ${POL_LIVE:-?} policer(s) for the one limited session"
 
+echo "  SNMP before any CoA, after the restarts of section 10:"
+snmp_bng c
+
 echo
 echo "=========== 13. CoA: THE RATE CHANGED ON THE LIVE SESSION ==========="
 COA_OK=$(dae coa daesecret 'User-Name = "sub1"\nPrisma-Rate-Limit-Down = 50000\nPrisma-Rate-Limit-Up = 20000\n')
@@ -741,6 +813,8 @@ echo "  Acct-Terminate-Cause: sub2 ${CAUSE2:-none}, sub1 ${CAUSE1:-none}, sub3 $
 wait_user sub1 > /dev/null
 REDIAL1=$($HX -c "show pppoe sessions" 2>&1 | awk '$2 == "sub1"')
 echo "  sub1 again: $REDIAL1"
+echo "  SNMP after the CoAs and the Disconnects:"
+snmp_bng d
 
 echo
 echo "=========== 15. FAILOVER: THE FIRST SERVER DIES, AND COMES BACK ==========="
@@ -769,6 +843,8 @@ $HX -c "clear pppoe session user sub2" > /dev/null 2>&1
 BACK_SECS=$(wait_user sub2 60)
 A1_1=$(heard 1 Access-Request sub2)
 echo "  server 1 back, its dead-time (10 s) over: sub2 again in ${BACK_SECS} s, asked of server 1 ($A1_0 -> $A1_1)"
+echo "  SNMP after the failover:"
+snmp_bng e
 
 echo
 echo "=========== 16. ROUND-ROBIN, BY A RELOAD ==========="
@@ -830,6 +906,8 @@ echo "  the dataplane, 8 s of PADIs later: ${ALIVE:-NOT ANSWERING}"
 NOCFG=$($HX -c "show running-config" 2>&1)
 POL_END=$(pols)
 echo "  VPP's policers: ${POL0:-?} before any session, ${POL_END:-?} now"
+echo "  SNMP with PPPoE gone:"
+snmp_bng f
 
 echo
 cat /tmp/radius1.log /tmp/radius2.log > /tmp/radius.log
@@ -968,5 +1046,49 @@ expect_in "  the container is not running" "not-configured" "$STATUS"
 expect_in "  and the dataplane lives through the PADIs that keep coming" \
   "vpp v" "$ALIVE"
 expect_not_in "  and the configuration holds no pppoe block" "pppoe" "$NOCFG"
+
+# prBng (#597): the counters, against the things they count.
+delta() { python3 -c 'import sys; print(int(sys.argv[1] or 0) - int(sys.argv[2] or 0))' "$1" "$2" 2>/dev/null || echo x; }
+expect "SNMP: prBngState running(1) with sessions up ($(bv a 1.0))" test "$(bv a 1.0)" = 1
+expect "  prBngSessionsActive is the VTY's count of sessions up (${GET_UP} by snmpget, $(bv a 3.0) walked, ${UP_VTY} listed)" \
+  sh -c "test '${GET_UP}' = '${UP_VTY}' && test '$(bv a 3.0)' = '${UP_VTY}' && test '${UP_VTY}' -eq 3"
+expect "  and it is started minus stopped ($(bv a 5.0) - $(bv a 6.0))" \
+  test "$(delta "$(bv a 5.0)" "$(bv a 6.0)")" = "$(bv a 3.0)"
+expect "  server 1's Access-Accepts are the ones it sent ($ACC_A0 <= $(bv a 20.1.5.127.0.0.1) <= $ACC_A1)" \
+  sh -c "test '$(bv a 20.1.5.127.0.0.1)' -ge $((ACC_A0 > 0 ? ACC_A0 - 1 : 0)) && test '$(bv a 20.1.5.127.0.0.1)' -le $ACC_A1 && test $ACC_A1 -ge 3"
+expect "  its Access-Rejects too, sub4's wrong password ($REJ_A0 <= $(bv a 20.1.6.127.0.0.1) <= $REJ_A1)" \
+  sh -c "test '$(bv a 20.1.6.127.0.0.1)' -ge $((REJ_A0 > 0 ? REJ_A0 - 1 : 0)) && test '$(bv a 20.1.6.127.0.0.1)' -le $REJ_A1 && test $REJ_A1 -ge 1"
+expect "  server 2, the failover, has accepted nobody ($(bv a 20.1.5.127.0.0.2))" \
+  test "$(bv a 20.1.5.127.0.0.2)" = 0
+expect "  a login moves the accepts: sub2's redial ($(bv a 20.1.5.127.0.0.1) -> $(bv b 20.1.5.127.0.0.1))" \
+  sh -c "test $(delta "$(bv b 20.1.5.127.0.0.1)" "$(bv a 20.1.5.127.0.0.1)") -ge 1"
+expect "  a refused one the rejects ($(bv a 20.1.6.127.0.0.1) -> $(bv b 20.1.6.127.0.0.1)), as server 1's log ($REJ_B0 <= x <= $REJ_B1)" \
+  sh -c "test $(delta "$(bv b 20.1.6.127.0.0.1)" "$(bv a 20.1.6.127.0.0.1)") -ge 1 && test '$(bv b 20.1.6.127.0.0.1)' -ge $((REJ_B0 > 0 ? REJ_B0 - 1 : 0)) && test '$(bv b 20.1.6.127.0.0.1)' -le $REJ_B1"
+expect "  the clear counted as a stop and the redial as a start ($(bv a 6.0) -> $(bv b 6.0), $(bv a 5.0) -> $(bv b 5.0))" \
+  sh -c "test $(delta "$(bv b 6.0)" "$(bv a 6.0)") -ge 1 && test $(delta "$(bv b 5.0)" "$(bv a 5.0)") -ge 1"
+expect "  and still three up, started minus stopped ($(bv b 3.0))" \
+  sh -c "test '$(bv b 3.0)' = 3 && test $(delta "$(bv b 5.0)" "$(bv b 6.0)") -eq 3"
+B2C=$(delta "$(cat /tmp/bng-c.at 2>/dev/null)" "$(cat /tmp/bng-b.at 2>/dev/null)")
+expect "the restarts of section 10 started the counters again: prBngUptime $(bv c 2.0) cs, younger than the ${B2C} s since the read before them" \
+  sh -c "test -n '$(bv c 2.0)' && test $(( $(bv c 2.0 | grep -E '^[0-9]+$' || echo 999999999) / 100 )) -lt ${B2C:-0}"
+expect "the CoAs answered: four ACKs ($(bv c 9.0) -> $(bv d 9.0))" \
+  test "$(delta "$(bv d 9.0)" "$(bv c 9.0)")" = 4
+expect "  and five NAKs, the refused ones ($(bv c 10.0) -> $(bv d 10.0))" \
+  test "$(delta "$(bv d 10.0)" "$(bv c 10.0)")" = 5
+expect "the Disconnects: two ACKs ($(bv c 7.0) -> $(bv d 7.0)), no NAK ($(bv d 8.0))" \
+  sh -c "test $(delta "$(bv d 7.0)" "$(bv c 7.0)") -eq 2 && test $(delta "$(bv d 8.0)" "$(bv c 8.0)") -eq 0"
+expect "  the wrong secret and the stranger counted as answered with nothing ($(bv c 11.0) -> $(bv d 11.0))" \
+  sh -c "test $(delta "$(bv d 11.0)" "$(bv c 11.0)") -ge 2"
+expect "failover: server 1's unanswered Access-Requests counted ($(bv d 20.1.7.127.0.0.1) -> $(bv e 20.1.7.127.0.0.1))" \
+  sh -c "test $(delta "$(bv e 20.1.7.127.0.0.1)" "$(bv d 20.1.7.127.0.0.1)") -ge 1"
+expect "  server 2's accepts ($(bv d 20.1.5.127.0.0.2) -> $(bv e 20.1.5.127.0.0.2))" \
+  sh -c "test $(delta "$(bv e 20.1.5.127.0.0.2)" "$(bv d 20.1.5.127.0.0.2)") -ge 1"
+expect "  and server 1, back, is active again ($(bv e 20.1.3.127.0.0.1))" \
+  test "$(bv e 20.1.3.127.0.0.1)" = 1
+expect "no pppoe: prBngState notConfigured(3) ($(bv f 1.0)), zero up ($(bv f 3.0)), zero CoAs ($(bv f 9.0))" \
+  test "$(bv f 1.0)/$(bv f 3.0)/$(bv f 9.0)" = 3/0/0
+expect_not_in "  and no server row" \
+  ".22.20.1" "$(cat /tmp/bng-f.walk)"
+expect "  and the uptime is absent ($(bv f 2.0))" test -z "$(bv f 2.0)"
 
 verdict

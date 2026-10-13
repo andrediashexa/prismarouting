@@ -48,7 +48,8 @@ OSPF, OSPFv3, IS-IS, the FIB's size, the control plane's CPU, memory and
 disks, the box's own state - the tuning in effect, the boot self-test, the
 configuration's commits and confirm window, the configuration trail's head
 (#524) - the ports' transceivers (#590), the modules and their sensors in
-ENTITY-MIB and ENTITY-SENSOR-MIB (#496), and the box's notifications. The box
+ENTITY-MIB and ENTITY-SENSOR-MIB (#496), PPPoE's control plane and its
+RADIUS servers (#597), and the box's notifications. The box
 prints it with its enterprise number filled in, the same way it prints the
 MIB:
 
@@ -79,6 +80,7 @@ exactly as it does YAML. Then give the host an SNMP interface - v2c with an
 | `{$SNMP.TIMEOUT}` | 5m | no answer for this long is "no SNMP data collection" |
 | `{$PRISMA.XCVR.CONTROL:"<port>"}` | 1 | 0 silences a port's transceiver alarms - an empty cage, a port expected dark; a QSFP lane is `"<port> lane <n>"` (#590) |
 | `{$PRISMA.XCVR.TEMP.MAX}` | 70 | a module's temperature, degrees C, that raises "temperature is high", beside the module's own high warning |
+| `{$PRISMA.PPPOE.DROP.PCT}`, `{$PRISMA.PPPOE.MIN}` | 50, 10 | PPPoE sessions up falling below this percent of their hourly maximum raises a high, above the minimum (#597) |
 | `{$PRISMA.XCVR.RX.MIN}`, `{$PRISMA.XCVR.RX.MAX}` | -40, 10 | RX power in dBm that raises "RX power is low" or "high", beside the module's own warnings: -40 is no light, so by default only the module's thresholds decide |
 
 **What it alarms on** is the table in *What is worth an alarm* below, with
@@ -540,9 +542,13 @@ MIBs above says how each of the three was answered. This table stays: it is
 in dBm, the unit the switch at the other end prints, and the Zabbix
 template's optical alarms are on it.
 
-**What a read costs.** The agent answers this subtree from a process of its
-own (`--transceivers`), so a module read over I2C never delays the rest of
-the product's objects, and caches it 30 seconds. The dataplane keeps each
+**What a read costs.** The agent reads the modules only for a request that
+reaches this subtree, so a module read over I2C never delays the rest of the
+product's objects, and caches it 30 seconds. Until 0.155.3 it was a process
+of its own (`--transceivers`) on a registration of its own, nested under the
+product's, and net-snmp never asks a nested registration a GET (#608, below
+under PPPoE): on 10.40.200.166 a walk of `.1.20` answered and an `snmpget` of
+the same OID was noSuchInstance, so every Zabbix item on it had no value. The dataplane keeps each
 module's identity and thresholds a minute and answers a second ask within
 2 seconds from its last read, so a poll costs the 24 bytes of readings per
 SFP. A dataplane that does not answer serves none of its ports; the cards
@@ -572,6 +578,75 @@ trail's state.
 thresholds of the sensors ENTITY-SENSOR-MIB serves, in each sensor's units.
 Its columns are in the section on those MIBs above, beside the sensors they
 belong to.
+
+### PPPoE's control plane - `.1.22` (#597)
+
+accel-pppd in the prisma-bng container ([bng.md](bng.md)), read with its
+own `show stat` - the screen `show pppoe summary` reads - through the host's
+doors: the agent runs as Debian-snmp, which cannot run docker, and
+`prisma-bng status` and `summary` are questions any account may ask. Upstream
+accel-ppp counts sessions up and starting, and per server the requests sent
+and the ones that timed out; `build/accel-ppp-ng.patch` adds the sessions
+started and stopped, each server's Access-Accepts and Access-Rejects, and the
+Disconnect/CoA listener's ACKs, NAKs and silent drops, all printed by the
+same `show stat`.
+
+| OID | Object | Type | What it is |
+|---|---|---|---|
+| `.1.22.1.0` | `prBngState` | INTEGER | running(1), stopped(2) - configured, and no subscriber can dial - notConfigured(3), noContainers(4) - a box running the dataplane as units |
+| `.1.22.2.0` | `prBngUptime` | TimeTicks | how long the control plane has run, which the counters count from; absent while it does not run |
+| `.1.22.3.0` | `prBngSessionsActive` | Gauge32 | sessions up; always started minus stopped |
+| `.1.22.4.0` | `prBngSessionsStarting` | Gauge32 | sessions being set up: high for long is subscribers stuck at authentication |
+| `.1.22.5.0` | `prBngSessionsStarted` | Counter32 | sessions that came up |
+| `.1.22.6.0` | `prBngSessionsStopped` | Counter32 | sessions that were up and ended, whatever ended them |
+| `.1.22.7.0`, `.8.0` | `prBngDisconnectAcks`, `prBngDisconnectNaks` | Counter32 | Disconnect-Requests (RFC 5176) answered ACK, NAK |
+| `.1.22.9.0`, `.10.0` | `prBngCoaAcks`, `prBngCoaNaks` | Counter32 | CoA-Requests applied (ACK), refused with nothing changed (NAK) |
+| `.1.22.11.0` | `prBngDaeDropped` | Counter32 | requests answered with nothing: not a `dynamic-authorization client`, a wrong secret, one already pending for the session |
+| `.1.22.20.1.2.<a.b.c.d>` | `prBngRadiusName` | DisplayString | the server, a row per `aaa radius` server indexed by its IPv4 address |
+| `.1.22.20.1.3.<a.b.c.d>` | `prBngRadiusState` | INTEGER | active(1), failed(2) - skipped for its `dead-time` |
+| `.1.22.20.1.4.<a.b.c.d>` | `prBngRadiusAuthSent` | Counter32 | Access-Requests sent, each retry counted |
+| `.1.22.20.1.5.<a.b.c.d>`, `.6` | `prBngRadiusAuthAccepts`, `prBngRadiusAuthRejects` | Counter32 | the server's answers |
+| `.1.22.20.1.7.<a.b.c.d>` | `prBngRadiusAuthTimeouts` | Counter32 | sends it did not answer within `timeout` |
+| `.1.22.20.1.8.<a.b.c.d>`, `.9` | `prBngRadiusAcctSent`, `prBngRadiusAcctTimeouts` | Counter32 | Accounting-Requests - Start, interims, Stop - sent and unanswered |
+
+**Every counter counts from the control plane's start.** A commit that
+changes `pppoe`, or a crash, restarts the container, and the counters start
+again at zero: `prBngUptime` is the discontinuity, and an NMS that rates them
+(the template does) sees one negative step it discards. A change under
+`aaa radius` is a reload and keeps them - except a server's own, when its
+secret changed: accel-ppp makes a new server of it.
+
+**A box with no PPPoE is answered, not silent**: notConfigured (or
+noContainers), every count zero, the table empty - there is no control
+plane to have counted anything. A status nobody could read leaves the whole
+group out, and a control plane that runs and did not answer serves its
+state alone, as the rest of the product does: no number it did not just
+give.
+
+**Served by the enterprise process, read only when a request reaches
+`.1.22`**: a read is a `docker exec`, cached ten seconds, and a poll of the
+rest of the product's objects never makes one. Not a process of its own on a
+registration of its own, as BFD's is, because net-snmp does not route to one:
+measured on Debian 12's net-snmp 5.9.3 with two stand-in helpers, a GET under
+`.1.3.6.1.4.1.<pen>.1.22` is handed to the helper registered on
+`.1.3.6.1.4.1.<pen>`, whichever comes first in `snmpd.conf`, and the one on
+`.1.22` is asked GETNEXTs only - a walk read the group, and every `snmpget`,
+which is what Zabbix polls with, answered noSuchInstance.
+`prTransceiver` (`.1.20`) and `prSensorThresholdTable` (`.1.21`) were
+registered nested the same way, and 10.40.200.166 (0.155.2) answered their
+walks and no GET (#608). Since 0.155.3 the three are served this way, and
+`snmpd.conf` has one registration for the product's subtree: the upgrade
+takes the two nested lines out of the file the VTY wrote and restarts a
+running snmpd, whose agent helpers otherwise run the old code until the next
+boot. `lab/snmp.sh` gets a module's name, RX power and a sensor's threshold
+by `snmpget`, against the walk's value at the same OID.
+
+`lab/pppoe.sh` walks it through snmpd as Debian-snmp and the doors, against
+real sessions: the sessions up are the VTY's, the accepts and rejects are the
+ones the RADIUS server's log says it sent, every CoA and Disconnect
+radclient was answered counted ACK or NAK, the first server's timeouts when
+it dies, and `no pppoe` back to notConfigured. `lab/snmp.sh` reads the group
+on a box with no PPPoE, by name with the MIB loaded.
 
 ## Notifications (#507)
 
@@ -687,6 +762,10 @@ password, and it is not an account: asked from outside, it answers
 | `prAuditState` 3 or more, or `prAuditHeadDigest` other than the one the NMS kept | the configuration trail was altered, cut or rewritten |
 | `prXcvrLaneRxLevel` lowWarning or lowAlarm, or `prXcvrState` alarm | a fibre, a connector or a module failing: compare the RX power with the far end's TX |
 | `prXcvrSerialNumber` changing | a module swapped in the cage |
+| `prBngState` stopped | PPPoE configured and no subscriber can dial |
+| `prBngSessionsActive` falling sharply | subscribers dropped together: an access link, the control plane, or RADIUS refusing the redials |
+| `prBngRadiusAuthTimeouts` rising, or `prBngRadiusState` failed | a RADIUS server not answering; with none left, nobody logs in |
+| `prBngDaeDropped` rising | Disconnect or CoA requests the box will not answer: a client or a secret that differs |
 
 ## Where the values come from, and what reading them costs
 
@@ -722,5 +801,6 @@ last one seen.
 | notifications | traps or informs, per destination | served (#507) |
 | the ports' transceivers: identity, temperature, voltage, bias, TX and RX power, thresholds | PRISMA-ROUTING-MIB `prTransceiver` | served (#590) |
 | the chassis, ports and modules as an inventory, the modules' DDM as sensors with their thresholds | ENTITY-MIB, ENTITY-SENSOR-MIB, PRISMA-ROUTING-MIB `prSensor` | served (#496) |
+| PPPoE: the control plane, sessions up, started and stopped, each RADIUS server's answers, Disconnect and CoA | PRISMA-ROUTING-MIB `prBng` | served (#597) |
 | fans, power supplies, the board's temperatures | ENTITY-SENSOR-MIB, from IPMI or hwmon | not served: no physical box to read them on yet (the ENTITY-MIB section says why) |
 | the cards as entities: model, firmware, serial | ENTITY-MIB | not served: a card's serial is in its PCI VPD, root's alone |

@@ -139,6 +139,9 @@ VALUEMAPS = {
     "PRISMA-ROUTING-MIB::prXcvrLaneLevel": [(1, "normal"), (2, "highWarning"),
                                             (3, "lowWarning"), (4, "highAlarm"),
                                             (5, "lowAlarm"), (6, "unknown")],
+    "PRISMA-ROUTING-MIB::prBngState": [(1, "running"), (2, "stopped"), (3, "notConfigured"),
+                                       (4, "noContainers")],
+    "PRISMA-ROUTING-MIB::prBngRadiusState": [(1, "active"), (2, "failed")],
     "ENTITY-SENSOR-MIB::EntitySensorStatus": [(1, "ok"), (2, "unavailable"),
                                               (3, "nonoperational")],
     "UCD-SNMP-MIB::UCDErrorFlag": [(0, "noError"), (1, "error")],
@@ -165,6 +168,8 @@ MACROS = [
     ("{$PRISMA.XCVR.RX.MIN}", "-40", "RX power, dBm, below which a warning is raised - beside the module's own low warning. -40 is no light: raise it on a port to watch a level the module's thresholds do not."),
     ("{$PRISMA.XCVR.RX.MAX}", "10", "RX power, dBm, above which a warning is raised - beside the module's own high warning."),
     ("{$PRISMA.BFD.TRAP.HOLD}", "10m", "How long a bfdSessDown keeps its problem open after the last one arrived; the session's own state is bfdSessState."),
+    ("{$PRISMA.PPPOE.MIN}", "10", "PPPoE sessions up below which a sudden drop is not reported (a lab, or a box starting to take subscribers)."),
+    ("{$PRISMA.PPPOE.DROP.PCT}", "50", "PPPoE sessions up falling below this percent of their maximum over the last hour raises a high."),
     ("{$BGP4V2.INDEX.MATCHES}", "^[0-9]+\\.2\\.", "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."),
 ]
 
@@ -367,6 +372,48 @@ def build():
                             "Prisma Routing: RADIUS accounting refused",
                             "WARNING", "A bad authenticator or a malformed packet; the first is usually a shared secret that differs between the BNG and the box.",
                             tags=[("scope", "compliance")])]),
+        # ------------------------------------------------ PPPoE (#597)
+        item("PPPoE: control plane", f"{P}.22.1.0", "prisma.pppoe.state", "UNSIGNED", "1m",
+             vmap="PRISMA-ROUTING-MIB::prBngState", tags=[("component", "pppoe")],
+             desc="prBngState: accel-pppd in the prisma-bng container. notConfigured on a box with no `pppoe`.",
+             triggers=[trig(f"last({ref('prisma.pppoe.state')})=2",
+                            "Prisma Routing: PPPoE is configured and its control plane is not running",
+                            "HIGH", "No subscriber can dial. `show pppoe summary` on the box; the container restarts by itself after a crash, so one that stays down did not start.",
+                            tags=[("scope", "availability")])]),
+        item("PPPoE: control plane uptime", f"{P}.22.2.0", "prisma.pppoe.uptime", "FLOAT", "5m", "uptime",
+             pre=[("MULTIPLIER", ["0.01"])], tags=[("component", "pppoe")],
+             desc="prBngUptime: the PPPoE counters count from then. Not served while the control plane does not run.",
+             triggers=[trig(f"last({ref('prisma.pppoe.uptime')})<10m"
+                            f" and last({ref('system.hw.uptime')})>15m",
+                            "Prisma Routing: the PPPoE control plane restarted without the box",
+                            "AVERAGE", "A commit that changed `pppoe`, or a crash: every PPPoE session dropped and redialled.",
+                            tags=[("scope", "availability")])]),
+        item("PPPoE: sessions up", f"{P}.22.3.0", "prisma.pppoe.sessions", tags=[("component", "pppoe")],
+             triggers=[trig(f"last({ref('prisma.pppoe.sessions')})<{{$PRISMA.PPPOE.DROP.PCT}}/100*max({ref('prisma.pppoe.sessions')},1h)"
+                            f" and max({ref('prisma.pppoe.sessions')},1h)>{{$PRISMA.PPPOE.MIN}}",
+                            "Prisma Routing: PPPoE sessions fell below {$PRISMA.PPPOE.DROP.PCT}% of the last hour's",
+                            "HIGH", "Subscribers dropped together: an access link, the control plane, or the RADIUS servers refusing the redials.",
+                            tags=[("scope", "availability")])]),
+        item("PPPoE: sessions being set up", f"{P}.22.4.0", "prisma.pppoe.starting", tags=[("component", "pppoe")],
+             desc="High for long is subscribers stuck at authentication."),
+        item("PPPoE: sessions started per second", f"{P}.22.5.0", "prisma.pppoe.started.rate", "FLOAT",
+             pre=[CPS], units="sps", tags=[("component", "pppoe")]),
+        item("PPPoE: sessions stopped per second", f"{P}.22.6.0", "prisma.pppoe.stopped.rate", "FLOAT",
+             pre=[CPS], units="sps", tags=[("component", "pppoe")]),
+        item("PPPoE: Disconnect-ACKs per second", f"{P}.22.7.0", "prisma.pppoe.disconnect.ack.rate", "FLOAT",
+             pre=[CPS], units="rps", tags=[("component", "pppoe")]),
+        item("PPPoE: Disconnect-NAKs per second", f"{P}.22.8.0", "prisma.pppoe.disconnect.nak.rate", "FLOAT",
+             pre=[CPS], units="rps", tags=[("component", "pppoe")]),
+        item("PPPoE: CoA-ACKs per second", f"{P}.22.9.0", "prisma.pppoe.coa.ack.rate", "FLOAT",
+             pre=[CPS], units="rps", tags=[("component", "pppoe")]),
+        item("PPPoE: CoA-NAKs per second", f"{P}.22.10.0", "prisma.pppoe.coa.nak.rate", "FLOAT",
+             pre=[CPS], units="rps", tags=[("component", "pppoe")]),
+        item("PPPoE: Disconnect and CoA requests unanswered per second", f"{P}.22.11.0",
+             "prisma.pppoe.dae.dropped.rate", "FLOAT", pre=[CPS], units="rps", tags=[("component", "pppoe")],
+             triggers=[trig(f"last({ref('prisma.pppoe.dae.dropped.rate')})>0",
+                            "Prisma Routing: Disconnect or CoA requests are answered with nothing",
+                            "WARNING", "A source that is not a `dynamic-authorization client`, or a secret that differs between it and the box: the RADIUS side waits for an answer that does not come.",
+                            tags=[("scope", "availability")])]),
     ]
     # ---------------------------------------------------------- traps
     traps = [
@@ -582,6 +629,32 @@ def build():
                                tags=[("scope", "availability")],
                                deps=[("Prisma Routing: bundle {#BUNDLE} has no member carrying traffic",
                                       f"last({ref(bk('active'))})=0 and last({ref(bk('members'))})>0")])]))
+
+    # ------------------------------------------------ PPPoE's RADIUS servers (#597)
+    rk = lambda s: f"prisma.pppoe.radius.{s}[{{#SNMPINDEX}}]"
+    rad = lambda name, col, key, **kw: item(f"RADIUS {{#RADIUSSERVER}}: {name}", f"{P}.22.20.1.{col}.{{#SNMPINDEX}}",
+                                            rk(key), tags=[("component", "pppoe"), ("radius", "{#RADIUSSERVER}")], **kw)
+    rules.append(rule("PPPoE RADIUS server discovery", f"discovery[{{#RADIUSSERVER}},{P}.22.20.1.2]",
+                      "prisma.pppoe.radius.discovery", [
+                          rad("state", 3, "state", vmap="PRISMA-ROUTING-MIB::prBngRadiusState", triggers=[
+                              trig(f"last({ref(rk('state'))})=2",
+                                   "Prisma Routing: RADIUS server {#RADIUSSERVER} is marked down",
+                                   "AVERAGE", "It left `retries` sends in a row unanswered and is skipped for its dead-time; requests go to the next server. With no server left, no subscriber logs in.",
+                                   tags=[("scope", "availability")])], proto=True),
+                          rad("Access-Requests per second", 4, "auth.sent.rate", vt="FLOAT", units="rps", pre=[CPS]),
+                          rad("Access-Accepts per second", 5, "auth.accept.rate", vt="FLOAT", units="rps", pre=[CPS]),
+                          rad("Access-Rejects per second", 6, "auth.reject.rate", vt="FLOAT", units="rps", pre=[CPS],
+                              desc="A wrong password, an unknown or a suspended subscriber: collected, not alarmed."),
+                          rad("Access-Requests unanswered per second", 7, "auth.timeout.rate", vt="FLOAT", units="rps",
+                              pre=[CPS], triggers=[
+                                  trig(f"min({ref(rk('auth.timeout.rate'))},5m)>0",
+                                       "Prisma Routing: RADIUS server {#RADIUSSERVER} is not answering Access-Requests",
+                                       "WARNING", "Unanswered sends for five minutes: the server, the path to it, or a secret it does not share with the box.",
+                                       tags=[("scope", "availability")])], proto=True),
+                          rad("Accounting-Requests per second", 8, "acct.sent.rate", vt="FLOAT", units="rps", pre=[CPS]),
+                          rad("Accounting-Requests unanswered per second", 9, "acct.timeout.rate", vt="FLOAT",
+                              units="rps", pre=[CPS]),
+                      ], delay="5m", desc="PRISMA-ROUTING-MIB's prBngRadiusTable (#597): a row per `aaa radius` server while PPPoE's control plane runs, indexed by its address. Every counter starts again at a restart of the control plane."))
 
     # ------------------------------------------------ transceivers (#590)
     xk = lambda s: f"prisma.xcvr.{s}[{{#SNMPINDEX}}]"
@@ -808,7 +881,7 @@ def build():
         "template": T,
         "name": T,
         "description": ("Prisma Routing (#514): the dataplane's interfaces, the CGNAT, the connection records, "
-                        "HA, LACP, BGP, OSPF and IS-IS, the ports' transceivers and modules, over SNMP v2c or v3 (v1 is refused). "
+                        "HA, LACP, BGP, OSPF and IS-IS, the ports' transceivers and modules, PPPoE and its RADIUS servers, over SNMP v2c or v3 (v1 is refused). "
                         "Print it with the box's enterprise number filled in: `show snmp zabbix-template`."),
         "vendor": {"name": "Prisma Routing", "version": "0.146"},
         "groups": [{"name": "Templates/Network devices"}],

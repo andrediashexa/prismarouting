@@ -272,6 +272,36 @@ fi
 env DESTDIR="$DESTDIR" PRISMA_VERSION_STAMP="$STAMP" \
     sh "$ART/appliance/install.sh" || exit $?
 
+# SNMP (#608): the product's subtree is ONE registration now. The release
+# before registered prTransceiver (.20) and prSensorThresholdTable (.21) on
+# lines of their own, nested under it, and net-snmp 5.9.3 sends a GET under a
+# nested pass_persist registration to the broader one - on 10.40.200.166
+# (0.155.2) a walk of .20 answered and an snmpget of the same OID was
+# noSuchInstance. The agent installed above serves both from the broader
+# registration; these lines are taken out of the file the VTY wrote, so it
+# reads as this release writes it (the boot's load rewrites it anyway, #523),
+# and the ENTITY process loses the number it no longer needs.
+#
+# HERE AND NOT IN install.sh, which is the medium's too and a patch may not
+# change; DESTDIR-aware, so test/test_upgrade_artifact.sh drives it.
+_snmpd=$DESTDIR/etc/snmp/snmpd.conf
+if [ -f "$_snmpd" ] && grep -Eq \
+     '^pass_persist \.1\.3\.6\.1\.4\.1\.[0-9]+\.1\.2[01] | --entity --enterprise [0-9]+$' \
+     "$_snmpd"; then
+  sed -i -E -e '/^pass_persist \.1\.3\.6\.1\.4\.1\.[0-9]+\.1\.2[01] /d' \
+      -e 's/ --entity --enterprise [0-9]+$/ --entity/' "$_snmpd" \
+    && echo "==> snmpd.conf: the transceivers' and the thresholds' nested registrations taken out (#608)"
+fi
+# AND snmpd RESTARTED, when it runs: the agent is a set of pass_persist
+# helpers snmpd started, each running the code it started with until snmpd
+# restarts - without this an upgraded box answers with the old agent until
+# its next boot. A restart costs a few seconds without SNMP; nothing that
+# forwards depends on it. try-restart starts nothing that was stopped.
+if [ -z "$DESTDIR" ] && [ -d /run/systemd/system ] \
+   && systemctl --version >/dev/null 2>&1; then
+  systemctl try-restart snmpd.service >/dev/null 2>&1 || true
+fi
+
 # THE BOX'S RECORD OF EVENTS (#588): that it was upgraded, from what to what,
 # written by the release just installed - its events.py, which the release
 # before may not have had. Best effort: an upgrade is never failed because

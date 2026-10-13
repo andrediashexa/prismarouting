@@ -21,7 +21,8 @@ PRISMA-ROUTING-MIB DEFINITIONS ::= BEGIN
 
 IMPORTS
     MODULE-IDENTITY, OBJECT-TYPE, enterprises,
-    Counter32, Counter64, Gauge32, Integer32, Unsigned32, TimeTicks
+    Counter32, Counter64, Gauge32, Integer32, Unsigned32, TimeTicks,
+    IpAddress
         FROM SNMPv2-SMI
     DisplayString, TruthValue
         FROM SNMPv2-TC
@@ -31,13 +32,17 @@ IMPORTS
         FROM ENTITY-MIB;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202610110000Z"
+    LAST-UPDATED "202610130000Z"
     ORGANIZATION "NetConfig"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202610130000Z"
+    DESCRIPTION
+        "PPPoE's control plane: the sessions, the RADIUS servers' answers,
+        and the Disconnect/CoA listener's (#597)."
     REVISION "202610110000Z"
     DESCRIPTION
         "The thresholds of the sensors ENTITY-SENSOR-MIB serves for the
@@ -1533,6 +1538,215 @@ prSensorLevel OBJECT-TYPE
     ::= { prSensorThresholdEntry 5 }
 
 --
+-- PPPoE's control plane (#597): accel-pppd in the prisma-bng container, read
+-- with its own `show stat`. Every counter counts from the control plane's
+-- start - a restart of the container, by a commit or a crash, starts them
+-- again at zero, and prBngUptime says when. On a box with no PPPoE,
+-- prBngState is notConfigured, the counters are zero and the server table is
+-- empty: there is no control plane to have counted anything.
+--
+
+prBng OBJECT IDENTIFIER ::= { prObjects 22 }
+
+prBngState OBJECT-TYPE
+    SYNTAX      INTEGER { running(1), stopped(2), notConfigured(3),
+                          noContainers(4) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The control plane: running; stopped, with PPPoE configured - no
+        subscriber can dial; notConfigured; or noContainers, a box that runs
+        the dataplane as systemd units, where PPPoE is not offered."
+    ::= { prBng 1 }
+
+prBngUptime OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "How long the control plane has run: the counters below count from
+        then. Not instantiated while it does not run."
+    ::= { prBng 2 }
+
+prBngSessionsActive OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "PPPoE sessions up: authenticated, addressed and forwarding. Always
+        prBngSessionsStarted minus prBngSessionsStopped."
+    ::= { prBng 3 }
+
+prBngSessionsStarting OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Sessions being set up: discovery done, not yet up. A number that
+        stays high is subscribers stuck at authentication."
+    ::= { prBng 4 }
+
+prBngSessionsStarted OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Sessions that came up since the control plane started."
+    ::= { prBng 5 }
+
+prBngSessionsStopped OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Sessions that were up and ended since the control plane started:
+        by the subscriber, a clear, a Disconnect, a timeout or a lost
+        carrier."
+    ::= { prBng 6 }
+
+prBngDisconnectAcks OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Disconnect-Requests (RFC 5176) answered with an ACK."
+    ::= { prBng 7 }
+
+prBngDisconnectNaks OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Disconnect-Requests answered with a NAK: no such session, or a
+        NAS identification that is not this box's."
+    ::= { prBng 8 }
+
+prBngCoaAcks OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "CoA-Requests applied and answered with an ACK."
+    ::= { prBng 9 }
+
+prBngCoaNaks OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "CoA-Requests refused with a NAK, nothing changed: no such session,
+        an attribute nothing acts on, or a rate that is not one."
+    ::= { prBng 10 }
+
+prBngDaeDropped OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Disconnect and CoA requests answered with nothing: a source that
+        is not a configured client, a wrong secret, or a request for a
+        session that already has one pending. Rising is usually a secret
+        that differs between the RADIUS side and the box."
+    ::= { prBng 11 }
+
+prBngRadiusTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PrBngRadiusEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "One row per RADIUS server under `aaa radius`, while the control
+        plane runs. Empty with no PPPoE, or with local users only."
+    ::= { prBng 20 }
+
+prBngRadiusEntry OBJECT-TYPE
+    SYNTAX      PrBngRadiusEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One RADIUS server, by its address."
+    INDEX       { prBngRadiusAddress }
+    ::= { prBngRadiusTable 1 }
+
+PrBngRadiusEntry ::= SEQUENCE {
+    prBngRadiusAddress       IpAddress,
+    prBngRadiusName          DisplayString,
+    prBngRadiusState         INTEGER,
+    prBngRadiusAuthSent      Counter32,
+    prBngRadiusAuthAccepts   Counter32,
+    prBngRadiusAuthRejects   Counter32,
+    prBngRadiusAuthTimeouts  Counter32,
+    prBngRadiusAcctSent      Counter32,
+    prBngRadiusAcctTimeouts  Counter32
+}
+
+prBngRadiusAddress OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "The server's address, as configured."
+    ::= { prBngRadiusEntry 1 }
+
+prBngRadiusName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The server's address, as text."
+    ::= { prBngRadiusEntry 2 }
+
+prBngRadiusState OBJECT-TYPE
+    SYNTAX      INTEGER { active(1), failed(2) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "failed while the server is skipped for its dead-time, after it
+        left as many sends in a row unanswered as `retries` allows."
+    ::= { prBngRadiusEntry 3 }
+
+prBngRadiusAuthSent OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Access-Requests sent to it, each retry counted."
+    ::= { prBngRadiusEntry 4 }
+
+prBngRadiusAuthAccepts OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Access-Accepts it answered."
+    ::= { prBngRadiusEntry 5 }
+
+prBngRadiusAuthRejects OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Access-Rejects it answered: a wrong password, an unknown or a
+        suspended subscriber."
+    ::= { prBngRadiusEntry 6 }
+
+prBngRadiusAuthTimeouts OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Access-Requests it did not answer within `timeout`, each send
+        counted."
+    ::= { prBngRadiusEntry 7 }
+
+prBngRadiusAcctSent OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Accounting-Requests sent to it - Start, Interim-Update and Stop -
+        each retry counted."
+    ::= { prBngRadiusEntry 8 }
+
+prBngRadiusAcctTimeouts OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Accounting-Requests it did not answer within `timeout`."
+    ::= { prBngRadiusEntry 9 }
+
+--
 -- Conformance.
 --
 
@@ -1656,6 +1870,18 @@ prSensorGroup OBJECT-GROUP
     DESCRIPTION "The sensors' thresholds."
     ::= { prGroups 13 }
 
+prBngGroup OBJECT-GROUP
+    OBJECTS { prBngState, prBngUptime, prBngSessionsActive,
+              prBngSessionsStarting, prBngSessionsStarted,
+              prBngSessionsStopped, prBngDisconnectAcks, prBngDisconnectNaks,
+              prBngCoaAcks, prBngCoaNaks, prBngDaeDropped, prBngRadiusName,
+              prBngRadiusState, prBngRadiusAuthSent, prBngRadiusAuthAccepts,
+              prBngRadiusAuthRejects, prBngRadiusAuthTimeouts,
+              prBngRadiusAcctSent, prBngRadiusAcctTimeouts }
+    STATUS      current
+    DESCRIPTION "PPPoE's control plane."
+    ::= { prGroups 14 }
+
 prCompliance MODULE-COMPLIANCE
     STATUS      current
     DESCRIPTION "What every Prisma Routing box serves."
@@ -1664,7 +1890,7 @@ prCompliance MODULE-COMPLIANCE
                            prSystemGroup, prHaGroup, prLacpGroup,
                            prIdentityGroup, prTuningGroup, prSelfTestGroup,
                            prConfigGroup, prAuditGroup,
-                           prTransceiverGroup, prSensorGroup }
+                           prTransceiverGroup, prSensorGroup, prBngGroup }
     ::= { prCompliances 1 }
 
 END

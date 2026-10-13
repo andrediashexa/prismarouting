@@ -342,6 +342,35 @@ case $OUTPUT in
 esac
 
 echo
+echo "=== snmpd.conf loses the nested registrations (#608) ==="
+# What 0.155.2's VTY wrote: prTransceiver and prSensorThresholdTable on lines
+# nested under the product's, which net-snmp never asks a GET. Shown red by
+# taking the sed out of appliance/upgrade.
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+mkdir -p "$BOX/etc/snmp"
+printf '%s\n' "view hexa included .1.3.6.1.4.1.67033" \
+  "pass_persist .1.3.6.1.2.1.47 /usr/lib/prisma-routing/snmp-agent --entity --enterprise 67033" \
+  "pass_persist .1.3.6.1.4.1.67033 /usr/lib/prisma-routing/snmp-agent --enterprise 67033" \
+  "pass_persist .1.3.6.1.4.1.67033.1.20 /usr/lib/prisma-routing/snmp-agent --transceivers --enterprise 67033" \
+  "pass_persist .1.3.6.1.4.1.67033.1.21 /usr/lib/prisma-routing/snmp-agent --entity --enterprise 67033" \
+  > "$BOX/etc/snmp/snmpd.conf"
+chmod 0600 "$BOX/etc/snmp/snmpd.conf"
+upgrade
+SN=$(cat "$BOX/etc/snmp/snmpd.conf")
+case $SN in
+  *".1.3.6.1.4.1.67033.1."*) bad "a nested registration is still there: $SN" ;;
+  *"pass_persist .1.3.6.1.4.1.67033 /usr/lib/prisma-routing/snmp-agent --enterprise 67033"*"pass_persist"*)
+    bad "something was added: $SN" ;;
+  *"pass_persist .1.3.6.1.2.1.47 /usr/lib/prisma-routing/snmp-agent --entity
+pass_persist .1.3.6.1.4.1.67033 /usr/lib/prisma-routing/snmp-agent --enterprise 67033"*)
+    ok "the nested lines are gone, the product's and ENTITY's kept as this release writes them" ;;
+  *) bad "snmpd.conf is not what this release writes: $SN" ;;
+esac
+[ "$(stat -c %a "$BOX/etc/snmp/snmpd.conf")" = 600 ] \
+  && ok "and the file is still 0600: it holds the communities" \
+  || bad "snmpd.conf is $(stat -c %a "$BOX/etc/snmp/snmpd.conf") now"
+
+echo
 echo "=== an upgrade from before 0.152.1 pins mtu 9000, once (#592) ==="
 # Through the artifact's own entry point, on a box whose stamp is 0.151.17 and
 # whose saved configuration names a VLAN and a loopback with no mtu - which
