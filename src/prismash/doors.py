@@ -42,7 +42,7 @@ import sys
 import threading
 import time
 
-from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR,
+from system import (LOGIN_SHELL, MANAGED_GROUPS, GROUP_OPERATOR, GROUP_ADMIN,
                     OPERATOR_GROUPADD, LocalFiles, RESOLV_CONF,
                     RESOLV_BEFORE, SSHD_DROPIN, SNMPD_CONF, SET_HOSTNAME,
                     hostname_error, is_number)
@@ -824,25 +824,39 @@ def operator_door(argv):
     return False
 
 
-def account_is_operator(uid):
+def account_is_operator(uid, group=GROUP_OPERATOR):
     """
-    Is the account `uid` a member of prisma-operator, as THIS host's group
-    file says at this instant (#563)? Read per request and never cached, so
-    the system's own deprovisioning takes effect on the next request; an
-    account the system cannot describe is not one.
+    Is the account `uid` a member of prisma-operator (or of `group`), as THIS
+    host's group file says at this instant (#563)? Read per request and never
+    cached, so the system's own deprovisioning takes effect on the next
+    request; an account the system cannot describe is not one.
     """
     try:
         import grp
         import pwd
         pw = pwd.getpwuid(uid)
-        g = grp.getgrnam(GROUP_OPERATOR)
+        g = grp.getgrnam(group)
     except (KeyError, ImportError):
         return False
     return pw.pw_name in g.gr_mem or pw.pw_gid == g.gr_gid
 
 
+def account_is_admin(uid):
+    """Is the account `uid` a member of prisma-admin - the administrator
+    role - as the group file says now?"""
+    return account_is_operator(uid, GROUP_ADMIN)
+
+
+#: The door prisma-admin's members may open beside root (#597): ending PPPoE
+#: sessions, which the VTY gives the administrator role. It was root's alone
+#: in 0.155.7, so the API's Clear - which acts as the certificate's account,
+#: never root - refused an administrator on prisma-bench ("only root may");
+#: the lab drove it as root and did not see it.
+ADMIN_VERB = "end PPPoE sessions"
+
+
 def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
-           is_operator=account_is_operator):
+           is_operator=account_is_operator, is_admin=account_is_admin):
     """
     What the daemon replies to `request` from `uid`: {"rc", "out"}.
 
@@ -874,7 +888,12 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
         return {"rc": 126, "out": "the host's door: not an operation the "
                                   "VTY is allowed on the host"}
     if uid not in allowed_uids:
-        if not (operator_door(argv) and is_operator(uid)):
+        if verb == ADMIN_VERB:
+            if not is_admin(uid):
+                return {"rc": 126, "out": f"the host's door: {verb}: only "
+                                          f"root and {GROUP_ADMIN}'s members "
+                                          "may"}
+        elif not (operator_door(argv) and is_operator(uid)):
             who = "only root and prisma-operator's members may" \
                 if operator_door(argv) else "only root may"
             return {"rc": 126, "out": f"the host's door: {verb}: {who}"}

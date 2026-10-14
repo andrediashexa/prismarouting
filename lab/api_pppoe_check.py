@@ -69,6 +69,10 @@ def code_of(fn):
 op = rpc.OperationalServiceStub(channel("root"))
 cfg = rpc.ConfigServiceStub(channel("root"))
 op_nv = rpc.OperationalServiceStub(channel("netview"))
+# The clears go as an administrator that is not root, as a client's
+# certificate does on a box: 0.155.7 drove them as root, and prisma-bench
+# refused the same Clear to an administrator ("only root may", #597).
+op_adm = rpc.OperationalServiceStub(channel("labadmin"))
 
 
 def listed():
@@ -246,7 +250,7 @@ def clears():
     by_user = {s.user: s for s in got if s.state == "active"}
     # By address: the session `show pppoe sessions` lists with it.
     a = by_user.get("sub3")
-    r = op.Clear(pb.ClearRequest(target=pb.ClearRequest.TARGET_PPPOE_ADDRESS,
+    r = op_adm.Clear(pb.ClearRequest(target=pb.ClearRequest.TARGET_PPPOE_ADDRESS,
                                  name=a.address), timeout=60)
     gone = wait_gone(a.session_id)
     back = wait_user("sub3", a.session_id)
@@ -262,7 +266,7 @@ def clears():
            f"{[(x.session_id, x.held, x.cause) for x in h.sessions]}")
     # By id.
     b = by_user.get("sub2")
-    op.Clear(pb.ClearRequest(target=pb.ClearRequest.TARGET_PPPOE_SESSION,
+    op_adm.Clear(pb.ClearRequest(target=pb.ClearRequest.TARGET_PPPOE_SESSION,
                              name=b.session_id), timeout=60)
     gone = wait_gone(b.session_id)
     back = wait_user("sub2", b.session_id)
@@ -270,13 +274,13 @@ def clears():
            f"{b.session_id}: gone {gone}, sub2 again {back}")
     # By user.
     c = by_user.get("sub5")
-    op.Clear(pb.ClearRequest(target=pb.ClearRequest.TARGET_PPPOE_USER,
+    op_adm.Clear(pb.ClearRequest(target=pb.ClearRequest.TARGET_PPPOE_USER,
                              name="sub5"), timeout=60)
     gone = wait_gone(c.session_id)
     result("clear-user", gone, f"sub5's {c.session_id}: gone {gone}")
     # An address no session holds: refused, nothing cleared.
     n = len(listed().sessions)
-    code = code_of(lambda: op.Clear(pb.ClearRequest(
+    code = code_of(lambda: op_adm.Clear(pb.ClearRequest(
         target=pb.ClearRequest.TARGET_PPPOE_ADDRESS, name="100.64.3.3"),
         timeout=60))
     result("clear-address-nobody", code == "FAILED_PRECONDITION"

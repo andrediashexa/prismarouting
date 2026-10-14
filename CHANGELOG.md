@@ -79,6 +79,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Only root could end PPPoE sessions: the API's `Clear` refused every
+  administrator.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  `clear pppoe session` asks for the administrator role, but the host's door
+  that ends the sessions was root's alone. The API acts as its certificate's
+  account, never root, so on prisma-bench (0.155.8) `Clear` with
+  `TARGET_PPPOE_ADDRESS` as an administrator answered `PERMISSION_DENIED`
+  ("the host's door: end PPPoE sessions: only root may"), and so did the
+  prompt for an administrator that is not root. The door now opens for
+  prisma-admin's members as well; anybody else is still refused, and the
+  refusal is still `PERMISSION_DENIED`. `lab/pppoe.sh` drove its clears as
+  root and could not see it: they go as an administrator that is not root
+  now.
+
 ## 0.155.8 - PPPoE holds its session limit: 16,000 by default, up to 100,000
 
 ### Fixed
