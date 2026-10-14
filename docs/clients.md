@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.8 - PPPoE holds its session limit: 16,000 by default, up to 100,000
+
+* **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.7). No message, field or number changes.
+* **`session-limit` now always holds** (#597): a `pppoe` block without one holds 16,000 sessions, and a commit (through the VTY or `Commit`) refuses a limit above 100,000 or above what the box's RAM sizes the statistics segment for - the refusal is the usual commit error text. Until the box's next reboot the ceiling is what the running segment holds, and the commit and `show pppoe summary` say so (screen text, also in `GetPppoeSummary.text`; not a contract). A box upgraded with PPPoE configured restarts its PPPoE container once at the first load, so its sessions redial. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.7 - the BNG in the API, typed
 
 * **Contract:** changed, additive only (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`; `health.proto` unchanged). No existing message, field, number or enum value changes; a client built from 0.155.6's contract keeps working (lab/api-grpc.sh drives one).
