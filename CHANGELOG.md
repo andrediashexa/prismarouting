@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.8 - PPPoE holds its session limit: 16,000 by default, up to 100,000
+
+### Fixed
+
 * **A box running PPPoE with no `session-limit` aborted its whole dataplane
   between 5,000 and 7,500 sessions.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   Every session is an interface with counters in VPP's statistics segment,
