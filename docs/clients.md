@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.11 - the PPPoE session trail's head sent off the box
+
+* **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.10). No message, field or number changes.
+* **The events carry a new `kind`, `trail`** (#597): `source` `host`, `component` `bng`, `subject` the trail's file (`pppoe-sessions.log`, or a closed month's `pppoe-sessions.log.2026-09`), severity `info` - `warning` when a head is not past the last one said, which means the trail is not the chain that head was of. The text carries the head's seq and sha256; it is written when the head has moved and an hour has passed since the last one, at the watcher's first reading after a start or a boot, and for each month's file when it is closed. `ListEvents` with `kind` `trail` lists them, and `WatchEvents` streams them as they are written. `kind` is extensible: a client that maps it to labels MUST show an unknown value as it is rather than drop the event. A client that keeps the events it streams holds a copy of the head off the box, which is what `VerifyPppoeHistory`'s head is compared with. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.10 - an administrator configures PPPoE and RADIUS through the API
 
 * **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.9). No message, field or number changes.
