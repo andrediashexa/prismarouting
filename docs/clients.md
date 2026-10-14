@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.9 - an administrator ends PPPoE sessions through the API
+
+* **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.8). No message, field or number changes.
+* **Known bug fixed:** on 0.155.7 and 0.155.8, `Clear` with a `TARGET_PPPOE_*` target answers `PERMISSION_DENIED` to every account but root, the administrator included - and a client's certificate is never root. From 0.155.9 an administrator's `Clear` ends the sessions, as 0.155.7's entry said; any other account is still `PERMISSION_DENIED`. A client that hid the PPPoE clears for that refusal can offer them against 0.155.9 and later. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.8 - PPPoE holds its session limit: 16,000 by default, up to 100,000
 
 * **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.7). No message, field or number changes.
