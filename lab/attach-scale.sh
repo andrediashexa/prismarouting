@@ -57,11 +57,15 @@ BOUND=3
 
 # 1 GB of main heap: 50,000 interfaces took 352 MB of it, measured here.
 # 4k pages, so the container is charged for what is touched.
-sed -e 's/main-heap-size [0-9]*[MG]/main-heap-size 1G/' lab/startup-test.conf \
+# startup_conf, so LAB_WORKERS reaches this lab: it read lab/startup-test.conf
+# directly, and `LAB_WORKERS=3` measured one thread while saying three (#597,
+# docs/bng.md 0.4 item 5 asked for the attach on workers).
+sed -e 's/main-heap-size [0-9]*[MG]/main-heap-size 1G/' "$(startup_conf test)" \
   > /tmp/startup-attach.conf
 printf '\nstatseg {\n  size 1G\n}\n' >> /tmp/startup-attach.conf
 vpp -c /tmp/startup-attach.conf > /tmp/vpp.log 2>&1 &
 wait_vpp
+echo "  $(box_workers) worker(s)"
 
 now_us() { echo $(($(date +%s%N) / 1000)); }
 

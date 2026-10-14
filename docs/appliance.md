@@ -710,6 +710,8 @@ thread count, for
 | 32 MB | dot1q sub-interfaces | 3 and 5 | 5,100 | the same |
 | 32 MB | dot1q sub-interfaces | 8 | 3,300 | the same |
 | 1 GB, set by hand | PPPoE sessions | 1 | 40,000, using 114.7 MB | nothing; that is where the measurement stopped, not a wall it found |
+| 32 MB | PPPoE sessions, attached to the CGNAT | 1, 3 and 4 | 7,500, 7,000 and 5,000 (steps of 500) | `Out-of-memory, calling os_panic()`; `lab/pppoe-scale.sh` |
+| the tuner's, for 100,000 sessions | PPPoE sessions, attached | 1, 3 and 4 | 100,000 in 758, 873 and 930 MB | nothing; the most `session-limit` a commit takes ([bng.md](bng.md) 0.4) |
 
 **The failure is the whole dataplane, and it is silent.** VPP does not refuse
 the interface that would not fit and carry on. `vnet_register_interface` tries
@@ -841,13 +843,16 @@ numbers, each `Config`'s own answer:
   counters of its own, so a box configured for 20,000 sub-interfaces Linux can
   name holds 40,000, and until #597 the tuner sized it for half;
 * **created at runtime** - `runtime_interfaces()`, the most interfaces the
-  configuration lets the box create while it runs. **Zero today.** It is the
-  seam for a BNG ([bng.md](bng.md)): a PPPoE session is an interface, the
-  session ceiling will be a statement in this file, and that statement returns
-  its ceiling here so the next boot is sized for it. What a configuration may
-  promise is `statseg_interfaces_for()` of the size the box can afford, and a
-  session past it is `SIGABRT`, so whatever accepts that ceiling refuses one
-  above it.
+  configuration lets the box create while it runs: the PPPoE session ceiling
+  ([bng.md](bng.md) 0.4 item 5). A session is an interface, so a `pppoe` block
+  returns its `session-limit` here - or 16,000 when it has none, since a block
+  with no ceiling was a box that aborted at 7,500 sessions - and the next boot
+  is sized for it. What a configuration may promise is
+  `statseg_interfaces_for()` of the size the box can afford, and a session
+  past it is `SIGABRT`, so the VTY refuses at commit a limit the largest
+  segment this box's RAM allows cannot hold, and tells accel-ppp never to take
+  more than the segment the dataplane is RUNNING on holds - which is what
+  protects a box that has not rebooted since its limit was raised.
 
 Four things the tuner will not do with that number:
 

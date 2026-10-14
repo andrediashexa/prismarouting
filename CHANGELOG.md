@@ -79,6 +79,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box running PPPoE with no `session-limit` aborted its whole dataplane
+  between 5,000 and 7,500 sessions.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  Every session is an interface with counters in VPP's statistics segment,
+  and a `pppoe` block with no limit gave accel-ppp no ceiling and the tuner
+  nothing to size for, so the box ran on VPP's 32 MB default: measured by the
+  new `lab/pppoe-scale.sh`, it survived 7,500 sessions on one thread, 7,000
+  on three and 5,000 on four, then `os_panic`, SIGABRT, every subscriber
+  gone. Now a block with no `session-limit` holds 16,000, accel-ppp.conf
+  always carries `max-sessions`, and the tuner sizes the segment for the
+  limit at boot. Because the tuner only runs at boot, accel-ppp is never told
+  more than the segment the dataplane is RUNNING on holds - worked out from
+  VPP's own segment and threads by the tuner's arithmetic - and the commit
+  and `show pppoe summary` say so ("16000, the default; 3443 until the next
+  reboot"). A commit refuses a limit above 100,000, the most measured, or
+  above what the largest segment the box's RAM gets holds; a saved file with
+  more is still loaded, and held. Measured: 16,000, 40,000 and 100,000
+  sessions, attached to the CGNAT, on the tuner's segments with no worker and
+  with two and three; the CGNAT attach does not grow with the sessions.
+  docs/bng.md 0.4 item 5 has the numbers.
+
+  **On an upgraded box** nothing restarts the dataplane. PPPoE's files are
+  format 6, so the next load of the configuration (the boot, `systemctl
+  restart prisma-routing.service`, or a commit of `pppoe`) writes them again
+  with the ceiling and restarts the PPPoE control plane - its sessions
+  redial. Until the next reboot the ceiling is what the running segment
+  holds; the reboot sizes the segment for the saved limit.
+
 ## 0.155.7 - the BNG in the API, typed
 
 ### Added

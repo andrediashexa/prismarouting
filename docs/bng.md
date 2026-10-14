@@ -74,10 +74,11 @@ it did claim:
   whole dataplane, not one subscriber. Reproduced twice at the same step. The
   tuner now sizes the segment from the interfaces a box's configuration makes
   it hold, per thread
-  ([#597](https://github.com/andrediashexa/hexarouting/issues/597)), and a
-  PPPoE session ceiling is one of them **once the BNG states it**:
-  `Config.runtime_interfaces()` in `src/prismash/config.py` is where it goes,
-  and until then a session is in no number the tuner reads.
+  ([#597](https://github.com/andrediashexa/hexarouting/issues/597)), and the
+  PPPoE session ceiling is one of them: `pppoe` > `session-limit`, 16,000 when
+  the block has none, which accel-ppp enforces and which is never more than
+  the running segment holds (section 0.4 item 5, `lab/pppoe-scale.sh`:
+  100,000 sessions held on one, three and four threads).
 * **Per-subscriber speed, which is what a BNG is sold on, does not exist in
   VPP 26.06.** There is a policer and there is no shaper: `configure policer`
   is the entire rate-control surface, `vppctl help` matches nothing for
@@ -336,11 +337,95 @@ In the order they are planned, each its own step on #597:
 4. **Discovery restricted to the access interfaces** (0.3 item 7), and the
    same MAC on two access ports (4, item 8): done, measured, 0.3 items 9
    and 10.
-5. **The stats segment sized for the configured `session-limit`** (2.1), and
-   the multi-worker attach cost measured once #597's other branch lands.
+5. **The stats segment sized for the configured `session-limit`** (2.1):
+   done, measured by `lab/pppoe-scale.sh` - see "The session ceiling" below.
+   The multi-worker attach cost: measured with it, and it does not grow with
+   the sessions on the box.
 6. A configuration change without a restart of every session: done for
    RADIUS (#607, 0.6) - a change under `aaa radius` is accel-ppp's `reload`;
    a `pppoe` change still restarts.
+
+**The session ceiling (item 5).** A PPPoE session is an interface in the
+dataplane, and its counters live in VPP's statistics segment, which aborts
+the whole dataplane when it runs out (2.1). Before this, a `pppoe` block
+with no `session-limit` had no ceiling at all - accel-ppp was given none and
+the tuner sized nothing - so an installed box ran on VPP's 32 MB default and
+`lab/pppoe-scale.sh` drove it to its abort again, sessions made and attached
+to the CGNAT in steps of 500:
+
+| Threads | 32 MB default survived | then |
+|---|---|---|
+| 1 | 7,500 | `Out-of-memory, calling os_panic()`, SIGABRT |
+| 3 (2 workers) | 7,000 | the same |
+| 4 (3 workers) | 5,000 | the same |
+
+Now:
+
+* **there is always a ceiling.** `session-limit` absent means 16,000
+  (`pppoe.SESSION_LIMIT_DEFAULT`), and accel-ppp.conf always carries
+  `max-sessions` - accel-ppp answers no PADI and no PADR once active plus
+  starting sessions reach it (`pppoe.c`, `conf_max_sessions`);
+* **the tuner sizes the segment for it**, at boot, from the saved file
+  (`Config.runtime_interfaces()`), by the arithmetic `lab/statseg-scale.sh`
+  already checks for sub-interfaces;
+* **accel-ppp is never told more than the RUNNING segment holds.** The tuner
+  only runs at boot, so a limit raised by a commit, or a box upgraded onto
+  the default with the 32 MB it booted on, would otherwise take sessions into
+  a segment that aborts. The VTY reads the segment VPP mapped and its
+  threads, works out what it holds by the tuner's own function, and writes
+  the lower of the two; the commit says so, and `show pppoe summary` shows
+  `16000, the default; 3443 until the next reboot`;
+* **a commit refuses** a limit above 100,000 (the most measured), or above
+  what the largest segment this box's RAM gets from the tuner holds (a
+  quarter of what the control plane keeps: 512 MB on a 2 GB control plane,
+  about 55,000 sessions on four threads). A saved file holding more is still
+  loaded - 0.154.0 took up to a million - and held at what the segment holds.
+
+Measured with `lab/pppoe-scale.sh` in the build image on a host other labs
+were running on, so the times are ceilings:
+
+| Limit | Threads | Segment (tuner) | Held | RSS | Segment used | Main heap used |
+|---|---|---|---|---|---|---|
+| on 32 MB, the VTY's ceiling | 1 / 3 / 4 | 32 MB | 4,223 / 3,669 / 3,443 | | | |
+| 16,000 (default) | 1 | 122 MB | 16,000 | 594 MB | 50.5 MB | 310 MB |
+| 16,000 (default) | 3 / 4 | 140 / 149 MB | 16,000 | | | |
+| 40,000 | 1 | 304 MB | 40,000 | 748 MB | 114.6 MB | 411 MB |
+| 40,000 | 3 / 4 | 349 / 372 MB | 40,000 | | | |
+| 100,000 | 1 | 758 MB | 100,000 | 1,572 MB | 370.5 MB | 723 MB |
+| 100,000 | 3 / 4 | 873 / 930 MB | 100,000 | 1,820 MB (4) | 491 MB (4) | 758 MB (4) |
+
+A session costs about 4.8 kB of the main heap with its CGNAT attachment
+(240 MB idle, 723 MB at 100,000). That heap is the one the tuner sizes for
+the CGNAT's sessions, and **nothing refuses a limit for it**: at 100,000
+sessions half a 1 GB heap is PPPoE's. Sizing the heap for the sessions
+moves the hugepage reservation, which is the kernel command line and a
+second reboot - not done in a patch.
+
+**The attach** (`set interface bpa in2out` on each session, what
+`appliance/prisma-bng-session` does) does not grow with the sessions on the
+box. On one thread it cost 0.86 to 1.04 ms a session in every step from 2,000
+to 100,000, most of it the configuration trail's fsync: 18 to 38 us without
+it, measured first with no log directory, on three workers up to 100,000.
+With workers and the trail, on the shared host, it read anywhere from 0.9 to
+15 ms a session, rising and falling with the other labs' load and not with
+the session count - 15.4 ms at 2,000 and 0.87 ms at 40,000 in one run, 0.89
+ms at 2,000 and 6.4 ms at 100,000 in the next - so `lab/pppoe-scale.sh`
+prints it and does not assert it. The ratio is `lab/attach-scale.sh`'s,
+which now honours `LAB_WORKERS` (it read its startup file directly and ran
+one thread whatever it was asked): with three workers, batches back to back
+on one dataplane, 854 us an attach at 1,000 interfaces, 857 at 10,000 and
+1,066 at 50,000 - 1.2x, against its bound of 3. #287 and #597 removed the walks
+that made it O(N); this is the measurement on sessions and on workers that
+was waiting for them.
+
+**How an upgraded box gets it.** Nothing restarts the dataplane. The
+accel-ppp files carry format 6, so the next load of the configuration - the
+boot, or `systemctl restart prisma-routing.service`, or a commit of `pppoe`
+- writes them again with the ceiling and restarts the PPPoE control plane
+(its sessions redial; nothing else is touched). Until the next reboot that
+ceiling is what the running segment holds; the reboot runs the tuner, which
+sizes the segment for the saved limit, and the load after it lifts the
+ceiling to the limit.
 
 **Out of phase 1**, each a later issue: IPv6 (IPv6CP, DHCPv6-PD), per-
 subscriber SHAPING (VPP has no shaper, 2.2; per-subscriber POLICING is built,
@@ -1389,7 +1474,9 @@ that measures less and says so.
 ## Appendix: reproducing the scale figures
 
 `lab/bng.sh` is the committed end-to-end evidence and is run the normal way.
-The scale figures in 2.1, 2.2 and 3.4 were taken by hand and no lab was added
+The method below is now `lab/pppoe-scale.sh` (0.4 item 5), which drives VPP's
+default segment to its abort and the tuner's sizes to their limits; the
+original figures in 2.1, 2.2 and 3.4 were taken by hand and no lab was added
 for them, because they drive `pppoe_add_del_session` directly and so measure
 the dataplane half only. A lab that did that would look like a BNG lab and
 prove nothing about a BNG, which is the confusion `lab/bng.sh`'s own header

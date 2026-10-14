@@ -16459,7 +16459,8 @@ class Shell:
         held, aaa = target.pppoe, target.aaa
         was_format = pppoe_mod.file_format()
         why = aaa_mod.check(aaa) + pppoe_mod.check(held, aaa)
-        acc = []
+        acc, room = [], {}
+        limit = pppoe_mod.session_limit(held)
         if not why and not pppoe_mod.is_empty(held):
             acc, bad = pppoe_mod.access(held, target.vlans)
             why = [bad] if bad else []
@@ -16469,6 +16470,15 @@ class Shell:
             if missing:
                 why.append("pppoe: the dataplane has no interface "
                            + ", ".join(missing))
+            room = self.pppoe_room(target)
+            # AT A COMMIT, NOT AT BOOT: a saved file holding more than this
+            # box can is still loaded, and held at what the segment holds
+            # below - a box with no subscribers is the worse outage.
+            bad = None if self.booting else pppoe_mod.limit_error(
+                limit, room.get("box_room"), room.get("threads"),
+                room.get("box_mb"))
+            if bad:
+                why.append(bad)
         if why:
             for w in why:
                 self.err_prose(w.split(":", 1)[0] + ": not applied",
@@ -16486,7 +16496,22 @@ class Shell:
             # RADIUS with no PPPoE to use it: held, and nothing runs.
             print("aaa: written")
             return True
-        ok, msg = pppoe_mod.write_files(held, acc, aaa=aaa)
+        # NEVER MORE THAN THE RUNNING SEGMENT HOLDS (docs/bng.md 0.4 item
+        # 5). The tuner sizes the segment for the limit, but only at a boot,
+        # from the saved file: a limit raised by this commit, or a box
+        # upgraded onto the default with the 32 MB it booted on, would let
+        # accel-ppp take sessions into a segment that aborts at the next one.
+        held_at = limit
+        if room.get("live_room") is not None and room["live_room"] < limit:
+            # Never 0, which accel-ppp reads as no ceiling at all.
+            held_at = max(1, room["live_room"])
+            print_prose(f"pppoe: at most {held_at} sessions until the next "
+                        f"reboot, which is what the running statistics "
+                        f"segment ({room['live_mb']} MB) holds; a reboot "
+                        f"sizes it for {limit} once the configuration is "
+                        f"saved", indent="")
+        ok, msg = pppoe_mod.write_files(held, acc, aaa=aaa,
+                                        max_sessions=held_at)
         if not ok:
             self.err(f"pppoe: {msg}")
             return False
@@ -16524,6 +16549,51 @@ class Shell:
                                   ", no session dropped"
                                   if said == "reloaded" else ""))
         return True
+
+    def pppoe_room(self, target):
+        """
+        What the dataplane's statistics segment holds for PPPoE sessions:
+        {"threads", "live_mb", "live_room", "box_mb", "box_room"} - the
+        running segment, and the largest one this box's RAM gets from the
+        tuner, each with what it holds beside the interfaces `target` makes
+        the box hold. None where it could not be read; the arithmetic is
+        pppoe.segment_room()'s, which is the tuner's.
+
+        BESIDE THE CONFIGURATION'S INTERFACES, NOT THE DATAPLANE'S LIST,
+        because that is what the tuner subtracted when it sized the segment
+        for the limit: a box sized for 16,000 must read as holding 16,000,
+        and its list has local0 and the control plane's TAP on top, which
+        would hold it at 15,998 and say so at every boot. What that leaves
+        out is three times covered: the segment is sized at three times what
+        an interface's counters weigh (prisma-routing-tune, STATSEG_GROWTH).
+        """
+        tune = tuneadvice.load_tuner()
+        rc, out = self.dp.run("show threads")
+        threads = pppoe_mod.thread_count(out) if rc == 0 else 0
+        rc, out = self.dp.run("show statistics segment /sys/vector_rate "
+                              "verbose")
+        live_mb = pppoe_mod.segment_mb(out) if rc == 0 else None
+        total_kb = 0
+        try:
+            with open(self.MEMINFO) as f:
+                for raw in f:
+                    w = raw.split()
+                    if w[:1] == ["MemTotal:"] and len(w) > 1 \
+                            and is_number(w[1]):
+                        total_kb = int(w[1])
+        except OSError:
+            pass
+        cp = self.read_tune_key("PRISMA_CONTROL_PLANE_MEMORY_GB")
+        box_mb = pppoe_mod.box_segment_mb(
+            tune, max(1, total_kb // 1048576) if total_kb else 0,
+            int(cp) if is_number(cp) else None)
+        named = target.dataplane_interfaces() - target.runtime_interfaces()
+        return {"threads": threads, "live_mb": live_mb,
+                "live_room": pppoe_mod.segment_room(tune, live_mb, threads,
+                                                    named),
+                "box_mb": box_mb,
+                "box_room": pppoe_mod.segment_room(tune, box_mb, threads,
+                                                   named)}
 
     def record_bng_asked(self, verb, refresh=False, was_format=""):
         """
@@ -25879,7 +25949,8 @@ class Shell:
         """
         cfg = self.running_config()
         f = {"held": cfg.pppoe, "aaa": cfg.aaa, "status": "", "counts": {},
-             "states": {}, "trail": None, "guard": None}
+             "states": {}, "trail": None, "guard": None,
+             "limit": pppoe_mod.enforced_limit()}
         if pppoe_mod.is_empty(cfg.pppoe):
             return f
         rc, status = self.host_run([pppoe_mod.BNG_CTL, "status"])
@@ -25903,7 +25974,7 @@ class Shell:
         """`show pppoe summary`, from pppoe_summary_facts()' reading."""
         print("\n".join(pppoe_mod.summary_screen(
             f["held"], f["status"], f["counts"], f["aaa"], f["states"],
-            f["trail"], f["guard"])))
+            f["trail"], f["guard"], f["limit"])))
 
     def show_pppoe(self, args):
         """
