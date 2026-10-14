@@ -147,6 +147,13 @@ grep -q "EnvironmentFile=-/run/prisma-routing/compose.env" "$U" \
 grep -q "^TimeoutStartSec=" "$U" \
   && ok "and is given longer than the 90s default to load 118 MB of gzip" \
   || bad "$U has no TimeoutStartSec: a slow box would have the load killed half way and the unit marked failed"
+_t=$(sed -n 's/^TimeoutStartSec=//p' "$U")
+[ "${_t:-0}" -ge 1800 ] 2>/dev/null \
+  && ok "and 30 minutes, which VM 127's 9-minute load on a slow disk needs room inside (#597)" \
+  || bad "$U gives the start ${_t:-no} seconds: VM 127 took 9 minutes to load 0.155.9's images"
+grep -q "^Environment=COMPOSE_HTTP_TIMEOUT=" "$U" \
+  && ok "and docker-compose waits longer than its 60s default for the daemon (#597)" \
+  || bad "$U leaves COMPOSE_HTTP_TIMEOUT at 60s: VM 127's dataplane create took longer and the unit failed with nothing else started"
 grep -q "share/prisma-routing/VERSION" "$BIN" \
   && ok "and the version comes from the box's own stamp" \
   || bad "load-the-images does not read /usr/share/prisma-routing/VERSION"

@@ -79,6 +79,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box with a slow disk could come up from an upgrade with only its
+  dataplane.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  VM 127 on srv02 took 9 minutes to load 0.155.9's container images on the
+  first boot after the upgrade (1355 s of iowait in its first 30 minutes);
+  docker-compose then gave up on creating the dataplane after its own 60 s
+  ("Read timed out. (read timeout=60)"), and `prisma-routing-containers`
+  failed with the dataplane's container created and nothing else - no
+  control plane, no management, nothing to try again. The unit now gives its
+  start 30 minutes instead of 10, and compose 600 s per answer from the
+  daemon. Recovered on VM 127 by restarting the unit, which took 21 s.
+
 ## 0.155.9 - an administrator ends PPPoE sessions through the API
 
 ### Fixed
