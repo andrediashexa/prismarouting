@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.7 - the BNG in the API, typed
+
+### Added
+
 * **The BNG in the management API, typed.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   docs/bng.md 0.4 item 2. `GetConfig` reads the `pppoe` block and the `aaa`
   block (RADIUS) as fields, areas `pppoe` and `aaa`; `SetConfig` writes each
@@ -100,8 +106,6 @@ version has a chance of seeing it.
   and user through the API; `lab/api-grpc.sh` takes both blocks through
   SetConfig, Commit and GetConfig and searches every typed answer for the secrets
   it set.
-
-### Fixed
 
 ## 0.155.6 - a crash soon after boot is no longer logged as the boot's start
 
