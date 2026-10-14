@@ -27,6 +27,12 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.10 - an administrator configures PPPoE and RADIUS through the API
+
+* **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.9). No message, field or number changes.
+* **Known bug fixed:** on 0.155.7 to 0.155.9, `Commit` of a candidate that changes `pppoe` or `aaa` fails for every account but root - `FAILED_PRECONDITION`, "pppoe: could not write /etc/prisma-routing/bng/accel-ppp.conf.new: Permission denied" - and a client's certificate is never root, so no API client could configure PPPoE or RADIUS. From 0.155.10 an administrator's commit applies; the box's first boot on it puts the directory right, so the fix holds from the reboot the upgrade asks for.
+* **A slow box's boot:** an upgraded box whose disk is slow could come up with only its dataplane container and no API at all (VM 127, 0.155.9: 9 minutes to load the images, then docker-compose's 60 s ran out). The unit waits 30 minutes now. A client that finds the API away for longer than the usual window after an upgrade should keep retrying rather than report the box down. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.9 - an administrator ends PPPoE sessions through the API
 
 * **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.8). No message, field or number changes.

@@ -39,7 +39,20 @@ EnvironmentFile=-/run/prisma-routing/compose.env
 # longer than the default would have its dataplane killed mid-load and the
 # unit marked failed, which on a first boot reads as "the containers do not
 # work on this hardware".
-TimeoutStartSec=600
+#
+# AND 600 WAS NOT ENOUGH EITHER (#597): VM 127 on srv02, whose disk is slow
+# (1355 s of iowait in its first 30 minutes), took 9 minutes to load
+# 0.155.9's 190 MB on its first boot after the upgrade - and then
+# docker-compose gave up on the dataplane's create after its own 60 s
+# ("Read timed out. (read timeout=60)"), so the unit failed with the
+# dataplane created and nothing else, and nothing tried again. The same box
+# had loaded 0.155.8 in one minute an hour before. Thirty minutes here, and
+# compose's own wait below, so a slow disk is a slow boot and not a box
+# with no control plane.
+TimeoutStartSec=1800
+# docker-compose's wait for each answer from the daemon. Its default is 60 s,
+# and creating a container on that box's disk took longer.
+Environment=COMPOSE_HTTP_TIMEOUT=600
 # The images are loaded from the medium's copy on every start rather than
 # once at install: a box that was rolled back, or whose docker state was
 # cleared, then starts the images it has rather than none. `docker load` on

@@ -79,6 +79,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **An administrator that is not root could not commit `pppoe` or `aaa`.**
+  ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  On prisma-bench (0.155.9) a commit of `pppoe session-limit 20000` through
+  the API, as an administrator's certificate, failed with "could not write
+  /etc/prisma-routing/bng/accel-ppp.conf.new: Permission denied" - the
+  directory came out 2750 under root's umask, where the rest of
+  /etc/prisma-routing is 2770 - and past that the doors that start,
+  restart, stop and reload the PPPoE container were root's alone, as the
+  one that ends sessions was until 0.155.9. The API always acts as its
+  certificate's account, so no API client could configure PPPoE or RADIUS
+  at all, and nor could an administrator at the prompt that is not root.
+  The directory is made group-writable by root's next load (the boot), and
+  the four doors open for prisma-admin's members. `lab/pppoe.sh` committed
+  only as root: it now commits a RADIUS `timeout` through the API as an
+  administrator that is not root, and reads it in accel-ppp.conf and
+  `show pppoe summary`.
+
+* **A box with a slow disk could come up from an upgrade with only its
+  dataplane.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  VM 127 on srv02 took 9 minutes to load 0.155.9's container images on the
+  first boot after the upgrade (1355 s of iowait in its first 30 minutes);
+  docker-compose then gave up on creating the dataplane after its own 60 s
+  ("Read timed out. (read timeout=60)"), and `prisma-routing-containers`
+  failed with the dataplane's container created and nothing else - no
+  control plane, no management, nothing to try again. The unit now gives its
+  start 30 minutes instead of 10, and compose 600 s per answer from the
+  daemon. Recovered on VM 127 by restarting the unit, which took 21 s.
+
 ## 0.155.9 - an administrator ends PPPoE sessions through the API
 
 ### Fixed

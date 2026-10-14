@@ -28442,6 +28442,10 @@ class Shell:
         # no [shaper] and `fail-time=0` on every server. Written again and
         # the container restarted on them, once: the format line says which
         # release's they are.
+        # And their directory group-writable (#597), which only root - this
+        # load - can make it: 0.155.9 and older left it 2750.
+        if applied and os.path.isdir(pppoe_mod.BNG_DIR):
+            pppoe_mod.share_dir()
         if applied and not pppoe_mod.is_empty(target.pppoe) \
                 and pppoe_mod.file_format() != pppoe_mod.FORMAT:
             print("note: PPPoE's files are from an older release; written "

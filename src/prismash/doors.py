@@ -847,12 +847,17 @@ def account_is_admin(uid):
     return account_is_operator(uid, GROUP_ADMIN)
 
 
-#: The door prisma-admin's members may open beside root (#597): ending PPPoE
-#: sessions, which the VTY gives the administrator role. It was root's alone
-#: in 0.155.7, so the API's Clear - which acts as the certificate's account,
-#: never root - refused an administrator on prisma-bench ("only root may");
-#: the lab drove it as root and did not see it.
-ADMIN_VERB = "end PPPoE sessions"
+#: The doors prisma-admin's members may open beside root (#597): the PPPoE
+#: control plane's, which follow from a configuration the administrator role
+#: commits - started, restarted or stopped on it, RADIUS read again - and
+#: ending its sessions, which the VTY gives the administrator role. They were
+#: root's alone through 0.155.8, and the API acts as its certificate's
+#: account, never root: on prisma-bench an administrator's Clear answered
+#: "only root may" (fixed in 0.155.9), and on 0.155.9 its commit of
+#: `pppoe session-limit` could not apply either.
+ADMIN_VERBS = ("end PPPoE sessions", "start or restart the PPPoE container",
+               "stop the PPPoE container",
+               "reload the PPPoE container's RADIUS")
 
 
 def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
@@ -888,7 +893,7 @@ def answer(request, uid, allowed_uids=(0,), execute=run_locally, files=None,
         return {"rc": 126, "out": "the host's door: not an operation the "
                                   "VTY is allowed on the host"}
     if uid not in allowed_uids:
-        if verb == ADMIN_VERB:
+        if verb in ADMIN_VERBS:
             if not is_admin(uid):
                 return {"rc": 126, "out": f"the host's door: {verb}: only "
                                           f"root and {GROUP_ADMIN}'s members "

@@ -370,6 +370,17 @@ check(P.file_format() == P.FORMAT and P.file_format("/proc/no") == "",
       "file_format: the release format of the files written")
 check("server=192.0.2.1" in open(os.path.join(bng, "accel-ppp.conf")).read(),
       "write_files: the [radius] from the aaa block it is handed")
+# #597 on 0.155.9: the directory came out 2750 under root's umask, and an
+# administrator that is not root could not write its files. Made 0750 here
+# by hand, as that box had it; write_files puts the group's write back.
+os.chmod(bng, 0o750)
+P.write_files(h, acc, aaa=AA)
+check(os.stat(bng).st_mode & 0o070 == 0o070,
+      f"write_files: the directory group-writable again: {oct(os.stat(bng).st_mode)}")
+os.chmod(bng, 0o750)
+check(P.share_dir(bng) and os.stat(bng).st_mode & 0o070 == 0o070
+      and not P.share_dir(os.path.join(bng, "no-such")),
+      "share_dir: the directory group-writable, False where there is none")
 check(ok and all(stat.S_IMODE(os.stat(os.path.join(bng, f)).st_mode) == 0o660
                  for f in ("accel-ppp.conf", "chap-secrets", "access.env"))
       and stat.S_IMODE(os.stat(P.CONF_PATH).st_mode) == 0o660,
