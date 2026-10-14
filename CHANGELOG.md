@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.9 - an administrator ends PPPoE sessions through the API
+
+### Fixed
+
 * **Only root could end PPPoE sessions: the API's `Clear` refused every
   administrator.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   `clear pppoe session` asks for the administrator role, but the host's door
