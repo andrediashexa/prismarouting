@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.13 - a prefix RADIUS delegates is in the session trail
+
+* **Contract:** unchanged (`prisma.proto` sha256 `f9a8eda173b07ae71ddcebf2edc8fc704505a7a30a8a38b0422fb39f47b93c8f`, the same as 0.155.12). No message, field or number changes.
+* **Known bug fixed:** on 0.155.12 a prefix delegated from RADIUS's `Delegated-IPv6-Prefix` was routed and shown in `ListPppoeSessions`' `ipv6_delegated_prefix`, but `ListPppoeHistory` with an address inside it returned no entry, and the history entry's `ipv6_delegated_prefix` and `delegated` stayed empty. From 0.155.13 they are filled from when the prefix was routed, as for a pool's. Sessions delegated on 0.155.12 keep their gap. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.12 - IPv6 on PPPoE sessions: SLAAC and a delegated prefix
 
 * **Contract:** additive (`prisma.proto` sha256 `f9a8eda173b07ae71ddcebf2edc8fc704505a7a30a8a38b0422fb39f47b93c8f`; 0.155.11's was `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`). New fields only, no number reused or renumbered: `PppoeConfig.ipv6_enable` (14), `ipv6_prefix_pools` (15), `ipv6_delegated_pools` (16, the new message `PppoeDelegatedPool` with `prefix` and `length`), `ipv6_dns_servers` (17); the session's `ipv6_prefix` and `ipv6_delegated_prefix`; the summary's `ipv6`, `ipv6_prefix_pools` and `ipv6_delegated_pools`; the history entry's `ipv6_prefix`, `ipv6_delegated_prefix` and `delegated` (a Timestamp). `""` means none - an IPv4-only session has both prefixes empty.
