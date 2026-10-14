@@ -42,6 +42,10 @@ Toda mudança no bloco `pppoe` reinicia o plano de controle PPPoE: **todas as se
 | `rate-limit default <download>/<upload>` | o limite de banda de uma sessão para a qual o RADIUS não mandou nenhum, em kbit/s ou com K, M ou G (`20M/10M`); sem ele, essa sessão não tem limite |
 | `ac-name <nome>` | o nome do concentrador no PADO; `prisma-routing` se omitido |
 | `local-user <nome> password <senha>` | um usuário local, para laboratório sem RADIUS |
+| `ipv6 prefix-pool <prefixo>` | liga o IPv6 nas sessões; cada sessão recebe um /64 deste prefixo como WAN, anunciado por RA (SLAAC). De /16 a /64. Até 16 |
+| `ipv6 delegated-pool <prefixo> length <n>` | um prefixo `/n` deste para cada sessão, delegado por DHCPv6 (prefix delegation) para a LAN do cliente. Até 16 |
+| `ipv6 dns <endereço>` | um resolvedor IPv6 entregue ao CPE, no RA e no DHCPv6. Até 2 |
+| `ipv6 enable` | liga o IPv6 sem pool: os prefixos vêm só do RADIUS |
 
 `no <declaração>` desfaz cada uma; `no pppoe`, no topo do modo de configuração, remove o bloco inteiro e desliga o plano de controle PPPoE no `commit`.
 
@@ -117,6 +121,23 @@ No FreeRADIUS, salve o que esse comando imprime como `/usr/share/freeradius/dict
 
 O limite é um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. A rajada aceita (o balde do policer) é meio segundo da taxa, nunca menos de 15.000 bytes, venha a taxa dos atributos do Prisma ou do `Cisco-AVPair`: os números de rajada do `Cisco-AVPair` são conferidos e não usados. Meio segundo é o que deixa **uma** conexão TCP, como a de um teste de velocidade, chegar ao plano: com um décimo de segundo (0.155.1) ela chegava à metade (25 Mbit/s num plano de 50), embora o UDP passasse exato. Até a 0.155.0 o balde era oito vezes maior, e um teste curto media de 7% a 90% acima do plano. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
 
+## IPv6
+
+Sem nenhuma declaração `ipv6`, a sessão continua só IPv4, como antes: o CPE que pede IPv6 recebe recusa. Com elas, cada sessão negocia o IPv6CP e recebe dois prefixos:
+
+* **o da WAN**, um /64, anunciado por Router Advertisement: o CPE monta o próprio endereço nele (SLAAC). Vem do `Framed-IPv6-Prefix` do RADIUS quando ele manda um, e do `ipv6 prefix-pool` quando não;
+* **o delegado**, para a LAN do cliente, entregue por DHCPv6 quando o CPE pede (prefix delegation). Vem do `Delegated-IPv6-Prefix` do RADIUS quando ele manda um, e do `ipv6 delegated-pool` quando não.
+
+```
+prisma# [edit pppoe] ipv6 prefix-pool 2001:db8:100::/40
+prisma# [edit pppoe] ipv6 delegated-pool 2001:db8:200::/36 length 56
+prisma# [edit pppoe] ipv6 dns 2001:4860:4860::8888
+```
+
+A caixa é `fe80::1` em toda sessão; o roteador padrão do CPE é ela. Os dois prefixos são roteados no dataplane para a sessão: o tráfego IPv6 do assinante é roteado, não traduzido pelo CGNAT. O limite de banda da sessão vale para o IPv6 também, no mesmo balde do IPv4: um plano de 20 Mbit/s é 20 Mbit/s somando os dois.
+
+O RADIUS recebe na contabilização o `Framed-IPv6-Prefix` e o `Framed-Interface-Id` já no Accounting-Start, e o `Delegated-IPv6-Prefix` numa atualização intermediária enviada na hora em que o prefixo é delegado.
+
 ## Disconnect e CoA
 
 Com `dynamic-authorization`, o seu RADIUS (ou o IXC) pode, sem o assinante discar de novo:
@@ -136,6 +157,8 @@ O endereço de cada sessão vem do RADIUS (`Framed-IP-Address`) quando ele manda
 | sem `interface`, sem `gateway` | o plano de controle não teria onde atender nem que endereço usar |
 | sem servidor em `aaa` > `radius` e sem `local-user` | ninguém para autenticar |
 | sem `address-pool` e sem RADIUS | ninguém para dar endereço |
+| `ipv6` sem `ipv6 prefix-pool` e sem RADIUS | nenhuma sessão teria prefixo de WAN, e sem ele o CPE não pede o delegado |
+| dois pools IPv6 que se sobrepõem | o mesmo prefixo iria para dois assinantes |
 | servidores em `aaa` > `radius`, nenhum que autentique (todos `role acct`) | ninguém para autenticar |
 | `dynamic-authorization listen` sem `client`, ou `client` sem `listen` | ninguém poderia assinar um pedido, ou não haveria onde recebê-lo |
 | interfaces de acesso em duas placas | o PPPoE do dataplane responde de um MAC só |
@@ -151,8 +174,8 @@ O segredo de cada servidor e de cada `client` fica na configuração salva, para
 
 | Comando | O que mostra ou faz |
 |---------|---------------------|
-| `show pppoe sessions` | uma linha por sessão: o id, o usuário, o endereço, o limite (download/upload, `-` sem limite) e há quanto tempo está de pé; uma sessão ainda autenticando diz `start` no lugar do tempo |
-| `show pppoe session <id>` | uma sessão inteira: o MAC do CPE, o tráfego, o limite e, para cada sentido limitado, quantos pacotes o policer deixou passar e quantos descartou |
+| `show pppoe sessions` | uma linha por sessão: o id, o usuário, o endereço, o limite (download/upload, `-` sem limite) e há quanto tempo está de pé; uma sessão ainda autenticando diz `start` no lugar do tempo. Uma sessão com IPv6 tem embaixo uma linha `ipv6` com o prefixo da WAN e uma `delegated` com o prefixo delegado |
+| `show pppoe session <id>` | uma sessão inteira: os prefixos IPv6, o MAC do CPE, o tráfego, o limite e, para cada sentido limitado, quantos pacotes o policer deixou passar e quantos descartou |
 | `show pppoe summary` | se o plano de controle PPPoE está rodando, quantas sessões estão ativas, começando e terminando, cada servidor RADIUS (com `failed` se o plano de controle o deu como fora) e o resumo da configuração |
 | `clear pppoe session <id>` | encerra uma sessão; o id é o da primeira coluna de `show pppoe sessions`, o mesmo `Acct-Session-Id` que o RADIUS recebeu |
 | `clear pppoe session user <nome>` | encerra as sessões de um usuário |
@@ -165,11 +188,12 @@ Tudo isso também está na API de gerência (gRPC), com campos tipados: as sess�
 
 ## Quem tinha o endereço: o histórico de sessões
 
-Com PPPoE, o endereço interno do assinante é entregue na hora da discagem, por ordem de chegada. O registro do CGNAT (o log de blocos, ou a fórmula) diz qual **endereço interno** estava atrás de um IP público e de uma porta; para saber **qual assinante** tinha esse endereço naquele instante, a caixa guarda o próprio histórico de sessões. Ele é escrito pelo plano de controle no início e no fim de cada sessão, responda ou não algum servidor RADIUS, em `/var/log/prisma-routing/pppoe-sessions.log`, ao lado da trilha de configuração: só cresce, cada linha vai ao disco antes de a sessão seguir, e cada uma carrega um hash encadeado na anterior.
+Com PPPoE, o endereço interno do assinante é entregue na hora da discagem, por ordem de chegada. O registro do CGNAT (o log de blocos, ou a fórmula) diz qual **endereço interno** estava atrás de um IP público e de uma porta; para saber **qual assinante** tinha esse endereço naquele instante, a caixa guarda o próprio histórico de sessões. Ele é escrito pelo plano de controle no início e no fim de cada sessão, responda ou não algum servidor RADIUS, em `/var/log/prisma-routing/pppoe-sessions.log`, ao lado da trilha de configuração: só cresce, cada linha vai ao disco antes de a sessão seguir, e cada uma carrega um hash encadeado na anterior. Numa sessão com IPv6, a linha de início traz o prefixo da WAN, e o prefixo delegado entra numa linha própria na hora em que é delegado, repetida no fim da sessão.
 
 | Comando | O que mostra |
 |---------|--------------|
 | `show pppoe history address <A.B.C.D> at <hora>` | a sessão que tinha aquele endereço interno naquele instante: o usuário, de quando a quando, o id da sessão, o MAC e a interface de acesso |
+| `show pppoe history address <endereço IPv6> at <hora>` | a sessão cujo prefixo de WAN contém aquele endereço, ou cujo prefixo delegado o continha naquele instante: o delegado conta a partir da hora em que foi delegado, não do início da sessão |
 | `show pppoe history user <nome>` | as sessões de um usuário |
 | `show pppoe history since <hora>` | as sessões que estiveram de pé daquela hora em diante |
 | `show pppoe history verify` | confere a cadeia de hashes e diz a primeira linha que não confere |
@@ -244,7 +268,7 @@ O resumo deve dizer `running` e contar as sessões ativas; cada assinante que di
 
 
 :::info
-Nesta versão o PPPoE é IPv4. IPv6, QinQ e alta disponibilidade das sessões ainda não existem. O limite de banda é por descarte (policer), não por fila (shaper).
+QinQ e alta disponibilidade das sessões ainda não existem. Uma sessão é sempre IPv4 com IPv6 opcional: só IPv6 não existe. O limite de banda é por descarte (policer), não por fila (shaper).
 
 :::
 

@@ -12,7 +12,10 @@ by IPCP from RADIUS or a pool, each session attached to a BPA pool,
 `show pppoe sessions|summary`, `clear pppoe session`, and `lab/pppoe.sh`
 proving it end to end. The box's own session trail - who held which inside
 address from when to when, hash-chained, `show pppoe history` - is 0.7.
-Section 0.4 is what remains of phase 1.
+Section 0.4 is what remains of phase 1. IPv6 on the sessions - IPv6CP, the
+WAN /64 by SLAAC, DHCPv6 prefix delegation, with the dataplane's PPPoE guard
+taking the CPE's RS and DHCPv6 to the control plane - is 0.8
+([#609](https://github.com/andrediashexa/hexarouting/issues/609)).
 
 **Everything from "Where every number here comes from" down is
 [#170](https://github.com/andrediashexa/hexarouting/issues/170)'s study, kept
@@ -427,7 +430,8 @@ ceiling is what the running segment holds; the reboot runs the tuner, which
 sizes the segment for the saved limit, and the load after it lifts the
 ceiling to the limit.
 
-**Out of phase 1**, each a later issue: IPv6 (IPv6CP, DHCPv6-PD), per-
+**Out of phase 1**, each a later issue: IPv6 (IPv6CP, DHCPv6-PD; built
+since, 0.8), per-
 subscriber SHAPING (VPP has no shaper, 2.2; per-subscriber POLICING is built,
 0.6), QinQ (the plugin parses one tag), IPoE (VPP has no DHCP server, 1.4),
 lawful intercept, HA of sessions (3.3). Disconnect and CoA are built (0.6).
@@ -667,8 +671,9 @@ disables the feature whatever the interface was bound to).
 3. **accel-ppp's `G` was 10^7 kbit** (10 Gbit/s for "1G"), and its rates
    overflowed an int past 2.1 Gbit/s; both fixed.
 
-**What is not built:** per-subscriber SHAPING (VPP has none), IPv6 rates
-(the policer is bound on ip6 too; IPv6 sessions are not phase 1), and the
+**What is not built:** per-subscriber SHAPING (VPP has none), a separate
+IPv6 rate (the policer is bound on ip6 too, one bucket for both families -
+0.8), and the
 policer with VPP workers: a policer is bound to the thread that first uses it
 and hands the others' packets to it (`policer-input-handoff`), which this lab
 (single-threaded) does not exercise.
@@ -872,7 +877,8 @@ and one of its own:
 * a session's address is what accel-ppp bound; that the packets came from
   that subscriber is the access network's to prove (uRPF, logging.md "What
   the record cannot know");
-* only IPv4 sessions are recorded: IPv6 is not phase 1.
+* the IPv6 prefixes are recorded since #609 (0.8): the WAN prefix in the
+  start, the delegated one in a `delegate` entry of its own.
 
 **Measured in `lab/pppoe.sh`** (section 17, 2026-10-13, single-threaded
 and with three workers), against the files accel-ppp wrote:
@@ -909,6 +915,223 @@ The lab's 25 trail checks, run against the product without this change
 the trail - the cause RADIUS received, the block log's record, no
 Accounting-Request sent - or are what a box without one also does: nobody
 named before a session, no start while RADIUS is down, no "NOT written".
+
+### 0.8 IPv6 on the sessions (#609)
+
+[#609](https://github.com/andrediashexa/hexarouting/issues/609), the IPv6
+that section 4 counts among what a BNG cannot decline. Each session can
+negotiate IPv6CP and is given two prefixes: its **WAN /64**, advertised by
+Router Advertisement so the CPE numbers itself by SLAAC, and a **delegated
+prefix** for its LAN, by DHCPv6 prefix delegation. Each from RADIUS when it
+gives one (`Framed-IPv6-Prefix`, `Delegated-IPv6-Prefix`) and from a pool
+otherwise. A patch: nothing in the kernel, VPP or FRR pins moved, and
+nothing the installer lays.
+
+```
+prisma# [edit pppoe] ipv6 prefix-pool 2001:db8:100::/40
+prisma# [edit pppoe] ipv6 delegated-pool 2001:db8:200::/36 length 56
+prisma# [edit pppoe] ipv6 dns 2001:4860:4860::8888
+```
+
+| Statement | What it is | accel-ppp is given |
+|---|---|---|
+| `ipv6 prefix-pool <prefix>` | each session's WAN /64 is taken from it; /16 to /64, up to 16 | `[ipv6-pool]` `<prefix>,64`, module `ipv6pool` |
+| `ipv6 delegated-pool <prefix> length <n>` | each session is delegated a /n of it; up to 16 | `[ipv6-pool]` `delegate=<prefix>,<n>` |
+| `ipv6 dns <address>` | up to 2, in RA (RDNSS) and in DHCPv6 | `[ipv6-dns]` |
+| `ipv6 enable` | IPv6CP on with no pool: the prefixes from RADIUS only | - |
+
+Any of them is `ipv6=allow`, `ipv6-intf-id=0:0:0:1` (the box is `fe80::1` on
+every session) and `ipv6-accept-peer-intf-id=1` (the CPE keeps the
+identifier it proposes; `Framed-Interface-Id` from RADIUS wins), and the
+modules `ipv6_nd` and `ipv6_dhcp`. **None of them is `ipv6=deny`, exactly
+what every release before wrote** - the file is byte for byte the same, so
+FORMAT does not move and an upgraded box restarts nothing for it. A commit
+refuses IPv6 with no prefix pool and no RADIUS - accel-ppp's DHCPv6 answers
+only a session that has a WAN prefix (`dhcpv6.c` `ev_ses_started`), so a
+delegated pool alone would delegate nothing - and two IPv6 pools that
+overlap.
+
+`[ipv6-nd]` is written whole and not left to accel-ppp: **with `ipv6_dhcp`
+loaded, its defaults are M on and A off** (`nd.c` `load_config`) - an address
+by DHCPv6 IA_NA only - and a CPE that does not ask for IA_NA, pppd's Linux
+and most routers among them, was given no WAN address at all. The file says
+`AdvManagedFlag=0`, `AdvAutonomousFlag=1`, `AdvOtherConfigFlag=1`, and the
+lifetimes (`[ipv6-dhcp]` the same: a week preferred, thirty days valid).
+
+**How RA and DHCPv6 reach accel-ppp when VPP terminates the session.** This
+is what had to be found first, and what decides the design.
+
+* **accel-ppp-ng is ready for it.** Its VPP hooks declare
+  `is_non_socket_dhcpv6_nd` (`session_hooks/vyos_vpp/vpphooks.c`): for such
+  a session its `ipv6_nd` and `ipv6_dhcp` open no socket on a kernel PPP
+  device - the session has none - and take ICMPv6 and DHCPv6 as PPP-IPv6
+  frames on the session's PPP channel, and send their answers the same way
+  (`ipv6/ppp_ipv6layer.c`). The channel is the AF_PPPOX socket on the
+  control plane's TAP, the one LCP comes and goes on. Its hooks also route
+  each prefix through the session interface (`vpp_ip6route_add_del`) and let
+  IPv6 in on it (`ip6-not-enabled` off on `ip6-unicast`).
+* **Stock VPP 26.06 does not bring them there.** `pppoe-input` sends every
+  PPP-IPv6 frame of a session to `ip6-input`, whatever it is; only what is
+  not IP goes to the control plane. VyOS ships a patched plugin; this
+  product runs VPP as released. Measured with accel-ppp given IPv6 by hand
+  on the released product (a probe lab, pppd with `+ipv6`, dhcpcd for the
+  delegation, 2026-10-14): IPv6CP came up and the CPE had its link-local
+  address, `fe80::1` its peer; its Router Solicitations and its DHCPv6
+  Solicits, each traced, went `pppoe-input` -> `ip6-input` ->
+  `ip6-not-enabled` -> `error-drop` (a multicast destination takes the
+  `ip6-multicast` arc, where the hook had not turned the drop off), and
+  dhcpcd sent five Solicits in 30 s to no answer; and accel-ppp's own
+  Router Advertisements, sent down the TAP, met `pppoe-input` on the TAP's
+  device-input, which took them for a subscriber's data, looked the session
+  up by the SOURCE MAC - the access card's - and dropped them, counted "no
+  such sessions" (7 in the probe, one of them a CPE frame traced from the
+  access side; with the change below, none, and 8 frames taken off the
+  TAP). The CPE got no RA, no address and no prefix. The WAN
+  prefix's route was in VPP all the same: accel-ppp installs it at its
+  first RA, answered or not.
+* **The candidates.** (a) Send the CPE's RS and DHCPv6 to the control plane
+  and take its answers off the TAP, so accel-ppp's own ND and DHCPv6 answer;
+  (b) VPP's own `ip6 nd` RA on each session interface, with a punt for
+  DHCPv6 only. (b) needs IPv6 enabled on every session interface (a link-
+  local address and an ND instance per subscriber), the prefix pushed into
+  VPP's RA configuration per session from the control plane, which accel-ppp
+  does not do, and still (a)'s punt for DHCPv6 - two mechanisms where one
+  serves both, and a per-session cost in the dataplane for what is a few
+  packets per session per day.
+* **Chosen: (a), in the PPPoE guard** (`src/plugins/bpa/bpa_pppoe_guard.h`,
+  docs/bng.md 0.3 item 9), which already sits in front of the plugin for
+  every PPPoE frame:
+  * **up:** a session frame carrying PPP-IPv6 whose packet is an ICMPv6 RS,
+    or UDP to port 547, to a link-scope destination (`ff02::/16`,
+    `fe80::/10`) with no extension header first, goes to
+    `pppoe-cp-dispatch` - the node an LCP frame goes to - instead of
+    `pppoe-input`. Judged as a control frame: refused from a port another
+    holds the MAC on, since `pppoe-cp-dispatch` learns the MAC's port from
+    it, as it does from LCP. Three bytes are read of an IPv6 data packet
+    and none of an IPv4 one; a DHCPv6 relay behind the CPE talking to a
+    global address is the subscriber's traffic and is forwarded;
+  * **down:** a feature of the bpa plugin's on the TAP's `device-input`
+    arc, in front of `pppoe-input` (`bpa-pppoe-cp-ip6`), takes a PPP-IPv6
+    session frame from the control plane - after at most one VLAN tag,
+    `pppoe-cp.<vlan>` - to `pppoe-cp-dispatch`, which sends it out of the
+    access interface the CPE's MAC is on, as it sends LCP. Laid by `set bpa
+    pppoe-access cp <tap>`, which the entrypoint now says at every start; a
+    plugin older than the word is said and IPv4 served as before.
+  * `show bpa pppoe-access` counts both: `ip6 to the control plane <n> from
+    it <n>`.
+
+**Measured after it**, the same probe on this branch: the RS and the
+Solicit traced `bpa-pppoe-session-guard` ("IPv6 control, to the control
+plane") -> `pppoe-cp-dispatch` -> the TAP; the CPE got RAs from `fe80::1`,
+made `2001:db8:100:0:<its id>/64` and a default route `via fe80::1 dev
+ppp0 proto ra`; dhcpcd's Solicit had its Advertise 10 ms later and its
+Reply after the Request, `delegated prefix 2001:db8:200::/56`; and from the
+"internet", pings to an address on the CPE's LAN prefix and to its SLAAC
+address were answered, the echo request through `ip6-lookup` ->
+`ip6-midchain` on `pppoe_session0` with the session's PPPoE header, and the
+reply through the guard ("pass") -> `pppoe-input` -> `ip6-lookup` -> the
+uplink.
+
+**The rest is accel-ppp's, as it is:** the pools (`ipv6pool`), RADIUS's
+attributes (asked before the pools: the module is loaded after `radius`, as
+`ippool` is), accounting - `Framed-IPv6-Prefix` and `Framed-Interface-Id` in
+the Start, `Delegated-IPv6-Prefix` in an interim it sends the moment it
+delegates (`EV_FORCE_INTERIM_UPDATE`) - and the session's policer: VPP 26.06
+applies `policer input`/`output` to `ip6-unicast` and `ip6-output` as well as
+IPv4's (`policer_op.c`), so a plan is one bucket for both families. The MSS
+clamp has its IPv6 half now, 20 bytes under `tcp-mss`.
+
+**A hole the hooks would have opened, closed.** accel-ppp's hook turns
+`ip6-not-enabled` off on a session with IPv6 and never on again, and VPP's
+plugin hands a deleted session's interface to the next one (0.6, defect 1):
+an IPv4-only subscriber dialling onto it would have had its IPv6 forwarded.
+The session hook (`appliance/prisma-bng-session`) turns the drop back on for
+a session accel-ppp gave no `IPV6_PREFIX`, once - a feature enabled twice
+runs twice.
+
+**Who held an IPv6 address** - 0.7's trail, extended:
+
+| Entry | Written at | Carries |
+|---|---|---|
+| `start` | as before | ` prefix <WAN prefix>` after the address, when IPv6CP gave one: it is known before the session is up, and held for its life |
+| `delegate` | the moment DHCPv6 takes a prefix for the session (`EV_FORCE_INTERIM_UPDATE` with `ipv6_dp` new) - which can be hours after the session began, when a router behind the CPE asks | the session restated with ` delegated <prefix> delegated-since <time>` and its `since`; its stop and any carry repeat both |
+
+`show pppoe history address <IPv6 address> [at <time>]` names the sessions
+whose WAN prefix holds the address, or whose delegated prefix did - from its
+`delegated-since`, not from the session's start: before that the prefix was
+the pool's, or the previous holder's. A control plane killed with -9 closes
+the session with its prefixes (`prisma_trail.c` reads a `delegate` back as it
+reads a `carry`). `show pppoe sessions` lists a session's prefixes on lines
+of their own under it (`ipv6`, `delegated`) - a prefix is up to 43
+characters and the row has no room; `show pppoe session <id>` and `show
+pppoe summary` show them, and so does the API, additively (docs/api.md,
+"PPPoE").
+
+**What is not built:** a session is always IPv4 (`ipv4=require`; IPv6-only
+is a later step); the WAN prefix is a /64 from a pool or RADIUS, never an
+address by IA_NA; one delegated prefix per session; nothing on the box
+answers a ping to `fe80::1` or Neighbor Discovery on a session - a PPP link
+needs none, and Linux's ppp device sends none (it is NOARP); and Prisma's
+own RADIUS attributes carry no IPv6 rate - the plan is one for both
+families.
+
+**Found on the way: a control plane killed with -9 crossed downloads
+again** - 0.6's defect 1, by IPv6. With the CPEs dual-stack (Debian's pppd
+negotiates IPv6CP unasked, measured: sub1 to sub3 of `lab/pppoe.sh`, which
+dial with no `+ipv6`, had SLAAC addresses as soon as the box offered IPv6),
+the entrypoint's record of what a dead daemon left (`stale_state`) listed
+its IPv4 routes and not the IPv6 ones - each session's WAN /64 stayed routed
+through its interface after the next accel-pppd removed the rest. Measured
+in the lab's first run with everything else of this change in: after
+section 10's `kill -9`, sub1's IPv4 adjacency on `pppoe_session0` carried
+sub2's MAC (`show adj`: `02aa00000002 ... 8864 1100 00c0`, sub1's session id
+with sub2's address) while the session on that interface was sub1's; sub1's
+iperf3 measured 0.0 both ways, its ping 100% lost, and the lab's check that
+every download goes to its own CPE went red. `stale_state` now lists IPv6's
+routes through session interfaces too, and the patch's
+`vpp_iproute_flush_stale` deletes them before the sessions; the second run,
+the same lab: 0 crossed, sub1 19.6 down and 9.9 up through its 20/10 plan.
+
+**Measured in `lab/pppoe.sh`** (section 23, 2026-10-14; real CPEs, pppd with
+`+ipv6`, the kernel's SLAAC, dhcpcd 9.4.1 asking for a prefix):
+
+* sub7 dialled and its kernel made `2001:db8:100:4:<its id>/64` with
+  `default via fe80::1 dev ppp0 proto ra`; dhcpcd had `ADV 2001:db8:200::/56
+  from fe80::1`, then the Reply: `delegated prefix 2001:db8:200::/56` out of
+  the pool;
+* sub8, whose RADIUS entry carries `Delegated-IPv6-Prefix =
+  2001:db8:280:100::/56`, was delegated exactly that, not the pool's;
+* from the "internet", pings to an address on each delegated prefix and to
+  sub7's SLAAC address: 0% lost, each the echo through the session's
+  midchain (`2001:db8:200::/56 ... via 0.0.0.0 pppoe_session4`, the
+  rewrite carrying sub7's MAC and session) and the reply back up the uplink;
+  still 0% after section 22's commits and clears;
+* the guard: `ip6 to the control plane 48 from it 171` - every CPE's RS and
+  DHCPv6 up, every RA and reply down (the lab's other CPEs are dual-stack
+  too);
+* sub7's 20/10 Mbit/s plan over IPv6, one TCP flow 15 s each way: 19.4 down,
+  9.8 up;
+* `show pppoe sessions` printed `ipv6 2001:db8:100:4::/64` and `delegated
+  2001:db8:200::/56` under sub7; the trail wrote sub7's start with `prefix
+  2001:db8:100:4::/64` and, 2.7 s later, its `delegate` entry; `show pppoe
+  history address 2001:db8:200::1 at <now>` named sub7, with both prefixes,
+  and the same at the session's start instant named nobody;
+* RADIUS: the Start carried `Framed-IPv6-Prefix = 2001:db8:100:4::/64` and
+  `Framed-Interface-Id`, and an Interim-Update `Delegated-IPv6-Prefix =
+  2001:db8:200::/56`;
+* sub8 hung up and dialled again with `noipv6` onto the same interface
+  (sw_if_index 13 both times), which has `ip6-not-enabled` on its arc again;
+  sub7's has none;
+* through the API (`lab/api_pppoe_check.py`): `ListPppoeSessions` carried
+  sub7's two prefixes as the screen printed them, `GetConfig` and
+  `GetPppoeSummary` the pools, `ListPppoeHistory` named sub7 for an address
+  of its delegated prefix with its `delegated` time.
+
+**Not measured:** a real CPE router (the lab's are Linux pppd and dhcpcd;
+the bench's Debian CPE is the next reading), the RA and DHCPv6 punt with VPP
+workers, and how many sessions' IPv6 the control plane's TAP carries at
+scale - an RS or a Solicit is a few packets a session per renewal, as LCP's
+echoes are, and it takes the path they take.
 
 ## Where every number here comes from
 

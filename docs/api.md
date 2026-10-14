@@ -421,6 +421,20 @@ reads and `Clear`.
   `pppoe` or `aaa` removes the whole block (`no pppoe`, `no aaa`). A commit
   of a `pppoe` change restarts the PPPoE control plane and every session
   redials; an `aaa` change is a reload, no session drops (docs/bng.md 0.6).
+* **IPv6 (#609, docs/bng.md 0.8).** `PppoeConfig.ipv6_enable`,
+  `ipv6_prefix_pools`, `ipv6_delegated_pools` (each a `PppoeDelegatedPool`:
+  `prefix` and the `length` each session is delegated) and
+  `ipv6_dns_servers` are the `ipv6 ...` statements; any of them is IPv6CP
+  on. **Unlike every other field, a `SetConfig` of `pppoe` with an empty
+  `fields` applies these four only when the request sets one of them**: a
+  client built before them, writing the block whole, sends all four at
+  their defaults and would otherwise turn the box's IPv6 off without knowing
+  it was there. To remove them, name them. A session carries its
+  `ipv6_prefix` (the WAN prefix RA advertised) and `ipv6_delegated_prefix`;
+  the summary `ipv6` and its pools; a history session the same two prefixes
+  and `delegated`, when DHCPv6 delegated the second; and
+  `ListPppoeHistoryRequest.address` takes an IPv6 address, which names the
+  session whose WAN prefix holds it or whose delegated prefix did at `at`.
 * **The sessions.** `ListPppoeSessions` (`show pppoe sessions`): each
   session's id - 16 hexadecimal digits, the Acct-Session-Id RADIUS was sent
   - user, inside address, the CPE's MAC, interface, state, uptime, bytes
