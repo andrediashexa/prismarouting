@@ -190,7 +190,7 @@ O `show pppoe summary` tem a linha `session trail`: quantas linhas foram escrita
 
 
 :::warning
-Uma cadeia que confere prova que o arquivo não foi editado, não que é o mesmo arquivo. Guarde fora da caixa, de tempos em tempos, o `sha256` que o `show pppoe history verify` imprime. A caixa nunca apaga o histórico: uma vez por mês o arquivo vira `pppoe-sessions.log.<AAAA-MM>`, e os meses além do prazo de guarda podem ser arquivados ou removidos por você.
+Uma cadeia que confere prova que o arquivo não foi editado, não que é o mesmo arquivo. Por isso a caixa manda a cabeça da cadeia para fora dela: de hora em hora enquanto o histórico cresce, quando o vigia de eventos começa, e a última linha de cada mês quando o arquivo é virado, ela grava um evento `trail` com o `seq` e o `sha256` — e o registro de eventos vai para os coletores de syslog configurados em `system` > `logging` e para o `WatchEvents` da API. Para conferir, compare o `head seq` e o `sha256` do `show pppoe history verify` com o último evento `trail` que o coletor recebeu (`show log kind trail` mostra a cópia da própria caixa). Sem um coletor de syslog configurado, essa cópia não sai da caixa. A caixa nunca apaga o histórico: uma vez por mês o arquivo vira `pppoe-sessions.log.<AAAA-MM>`, e os meses além do prazo de guarda podem ser arquivados ou removidos por você.
 
 :::
 

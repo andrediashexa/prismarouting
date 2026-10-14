@@ -203,6 +203,7 @@ door call, a timer run or FRR's debug is not a reading.
 | `pool` | `show bpa blocks` | 30 s | dataplane | a pool whose refusals grew: out of blocks, once, however long it goes on refusing; and with a block free again once it refuses nobody. A deterministic pool's reserve the same |
 | `collector` | `show bpa logging`, through `logstate.LogWatch` | 10 s | dataplane | a TCP stream (syslog, IPFIX over TCP) losing its collector - its connection is not `connected` - or reaching it again. A UDP stream has no connection to see: it is lost when LogWatch calls it stalled (sends failing, nothing delivered for 60 s) |
 | `login` | wtmp and btmp | 10 s | host | a login (who, from where, to the VTY or a shell), a logout (info), a failed login (the account typed, from where) |
+| `trail` | the PPPoE session trail's files, each read from its end (`pppoetrail.head()`) | 60 s | host | the trail's head - its last entry's `seq` and digest - hourly while it moves, at the watcher's start, and each file's closing head when it is moved aside (info): the copy off the box `show pppoe history verify` is compared with ([bng.md](bng.md) 0.7) |
 
 `show log`'s lines from the lab (`lab/show-log-watch.sh`, 2026-10-06, the
 lab's container in UTC):
@@ -662,7 +663,8 @@ own registers saw it, and nothing above them did.
 The `prisma-bng` container (docs/bng.md) is a component like the dataplane
 and the routing daemons, and its runs are in the record:
 every start, with its cause; every exit, with its code and why; and each
-`aaa radius` server that accel-ppp marked failed, and used again.
+`aaa radius` server that accel-ppp marked failed, and used again; and the
+head of its session trail, hourly, so a copy of it leaves the box.
 
 **Its runs are a record, not a state.** Docker brings the container back
 within a second (`restart: unless-stopped`), so a reading every 10 s of
@@ -719,16 +721,33 @@ watcher starts is said once, standing.
 | `exit` | `bng` | warning | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
 | `radius` | | warning | `RADIUS server 192.0.2.10 failed: it did not answer, and accel-ppp uses the others for its dead-time` |
 | `radius` | | notice | `RADIUS server 192.0.2.10 is active again: its dead-time is over and accel-ppp sends to it` |
+| `trail` | `bng` | info | `the PPPoE session trail's head: seq 1234, sha256 <64 hex>, in pppoe-sessions.log; 17 entries since the last head said` |
+| `trail` | `bng` | info | `the PPPoE session trail's file pppoe-sessions.log.2026-09 closed: seq 1260, sha256 <64 hex>; 26 entries since the last head said` |
+| `trail` | `bng` | warning | `... the last head said was seq 1234: the chain went back, and is not the one that head was of` |
 
 Source `host`: the host's watcher says them. Starts and exits are held and
 counted like any subject's changes (`flap_admit()`), starts and exits apart,
 so a crash loop is four of each in five minutes and then one summary a
 window.
 
+**The session trail's head** (kind `trail`, docs/bng.md 0.7) is how the
+trail's hash chain gets a copy off the box: this record goes to the remote
+syslog collectors and to `WatchEvents`, so an event carrying the head is
+the copy `show pppoe history verify` is compared with. It is said when the
+head differs from the last one said and an hour (`HEAD_EVERY`) has passed
+since that one, at the watcher's first reading after it starts, and for
+each file moved aside at the month's end, its closing head; nothing on a
+box whose PPPoE never wrote a trail. `info`, as a logout is: a routine
+record, below what an operator filters with `severity notice`, and sent by
+a collector's default (`info` and above). These are not held by
+`flap_admit()` - bounded by construction, one an hour, one a start, one a
+month - since a head held is a head never sent.
+
 ```
 prisma> show log kind exit
 prisma> show log kind start since 1d
 prisma> show log kind radius
+prisma> show log kind trail
 ```
 
 **What it does not do.** It does not say a session dropped: sessions are
@@ -758,8 +777,8 @@ and every one above it. `source` is `vty`, `api`, `host`, `dataplane` or
 `routing`. `kind` is what an event is: phase 1's `commit`, `rollback`,
 `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`,
 phase 2's `settings`, `link`, `transceiver`, `bgp`, `bfd`, `pool`,
-`collector`, `login`, `gave-up`, and the PPPoE control plane's `exit` and
-`radius` (#597). An event wider than the console folds, its continuation indented,
+`collector`, `login`, `gave-up`, and the PPPoE control plane's `exit`,
+`radius` and `trail` (#597). An event wider than the console folds, its continuation indented,
 as every row the VTY prints does (test_prismash_refusals.py holds them to 79
 columns): the first row carries the time, severity, source and the start of
 the sentence, so `| match` finds an event by those; `source` and `severity`

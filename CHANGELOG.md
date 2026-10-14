@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The PPPoE session trail's head leaves the box.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  docs/bng.md 0.7. Since 0.155.4 `show pppoe history verify` printed the
+  hash chain's head and told the operator to compare it "with a copy kept
+  off the box", and nothing put one there: a trail written again from its
+  first line, chained afresh, verifies too. The host's watcher now reads the
+  head - each file's last entry, read from its end, never a whole verify,
+  every 60 s - and writes it as an event of the new kind `trail` (component
+  `bng`, severity `info`): "the PPPoE session trail's head: seq 1234,
+  sha256 <hex>, in pppoe-sessions.log; 17 entries since the last head
+  said". The record already goes to the remote syslog collectors and to
+  `WatchEvents`, so that event is the copy off the box, with no new
+  transport. Said when the head moved and an hour has passed since the last
+  one said (an event per session would be thousands a day in a record that
+  keeps about 1500), at once at the watcher's start, and, when the month's
+  file is moved aside, its closing head, so no stretch of the chain goes
+  unsaid; a head behind the last one said is a warning. Not held by the
+  flapping rule: bounded by construction, and a held head is a head never
+  sent. `show pppoe history verify` now ends "compare the head with the copy
+  sent off the box: show log kind trail". `lab/pppoe.sh` drives the watcher
+  after the trail's sessions: one pass wrote one `trail` event, seq 65 and
+  the sha256 `show pppoe history verify` printed as its head, and the next
+  pass, nothing written between, wrote none. One run of it found a redial
+  writing seq 65 a second after the first pass said 64, and the second pass
+  saying it - rightly - so the pair is taken while the trail stands still.
+
 ### Fixed
 
 ## 0.155.10 - an administrator configures PPPoE and RADIUS through the API

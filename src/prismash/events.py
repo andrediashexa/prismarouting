@@ -90,10 +90,11 @@ ACCOUNT_KINDS = ("commit", "rollback", "confirm", "confirm-expired", "asked",
 #: failed one, and the dataplane given up on. Never an account's: no account
 #: can write that a link went down. `show log kind <kind>` selects one.
 WATCH_KINDS = ("link", "transceiver", "bgp", "bfd", "pool", "collector",
-               "login", "gave-up", "radius")
+               "login", "gave-up", "radius", "trail")
 #: A start's counterpart, for a component whose exits are seen (#597): the
 #: PPPoE control plane's, with its code and why - "start" and "exit" are the
-#: container's runs, "radius" its RADIUS servers failed and back.
+#: container's runs, "radius" its RADIUS servers failed and back, "trail"
+#: the session trail's head, sent off the box (docs/bng.md 0.7).
 KINDS = ACCOUNT_KINDS + ("start", "exit", "boot", "upgraded") + WATCH_KINDS
 #: One sentence, not a screen.
 TEXT_MAX = 300

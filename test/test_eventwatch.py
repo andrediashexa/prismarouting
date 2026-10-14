@@ -64,7 +64,10 @@ for k, v in (("PRISMA_CONFIG", "prisma-routing.conf"),
              # box's; the tests that read some build a sysfs of their own.
              ("PRISMA_SYS_CLASS_NET", "no-sys-class-net"),
              # The PPPoE control plane's record of its runs (#597).
-             ("PRISMA_BNG_RUNS", "bng-runs")):
+             ("PRISMA_BNG_RUNS", "bng-runs"),
+             # The PPPoE session trail (#597, docs/bng.md 0.7): none here
+             # but the one the trail tests write.
+             ("PRISMA_PPPOE_TRAIL", "trail/pppoe-sessions.log")):
     os.environ[k] = os.path.join(_root, v)
 os.environ.pop("PRISMA_WATCH_NETDEVS", None)
 
@@ -704,8 +707,11 @@ check(set(r["link"]) == set(up) and r["transceiver"]["GigabitEthernet0/8/0"]
 sh.dp = Dp({})
 sh.frr = type("F", (prismash.Frr,), {"show": lambda self, c: (1, "")})()
 check(all(sh.watch_read(k) is None for k in W.CADENCE
-          if k not in ("login",) + W.BNG_KINDS),
+          if k not in ("login", "trail") + W.BNG_KINDS),
       "watch_read: nothing answering is None for every kind, not empty")
+check(sh.watch_read("trail") == {"file": "", "seq": 0, "sha": "",
+                                 "closed": []},
+      "watch_read: no PPPoE session trail is a reading - none written")
 check(sh.watch_read("bng") == {"runs": []}
       and sh.watch_read("radius") == {"started": None, "servers": {}},
       "watch_read: no record of the PPPoE control plane's runs is a box "
@@ -1282,6 +1288,175 @@ check(sh.watch_radius() is None,
       "watch_radius: a summary that cannot be had is no reading")
 prismash.pppoe_mod.BNG_CTL, prismash.aaa_mod.read_conf = _old_ctl, _old_conf
 os.remove(os.environ["PRISMA_BNG_RUNS"])
+
+print("\n=== the PPPoE session trail's head, sent off the box (#597) ===")
+# docs/bng.md 0.7: an event carrying the head is the copy off the box, by the
+# record's own remote syslog and WatchEvents. Mutations shown red:
+# trail_changes() without HEAD_EVERY (a head every reading), without the
+# run (a restart waits an hour), without the closing heads (a month's end
+# unsaid), and tick() passing the heads through flap_admit() (held).
+SHA = ["%064x" % i for i in range(10)]
+
+
+def thead(seq, sha, closed=()):
+    return {"file": "pppoe-sessions.log", "seq": seq, "sha": sha,
+            "closed": [{"file": f, "seq": n, "sha": h} for f, n, h in closed]}
+
+
+ch, sd = W.trail_changes({}, {"file": "", "seq": 0, "sha": "", "closed": []},
+                         NOW, run=1)
+check(ch == [] and "seq" not in sd,
+      "trail_changes: no trail - PPPoE never wrote one - says nothing")
+ch, sd = W.trail_changes({}, thead(1234, SHA[1]), NOW, run=1)
+check(texts(ch) == [f"the PPPoE session trail's head: seq 1234, sha256 "
+                    f"{SHA[1]}, in pppoe-sessions.log; the first head said"]
+      and ch[0]["severity"] == "info" and ch[0]["kind"] == "trail"
+      and ch[0]["component"] == "bng" and ch[0]["key"] == "trail:head"
+      and ch[0]["subject"] == "pppoe-sessions.log"
+      and sd == {"seq": 1234, "sha": SHA[1], "file": "pppoe-sessions.log",
+                 "t": NOW, "run": 1},
+      f"trail_changes: the first head is said, and kept as said: {texts(ch)}")
+first_sd = sd
+ch, sd = W.trail_changes(first_sd, thead(1234, SHA[1]), NOW + 7200, run=2)
+check(ch == [] and sd["t"] == NOW and sd["run"] == 2,
+      "trail_changes: a head that has not moved is not said again - an hour "
+      "on, or by a new run")
+ch, sd = W.trail_changes(first_sd, thead(1251, SHA[2]),
+                         NOW + W.HEAD_EVERY - 1, run=1)
+check(ch == [] and sd["seq"] == 1234,
+      "trail_changes: moved, but within HEAD_EVERY of the last one said: "
+      "not yet")
+ch, sd = W.trail_changes(first_sd, thead(1251, SHA[2]),
+                         NOW + W.HEAD_EVERY, run=1)
+check(texts(ch) == [f"the PPPoE session trail's head: seq 1251, sha256 "
+                    f"{SHA[2]}, in pppoe-sessions.log; 17 entries since the "
+                    f"last head said"]
+      and sd["t"] == NOW + W.HEAD_EVERY and sd["seq"] == 1251,
+      f"trail_changes: moved, and HEAD_EVERY since: said, with how far it "
+      f"moved: {texts(ch)}")
+ch, _ = W.trail_changes(first_sd, thead(1235, SHA[2]), NOW + 60, run=2)
+check(len(ch) == 1 and "1 entry since the last head said" in ch[0]["text"],
+      "trail_changes: a restart of the watcher (a new run) says a moved "
+      "head at once, not an hour on")
+ch, _ = W.trail_changes(first_sd, thead(1251, SHA[2]), NOW - 600, run=1)
+check(len(ch) == 1, "trail_changes: a clock that went back says it")
+ch, _ = W.trail_changes(first_sd, thead(3, SHA[3]), NOW + 60, run=2)
+check(len(ch) == 1 and ch[0]["severity"] == "warning"
+      and "the last head said was seq 1234: the chain went back" in
+      ch[0]["text"],
+      f"trail_changes: a head behind the last one said is a warning: "
+      f"{texts(ch)}")
+# The month turns between two readings: the file moved aside closed at
+# 1260, the live one has the carries after it.
+rot = thead(1263, SHA[5], [("pppoe-sessions.log.2026-10", 1260, SHA[4])])
+ch, sd = W.trail_changes(first_sd, rot, NOW + 600, run=1)
+check(texts(ch) == [f"the PPPoE session trail's file pppoe-sessions.log."
+                    f"2026-10 closed: seq 1260, sha256 {SHA[4]}; 26 entries "
+                    f"since the last head said"]
+      and ch[0]["key"] == "trail:closed"
+      and ch[0]["subject"] == "pppoe-sessions.log.2026-10"
+      and sd["seq"] == 1260 and sd["t"] == NOW
+      and sd["closed"] == "pppoe-sessions.log.2026-10",
+      f"trail_changes: a file moved aside has its closing head said at "
+      f"once; the live head waits its hour: {texts(ch)}")
+ch2, sd2 = W.trail_changes(sd, rot, NOW + W.HEAD_EVERY, run=1)
+check(texts(ch2) == [f"the PPPoE session trail's head: seq 1263, sha256 "
+                     f"{SHA[5]}, in pppoe-sessions.log; 3 entries since the "
+                     f"last head said"],
+      "  and the hour on, the live head, counted from the closing one")
+ch, _ = W.trail_changes(sd2, rot, NOW + 2 * W.HEAD_EVERY, run=1)
+check(ch == [], "  and neither again")
+ch, sd = W.trail_changes(first_sd, thead(1300, SHA[6], [
+    ("pppoe-sessions.log.2026-10", 1234, SHA[1])]), NOW + W.HEAD_EVERY, run=1)
+check([c["key"] for c in ch] == ["trail:head"],
+      "trail_changes: a closing head that IS the last one said is not said "
+      "twice")
+two = thead(1400, SHA[9], [("pppoe-sessions.log.2026-09", 1234, SHA[1]),
+                           ("pppoe-sessions.log.2026-10", 1300, SHA[7]),
+                           ("pppoe-sessions.log.2026-11", 1350, SHA[8])])
+ch, sd = W.trail_changes(dict(first_sd, closed="pppoe-sessions.log.2026-09"),
+                         two, NOW + 60, run=1)
+check([c["subject"] for c in ch] == ["pppoe-sessions.log.2026-10",
+                                     "pppoe-sessions.log.2026-11"]
+      and "50 entries since" in ch[1]["text"],
+      "trail_changes: two months turned while the watcher was away: each "
+      "closing head, in order")
+ch, sd = W.trail_changes({}, two, NOW, run=1)
+check([c["key"] for c in ch] == ["trail:head"]
+      and sd["closed"] == "pppoe-sessions.log.2026-11",
+      "trail_changes: the first reading takes the files already moved aside "
+      "as known, and says the head")
+check(W.trail_text({"file": "f", "seq": 5, "sha": "x"}, {})[0].endswith(
+      "the first head said") and W.trail_text(
+      {"file": "f", "seq": 5, "sha": "x"}, {"seq": 5}, closed=True)[1]
+      == "warning",
+      "trail_text: the first head; the same seq again is not the same chain")
+# Through tick(): the heads are events the record takes, and never held by
+# the flapping rule - five restarts of the watcher in a minute say five.
+st, said5 = {}, []
+for i in range(6):
+    evs, st = W.tick(st, {"trail": thead(10 + i, SHA[i])},
+                     {"dataplane": None, "routing": None}, NOW + i, run=i)
+    said5 += evs
+check(len(said5) == 6 and all(events.event_error(e) is None
+                              for e in said5)
+      and all(events.event_error(e, privileged=False) for e in said5)
+      and said5[0]["kind"] == "trail" and said5[0]["component"] == "bng"
+      and said5[0]["source"] == "host" and st["trail"]["seq"] == 15
+      and "trail" not in st.get("seen", {}),
+      f"tick: each head an event the record takes, no account may write, "
+      f"not held: {len(said5)}")
+evs, st2 = W.tick(st, {"trail": None}, {"dataplane": None, "routing": None},
+                  NOW + 9, run=9)
+check(evs == [] and st2["trail"] == st["trail"],
+      "tick: a trail that could not be read is no reading")
+# The Shell: the trail read as root off the host, and the loop - a pass says
+# the head, the next pass (a restart) not again, and one after sessions did.
+os.makedirs(os.path.dirname(os.environ["PRISMA_PPPOE_TRAIL"]), exist_ok=True)
+import pppoetrail  # noqa: E402
+_prev = b"\0" * 32
+_seq = 0
+
+
+def tput(body):
+    global _prev, _seq
+    import hashlib
+    _seq += 1
+    content = f"{body} seq {_seq}"
+    _prev = hashlib.sha256(_prev + content.encode()).digest()
+    with open(os.environ["PRISMA_PPPOE_TRAIL"], "a") as fh:
+        fh.write(f"{content} sha256 {_prev.hex()}\n")
+
+
+tput("2026-10-14T10:00:00.000Z restart closed 0")
+tput("2026-10-14T10:00:01.000Z start session 01 user a mac - interface x "
+     "address 100.64.0.1")
+check(sh.watch_read("trail") == pppoetrail.head()
+      and sh.watch_read("trail")["seq"] == 2,
+      "watch_read trail: pppoetrail.head(), off the host")
+for f in (os.environ["PRISMA_WATCH_STATE"], os.environ["PRISMA_EVENTS"]):
+    if os.path.exists(f):
+        os.remove(f)
+sh = prismash.Shell()
+sh.dp = Dp(dict(ANSWERS))
+sh.frr = frr()
+sh.watch_starts = lambda: {"dataplane": None, "routing": None}
+with contextlib.redirect_stdout(io.StringIO()):
+    p1 = sh.watch_events(once=True)
+    p2 = sh.watch_events(once=True)
+    tput("2026-10-14T10:05:00.000Z stop session 01 user a mac - interface x "
+         "address 100.64.0.1 since 2026-10-14T10:00:01.000Z cause "
+         "User-Request")
+    p3 = sh.watch_events(once=True)
+trec = [e for e in events.read_events() if e.get("kind") == "trail"]
+check([e["kind"] for e in p1] == ["trail"] and p2 == []
+      and [e["kind"] for e in p3] == ["trail"] and len(trec) == 2
+      and f"seq 3, sha256 {_prev.hex()}" in trec[-1]["text"]
+      and "1 entry since the last head said" in trec[-1]["text"]
+      and W.read_state()["trail"]["seq"] == 3,
+      f"watch_events: the first pass says the head, a restart with it "
+      f"unmoved nothing, a restart after it moved says it: {texts(trec)}")
+os.remove(os.environ["PRISMA_PPPOE_TRAIL"])
 
 print("\n=== show log kind ===")
 f, why = events.parse_show_args(["kind", "link"])
