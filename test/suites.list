@@ -183,6 +183,7 @@ python3 test/test_apiserver.py
 python3 test/test_typedcfg.py
 python3 test/test_typedcfg_routing.py
 python3 test/test_typedcfg_phase4.py
+python3 test/test_typedcfg_bng.py
 python3 test/test_clients_sha.py
 python3 test/test_logstate.py
 python3 test/test_cgnatshow.py

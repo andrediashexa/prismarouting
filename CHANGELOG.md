@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The BNG in the management API, typed.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
+  docs/bng.md 0.4 item 2. `GetConfig` reads the `pppoe` block and the `aaa`
+  block (RADIUS) as fields, areas `pppoe` and `aaa`; `SetConfig` writes each
+  as one object - only what differs, as the lines an operator types - and
+  `DeleteConfig` removes either whole. A secret is never read: a local user's
+  password and a RADIUS server's or Disconnect/CoA client's secret are
+  `password_set` / `secret_set`, and are written through write-only fields,
+  as a BGP neighbour's password already was; empty keeps the one configured,
+  and every reply blanks the lines it staged. Five reads, each the VTY's
+  screen drawn from the one reading its fields carry: `ListPppoeSessions`,
+  `GetPppoeSession` (with its policers), `GetPppoeSummary` (the control
+  plane, the sessions, the session trail's and the dataplane's refusal
+  counters, each RADIUS server's state), `ListPppoeHistory` and
+  `VerifyPppoeHistory`; and `Clear` ends sessions by id, user, inside address
+  or all. Additive only: no existing message, field or number changed, and
+  a client built from 0.155.6's contract works unchanged (`lab/api-grpc.sh`
+  drives one). `GetSchema` gains the `pppoe`, `aaa` and `aaa radius` modes.
+  The VTY gains `clear pppoe session address <A.B.C.D>`, the session the
+  list shows at that address ended by its id. `lab/pppoe.sh` holds every
+  read to the VTY's own screen on real sessions and clears by address, id
+  and user through the API; `lab/api-grpc.sh` takes both blocks through
+  SetConfig, Commit and GetConfig and searches every typed answer for the secrets
+  it set.
+
 ### Fixed
 
 ## 0.155.6 - a crash soon after boot is no longer logged as the boot's start

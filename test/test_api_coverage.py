@@ -58,8 +58,11 @@ check(by.get(("operational", "ping"), (0, 0, 0, ""))[3] == "typed",
 #: maintainer's sequencing: the typed API is phase 1's next step (docs/bng.md
 #: 0.4). Named here so that nothing else can join it - a new text or
 #: unreachable path is still a failure - and checked for staleness below, so
-#: an entry that becomes typed is taken out.
-PENDING_597 = {"show pppoe", "clear pppoe", "pppoe", "aaa", "show aaa"}
+#: an entry that becomes typed is taken out. docs/bng.md 0.4 item 2 took out
+#: `show pppoe`, `clear pppoe`, `pppoe` and `aaa`; what is left is the
+#: RADIUS dictionary, a file for the RADIUS server's operator, which Show
+#: hands out as it prints it.
+PENDING_597 = {"show aaa"}
 
 
 def pending(path):

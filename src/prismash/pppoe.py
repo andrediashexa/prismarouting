@@ -961,12 +961,16 @@ def summary_screen(held, status, counts, aaa=None, states=None, trail=None,
 
 
 _SID = re.compile(r"^[0-9a-fA-F]{16}$")
+CLEAR_USAGE = ("clear pppoe session <id> | user <name> | address <A.B.C.D> "
+               "| all")
 
 
 def clear_words(words):
     """
-    `clear pppoe session <id> | user <name> | all`'s words after `session`,
-    as prisma-bng's `terminate` arguments, and why not.
+    `clear pppoe session <id> | user <name> | address <A.B.C.D> | all`'s
+    words after `session`, as prisma-bng's `terminate` arguments - or, by
+    address, ["address", <a>], which the VTY turns into the session's id
+    (prisma-bng terminates by id, user or all) - and why not.
     """
     if words == ["all"]:
         return ["all"], None
@@ -974,9 +978,11 @@ def clear_words(words):
         return ["sid", words[0].lower()], None
     if len(words) == 2 and words[0] == "user" and _NAME.match(words[1]):
         return ["username", words[1]], None
-    return None, ("clear pppoe session <session-id> | user <name> | all; "
-                  "the id is the 16-hex session id 'show pppoe sessions' "
-                  "lists, the Acct-Session-Id RADIUS was sent")
+    if len(words) == 2 and words[0] == "address" and _addr4(words[1]):
+        return ["address", _addr4(words[1])], None
+    return None, ("clear pppoe session <session-id> | user <name> | address "
+                  "<A.B.C.D> | all; the id is the 16-hex session id 'show "
+                  "pppoe sessions' lists, the Acct-Session-Id RADIUS was sent")
 
 
 def cp_taps(show_tap):

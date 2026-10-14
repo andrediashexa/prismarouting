@@ -87,8 +87,8 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `CloseCandidate`, `GetRunning`, `ListRevisions` | |
 | | `GetPendingConfirm` | the `commit confirmed` window the box holds (#558): its deadline, who committed it and why, the revision it reverts from - from the box's own state, so the same after a restart of the server or the client, and for any account |
 | | `ListCandidates` | the account's open candidates (#558): each one's base, staged lines, creation, last activity and expiry, and the server's idle rule |
-| | `GetConfig` | interfaces, CGNAT pools and the CGNAT log export as fields (#558, phase 2), and the routing half - static routes, BGP, OSPF, OSPF6, IS-IS and each interface's IGP settings (phase 3) - of the running configuration or of a candidate |
-| | `SetConfig`, `DeleteConfig` | one object of a candidate set to the fields given, or removed - an interface, a pool, the log export, a static route or a BGP neighbour: the server writes the VTY lines and stages them as `Edit` does |
+| | `GetConfig` | interfaces, CGNAT pools and the CGNAT log export as fields (#558, phase 2), and the routing half - static routes, BGP, OSPF, OSPF6, IS-IS and each interface's IGP settings (phase 3) - of the running configuration or of a candidate; the BNG's `pppoe` and `aaa` blocks, areas `pppoe` and `aaa` (#597), secrets never read. See [PPPoE](#pppoe) |
+| | `SetConfig`, `DeleteConfig` | one object of a candidate set to the fields given, or removed - an interface, a pool, the log export, a static route, a BGP neighbour, the `pppoe` or the `aaa` block: the server writes the VTY lines and stages them as `Edit` does |
 | | `GetSchema` | the whole configuration grammar as the prompt's `?` answers it - every mode, statement, argument, `no` form and value source - versioned by release and digest |
 | | `ValidateLines` | lines checked by the VTY in a throwaway candidate, each accepted or refused with its reason |
 | OperationalService | `GetVersion`, `GetSystem`, `ListInterfaces`, `ListPools`, `GetSubscriber`, `GetSessionsSummary`, `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListVrrp`, `ListBundles` | the readers behind the matching `show`; `GetSystem` carries `show system uptime`'s clocks (0.148.7, #534): `boot_time`, `dataplane_started`, `control_plane_started`, `vty_started`, `release_installed_at` (unset when not read), `last_boot_reason` (only as recorded: `system reboot by <account>`, or `not recorded`) and `dataplane_restarted`; since 0.151.14 (#588) also `dataplane_start_cause` and `control_plane_start_cause` - `boot`, `operator`, `upgrade` or `unexpected` as the box's record of events says, `""` for a start it has not recorded |
@@ -97,7 +97,8 @@ VTY's refusal in the VTY's words and a change made through the API is in
 | | `TestPolicy` | `test policy <p> route\|rib <prefix> ... at <use>` (#538): `attributes` describe the route, as the words `route` takes; `rib` reads it off the box instead, with `vrf` and `neighbor`. Answers the verdict, the deciding policy and term, every step, the route before and after the sets, what was assumed and what is refused there. A use or an attribute it does not take is `INVALID_ARGUMENT`, a policy that does not exist `NOT_FOUND` |
 | | `Show` | any `show`, `ping`, `traceroute` or `mtr`, as text (not `monitor`: it redraws a terminal, and a call has none - the telemetry stream is the API's live view) |
 | | `GetLogging` | `show cgnat logging` (#555): each log export - syslog and IPFIX over TCP, IPFIX over UDP - its collector, who carries it (the log container or the dataplane), its connection, its counters, its spill and whether it is delivering; the box-wide drop counters; the screen itself in `text`. See [The log export](#the-log-export) |
-| | `Clear` | `clear ...` (#558, phase 5): interface counters (one or every), a CGNAT subscriber's sessions, a BGP session (hard, soft, soft in or out), OSPF's process or one adjacency, IS-IS adjacencies; the VTY's line run, its output returned. See [Actions and the box](#actions-and-the-box) |
+| | `Clear` | `clear ...` (#558, phase 5): interface counters (one or every), a CGNAT subscriber's sessions, a BGP session (hard, soft, soft in or out), OSPF's process or one adjacency, IS-IS adjacencies; PPPoE sessions by id, user, inside address or all (#597); the VTY's line run, its output returned. See [Actions and the box](#actions-and-the-box) |
+| | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory`, `VerifyPppoeHistory` | `show pppoe sessions`, `session <id>`, `summary`, `history [...]` and `history verify` (#597), each as fields and its screen in `text`. See [PPPoE](#pppoe) |
 | | `LookupTranslation` | `show cgnat translation <public> <port>` (#558, phase 6): the subscriber behind it - an IPv4 address, or a NAT64 subscriber's prefix - its pool and block, and whether the answer holds for any instant (`SOURCE_FORMULA`) or only now (`SOURCE_RESERVE`, `SOURCE_DYNAMIC`). See [The CGNAT's screens](#the-cgnats-screens) |
 | | `ListTop`, `GetDrops`, `GetCgnatMemory`, `ListBlocks`, `GetIdentity`, `VerifyHistory`, `ListAlgs`, `ListForwards`, `GetHaStatus` | `show cgnat top`, `drops`, `memory`, `blocks`, `identity`, `history verify`, `alg`, `forward` and `ha` (#558, phase 6), each as fields and its screen in `text`. See [The CGNAT's screens](#the-cgnats-screens) |
 | | `ListOspfInterfaces`, `ListIsisInterfaces`, `GetHardware`, `GetRoutingLogging`, `GetSnmpFile` | `show ospf interface`, `show isis interface`, `show hardware`, `show logging` (FRR's, per daemon), `show snmp mib` and `show snmp zabbix-template` (#558, phase 7), each as fields and its screen in `text`; `GetSnmpFile` returns the file itself. See [The rest of the screens](#the-rest-of-the-screens) |
@@ -379,6 +380,84 @@ session (`bfd_peer`) or, with neither, the whole block.
   carry the attachment; a static route's BFD words are no longer in its
   `extra`.
 
+### PPPoE
+
+The BNG (#597, docs/bng.md 0.4 item 2) is typed both ways: its configuration
+through `GetConfig` / `SetConfig` / `DeleteConfig`, its sessions through five
+reads and `Clear`.
+
+* **The blocks as fields.** `GetConfig` area `pppoe` answers
+  `TypedConfig.pppoe` (`PppoeConfig`: the access interfaces, gateway,
+  address pools, resolvers, authentication methods, session limit, MTU,
+  TCP MSS, AC name, the default rate limit in kbit/s and the local users);
+  area `aaa` answers `TypedConfig.aaa` (`AaaConfig.radius`: the servers by
+  priority with their ports, role and priority, the mode, the timers, the
+  NAS identifier, the Disconnect/CoA listener and clients, the rate
+  profiles). `configured` says whether the block exists at all. As
+  everywhere in `TypedConfig`, a field at its default is a statement the
+  block does not have; RADIUS's numeric settings are `optional`, because
+  `retries 0` and `interim-interval 0` are values.
+* **Secrets are never read.** A local user's password, a RADIUS server's
+  and a Disconnect/CoA client's secret are `password_set` / `secret_set` on
+  a read. They are written the way a BGP neighbour's password is
+  (`BgpNeighborEdit.password`): `PppoeLocalUser.password`,
+  `RadiusServerConfig.secret` and `RadiusClientConfig.secret` are write
+  only - empty keeps the secret the block holds, and a user, server or
+  client the block does not have yet needs one (`INVALID_ARGUMENT`
+  otherwise). The lines staged carry the secret to the box; the `lines` and
+  `output` a `SetConfigResponse` returns have it blanked (`<set, not
+  shown>`), as `show running-config` does. The configuration's text -
+  `GetRunning`, `ShowCandidate` - is unchanged by #597: it is the text the
+  box holds, as it already was for an SNMP community or a BGP password.
+* **Edits are lines, against the candidate.** `SetConfig` with `pppoe` or
+  `aaa` writes what differs - removals first - at `["pppoe"]` or
+  `["aaa","radius"]`. `fields` names PppoeConfig's fields
+  (`"rate_limit_default"` is both rates) and AaaConfig's as
+  `"radius.<field>"` (`"radius.dynamic_authorization"` is the listener and
+  its port); empty is every field, so a list left empty - servers, local
+  users, clients, profiles - removes what the block has. Name the fields
+  you mean. A SetConfig of any other object, and one with `fields` naming
+  other fields, leaves the rest of the block as it is. `DeleteConfig` area
+  `pppoe` or `aaa` removes the whole block (`no pppoe`, `no aaa`). A commit
+  of a `pppoe` change restarts the PPPoE control plane and every session
+  redials; an `aaa` change is a reload, no session drops (docs/bng.md 0.6).
+* **The sessions.** `ListPppoeSessions` (`show pppoe sessions`): each
+  session's id - 16 hexadecimal digits, the Acct-Session-Id RADIUS was sent
+  - user, inside address, the CPE's MAC, interface, state, uptime, bytes
+  each way and its rate limit in kbit/s, in the screen's order. PPPoE not
+  running is `running` false and no session, never an error.
+  `GetPppoeSession` (`show pppoe session <id>`) adds the session's index in
+  the dataplane and its policers' packets passed and dropped;
+  `INVALID_ARGUMENT` for an id that is not 16 hex digits, `NOT_FOUND` for
+  one no session has. `GetPppoeSummary` (`show pppoe summary`): the
+  control plane's state, the sessions by state, the session trail's
+  entries written and NOT written and its sequence, the frames the
+  dataplane refused before they reached the control plane (from outside the
+  access interfaces, a MAC another port holds), the RADIUS servers with the
+  state accel-ppp holds each in, and the configuration it runs on. Each
+  `*_known` false is a value that was not read, never a zero that was.
+* **Who held which address.** `ListPppoeHistory` (`show pppoe history`)
+  takes the screen's filters - `user`, `address`, `session_id`, `at` or
+  `since` (the `show log` time syntax), `last` - read by the VTY's own
+  parser, and answers each session with its `start` and `stop` to the
+  millisecond (`held` while there is no stop) and the `cause` it ended
+  with; `more` counts what matched past the 2000 a call returns.
+  `VerifyPppoeHistory` (`show pppoe history verify`) checks the trail's
+  hash chain and answers a verdict, the entry a broken chain names and the
+  head to compare with a copy kept off the box.
+* **`Clear`** ends PPPoE sessions as `clear pppoe session` does - a PADT to
+  the CPE, Accounting-Stop to RADIUS - with `TARGET_PPPOE_SESSION` (`name`
+  the id), `TARGET_PPPOE_USER` (the user), `TARGET_PPPOE_ADDRESS` (the inside
+  address; the session `show pppoe sessions` lists with it, ended by its
+  id) or `TARGET_PPPOE_ALL`. The CPE redials. An account without the
+  administrator role is refused, as at the prompt.
+
+`lab/pppoe.sh` holds every read to the VTY's screen on real PPPoE sessions
+and clears sessions by id, user and address through the API;
+`lab/api-grpc.sh` takes both blocks through SetConfig, Commit and GetConfig,
+searches every typed answer for the secrets it set, and drives the server with a
+client built from the contract of 0.155.6, before any of this existed.
+
 ### The probes
 
 `Ping`, `Traceroute` and `Mtr` (#558, phase 7) run the probe the VTY runs -
@@ -477,10 +556,12 @@ other face, not a second configuration:
   A request whose own fields cannot become a line answers
   `INVALID_ARGUMENT` with `REASON_USAGE`.
 * **`GetSchema`** is the WHOLE configuration grammar, generated from the
-  tree the prompt's `?` answers from - every mode (26: config, nat, cgnat,
-  pool, system and its levels, policy-options and its levels, user,
-  snmp-user, the interfaces, router static/bgp/ospf/ospf6/isis, rpki,
-  route-map), each with the `path` to type its statements at, how it is
+  tree the prompt's `?` answers from - every mode (38 since #597: config,
+  nat, cgnat, pool, nat64 and its pool, system and its levels,
+  policy-options and its levels, user, snmp-user, the interfaces, router
+  static/bgp/ospf/ospf6/isis and BGP's address families, rpki, bfd and its
+  peers and profiles, route-map, an operator VRF's block, and the BNG's
+  pppoe, aaa and aaa radius), each with the `path` to type its statements at, how it is
   entered and the roles that change it. Each statement has its words, help,
   its forms (`<collector> src <source> [port <n>] | disable` is two), each
   argument's kind (`integer` with its range, `ipv4_prefix`, `ipv6_prefix`,
@@ -636,7 +717,9 @@ read and written):
   an SNMP user's passphrases are left out, an IS-IS password is `<set>`, a
   RADIUS identity secret is `identity_radius_secret_set`. They are set as
   lines through Edit; no typed field takes one, and naming one in
-  `SetConfig.fields` is `INVALID_ARGUMENT`.
+  `SetConfig.fields` is `INVALID_ARGUMENT`. The BNG's secrets are read the
+  same way and written through write-only fields, as a BGP neighbour's
+  password is (see [PPPoE](#pppoe)).
 * **Edits: the system settings and the VRF devices.** `SetConfig` with a
   `system` writes only what differs, at the configuration level; its fields
   are named by block and key - `hostname`, `dns_servers`, `ssh.port`,

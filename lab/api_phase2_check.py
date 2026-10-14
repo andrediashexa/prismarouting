@@ -260,8 +260,10 @@ def check_schema():
             for a in f.arguments if a.source}
     # 32 since #572: `nat64` and `nat64 pool`, NAT64's level and its pool,
     # beside 0.150.12's three BFD modes; and #588 phase 3's system logging.
-    # 35 since #580: system management.
-    ok = (len(modes) == 35 and "vrf" in modes and "router bgp" in modes and "router isis" in modes
+    # 35 since #580: system management. 38 since #597 (docs/bng.md 0.4
+    # item 2): pppoe, aaa and aaa radius, typed areas pppoe and aaa.
+    ok = (len(modes) == 38 and modes["pppoe"].typed_area == "pppoe"
+          and list(modes["aaa radius"].path) == ["aaa", "radius"] and "vrf" in modes and "router bgp" in modes and "router isis" in modes
           and list(modes["nat64 pool"].path) == ["nat", "nat64", "pool <name>"]
           and modes["nat64 pool"].typed_area == "nat64"
           and arg is not None and arg.kind == "integer" and (arg.min, arg.max) == (64, 32768)

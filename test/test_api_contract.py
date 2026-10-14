@@ -112,7 +112,12 @@ want = {
                            # #590: show interface transceiver.
                            "ListTransceivers",
                            # #596: show system tuning advice.
-                           "GetTuningAdvice"],
+                           "GetTuningAdvice",
+                           # #597, docs/bng.md 0.4 item 2: the PPPoE
+                           # sessions, summary, history and its verify.
+                           "ListPppoeSessions", "GetPppoeSession",
+                           "GetPppoeSummary", "ListPppoeHistory",
+                           "VerifyPppoeHistory"],
     "TelemetryService": ["Subscribe", "GetHistory",
                          # #558 phase 5: monitor cgnat logging.
                          "WatchLogging"],

@@ -594,6 +594,81 @@ rv, out = said(lambda: sh.clear_pppoe(["session", "all"]))
 check("permission denied" in out and not os.path.exists(log),
       "clear_pppoe: an account without the role is refused")
 
+# By address (docs/bng.md 0.4 item 2): the list read, the session ended by
+# its id - prisma-bng terminates by id, user or all.
+log = ctl(0, TABLE)
+rv, out = said(lambda: shell().clear_pppoe(["session", "address",
+                                            "100.64.0.77"]))
+check("cleared: sid 8aa8eb1ab0657546" in out and open(log).read().split()
+      == ["sessions", "terminate", "sid", "8aa8eb1ab0657546"],
+      f"clear_pppoe: by address, the session's id terminated: {out!r}")
+log = ctl(0, TABLE)
+rv, out = said(lambda: shell().clear_pppoe(["session", "address",
+                                            "100.64.0.99"]))
+check("no session holds 100.64.0.99" in out
+      and open(log).read().split() == ["sessions"],
+      "clear_pppoe: an address no session holds, nothing terminated")
+log = ctl(3, "not running")
+rv, out = said(lambda: shell().clear_pppoe(["session", "address",
+                                            "100.64.0.77"]))
+check("PPPoE is not running" in out, "clear_pppoe: by address, not running")
+log = ctl(1, "no answer")
+rv, out = said(lambda: shell().clear_pppoe(["session", "address",
+                                            "100.64.0.77"]))
+check("did not answer" in out, "clear_pppoe: by address, no answer")
+check(P.clear_words(["address", "100.64.0.7"]) == (["address", "100.64.0.7"],
+                                                    None),
+      "clear_words: address <A.B.C.D>")
+check(P.clear_words(["address", "fe80::1"])[0] is None,
+      "clear_words: an inside address is IPv4")
+
+log = ctl(0, TABLE)
+f = shell().pppoe_sessions_facts()
+check(f["running"] and f["error"] is None and len(f["rows"]) == 2
+      and open(log).read().split() == ["sessions"],
+      "pppoe_sessions_facts: the control plane asked once")
+check("2 session(s)" in said(lambda: shell().show_pppoe_sessions(f))[1],
+      "show_pppoe_sessions: drawn from that reading")
+log = ctl(1, "the door did not answer")
+f = shell().pppoe_sessions_facts()
+check(f["running"] and f["error"] == "the door did not answer"
+      and "did not answer" in said(lambda: shell().show_pppoe_sessions(f))[1],
+      "pppoe_sessions_facts: an answer that did not come")
+log = ctl(0, TABLE)
+dp = Dp({"show pppoe session": (0, "[0] sw-if-index 7 client-ip 0.0.0.0\n"
+                                   "  local-mac x client-mac "
+                                   "02:aa:00:00:00:01\n"),
+         "show policer": (0, 'Name "vyos_7_20000_1250000_down"\n'
+                             'conform 10 packets, 1 bytes\n'
+                             'exceed 2 packets, 1 bytes\n')})
+f = shell(dp).pppoe_session_facts("8AA8EB1AB0657546")
+check(f["row"]["username"] == "sub1" and f["sw_if_index"] == "7"
+      and f["policers"]["vyos_7_20000_1250000_down"] == {"conform": 10,
+                                                         "dropped": 2},
+      "pppoe_session_facts: the row, its index by MAC, the policers")
+out = said(lambda: shell(dp).show_pppoe_session("8aa8eb1ab0657546", f))[1]
+check("02:aa:00:00:00:01" in out and "10 packets passed, 2 dropped" in out,
+      f"show_pppoe_session: drawn from that reading: {out!r}")
+f = shell(dp).pppoe_session_facts("0000000000000000")
+check(f["row"] is None and "no session 0000000000000000" in said(
+          lambda: shell().show_pppoe_session("0000000000000000", f))[1],
+      "pppoe_session_facts: an id no session has")
+log = ctl(0, "running")
+sh = shell(Dp({"show bpa pppoe-access": (
+    0, "discovery passed 5 not-access 3 held 1\n")}))
+sh.running_config = lambda: tgt
+f = sh.pppoe_summary_facts()
+check(f["status"] == "running" and f["guard"] == {"not-access": 3, "held": 1}
+      and f["held"]["gateway"] == "100.64.0.1",
+      "pppoe_summary_facts: the status, the guard, the blocks it runs on")
+out = said(lambda: sh.show_pppoe_summary(f))[1]
+check("running" in out and "3 from outside" in out,
+      f"show_pppoe_summary: drawn from that reading: {out!r}")
+f = shell().pppoe_summary_facts()
+check(f["status"] == "" and "not configured" in said(
+          lambda: shell().show_pppoe_summary(f))[1],
+      "pppoe_summary_facts: no PPPoE, nothing asked")
+
 log = ctl(0, TABLE)
 rv, out = said(lambda: shell().show_pppoe(["sessions"]))
 check("sub1" in out and "2 session(s)" in out, "show_pppoe sessions")

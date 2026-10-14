@@ -78,13 +78,21 @@ OPERATIONAL_RULES = [
     (["monitor", "cgnat", "logging"], "typed", "TelemetryService.WatchLogging",
      "the block events as a stream of LogEvent, the same filters; delivered "
      "in 0.149.25"),
-    # PPPoE (#597), ahead of the rules that would claim it: its first
-    # increment kept the contract as it was, so the sessions are screen text
-    # and `clear pppoe` has no ClearRequest target yet.
-    (["clear", "pppoe"], "none", "-",
-     "#597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4)"),
-    (["show", "pppoe"], "text", "OperationalService.Show",
-     "#597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4)"),
+    # PPPoE (#597, docs/bng.md 0.4 item 2): the sessions typed, each screen
+    # drawn from the reading the rpc's fields carry.
+    (["clear", "pppoe"], "typed", "OperationalService.Clear",
+     "TARGET_PPPOE_SESSION, _USER, _ADDRESS, _ALL (#597)"),
+    (["show", "pppoe", "sessions"], "typed",
+     "OperationalService.ListPppoeSessions", "#597"),
+    (["show", "pppoe", "session"], "typed",
+     "OperationalService.GetPppoeSession", "its policers too (#597)"),
+    (["show", "pppoe", "summary"], "typed",
+     "OperationalService.GetPppoeSummary",
+     "the trail's and the refusals' counters, RADIUS's states (#597)"),
+    (["show", "pppoe", "history", "verify"], "typed",
+     "OperationalService.VerifyPppoeHistory", "#597"),
+    (["show", "pppoe", "history"], "typed",
+     "OperationalService.ListPppoeHistory", "the same filters (#597)"),
     (["clear"], "typed", "OperationalService.Clear",
      "a ClearRequest target per clear; delivered in 0.149.25"),
     (["rollback"], "typed", "ConfigService.Rollback, then Commit", ""),
@@ -224,8 +232,6 @@ CONFIG_RULES = [
     (["commit"], "typed", "ConfigService.Commit",
      "refusals carry Diagnostics.reason (0.149.18)"),
     (["rollback"], "typed", "ConfigService.Rollback", ""),
-    (["pppoe"], "text", "ConfigService.Edit (lines) / GetRunning",
-     "#597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4); GetConfig has no area for it"),
     # #585: an edit OF the candidate, the session's like `top`, and not a
     # statement in it. Edit takes the line as the prompt does, at the level
     # `path` names; SetConfig takes a whole candidate, which is what a client
@@ -274,6 +280,15 @@ TYPED_CONFIG = {
                    "filter", "alg", "vrf", "outside-vrf", "mode",
                    "subscriber-length", "nat64-prefix"),
     "cgnat": ("logging",),
+    # #597, docs/bng.md 0.4 item 2: the BNG's blocks, every statement; a
+    # secret is a write-only field (PppoeLocalUser.password,
+    # RadiusServerConfig.secret), never read.
+    "pppoe": ("interface", "gateway", "address-pool", "dns", "authentication",
+              "session-limit", "mtu", "tcp-mss", "ac-name", "rate-limit",
+              "local-user"),
+    "aaa radius": ("server", "mode", "timeout", "retries", "dead-time",
+                   "nas-identifier", "interim-interval",
+                   "dynamic-authorization", "rate-profile"),
 }
 #: Statements one level's pool grammar offers and that level refuses at
 #: commit (#572): the same Pool grammar serves both levels.
@@ -416,7 +431,9 @@ PHASE4_LINES_WHY = {
 BLOCK_ENTRIES = {"config": ("nat", "rpki", "bfd", "router", "interface",
                             "system",
                             "policy-options", "user", "snmp-user",
-                            "route-map"),
+                            "route-map", "pppoe", "aaa"),
+                 # #597: `aaa` holds one level, `radius`.
+                 "aaa": ("radius",),
                  # `vrf <name>` (FRR's block) vs `vrf <name> table <id>`:
                  # the second is a statement, area vrfs (phase 4).
                  "nat": ("cgnat", "nat64")}
@@ -474,6 +491,7 @@ def classify_config(level, words):
                     "a line (0.149.22)")
         if stmt[:len(first.split())] == first.split():
             since = ("#559 phase 3" if level.startswith("bfd") else
+                     "#597" if level in ("pppoe", "aaa radius") else
                      "0.149.22" if level == "router static" else "0.149.20")
             return ("typed", TYPED_CONFIG_API,
                     "and as lines through Edit; GetSchema/ValidateLines check "
