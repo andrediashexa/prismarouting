@@ -444,7 +444,8 @@ reads and `Clear`.
   with; `more` counts what matched past the 2000 a call returns.
   `VerifyPppoeHistory` (`show pppoe history verify`) checks the trail's
   hash chain and answers a verdict, the entry a broken chain names and the
-  head to compare with a copy kept off the box.
+  head to compare with the copy the box sends off itself: the `trail`
+  events `ListEvents` and `WatchEvents` carry (docs/bng.md 0.7).
 * **`Clear`** ends PPPoE sessions as `clear pppoe session` does - a PADT to
   the CPE, Accounting-Stop to RADIUS - with `TARGET_PPPOE_SESSION` (`name`
   the id), `TARGET_PPPOE_USER` (the user), `TARGET_PPPOE_ADDRESS` (the inside

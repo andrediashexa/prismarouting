@@ -16782,6 +16782,11 @@ class Shell:
                 return eventwatch.bng_reading("")
         if kind == "radius":
             return self.watch_radius()
+        if kind == "trail":
+            # The PPPoE session trail's head (#597, docs/bng.md 0.7), from
+            # each file's end: read here, as root on the host - the trail's
+            # directory is root's 0750, and the doors are for the accounts.
+            return pppoetrail.head()
         return None
 
     def watch_radius(self):
@@ -16829,12 +16834,12 @@ class Shell:
                       file=sys.stderr)
             return None
 
-    def watch_tick(self, state, now=None, force=False):
+    def watch_tick(self, state, now=None, force=False, run=None):
         """
         One tick of the host's watcher (#588 phase 2): the kinds whose
         cadence has come, read, and handed with `state` to eventwatch.tick();
         (events, new_state). `force` reads every kind - a lab's or a test's
-        single pass.
+        single pass. `run` names this run of the watcher (watch_events()).
         """
         import eventwatch
         now = time.time() if now is None else now
@@ -16854,7 +16859,7 @@ class Shell:
         if runs and (not seen or runs[-1]["n"] != seen[-1]["n"]):
             record = events.read_events()
         return eventwatch.tick(state, readings, self.watch_starts(), now,
-                               logins, record)
+                               logins, record, run)
 
     def watch_events(self, once=False, sleep=time.sleep):
         """
@@ -16880,9 +16885,13 @@ class Shell:
         # And the record's remote syslog destinations (#588 phase 3), sent
         # from here between the ticks: eventfwd.py says why this process.
         fwd = eventfwd.Forwarder()
+        # This run of the watcher: the PPPoE session trail's head is said
+        # at its first reading in a run, not only hourly (#597,
+        # eventwatch.trail_changes) - a restart, or a boot, says it at once.
+        run = round(time.time(), 3)
         while True:
             t0 = time.time()
-            new, nxt = self.watch_tick(state, t0, force=once)
+            new, nxt = self.watch_tick(state, t0, force=once, run=run)
             for ev in new:
                 events.record(ev)
             # BFD-STD-MIB's notifications (#559), from the same comparison:

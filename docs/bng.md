@@ -771,7 +771,8 @@ PPPoE session trail: /var/log/prisma-routing/pppoe-sessions.log
   head  seq 4
   sha256 b95e36be694b2c847cd30ef2f5bb564108645c3cb9d16457c772d41f29039730
   a chain that verifies proves the files were not edited, not that they
-  are the same files: compare the head with a copy kept off the box
+  are the same files: compare the head with the copy sent off the box:
+  show log kind trail, as the remote syslog or the API received it
 ```
 
 `show pppoe history [user <name>] [address <A.B.C.D>] [session <id>] [at
@@ -806,18 +807,68 @@ entries written since the control plane started and, in capitals, any it
 could NOT write (the volume full, the directory gone) - each one a session
 the box cannot answer for. accel-ppp's own log says which and why.
 
+**The head, sent off the box.** A chain that verifies proves the files were
+not edited; it does not prove they are the same files - a trail written
+again from its first line, chained afresh, verifies too. What tells them
+apart is a head kept where the box cannot reach it. So the host's watcher
+(`prismash --watch-events`, `src/prismash/eventwatch.py`
+`trail_changes()`) writes the head as an event, and the record of events
+already leaves the box: to the remote syslog collectors configured under
+`system` > `logging`, and to the API's `WatchEvents` stream
+([logging-events.md](logging-events.md)). No new transport, and nothing to
+configure beyond the collector the box already sends to.
+
+| Kind | Component | Severity | Sentence |
+|---|---|---|---|
+| `trail` | `bng` | info | `the PPPoE session trail's head: seq 1234, sha256 <64 hex>, in pppoe-sessions.log; 17 entries since the last head said` |
+| `trail` | `bng` | info | `the PPPoE session trail's file pppoe-sessions.log.2026-09 closed: seq 1260, sha256 <64 hex>; 26 entries since the last head said` |
+| `trail` | `bng` | warning | `... the last head said was seq 1234: the chain went back, and is not the one that head was of` |
+
+* **What is read**: the last entry of each file, from the file's end
+  (`pppoetrail.head()`, `last_entry()`) - its `seq` and its digest - every
+  60 s, as root on the host (the directory is root's 0750). Never a whole
+  `verify`: a month's file at 20,000 sessions a day is about 150 MB.
+* **When it is said**: when the head differs from the last one said, and
+  `HEAD_EVERY` (3600 s) has passed since that one; and at once at the
+  watcher's first reading after it starts - a restart of the watcher, a
+  boot - when the head differs from the last one said. The last one said is
+  kept in `events-watch.state` with the watcher's other state. No trail
+  file, no event.
+* **Why hourly**: the head is a digest over every entry before it, so one
+  head that reached a collector pins the whole trail up to it, and what
+  could be rewritten unseen is the last hour of entries. Said every time it
+  moves, a box with 20,000 sessions a day would write an event every few
+  seconds into a record that keeps about 1500, pushing out the events an
+  operator reads; an hour is 24 a day. The flapping rule (`flap_admit()`)
+  does not hold these: they are bounded by construction, and a held head
+  would be a head never sent.
+* **The month's end**: when a file is moved aside (`.<YYYY-MM>`), its last
+  entry - its closing head - is said at the next reading, before the live
+  file's, so no stretch of the chain goes unsaid between two hourly heads.
+* **A head behind the last one said** - a lower `seq`, or the same `seq`
+  again - is said as a warning: that is not the chain the earlier head was
+  of.
+
+**Comparing.** At the collector, the newest `trail` event before the instant
+in question; on the box, `show pppoe history verify`. The entry with that
+`seq` must carry that digest: when the head said is the newest, the screen's
+`head seq` and `sha256` are the same two values, and when entries were
+written since, the line with that `seq` in the trail (`grep ' seq 1234 '
+/var/log/prisma-routing/pppoe-sessions.log*`) ends with it - and `verify`
+says the chain from it to today is intact. A digest that differs is a trail
+that is not the one the box sent.
+
 **What it proves, and what it does not** - the configuration trail's limits,
 and one of its own:
 
 * a chain that verifies proves the files were not edited; it does not prove
-  they are the same files. The configuration trail's digests also go to
-  VPP's log and from there to a remote syslog; the session trail's do not
-  yet leave the box, so today the head has to be copied off by the operator
-  (`show pppoe history verify` prints it whole). Sending the entries to the
-  box's remote syslog is a follow-up, not built here;
+  they are the same files. The head sent off the box (above) is what does,
+  up to the last head said: entries after it are covered by the next one;
 * entries removed from the **end** verify (every remaining link is genuine),
   and nothing on the box remembers the last sequence written except accel-ppp
-  while it runs (`show stat`'s `seq`);
+  while it runs (`show stat`'s `seq`). Off the box, the last head said does:
+  a trail cut back past it no longer has its `seq`. Entries written after
+  the last head said, and removed before the next, are not seen by anything;
 * a session's address is what accel-ppp bound; that the packets came from
   that subscriber is the access network's to prove (uRPF, logging.md "What
   the record cannot know");

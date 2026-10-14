@@ -82,7 +82,10 @@
 #   * the chain verifies, and names the entry an edit changed;
 #   * no accounting server answering: the session bound and ended is
 #     recorded though no RADIUS server got a Start; both servers down: a
-#     stop is recorded, and no start, since nobody can be authenticated.
+#     stop is recorded, and no start, since nobody can be authenticated;
+#   * the head sent off the box: a pass of the host's watcher after
+#     sessions writes a `trail` event whose seq and sha256 are `show pppoe
+#     history verify`'s head, and the next pass writes none.
 # and for docs/bng.md 0.4 items 3 and 4 (#597), read through the
 # host's watcher (`prismash --watch-events once`) and `show log`:
 #   * every start and exit of the container is an event with its reason:
@@ -1155,6 +1158,67 @@ echo "  RADIUS back: sub2 again in ${DN_BACK} s"
 VERIFY_END=$($HX -c "show pppoe history verify" 2>&1)
 SUMMARY_T=$($HX -c "show pppoe summary" 2>&1)
 echo "$SUMMARY_T" | grep "session trail" | sed 's/^/  /'
+
+# F. The head, sent off the box (docs/bng.md 0.7): the host's watcher writes
+# it as a `trail` event, into the record the remote syslog and WatchEvents
+# carry. Each `tick` is a new run of the watcher, which says a head that
+# moved since the last one said at once (eventwatch.trail_changes); the
+# second, nothing written between, says none. The heads are not passed
+# through the flapping rule, so the ticks before this one cannot hold it.
+trail_events() {
+  cat /var/log/prisma-routing/events.log 2>/dev/null | python3 -c 'import json, sys
+for line in sys.stdin:
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if e.get("kind") == "trail":
+        print(e["severity"], e.get("component", "-"), e["text"])'
+}
+# A CPE redialling between the two ticks moves the head, and the second
+# tick then says it - rightly: in a run of this lab on 2026-10-14 a redial
+# wrote seq 65 a second after the first tick said 64. So the pair is
+# taken while the trail stands still - sub3 back, no line for 5 s - and taken
+# again, up to three times, when a line was written during it anyway.
+trail_quiet() {
+  _n=0; _a=$(wc -l < "$TR")
+  while [ "$_n" -lt 30 ]; do
+    sleep 5; _b=$(wc -l < "$TR")
+    [ "$_a" = "$_b" ] && return 0
+    _a=$_b; _n=$((_n + 1))
+  done
+  return 1
+}
+wait_user sub3 60 > /dev/null
+TRAIL_N0=$(trail_events | wc -l)
+TRAIL_TRY=0
+while [ "$TRAIL_TRY" -lt 3 ]; do
+  TRAIL_TRY=$((TRAIL_TRY + 1))
+  trail_quiet
+  TR_L0=$(wc -l < "$TR")
+  tick > /dev/null
+  VERIFY_H=$($HX -c "show pppoe history verify" 2>&1)
+  TRAIL_NB=$(trail_events | wc -l)
+  # The newest head said, after this tick: the one the first tick wrote, or
+  # on a retry the one the last tick wrote - the head either way.
+  TRAIL_LAST=$(trail_events | grep "trail's head: " | tail -1)
+  [ "$TRAIL_TRY" = 1 ] && TRAIL_EV1=$(trail_events | tail -n +$((TRAIL_N0 + 1)))
+  tick > /dev/null
+  TRAIL_NC=$(trail_events | wc -l)
+  TR_L1=$(wc -l < "$TR")
+  [ "$TR_L0" = "$TR_L1" ] && break
+  echo "  the trail moved during the two ticks ($TR_L0 -> $TR_L1 lines): again"
+done
+TRAIL_FIRST=$(echo "$TRAIL_EV1" | grep -c .)
+H_SEQ=$(echo "$VERIFY_H" | sed -n 's/^  head  seq \([0-9]*\)$/\1/p')
+H_SHA=$(echo "$VERIFY_H" | sed -n 's/^  sha256 \([0-9a-f]*\)$/\1/p')
+EV_SEQ=$(echo "$TRAIL_LAST" | sed -n "s/.*trail's head: seq \([0-9]*\), sha256 .*/\1/p")
+EV_SHA=$(echo "$TRAIL_LAST" | sed -n "s/.*trail's head: seq [0-9]*, sha256 \([0-9a-f]*\), .*/\1/p")
+echo "  the host's watcher, sessions made since its last head: $TRAIL_FIRST trail event(s)"
+echo "$TRAIL_EV1" | sed 's/^/    /'
+echo "  show pppoe history verify's head (pass $TRAIL_TRY): seq ${H_SEQ:-?} sha256 ${H_SHA:-?}"
+echo "  and a second tick, the trail still ($TR_L0 -> $TR_L1 lines): $((TRAIL_NC - TRAIL_NB)) trail event(s)"
+$HX -c "show log kind trail last 2" 2>&1 | sed 's/^/  /'
 echo "=========== 18. PPPoE ONLY ON THE ACCESS INTERFACES ==========="
 # padi.py <iface> <count> [<src mac>] - PADIs sent from <iface>, one a
 # second; prints how many came back with a PADO for them (Host-Uniq)
@@ -1737,6 +1801,13 @@ expect "both RADIUS servers down: a session cleared has its stop recorded" \
 expect "  and no start: nobody could be authenticated, so nothing was held" \
   sh -c "test '$DN_STARTS' -eq 0 && test '$DN_LISTED' -eq 0"
 expect_in "the chain verifies at the end, across every restart" "chain intact" "$VERIFY_END"
+expect "the head sent off the box: a tick after sessions writes one trail event (bng, info) ($TRAIL_FIRST)" \
+  sh -c "test '$TRAIL_FIRST' -eq 1 && echo \"\$1\" | grep -q '^info bng '" _ "$TRAIL_EV1"
+expect "  its seq and sha256 are show pppoe history verify's head (${EV_SEQ:-none} ${EV_SHA:-none})" \
+  sh -c "test -n '$EV_SEQ' && test '$EV_SEQ' = '$H_SEQ' && test -n '$EV_SHA' && test '$EV_SHA' = '$H_SHA'"
+expect "  and an immediate second tick, the trail still ($TR_L0 -> $TR_L1 lines), writes none ($((TRAIL_NC - TRAIL_NB)))" \
+  sh -c "test '$TR_L0' = '$TR_L1' && test '$((TRAIL_NC - TRAIL_NB))' -eq 0"
+expect_in "  verify points at it" "show log kind trail" "$VERIFY_H"
 expect_in "show pppoe summary: the trail's entries" "entries written" \
   "$(echo "$SUMMARY_T" | grep 'session trail')"
 expect_not_in "  and none it could not write" "NOT" "$(echo "$SUMMARY_T" | grep 'session trail')"

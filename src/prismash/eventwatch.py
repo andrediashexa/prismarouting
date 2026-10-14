@@ -85,7 +85,8 @@ TICK = 10
 #: card one identity read and 24 bytes of levels, and the API's own advice
 #: for ListTransceivers is minutes, not seconds.
 CADENCE = {"link": 10, "bfd": 10, "bgp": 10, "collector": 10, "login": 10,
-           "pool": 30, "transceiver": 60, "bng": 10, "radius": 10}
+           "pool": 30, "transceiver": 60, "bng": 10, "radius": 10,
+           "trail": 60}
 #: The kinds read from the dataplane, and from the routing daemons: within
 #: SETTLE of that component's start they are not compared.
 DATAPLANE_KINDS = ("link", "transceiver", "pool", "collector")
@@ -1088,6 +1089,97 @@ def radius_standing(cur):
             if cur["servers"][a]["state"] == "failed"]
 
 
+# --------------------------------------- the PPPoE session trail's head
+
+#: How often, at most, the PPPoE session trail's head is said (#597,
+#: docs/bng.md 0.7), seconds. The head is a digest over every entry before
+#: it, so one head that reached a collector pins the whole trail up to it,
+#: and what can be rewritten on the box unseen is what came after the last
+#: head said: an hour of sessions. Said every time it moves, it would be an
+#: event every few seconds on a box with 20,000 sessions a day - thousands
+#: a day in a record that keeps about 1500 (events.EVENTS_MAX), pushing out
+#: the events an operator reads. An hour is 24 a day.
+HEAD_EVERY = 3600
+#: How the trail is named in a sentence.
+TRAIL_WHAT = "the PPPoE session trail"
+
+
+def trail_text(h, said, closed=False):
+    """
+    The sentence a head says, and its severity: `h` {"file", "seq", "sha"},
+    `said` the last head said ({} when none was), `closed` when `h` is a
+    moved-aside file's last entry - its head when it was closed. A head
+    whose seq is not past the last one said is not the chain that one was
+    said of: the trail was replaced or started again, which is a warning.
+    """
+    if closed:
+        text = (f"{TRAIL_WHAT}'s file {h['file']} closed: seq {h['seq']}, "
+                f"sha256 {h['sha']}")
+    else:
+        text = (f"{TRAIL_WHAT}'s head: seq {h['seq']}, sha256 {h['sha']}, "
+                f"in {h['file']}")
+    if not said.get("seq"):
+        return text + "; the first head said", "info"
+    n = h["seq"] - said["seq"]
+    if n > 0:
+        return (text + f"; {n} entr{'y' if n == 1 else 'ies'} since the "
+                f"last head said"), "info"
+    return (text + f"; the last head said was seq {said['seq']}: the chain "
+            f"went back, and is not the one that head was of"), "warning"
+
+
+def trail_changes(said, cur, now, run=None):
+    """
+    The heads to say of a trail reading `cur` (pppoetrail.head()), and what
+    is said after them: (changes, said). `said` is the state's record of
+    the last head said - {"seq", "sha", "file", "t", "run", "closed"} - and
+    `run` names this run of the watcher.
+
+    NOT A COMPARISON OF TWO READINGS: of the reading with the last head
+    SAID. The head is said when it differs from that one and HEAD_EVERY has
+    passed since it was said - or this is the watcher's first reading of
+    the trail since it started (`run` is not the one said), so a restart or
+    a boot says where the trail stands at once. A file moved aside since
+    the last reading (the trail's month turned) has its closing head said
+    then, before the live file's, so no stretch of the chain goes unsaid;
+    the first reading of all says the head and takes the files already
+    moved aside as known. No trail (seq 0) says nothing.
+
+    These are bounded by construction - one an hour, one a start of the
+    watcher, one a month - so tick() does not pass them through
+    flap_admit(): a held head would be a head never sent off the box.
+    """
+    said = dict(said or {})
+    fresh = said.get("run") != run
+    said["run"] = run
+    if not cur or not cur.get("seq"):
+        return [], said
+    out = []
+    base = {"source": "host", "kind": "trail", "component": "bng",
+            "what": TRAIL_WHAT, "reason": "", "bounded": True}
+    known = said.get("closed")
+    for c in cur.get("closed") or []:
+        if not said.get("seq") or (known is not None and c["file"] <= known) \
+                or (c["seq"], c["sha"]) == (said.get("seq"), said.get("sha")):
+            continue
+        text, sev = trail_text(c, said, closed=True)
+        out.append(dict(base, key="trail:closed", subject=c["file"],
+                        severity=sev, text=text, state=f"seq {c['seq']}"))
+        # Not its time: the live head's hour runs from the last one said.
+        said.update(seq=c["seq"], sha=c["sha"], file=c["file"])
+    if cur.get("closed"):
+        said["closed"] = cur["closed"][-1]["file"]
+    if (cur["seq"], cur["sha"]) == (said.get("seq"), said.get("sha")):
+        return out, said
+    t = said.get("t")
+    if fresh or t is None or not 0 <= now - t < HEAD_EVERY:
+        text, sev = trail_text(cur, said)
+        out.append(dict(base, key="trail:head", subject=cur["file"],
+                        severity=sev, text=text, state=f"seq {cur['seq']}"))
+        said.update(seq=cur["seq"], sha=cur["sha"], file=cur["file"], t=now)
+    return out, said
+
+
 # ---------------------------------------------------------------- standing
 
 def link_standing(cur):
@@ -1411,7 +1503,7 @@ COMPARE = {"link": (link_changes, True), "transceiver": (module_changes,
            "radius": (radius_changes, False)}
 
 
-def tick(state, readings, starts, now, logins=None, record=None):
+def tick(state, readings, starts, now, logins=None, record=None, run=None):
     """
     One tick of the watcher, pure: (events, new_state).
 
@@ -1425,7 +1517,8 @@ def tick(state, readings, starts, now, logins=None, record=None):
     are not passed through flap_admit(): once a boot is their bound.
     `record` is the box's record of events, for a start of the PPPoE
     control plane to find its cause in (bng_changes); None when no new run
-    was read.
+    was read. `run` names this run of the watcher, for the PPPoE session
+    trail's head (trail_changes): said once at a start, then hourly.
     """
     state = json.loads(json.dumps(state or {}))
     seen = state.setdefault("seen", {})
@@ -1433,10 +1526,14 @@ def tick(state, readings, starts, now, logins=None, record=None):
     last = state.setdefault("last", {})
     flaps = state.setdefault("flaps", {})
     stood = state.setdefault("stood", {})
-    changes, standing = [], []
+    changes, standing, trail = [], [], []
     for kind, cur in readings.items():
         last[kind] = now
         if cur is None:
+            continue
+        if kind == "trail":
+            trail, state["trail"] = trail_changes(state.get("trail"), cur,
+                                                  now, run)
             continue
         comp = "dataplane" if kind in DATAPLANE_KINDS else \
             "bng" if kind in BNG_KINDS else "routing"
@@ -1473,9 +1570,9 @@ def tick(state, readings, starts, now, logins=None, record=None):
         state["logins"] = pos
         last["login"] = now
     out = []
-    for c in standing + changes:
-        if not c.get("standing") and not flap_admit(flaps, c,
-                                                    c.get("t", now)):
+    for c in standing + changes + trail:
+        if not c.get("standing") and not c.get("bounded") and \
+                not flap_admit(flaps, c, c.get("t", now)):
             continue
         out.append(events.make_event(
             c["source"], c["severity"], c["text"], who=c.get("who", ""),

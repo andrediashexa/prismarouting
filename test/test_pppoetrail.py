@@ -210,6 +210,17 @@ check("1 earlier file(s)" in scr[1] and
       f"verify_screen: intact, the head whole, a console's width: {scr}")
 
 
+# docs/bng.md 0.7 quotes the screen: its closing lines - where the head is
+# to be compared - are the ones the screen prints. No doc test reads this
+# screen, and the lines changed when the head began to be sent off the box.
+_doc = open(os.path.join(HERE, "..", "docs", "bng.md")).read()
+_quote = _doc.split("prisma> show pppoe history verify\n", 1)[-1] \
+    .split("```", 1)[0].splitlines()
+check(len(_quote) > 3 and _quote[-3:] == scr[-3:],
+      f"docs/bng.md quotes verify's closing lines as the screen prints them: "
+      f"{_quote[-3:]}")
+
+
 def tampered(edit):
     """verify() of a copy of the trail with `edit` applied to its lines."""
     d = tempfile.mkdtemp(dir=_root)
@@ -253,6 +264,52 @@ check("nothing here is covered" in "".join(T.verify_screen(rep)),
 check("no PPPoE session has been recorded" in
       "".join(T.verify_screen(T.verify(os.path.join(d, "none.log")))),
       "verify_screen: no trail at all")
+
+print("\n=== the head, read from the end (sent off the box) ===")
+# The host's watcher reads it every minute (eventwatch.trail_changes): from
+# each file's end, never a verify. Mutations shown red: last_entry() not
+# reading further back when its first 4 kB hold no whole entry (the 5 kB
+# line), and head() taking the newest moved-aside file for the live one.
+check(T.last_entry(TRAIL)["seq"] == 9 and T.last_entry(SEP)["seq"] == 4
+      and T.last_entry(TRAIL)["sha"] == w.head.hex(),
+      "last_entry: each file's last entry")
+check(T.last_entry(os.path.join(DIR, "none.log")) is None,
+      "last_entry: no file is none")
+hd = T.head()
+check(hd == {"file": "pppoe-sessions.log", "seq": 9, "sha": w.head.hex(),
+             "closed": [{"file": "pppoe-sessions.log.2026-09", "seq": 4,
+                         "sha": T.last_entry(SEP)["sha"]}]}
+      and (hd["seq"], hd["sha"]) == (T.verify()["head_seq"],
+                                     T.verify()["head_sha"]),
+      f"head: the live file's last entry - verify()'s head - and the "
+      f"moved-aside file's closing one: {hd}")
+check(T.head(os.path.join(DIR, "none.log")) ==
+      {"file": "", "seq": 0, "sha": "", "closed": []},
+      "head: no trail at all - PPPoE never wrote one - is seq 0")
+check(T.head(closed_max=0)["closed"] == [],
+      "head: closed_max 0 reads no moved-aside file")
+d = tempfile.mkdtemp(dir=_root)
+shutil.copy(SEP, d)
+lone_sep = T.head(os.path.join(d, os.path.basename(TRAIL)))
+check(lone_sep["seq"] == 4 and lone_sep["file"].endswith(".2026-09"),
+      "head: the month just moved aside and nothing written since - its "
+      "last entry is the head")
+# A long file, a torn last write, and a line far longer than one reading.
+d = tempfile.mkdtemp(dir=_root)
+lp = os.path.join(d, "pppoe-sessions.log")
+lw = Writer(lp)
+for i in range(60):
+    lw.put(f"2026-10-02T09:{i:02d}:00.000Z start {S1}")
+lw.put(f"2026-10-02T10:00:00.000Z start {S1.replace('sub1', 'x' * 5000)}")
+with open(lp, "a") as fh:
+    fh.write("2026-10-02T10:00:01.000Z start session 00")
+check(T.last_entry(lp)["seq"] == 61 and T.last_entry(lp)["sha"] ==
+      lw.head.hex(),
+      "last_entry: past a write cut short, a 5 kB line read whole")
+with open(lp, "a") as fh:
+    fh.write("\n" + "y" * (T.TAIL_MAX + 10) + "\n")
+check(T.last_entry(lp) is None,
+      "last_entry: TAIL_MAX of what is not an entry is not read past")
 
 print("\n=== the words ===")
 now = T.parse_stamp("2026-10-13T12:00:00.000Z")

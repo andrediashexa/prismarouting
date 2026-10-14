@@ -47,6 +47,16 @@ SHOW_LAST = 50
 #: most 1 MiB (doors._read_line), and a session is about 300 bytes of JSON.
 ROWS_MAX = 2000
 KINDS = ("start", "stop", "carry", "restart")
+#: How far from a file's end last_entry() looks for its last entry. An entry
+#: is about 300 bytes, and one whose user name is 192 bytes all escaped
+#: (%XX) under 900: 64 KiB is seventy entries of the longest kind, so an end
+#: with no entry in it is not a write cut short but not a trail.
+TAIL_MAX = 65536
+#: The moved-aside files head() reads the closing head of, newest first: a
+#: year's. The watcher says each one closed once, when it first sees it
+#: (eventwatch.trail_changes), and a watcher stopped for more than a year
+#: has more to say than a closing head.
+CLOSED_MAX = 12
 
 _STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$")
 _TAIL = re.compile(r" seq (\d+) sha256 ([0-9a-f]{64})$")
@@ -134,6 +144,68 @@ def segments(path=None):
     out = [os.path.join(d, n) for n in months]
     if base in names:
         out.append(path)
+    return out
+
+
+def last_entry(path):
+    """
+    The last entry of one file, as parse_line() reads it, found from the
+    file's end: the host's watcher reads the head every minute (#597,
+    docs/bng.md 0.7), and a month's file at 20,000 sessions a day is about
+    150 MB, which a reading from the start would read whole each time. What
+    is not an entry at the end - a write cut short - is passed over, as
+    verify() passes it. None when the last TAIL_MAX bytes hold no entry, or
+    the file cannot be read.
+    """
+    try:
+        with open(path, "rb") as fh:
+            end = fh.seek(0, os.SEEK_END)
+            size = 4096
+            while True:
+                start = max(0, end - size)
+                fh.seek(start)
+                lines = fh.read(end - start).split(b"\n")
+                if start:
+                    # Cut where the reading began: not a whole line.
+                    lines = lines[1:]
+                for raw in reversed(lines):
+                    rec = parse_line(raw.decode("utf-8", "surrogateescape"))
+                    if rec:
+                        return rec
+                if not start or size >= TAIL_MAX:
+                    return None
+                size *= 4
+    except OSError:
+        return None
+
+
+def head(path=None, closed_max=None):
+    """
+    The trail's head as the host's watcher sends it off the box (#597,
+    docs/bng.md 0.7): {"file", "seq", "sha", "closed"} - the last entry of
+    the newest file that has one, that file's name, and each moved-aside
+    file's last entry ({"file", "seq", "sha"}, oldest first, the newest
+    `closed_max` of them): its head when it was closed. seq 0 and no file
+    when no file has an entry - PPPoE never wrote a trail here. Each file is
+    read from its end (last_entry()), never verified: verify() reads every
+    file whole, and is what an operator compares this with.
+    """
+    path = path or TRAIL_PATH
+    closed_max = CLOSED_MAX if closed_max is None else closed_max
+    segs = segments(path)
+    out = {"file": "", "seq": 0, "sha": "", "closed": []}
+    moved = [p for p in segs if p != path][-closed_max:] if closed_max else []
+    for p in moved:
+        rec = last_entry(p)
+        if rec:
+            out["closed"].append({"file": os.path.basename(p),
+                                  "seq": rec["seq"], "sha": rec["sha"]})
+    rec = last_entry(path) if path in segs else None
+    if rec:
+        out.update(file=os.path.basename(path), seq=rec["seq"],
+                   sha=rec["sha"])
+    elif out["closed"]:
+        out.update({k: out["closed"][-1][k] for k in ("file", "seq", "sha")})
     return out
 
 
@@ -365,8 +437,10 @@ def verify_screen(rep, path=None):
             f"  sha256 {rep['head_sha']}",
             "  a chain that verifies proves the files were not edited, not "
             "that they",
-            "  are the same files: compare the head with a copy kept off the "
-            "box"]
+            "  are the same files: compare the head with the copy sent off the "
+            "box:",
+            "  show log kind trail, as the remote syslog or the API received "
+            "it"]
     return out
 
 
