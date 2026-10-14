@@ -245,6 +245,57 @@ def config():
            f"{len(raw)} bytes, none of {SECRETS}")
 
 
+def ipv6():
+    """
+    IPv6 on the sessions (#609), typed: sub7's WAN and delegated prefixes in
+    ListPppoeSessions as `show pppoe sessions` prints them under it; the
+    pools in GetConfig and GetPppoeSummary as configured; and who held an
+    address of the delegated prefix, from ListPppoeHistory.
+    """
+    import ipaddress
+    got = listed()
+    s7 = [s for s in got.sessions if s.user == "sub7" and s.state == "active"]
+    screen = vty("show pppoe sessions").splitlines()
+    under = []
+    if s7:
+        at = [i for i, ln in enumerate(screen) if ln.startswith(s7[0].session_id)]
+        under = [ln.strip() for ln in screen[at[0] + 1:at[0] + 3]] if at else []
+    ok = bool(s7) and s7[0].ipv6_prefix.startswith("2001:db8:100:") \
+        and s7[0].ipv6_prefix.endswith("/64") \
+        and ipaddress.IPv6Network(s7[0].ipv6_delegated_prefix or "::/128") \
+        .subnet_of(ipaddress.IPv6Network("2001:db8:200::/40")) \
+        and under == [f"ipv6 {s7[0].ipv6_prefix}",
+                      f"delegated {s7[0].ipv6_delegated_prefix}"]
+    result("sessions-ipv6", ok,
+           f"{[(s.user, s.ipv6_prefix, s.ipv6_delegated_prefix) for s in got.sessions]}"
+           f" vty {under}")
+    c = cfg.GetConfig(pb.GetConfigRequest(areas=["pppoe"]), timeout=60).pppoe
+    sm = op.GetPppoeSummary(pb.GetPppoeSummaryRequest(), timeout=60)
+    pools = [(d.prefix, d.length) for d in c.ipv6_delegated_pools]
+    result("config-ipv6",
+           list(c.ipv6_prefix_pools) == ["2001:db8:100::/48"]
+           and pools == [("2001:db8:200::/40", 56)]
+           and list(c.ipv6_dns_servers) == ["2001:4860:4860::8888"]
+           and not c.ipv6_enable and sm.ipv6
+           and list(sm.ipv6_prefix_pools) == ["2001:db8:100::/48"]
+           and [(d.prefix, d.length) for d in sm.ipv6_delegated_pools] == pools,
+           f"config {list(c.ipv6_prefix_pools)} {pools} summary {sm.ipv6}")
+    if not s7 or not s7[0].ipv6_delegated_prefix:
+        result("history-ipv6", False, "sub7 has no delegated prefix")
+        return
+    addr = str(ipaddress.IPv6Network(s7[0].ipv6_delegated_prefix)[1])
+    h = op.ListPppoeHistory(pb.ListPppoeHistoryRequest(address=addr, at="0m"),
+                            timeout=60)
+    vt = vty(f"show pppoe history address {addr} at 0m")
+    result("history-ipv6",
+           [x.user for x in h.sessions] == ["sub7"]
+           and h.sessions[0].ipv6_delegated_prefix == s7[0].ipv6_delegated_prefix
+           and h.sessions[0].HasField("delegated")
+           and h.sessions[0].delegated.seconds >= h.sessions[0].start.seconds
+           and "sub7 held" in vt,
+           f"{addr}: {[(x.user, x.ipv6_prefix, x.ipv6_delegated_prefix) for x in h.sessions]}")
+
+
 def clears():
     got = listed().sessions
     by_user = {s.user: s for s in got if s.state == "active"}
@@ -343,5 +394,5 @@ def commit():
 
 for name, fn in (("sessions", sessions), ("session", one), ("summary", summary),
                  ("history", history), ("verify", verify), ("config", config),
-                 ("clears", clears), ("commit", commit)):
+                 ("ipv6", ipv6), ("clears", clears), ("commit", commit)):
     run(name, fn)
