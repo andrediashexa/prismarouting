@@ -15,6 +15,9 @@
  * WHAT A LINE IS, one per event, appended, fsynced:
  *
  *   <time> start session <sid> user <u> mac <m> interface <i> address <a>
+ *                [prefix <IPv6 WAN prefix>]
+ *   <time> delegate session ... delegated <p> delegated-since <time>
+ *                since <time>
  *   <time> stop  session ... address <a> since <time> cause <c>
  *   <time> carry session ... address <a> since <time>
  *   <time> restart closed <n>
@@ -30,7 +33,9 @@
  * A stop repeats what its start said, `since` included, so either line
  * answers alone - the rule the BPA log's release follows (#397). `carry`
  * restates a session still held when the file is rotated (monthly), so a
- * month's file answers for any instant in that month on its own; `restart`
+ * month's file answers for any instant in that month on its own;
+ * `delegate` restates a session the moment it is delegated an IPv6 prefix
+ * by DHCPv6 (#609), which its stop and carry then repeat; `restart`
  * is the control plane starting, and the stops written just before it, cause
  * Control-Plane-Lost, close what a control plane that died left open.
  *
@@ -414,7 +419,12 @@ static struct prisma_trail_open *prisma_trail_track(struct prisma_trail_open *op
 	end = strstr(kind, " seq ");
 	if (!end)
 		return open;
-	if (!strncmp(kind, "start session ", 14) || !strncmp(kind, "carry session ", 14)) {
+	if (!strncmp(kind, "start session ", 14) || !strncmp(kind, "carry session ", 14) ||
+	    !strncmp(kind, "delegate session ", 17)) {
+		/* A delegate (#609) restates the session with its prefix, as a
+		 * carry does: what a control plane killed later closes with. */
+		int skip = kind[0] == 'd' ? 9 : 6;
+
 		o = calloc(1, sizeof(*o));
 		if (!o)
 			return open;
@@ -423,7 +433,7 @@ static struct prisma_trail_open *prisma_trail_track(struct prisma_trail_open *op
 			prisma_trail_fields(o, kind + 6, end);
 			snprintf(o->since, sizeof(o->since), "%.*s", (int)(kind - 1 - line), line);
 		} else if (since && since < end) {
-			prisma_trail_fields(o, kind + 6, since);
+			prisma_trail_fields(o, kind + skip, since);
 			snprintf(o->since, sizeof(o->since), "%.*s", (int)(end - since - 7), since + 7);
 		} else {
 			free(o);
