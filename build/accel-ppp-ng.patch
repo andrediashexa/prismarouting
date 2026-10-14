@@ -258,9 +258,9 @@ index 0000000..afaf442
 +}
 +
 +/*
-+ * The session's delegated prefix, the moment accel-ppp's dhcpv6 took it
-+ * (#609): it fires EV_FORCE_INTERIM_UPDATE then, for RADIUS's interim, and
-+ * at no other time with ipv6_dp new. Written once a session; a renew keeps
++ * The session's delegated prefix, the moment accel-ppp's dhcpv6 routed it
++ * (#609): it fires EV_FORCE_INTERIM_UPDATE then (this patch's dhcpv6.c), a
++ * pool's prefix and RADIUS's alike. Written once a session; a renew keeps
 + * the prefix and fires nothing.
 + */
 +static void ev_force_interim(struct ap_session *ses)
@@ -380,6 +380,47 @@ index bafb876..ee35d3d 100644
  };
  
  struct ev_mppe_keys_t
+diff --git a/accel-pppd/ipv6/dhcpv6.c b/accel-pppd/ipv6/dhcpv6.c
+index be24b80..48cf1f3 100644
+--- a/accel-pppd/ipv6/dhcpv6.c
++++ b/accel-pppd/ipv6/dhcpv6.c
+@@ -229,6 +229,12 @@ static void insert_dp_routes(struct ap_session *ses, struct dhcpv6_pd *pd, struc
+ 	}
+ 
+ 	pd->dp_active = 1;
++	/* Prisma (#609): fired here, once the prefix is routed, and not where it
++	 * was taken from the pool: a prefix RADIUS gave (Delegated-IPv6-Prefix)
++	 * is on the session from its Access-Accept, so it was never taken here
++	 * and the event never fired - no interim carried it and the session
++	 * trail never wrote its `delegate`. */
++	triton_event_fire(EV_FORCE_INTERIM_UPDATE, ses);
+ }
+ 
+ static int insert_status(struct dhcpv6_packet *pkt, struct dhcpv6_option *opt, int code)
+@@ -439,9 +445,7 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
+ 
+ 			if (!ses->ipv6_dp) {
+ 				ses->ipv6_dp = ipdb_get_ipv6_prefix(ses);
+-				if (ses->ipv6_dp)
+-					triton_event_fire(EV_FORCE_INTERIM_UPDATE, ses);
+-				else {
++				if (!ses->ipv6_dp) {
+ 					dhcpv6_packet_free(reply);
+ 					return;
+ 				}
+@@ -655,11 +659,8 @@ static void dhcpv6_send_reply2(struct dhcpv6_packet *req, struct dhcpv6_pd *pd,
+ 			ia_na->T1 = conf_pref_lifetime == -1 ? -1 : htonl(conf_pref_lifetime / 2);
+ 			ia_na->T2 = conf_pref_lifetime == -1 ? -1 : htonl((conf_pref_lifetime * 4) / 5);
+ 
+-			if (!ses->ipv6_dp) {
++			if (!ses->ipv6_dp)
+ 				ses->ipv6_dp = ipdb_get_ipv6_prefix(ses);
+-				if (ses->ipv6_dp)
+-					triton_event_fire(EV_FORCE_INTERIM_UPDATE, ses);
+-			}
+ 
+ 			if (!ses->ipv6_dp)
+ 				goto out;
 diff --git a/accel-pppd/ppp/ppp.c b/accel-pppd/ppp/ppp.c
 index 235b4b6..c22059e 100644
 --- a/accel-pppd/ppp/ppp.c
