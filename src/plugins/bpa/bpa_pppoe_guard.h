@@ -71,6 +71,11 @@
  * every other one is a control frame it punts. */
 #define BPA_PPP_IP4 0x0021
 #define BPA_PPP_IP6 0x0057
+/* The IPv6 the session's control plane answers (#609): an ICMPv6 Router
+ * Solicitation, and a DHCPv6 message to a server or relay. */
+#define BPA_ICMP6_ROUTER_SOLICIT 133
+#define BPA_DHCP6_SERVER_PORT	 547
+#define BPA_IP6_HEADER		 40
 
 #define BPA_PPPOE_HOLD_WAYS 4
 /* 16384 sets of 4: 65,536 MACs in 1 MiB, past what one box terminates. */
@@ -82,6 +87,9 @@ typedef enum
   BPA_PPPOE_PASS = 0,
   BPA_PPPOE_NOT_ACCESS,
   BPA_PPPOE_HELD,
+  /* An IPv6 control frame (bpa_pppoe_ip6_is_control): to the control
+   * plane, as an LCP frame goes, and not to ip6-input (#609). */
+  BPA_PPPOE_PUNT,
 } bpa_pppoe_verdict_t;
 
 /* One way of a set. `key` 0 is an empty way. */
@@ -164,12 +172,88 @@ bpa_pppoe_held_note (bpa_pppoe_held_t *tbl, u32 sets_log2, u64 key,
 }
 
 /*
+ * Whether a session's IPv6 packet is one its control plane answers (#609):
+ * `ip6` the IPv6 header after the PPP protocol, `len` the bytes of it the
+ * buffer holds. 1 for an ICMPv6 Router Solicitation and for UDP to port 547
+ * (DHCPv6, client to server), each sent to a link-scope address - ff02::/16
+ * or fe80::/10 - with no extension header between: what a CPE sends for its
+ * WAN prefix (RFC 4861 6.3.7) and its delegated one (RFC 8415 13), and
+ * nothing that is the subscriber's traffic to anywhere else.
+ *
+ * WHY HERE, measured in lab/pppoe.sh (docs/bng.md 0.8): VPP 26.06's pppoe-
+ * input decapsulates EVERY PPP-IPv6 frame into ip6-input, so a CPE's RS and
+ * its DHCPv6 Solicit died in the dataplane - the session interface has no
+ * IPv6 address and no ND - while accel-ppp-ng's VPP hooks wait for them on
+ * the session's PPP channel (ppp_ipv6layer.c, is_non_socket_dhcpv6_nd),
+ * which is the control plane's TAP. VyOS ships a patched plugin; this
+ * product runs stock VPP, so the guard - already in front of the plugin for
+ * every session frame - sends these few to pppoe-cp-dispatch instead, the
+ * node that takes an LCP frame to the control plane.
+ */
+static_always_inline int
+bpa_pppoe_ip6_is_control (const u8 *ip6, u32 len)
+{
+  if (len < BPA_IP6_HEADER + 4 || (ip6[0] >> 4) != 6)
+    return 0;
+  /* the destination: ff02::/16, or fe80::/10 */
+  if (!((ip6[24] == 0xff && ip6[25] == 0x02) ||
+	(ip6[24] == 0xfe && (ip6[25] & 0xc0) == 0x80)))
+    return 0;
+  if (ip6[6] == 58)
+    return ip6[BPA_IP6_HEADER] == BPA_ICMP6_ROUTER_SOLICIT;
+  if (ip6[6] == 17)
+    return ((ip6[BPA_IP6_HEADER + 2] << 8) | ip6[BPA_IP6_HEADER + 3]) ==
+	   BPA_DHCP6_SERVER_PORT;
+  return 0;
+}
+
+/*
+ * Whether a frame from the CONTROL PLANE's TAP is a session's IPv6 (#609):
+ * the Router Advertisement and the DHCPv6 reply accel-ppp sends back on the
+ * session (`frame` the Ethernet header, `len` its bytes). VPP 26.06 hands
+ * the TAP's frames to pppoe-input, which takes a PPP-IPv6 frame for a
+ * subscriber's data and looks its session up by the SOURCE MAC - the access
+ * card's, here - and drops it ("no such session"): measured, every RA accel-
+ * ppp sent died there. 1 for ethertype 0x8864 (after at most one VLAN tag,
+ * accel-ppp's pppoe-cp.<vlan>) carrying PPP protocol 0x0057; the offset of
+ * the PPPoE header in `*pppoe_at`.
+ */
+static_always_inline int
+bpa_pppoe_cp_is_ip6 (const u8 *frame, u32 len, u32 *pppoe_at)
+{
+  u32 at = 12;
+  u16 type;
+
+  if (len < at + 2)
+    return 0;
+  type = (frame[at] << 8) | frame[at + 1];
+  if (type == 0x8100)
+    {
+      at += 4;
+      if (len < at + 2)
+	return 0;
+      type = (frame[at] << 8) | frame[at + 1];
+    }
+  at += 2;
+  /* PPPoE: ver_type, code, session id, length, then the PPP protocol */
+  if (type != 0x8864 || len < at + 8)
+    return 0;
+  if (((frame[at + 6] << 8) | frame[at + 7]) != BPA_PPP_IP6)
+    return 0;
+  *pppoe_at = at;
+  return 1;
+}
+
+/*
  * The verdict on one PPPoE frame, and the table updated by it.
  *
  *   is_access    the frame came in on an access interface
  *   is_discovery ethertype 0x8863 (else 0x8864, a session-stage frame)
  *   code         the PPPoE code (discovery)
  *   ppp_proto    the PPP protocol (session stage)
+ *   ip6_control  a PPP-IPv6 frame bpa_pppoe_ip6_is_control() names: judged
+ *                as a control frame, since it goes where one goes, and
+ *                BPA_PPPOE_PUNT when it may (#609)
  *
  * The caller holds whatever lock the table needs: only a discovery frame
  * or a control frame reaches the table, never a data frame.
@@ -177,13 +261,15 @@ bpa_pppoe_held_note (bpa_pppoe_held_t *tbl, u32 sets_log2, u64 key,
 static_always_inline bpa_pppoe_verdict_t
 bpa_pppoe_guard_verdict (bpa_pppoe_held_t *tbl, u32 sets_log2, u64 key,
 			 u32 rx_sw_if_index, int is_access, int is_discovery,
-			 u8 code, u16 ppp_proto, u32 now, u32 hold)
+			 u8 code, u16 ppp_proto, int ip6_control, u32 now,
+			 u32 hold)
 {
   bpa_pppoe_held_t *e;
 
   if (!is_access)
     return BPA_PPPOE_NOT_ACCESS;
-  if (!is_discovery && (ppp_proto == BPA_PPP_IP4 || ppp_proto == BPA_PPP_IP6))
+  if (!is_discovery && !ip6_control &&
+      (ppp_proto == BPA_PPP_IP4 || ppp_proto == BPA_PPP_IP6))
     return BPA_PPPOE_PASS;
   e = bpa_pppoe_held_find (tbl, sets_log2, key);
   if (e && e->sw_if_index != rx_sw_if_index && now - e->seen < hold)
@@ -196,15 +282,18 @@ bpa_pppoe_guard_verdict (bpa_pppoe_held_t *tbl, u32 sets_log2, u64 key,
       return BPA_PPPOE_PASS;
     }
   bpa_pppoe_held_note (tbl, sets_log2, key, rx_sw_if_index, now, hold);
-  return BPA_PPPOE_PASS;
+  return ip6_control ? BPA_PPPOE_PUNT : BPA_PPPOE_PASS;
 }
 
 /* Whether a data or control frame needs the table: the hot path's test,
- * kept here so the unit test holds the node to the same rule. */
+ * kept here so the unit test holds the node to the same rule. An IPv6
+ * control frame does: it reaches pppoe-cp-dispatch, which LEARNS its MAC's
+ * interface as any control frame's (item 9's hole, otherwise reopened by
+ * an RS from another access port). */
 static_always_inline int
-bpa_pppoe_needs_table (int is_discovery, u16 ppp_proto)
+bpa_pppoe_needs_table (int is_discovery, u16 ppp_proto, int ip6_control)
 {
-  return is_discovery ||
+  return is_discovery || ip6_control ||
 	 (ppp_proto != BPA_PPP_IP4 && ppp_proto != BPA_PPP_IP6);
 }
 
