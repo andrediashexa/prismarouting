@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.10 - an administrator configures PPPoE and RADIUS through the API
+
+### Fixed
+
 * **An administrator that is not root could not commit `pppoe` or `aaa`.**
   ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   On prisma-bench (0.155.9) a commit of `pppoe session-limit 20000` through
