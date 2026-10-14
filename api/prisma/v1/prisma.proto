@@ -663,6 +663,33 @@ message PppoeConfig {
   uint32 rate_limit_default_up_kbit = 12;
   // `local-user`s (for a lab without RADIUS), by name.
   repeated PppoeLocalUser local_users = 13;
+  // IPv6 on the sessions (#609, docs/bng.md 0.8). Any of these turns
+  // IPv6CP on; none of them is IPv6CP refused, as before. Named in
+  // SetConfig's `fields` as "ipv6_enable", "ipv6_prefix_pools",
+  // "ipv6_delegated_pools", "ipv6_dns_servers". UNLIKE the fields above,
+  // a SetConfig with an empty `fields` applies them only when it sets one:
+  // a client built before them, writing the block whole, leaves the box's
+  // IPv6 as it is. To remove them, name them.
+  //
+  // `ipv6 enable`: IPv6CP on with nothing else - the prefixes from RADIUS
+  // (Framed-IPv6-Prefix, Delegated-IPv6-Prefix).
+  bool ipv6_enable = 14;
+  // `ipv6 prefix-pool`s, in the order written: each session's WAN /64 is
+  // taken from them and advertised by RA (SLAAC). /16 to /64.
+  repeated string ipv6_prefix_pools = 15;
+  // `ipv6 delegated-pool`s, in the order written: each session is
+  // delegated a prefix of `length` from them by DHCPv6.
+  repeated PppoeDelegatedPool ipv6_delegated_pools = 16;
+  // `ipv6 dns`: up to 2 IPv6 resolvers, in RA (RDNSS) and DHCPv6.
+  repeated string ipv6_dns_servers = 17;
+}
+
+// An `ipv6 delegated-pool <prefix> length <length>` (#609).
+message PppoeDelegatedPool {
+  // "2001:db8:200::/40", host bits clear.
+  string prefix = 1;
+  // The prefix each session is delegated, /16 to /64; at least the pool's.
+  uint32 length = 2;
 }
 
 message PppoeLocalUser {
@@ -1755,6 +1782,10 @@ message PppoeSession {
   // 0 is a session with no rate limit.
   uint32 rate_limit_down_kbit = 10;
   uint32 rate_limit_up_kbit = 11;
+  // IPv6 (#609): the WAN prefix RA advertised ("2001:db8:100::/64") and the
+  // prefix DHCPv6 delegated ("2001:db8:200::/56"); "" for none.
+  string ipv6_prefix = 12;
+  string ipv6_delegated_prefix = 13;
 }
 
 message PppoeSessions {
@@ -1856,12 +1887,19 @@ message PppoeSummary {
   uint32 rate_limit_default_up_kbit = 26;
   // `show pppoe summary`, verbatim.
   string text = 27;
+  // IPv6 (#609): IPv6CP on, and the pools the prefixes come from; both
+  // empty with ipv6 true is from RADIUS only.
+  bool ipv6 = 28;
+  repeated string ipv6_prefix_pools = 29;
+  repeated PppoeDelegatedPool ipv6_delegated_pools = 30;
 }
 
 message ListPppoeHistoryRequest {
   // Each "" is no filter; the filters AND.
   string user = 1;
-  // An inside address, IPv4.
+  // An inside address, IPv4; or an IPv6 address (#609), which names the
+  // sessions whose WAN prefix holds it, or whose delegated prefix did -
+  // from when it was delegated.
   string address = 2;
   // 16 hexadecimal digits.
   string session_id = 3;
@@ -1893,6 +1931,11 @@ message PppoeHistorySession {
   // ("User-Request", "Lost-Carrier", "Admin-Reset", "NAS-Request"...), or
   // "Control-Plane-Lost" for a control plane that ended without closing it.
   string cause = 9;
+  // IPv6 (#609): the WAN prefix the session held from its start, and the
+  // prefix DHCPv6 delegated it, held from `delegated` - "" for none.
+  string ipv6_prefix = 10;
+  string ipv6_delegated_prefix = 11;
+  google.protobuf.Timestamp delegated = 12;
 }
 
 message PppoeHistory {

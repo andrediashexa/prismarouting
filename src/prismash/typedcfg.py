@@ -1797,7 +1797,14 @@ def system_areas_typed(cfg, areas):
 #: rates.
 PPPOE_FIELDS = ("interfaces", "gateway", "address_pools", "dns_servers",
                 "authentication", "session_limit", "mtu", "tcp_mss",
-                "ac_name", "rate_limit_default", "local_users")
+                "ac_name", "rate_limit_default", "local_users",
+                "ipv6_enable", "ipv6_prefix_pools", "ipv6_delegated_pools",
+                "ipv6_dns_servers")
+#: IPv6's (#609), which a SetConfig with an empty `fields` applies only when
+#: it sets one of them: a client built before them writes the block whole
+#: with all four at their defaults, and would otherwise turn the box's IPv6
+#: off without knowing it existed.
+PPPOE_IPV6_FIELDS = PPPOE_FIELDS[-4:]
 #: AaaConfig's, by block and field; "radius.dynamic_authorization" is the
 #: listener and its port.
 AAA_FIELDS = ("radius.servers", "radius.mode", "radius.timeout_seconds",
@@ -1843,7 +1850,13 @@ def pppoe_held_typed(held):
             "rate_limit_default_down_kbit": down,
             "rate_limit_default_up_kbit": up,
             "local_users": [{"name": n, "password_set": True}
-                            for n in sorted(held["users"])]}
+                            for n in sorted(held["users"])],
+            "ipv6_enable": pppoe_mod.v6(held)["enable"],
+            "ipv6_prefix_pools": list(pppoe_mod.v6(held)["pools"]),
+            "ipv6_delegated_pools": [
+                {"prefix": p, "length": int(n)}
+                for p, n in pppoe_mod.v6(held)["delegated"]],
+            "ipv6_dns_servers": list(pppoe_mod.v6(held)["dns"])}
 
 
 def aaa_typed(cfg):
@@ -1922,8 +1935,24 @@ def pppoe_lines(held, desired, fields=()):
     """
     now = pppoe_held_typed(held)
     out = []
-    for f in _mask(fields, PPPOE_FIELDS):
+    masked = _mask(fields, PPPOE_FIELDS)
+    if not fields and not any(desired.get(f) for f in PPPOE_IPV6_FIELDS):
+        masked = [f for f in masked if f not in PPPOE_IPV6_FIELDS]
+    for f in masked:
         want = desired.get(f)
+        if f == "ipv6_enable":
+            if bool(want) != now[f]:
+                out.append("ipv6 enable" if want else "no ipv6 enable")
+            continue
+        if f == "ipv6_prefix_pools":
+            out += _list_lines("ipv6 prefix-pool", now[f], list(want or []))
+            continue
+        if f == "ipv6_dns_servers":
+            out += _list_lines("ipv6 dns", now[f], list(want or []))
+            continue
+        if f == "ipv6_delegated_pools":
+            out += _delegated_lines(now[f], list(want or []))
+            continue
         if f == "interfaces":
             out += _list_lines("interface", now[f], list(want or []))
         elif f == "address_pools":
@@ -1965,6 +1994,25 @@ def pppoe_lines(held, desired, fields=()):
             want = int(want or 0)
             if want != now[f]:
                 out.append(f"{word} {want}" if want else f"no {word}")
+    return out
+
+
+def _delegated_lines(now, want):
+    """
+    Lines that take `ipv6 delegated-pool`s `now` to `want` (#609), each a
+    {"prefix", "length"}: removals first, then each new pool or new length -
+    a pool given again with another length is the statement that changes it.
+    """
+    have = {d["prefix"]: int(d["length"]) for d in now}
+    wanted = {}
+    for d in want:
+        if not d.get("prefix") or not d.get("length"):
+            raise ValueError("ipv6_delegated_pools: every pool needs its "
+                             "prefix and its length")
+        wanted[d["prefix"]] = int(d["length"])
+    out = [f"no ipv6 delegated-pool {p}" for p in have if p not in wanted]
+    out += [f"ipv6 delegated-pool {p} length {n}" for p, n in wanted.items()
+            if have.get(p) != n]
     return out
 
 

@@ -474,5 +474,60 @@ check("not read" in said(lambda: shell("").show_pppoe_verify(
           {"rep": None, "why": "no door"})),
       "show_pppoe_verify: a check that could not be read says so")
 
+print("\n=== IPv6: the WAN prefix and the delegated one (#609) ===")
+V6 = ("session 00000000000000c1 user sub6 mac 02:aa:00:00:00:06 interface "
+      "host-acc0 address 100.64.0.30 prefix 2001:db8:100::/64")
+DG = " delegated 2001:db8:200::/56 delegated-since 2026-10-14T10:20:00.000Z"
+Z = " seq 1 sha256 " + "0" * 64
+recs6 = [T.parse_line(x + Z) for x in (
+    f"2026-10-14T10:00:00.000Z start {V6}",
+    f"2026-10-14T10:20:00.000Z delegate {V6}{DG} since "
+    f"2026-10-14T10:00:00.000Z",
+    f"2026-10-14T11:00:00.000Z stop {V6}{DG} since 2026-10-14T10:00:00.000Z "
+    f"cause User-Request")]
+check(all(recs6) and recs6[1]["kind"] == "delegate",
+      "parse_line: a delegate is an entry")
+s6 = T.sessions(recs6)
+check(len(s6) == 1 and s6[0]["prefix"] == "2001:db8:100::/64"
+      and s6[0]["delegated"] == "2001:db8:200::/56"
+      and s6[0]["delegated_since"] == T.parse_stamp("2026-10-14T10:20:00.000Z")
+      and s6[0]["start"] == T.parse_stamp("2026-10-14T10:00:00.000Z")
+      and s6[0]["cause"] == "User-Request",
+      f"sessions: the delegate joins its session, its start kept: {s6}")
+only_d = T.sessions(recs6[1:2])
+check(len(only_d) == 1 and only_d[0]["delegated"] == "2001:db8:200::/56"
+      and only_d[0]["start"] == T.parse_stamp("2026-10-14T10:00:00.000Z"),
+      "sessions: a delegate whose start is not read stands for the session")
+t1015 = T.parse_stamp("2026-10-14T10:15:00.000Z")
+t1030 = T.parse_stamp("2026-10-14T10:30:00.000Z")
+check(T.holds(s6[0], "2001:db8:100::abcd") and
+      T.holds(s6[0], "2001:db8:200:ff::1", t1030)
+      and not T.holds(s6[0], "2001:db8:200:ff::1", t1015)
+      and T.holds(s6[0], "2001:db8:100::1", t1015)
+      and not T.holds(s6[0], "2001:db8:300::1")
+      and T.holds(s6[0], "100.64.0.30") and not T.holds(s6[0], "100.64.0.31")
+      and not T.holds(s6[0], "2001:zz::1"),
+      "holds: an IPv6 address in the WAN prefix, or in the delegated one "
+      "from when it was delegated; an IPv4 one exactly")
+check([s["user"] for s in T.select(s6, address="2001:db8:200:1::5",
+                                   at=t1030)] == ["sub6"]
+      and T.select(s6, address="2001:db8:200:1::5", at=t1015) == [],
+      "select: the delegated prefix names sub6 at 10:30, nobody at 10:15")
+lines = T.session_lines(s6[0])
+check(lines[3] == "  ipv6 2001:db8:100::/64"
+      and lines[4] == "  delegated 2001:db8:200::/56 from "
+      "2026-10-14T10:20:00.000Z"
+      and len(T.session_lines(T.sessions(recs6[:1])[0])) == 4
+      and len(T.session_lines(dict(s6[0], prefix="", delegated=""))) == 3,
+      f"session_lines: the prefixes, a line each; an IPv4 session's three: "
+      f"{lines}")
+f6, why = T.parse_show_args(["address", "2001:DB8:200::0001"],
+                            lambda v, n: 0)
+check(why is None and f6["address"] == "2001:db8:200::1",
+      "parse_show_args: an IPv6 address, compressed")
+check(T.parse_show_args(["address", "2001:zz::1"], lambda v, n: 0)[1]
+      and T.parse_show_args(["address", "300.1.1.1"], lambda v, n: 0)[1],
+      "parse_show_args: neither family's address is refused")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
