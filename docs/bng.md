@@ -1035,8 +1035,11 @@ uplink.
 **The rest is accel-ppp's, as it is:** the pools (`ipv6pool`), RADIUS's
 attributes (asked before the pools: the module is loaded after `radius`, as
 `ippool` is), accounting - `Framed-IPv6-Prefix` and `Framed-Interface-Id` in
-the Start, `Delegated-IPv6-Prefix` in an interim it sends the moment it
-delegates (`EV_FORCE_INTERIM_UPDATE`) - and the session's policer: VPP 26.06
+the Start, `Delegated-IPv6-Prefix` in an interim sent the moment the prefix is
+routed (`EV_FORCE_INTERIM_UPDATE`; accel-ppp fired it only when its dhcpv6
+took a prefix from a pool, so a prefix RADIUS gave - on the session from its
+Access-Accept - had no interim and no trail entry until 0.155.13 moved it to
+`insert_dp_routes`) - and the session's policer: VPP 26.06
 applies `policer input`/`output` to `ip6-unicast` and `ip6-output` as well as
 IPv4's (`policer_op.c`), so a plan is one bucket for both families. The MSS
 clamp has its IPv6 half now, 20 bytes under `tcp-mss`.
@@ -1054,7 +1057,7 @@ runs twice.
 | Entry | Written at | Carries |
 |---|---|---|
 | `start` | as before | ` prefix <WAN prefix>` after the address, when IPv6CP gave one: it is known before the session is up, and held for its life |
-| `delegate` | the moment DHCPv6 takes a prefix for the session (`EV_FORCE_INTERIM_UPDATE` with `ipv6_dp` new) - which can be hours after the session began, when a router behind the CPE asks | the session restated with ` delegated <prefix> delegated-since <time>` and its `since`; its stop and any carry repeat both |
+| `delegate` | the moment DHCPv6 routes a prefix for the session, from a pool or from RADIUS (`EV_FORCE_INTERIM_UPDATE`, fired by `insert_dp_routes` since 0.155.13) - which can be hours after the session began, when a router behind the CPE asks | the session restated with ` delegated <prefix> delegated-since <time>` and its `since`; its stop and any carry repeat both |
 
 `show pppoe history address <IPv6 address> [at <time>]` names the sessions
 whose WAN prefix holds the address, or whose delegated prefix did - from its

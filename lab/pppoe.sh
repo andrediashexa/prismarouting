@@ -1569,11 +1569,18 @@ TRAIL6=$(tail -n "+$((TRAIL6_L0 + 1))" "$P6" 2>/dev/null)
 echo "$TRAIL6" | grep -E " (start|delegate) session .* user sub[78] " | cut -c1-220 | sed 's/^/  trail: /'
 START7=$(echo "$TRAIL6" | grep " start session .* user sub7 " | tail -1)
 DELEG7=$(echo "$TRAIL6" | grep " delegate session .* user sub7 " | tail -1)
+# sub8's prefix came from RADIUS, on the session from its Access-Accept:
+# accel-ppp's dhcpv6 never took it from a pool, which is where it fired the
+# event the delegate entry is written on - on 0.155.12 the bench's RADIUS
+# prefix was routed, and no trail entry and no history named its subscriber.
+DELEG8=$(echo "$TRAIL6" | grep " delegate session .* user sub8 " | tail -1)
 T_START7=$(echo "$START7" | cut -d' ' -f1)
 NOW6=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 HIST6=$($HX -c "show pppoe history address ${PDA7:-::1} at $NOW6" 2>&1)
 HIST6_W=$($HX -c "show pppoe history address ${SL7:-::1} at $NOW6" 2>&1)
 HIST6_EARLY=$($HX -c "show pppoe history address ${PDA7:-::1} at ${T_START7:-2000-01-01T00:00:00Z}" 2>&1)
+HIST8=$($HX -c "show pppoe history address ${PDA8:-::1} at $NOW6" 2>&1)
+echo "$HIST8" | sed 's/^/  history, the RADIUS-delegated address of sub8 now: /'
 echo "$HIST6" | sed 's/^/  history, the delegated address now: /'
 echo "$HIST6_EARLY" | sed 's/^/  history, the same at the session start: /'
 # RADIUS accounting: the WAN prefix in the Start, the delegated one in the
@@ -2087,6 +2094,9 @@ expect "  and an interim the delegated prefix, sent when it was delegated" \
   sh -c "echo \"\$1\" | grep -q 'Delegated-IPv6-Prefix = ${PD7:-x}'" _ "$A6_INT"
 expect "  sub8's accounting its RADIUS prefix" \
   sh -c "echo \"\$1\" | grep -q 'Delegated-IPv6-Prefix = 2001:db8:280:100::/56'" _ "$A8_INT"
+expect "  sub8's RADIUS prefix has its delegate entry in the trail too" \
+  sh -c "echo \"\$1\" | grep -q ' delegated 2001:db8:280:100::/56 delegated-since '" _ "$DELEG8"
+expect_in "  and show pppoe history address <an address of it> names sub8" "sub8 held" "$HIST8"
 expect "  an IPv6 session's interface lets IPv6 in (no ip6-not-enabled)" \
   sh -c "echo \"\$1\" | grep -q '^ip6-unicast:' && ! echo \"\$1\" | grep -q ip6-not-enabled" _ "$F7"
 expect "  sub8, IPv4-only on the interface its IPv6 session left (${I8:-?} -> ${I8B:-?}), has IPv6 dropped again" \

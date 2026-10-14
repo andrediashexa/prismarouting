@@ -79,6 +79,15 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A prefix RADIUS delegates (`Delegated-IPv6-Prefix`) is in the session
+  trail and the history.** ([#609](https://github.com/andrediashexa/hexarouting/issues/609))
+  On 0.155.12 it was routed and reached, but no `delegate` entry was
+  written and no interim accounting carried it, so `show pppoe history
+  address` on an address inside it named nobody (found on the bench, with a
+  real CPE). accel-ppp fired the event both are written on only when its
+  dhcpv6 took a prefix from a pool; RADIUS's is on the session from its
+  Access-Accept. The event now fires when the prefix is routed, for either.
+
 ## 0.155.12 - IPv6 on PPPoE sessions: SLAAC and a delegated prefix
 
 ### Added
