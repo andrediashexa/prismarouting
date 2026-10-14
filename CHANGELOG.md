@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.12 - IPv6 on PPPoE sessions: SLAAC and a delegated prefix
+
+### Added
+
 * **IPv6 on PPPoE subscriber sessions: IPv6CP, the WAN /64 by SLAAC,
   DHCPv6 prefix delegation.** ([#609](https://github.com/andrediashexa/hexarouting/issues/609))
   docs/bng.md 0.8. Under `pppoe`: `ipv6 prefix-pool <prefix>` (each
@@ -136,8 +142,6 @@ version has a chance of seeing it.
     subscriber's IPv4 downloads went out with another's MAC (0.155.0's
     crossed-downloads defect, again). The IPv6 routes are listed and removed
     before the sessions now; the same lab measured 0 crossed.
-
-### Fixed
 
 ## 0.155.11 - the PPPoE session trail's head sent off the box
 
