@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.13 - a prefix RADIUS delegates is in the session trail
+
+### Fixed
+
 * **A prefix RADIUS delegates (`Delegated-IPv6-Prefix`) is in the session
   trail and the history.** ([#609](https://github.com/andrediashexa/hexarouting/issues/609))
   On 0.155.12 it was routed and reached, but no `delegate` entry was
