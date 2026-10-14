@@ -224,12 +224,16 @@ def tampered(edit):
 rep = tampered(lambda ls: [ls[0], ls[1].replace("100.64.0.10", "100.64.0.12")]
                + ls[2:])
 check(rep["problem"] and rep["problem"][0].startswith("BROKEN at entry 6")
-      and "changed" in rep["problem"][1],
+      and "changed" in rep["problem"][1]
+      and (rep["kind"], rep["entry"]) == ("altered", 6),
       f"verify: an address changed is BROKEN at its entry: {rep['problem']}")
 rep = tampered(lambda ls: ls[:1] + ls[2:])
 check(rep["problem"] and rep["problem"][0].startswith("BROKEN before entry 7")
-      and "1 entry was removed" in rep["problem"][1],
+      and "1 entry was removed" in rep["problem"][1]
+      and (rep["kind"], rep["entry"]) == ("removed", 7),
       "verify: an entry removed is BROKEN before the next - not an edit of it")
+check(T.verify()["kind"] == "" and T.verify()["entry"] == 0,
+      "verify: an intact chain names no kind and no entry (the API's verdict)")
 rep = tampered(lambda ls: ls[:2] + ["2026-10-02T09:20:00.000Z start sess\n"]
                + ls[2:])
 check(rep["problem"] is None and rep["checked"] == 9
@@ -387,6 +391,31 @@ out = said(lambda: shell("").show_pppoe_history(["verify"]))
 check("chain intact" in out, "show_pppoe_history verify")
 out = said(lambda: shell("").show_pppoe(["history", "frobnicate"]))
 check("not a filter it takes" in out, "show_pppoe history: a refusal")
+
+# docs/bng.md 0.4 item 2: the reading the screen and the API share.
+f = shell("").pppoe_history_facts(["address", "100.64.0.10", "at",
+                                   "2026-10-02T09:15:00Z"])
+check(f["why_filter"] is None and f["why_read"] is None
+      and [s["user"] for s in f["got"]["sessions"]] == ["sub3"],
+      "pppoe_history_facts: the filters read, the trail asked once")
+check(said(lambda: shell("").show_pppoe_history_of(f)).startswith(
+          "sub3 held 100.64.0.10\n"),
+      "show_pppoe_history_of: the screen drawn from that reading")
+f = shell("").pppoe_history_facts(["frobnicate"])
+check(f["why_filter"] and f["got"] is None
+      and "not a filter it takes" in said(
+          lambda: shell("").show_pppoe_history_of(f)),
+      "pppoe_history_facts: a filter refused, in the VTY's words")
+check("trail was not read" in said(lambda: shell("").show_pppoe_history_of(
+          {"why_filter": None, "why_read": "no door", "got": None})),
+      "show_pppoe_history_of: a trail not read says so")
+f = shell("").pppoe_verify_facts()
+check(f["why"] is None and f["rep"]["checked"] == 9
+      and "chain intact" in said(lambda: shell("").show_pppoe_verify(f)),
+      "pppoe_verify_facts / show_pppoe_verify: one check, its screen")
+check("not read" in said(lambda: shell("").show_pppoe_verify(
+          {"rep": None, "why": "no door"})),
+      "show_pppoe_verify: a check that could not be read says so")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -118,6 +118,10 @@ ALLOWED = {
                       "configuration key and the `pppoe` block's `radius "
                       "nas-identifier` statement spell it (#597) - an "
                       "identifier, and 'nas' alone in prose still fails",
+    "nas_identifier": "the same attribute as RadiusConfig's field name in "
+                      "prisma.v1 and the typed configuration's key (#597, "
+                      "docs/bng.md 0.4 item 2) - an identifier of the "
+                      "contract",
     "radius_nas.py": "the file name of the NAS the labs point at the box, "
                      "and a file name is an identifier rather than prose",
     "America/Sao_Paulo": "an IANA timezone identifier",

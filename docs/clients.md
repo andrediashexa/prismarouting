@@ -27,6 +27,20 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.7 - the BNG in the API, typed
+
+* **Contract:** changed, additive only (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`; `health.proto` unchanged). No existing message, field, number or enum value changes; a client built from 0.155.6's contract keeps working (lab/api-grpc.sh drives one).
+* **New configuration areas `pppoe` and `aaa`** (#597): `TypedConfig.pppoe` (31) and `.aaa` (32), and `SetConfigRequest.pppoe` (16) and `.aaa` (17). `DeleteConfig` areas `pppoe` and `aaa` remove the whole block. `GetConfig` with no areas now also returns them; an old client ignores them. `configured` false means the block is absent. Kbit/s for rates. RADIUS `timeout_seconds`, `retries`, `dead_time_seconds` and `interim_interval_seconds` are `optional`: unset means no statement (the default), and 0 is a value.
+* **Secrets are write-only:** `PppoeLocalUser.password`, `RadiusServerConfig.secret` and `RadiusClientConfig.secret`. A read only says `password_set` / `secret_set`; empty on a write keeps the configured secret; a new entry without one is `INVALID_ARGUMENT`. Replies blank them. `GetRunning` / `ShowCandidate` text is unchanged and holds the secrets as it already did for SNMP and BGP - do not display it raw.
+* **SetConfig field names:** PppoeConfig's own (`rate_limit_default` covers both rates) and `radius.<field>` for AaaConfig (`radius.dynamic_authorization` is the listener and its port). Empty `fields` sets every field, so an empty list removes entries. A commit of a `pppoe` change restarts the PPPoE control plane and sessions redial; an `aaa` change is a reload and drops nothing.
+* **New rpcs in `OperationalService`:** `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory`, `VerifyPppoeHistory`, each with the VTY screen in `text`.
+  * PPPoE not running is `running` false with no sessions, not an error.
+  * `GetPppoeSession` with an id that is not 16 hex digits is `INVALID_ARGUMENT`; an unknown id is `NOT_FOUND`.
+  * History filters use the `show log` time syntax; a filter the VTY refuses is `INVALID_ARGUMENT`, and an unreadable trail is `UNAVAILABLE`. Timestamps are to the millisecond.
+  * `rx_bytes` / `tx_bytes` are counters reset with the session; trail and refusal counts are counters since the control plane / dataplane started. A `*_known` false means not read, not zero.
+* **`ClearRequest.Target` gains** `TARGET_PPPOE_SESSION` (8), `_USER` (9), `_ADDRESS` (10) and `_ALL` (11). Administrator only (`PERMISSION_DENIED` otherwise); nothing to clear is `FAILED_PRECONDITION`.
+* **`GetSchema`** gains the modes `pppoe`, `aaa` and `aaa radius` (38 modes), and the digest changes. `docs/api-coverage.md` lists the PPPoE statements and commands as typed. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.6 - a crash soon after boot is no longer logged as the boot's start
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9f767af77bcd343f9665a28f4d9ffbb7d195fc93478af065276efe8eca4856b4`, the same as 0.155.5). No message, field or number changes.

@@ -95,6 +95,14 @@
 #   * sub1's MAC dialling on a second access port (VLAN 100) is refused,
 #     counted, while sub1's session lives - sub1's session never changes -
 #     and gets the MAC once sub1 hangs up.
+# and for docs/bng.md 0.4 item 2 (#597), through the management API over
+# mutual TLS, the server the box runs, the stubs generated from the contract:
+#   * the sessions, one session with its policers, the summary with the
+#     trail's and the refusals' counters, the history and its verify - each
+#     held to the VTY's own screen, read around the call;
+#   * GetConfig's pppoe and aaa areas, secret_set and no secret in a byte;
+#   * Clear by address, by id and by user ends the session, which redials,
+#     and the trail closes it; an account without the role is refused.
 MODE=${1:-on}
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -1372,6 +1380,65 @@ sleep 4
 echo "  the files are format ${FMT_NOW:-?} now; the host's watcher: $(tick)"
 
 echo
+echo "=========== 22. THE TYPED API (docs/bng.md 0.4 item 2) ==========="
+# The management API on these sessions, as prisma-web will read them: mutual
+# TLS, root's certificate and a read-only account's, the stubs generated from
+# the contract, the server the box runs. Every read is held to the VTY's own
+# screen of the same command; the clears end real sessions, which redial.
+C=/tmp/api; rm -rf $C; mkdir -p $C/box
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=lab clients CA" \
+  -keyout $C/ca.key -out $C/ca.crt 2>/dev/null
+for _who in server:prisma-api root:root netview:netview; do
+  _n=${_who%%:*}; _cn=${_who#*:}
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=$_cn" -keyout $C/$_n.key \
+    -out $C/$_n.csr 2>/dev/null
+  if [ "$_n" = server ]; then
+    printf 'subjectAltName=DNS:prisma-api,IP:127.0.0.1\n' > $C/ext
+  else
+    printf 'extendedKeyUsage=clientAuth\n' > $C/ext
+  fi
+  openssl x509 -req -in $C/$_n.csr -CA $C/ca.crt -CAkey $C/ca.key \
+    -CAcreateserial -days 2 -extfile $C/ext -out $C/$_n.crt 2>/dev/null
+done
+cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
+id netview > /dev/null 2>&1 || useradd -M -s /usr/sbin/nologin netview
+# The host's doors, as on a box: each account's worker asks the host for
+# the sessions and the trail through them, and a read-only account is
+# answered what its VTY would be.
+# The VTY and the API server name the host's prisma-bng where a box has it
+# (section 1 put the stand-in there): the doors run only that path, and the
+# rest of this lab, which asks with no doors, keeps naming the script.
+rm -f /run/prisma-routing/doors.sock
+python3 /src/src/prismash/doors.py --serve > /tmp/doors22.log 2>&1 &
+DOORS22=$!
+PRISMA_BNG_CTL_LAB=$PRISMA_BNG_CTL
+export PRISMA_BNG_CTL=/usr/lib/prisma-routing/prisma-bng
+for _i in 1 2 3 4 5 6 7 8 9 10; do
+  [ -S /run/prisma-routing/doors.sock ] && break; sleep 0.5
+done
+GEN=$(sh tools/gen-api.sh /tmp/apistubs 2>&1 && echo generated)
+echo "  stubs: $GEN"
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50557 \
+  --dir $C/box --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver.log 2>&1 &
+_n=0; until grep -q "prisma.v1 on" /tmp/apiserver.log || [ $_n -ge 30 ]; do
+  sleep 0.5; _n=$((_n + 1)); done
+sed 's/^/  /' /tmp/apiserver.log
+# The sessions the format upgrade above restarted, back: sub2, sub3 and sub5
+# (sub1 hung up in section 19).
+if [ "$MODE" != off ]; then
+  for _u in sub2 sub3 sub5; do echo "  $_u up after $(wait_user $_u 90) s"; done
+fi
+API22=$(python3 lab/api_pppoe_check.py /tmp/apistubs $C 127.0.0.1:50557 "$HX" 2>&1)
+printf '%s\n' "$API22" | sed 's/^/  /'
+APILOG22=$(cat /tmp/apiserver.log)
+for _p in $(pgrep -x sleep); do
+  [ "$(tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null)" = "sleep 900 " ] && kill "$_p"
+done
+kill "$DOORS22" 2>/dev/null; wait "$DOORS22" 2>/dev/null
+rm -f /run/prisma-routing/doors.sock
+export PRISMA_BNG_CTL=$PRISMA_BNG_CTL_LAB
+
+echo
 echo "=========== 11. no pppoe ==========="
 printf 'configure\nno pppoe\ncommit\n' | $HX > /tmp/nopppoe.txt 2>&1
 grep -o "pppoe: [a-z, ]*" /tmp/nopppoe.txt | sed 's/^/  commit: /'
@@ -1414,6 +1481,29 @@ echo "$REC" | grep -E "^(start|exit|radius|asked)" | sed 's/^/  record: /'
 echo
 cat /tmp/radius1.log /tmp/radius2.log > /tmp/radius.log
 echo "=========== VERDICT ==========="
+a22() { printf '%s\n' "$API22" | grep -q "^RESULT $1 ok"; }
+expect "API: ListPppoeSessions lists the sessions the VTY lists, id, user, address" a22 sessions-are-vty
+expect "  its text is show pppoe sessions" a22 sessions-text-is-vty
+expect "  each with its MAC (show pppoe session's), state, uptime, interface" a22 sessions-fields
+expect "API: GetPppoeSession is show pppoe session, the policers too" a22 session-is-vty
+expect "  an id that is not 16 hex digits: INVALID_ARGUMENT" a22 session-bad-id
+expect "  an id no session has: NOT_FOUND" a22 session-unknown
+expect "API: GetPppoeSummary: running, sessions, the trail's and refusals' counters as the VTY's" a22 summary-is-vty
+expect "  the RADIUS servers by priority, with accel-ppp's state; the listener" a22 summary-radius
+expect "  its text is show pppoe summary" a22 summary-text-is-vty
+expect "API: ListPppoeHistory is show pppoe history user <u> last 3, to the millisecond" a22 history-is-vty
+expect "  a filter the VTY refuses: INVALID_ARGUMENT" a22 history-refused
+expect "API: VerifyPppoeHistory is show pppoe history verify: intact, the same head" a22 verify-is-vty
+expect "API: GetConfig reads pppoe and aaa as fields, secret_set and no secret" a22 config-read
+expect "  and no secret anywhere in the answer's bytes" a22 config-no-secret
+expect "API: Clear by address ends the session holding it; it redials" a22 clear-address
+expect "  and the trail closes that session, with its cause" a22 clear-address-history
+expect "API: Clear by id ends that session; it redials" a22 clear-session
+expect "API: Clear by user ends that user's session" a22 clear-user
+expect "  an address no session holds: FAILED_PRECONDITION, nothing ended" a22 clear-address-nobody
+expect "  an account without the role: PERMISSION_DENIED, the session kept" a22 clear-no-role
+expect "  and it still reads the sessions" a22 reads-any-account
+expect_not_in "  and the API server raised nothing" "Traceback" "$APILOG22"
 expect_in "PAP: sub1 has a session" " sub1 " "$SHOW"
 expect_in "CHAP: sub2 has a session" " sub2 " "$SHOW"
 expect_in "MS-CHAPv2 on VLAN 100: sub3 has a session" " sub3 " "$SHOW"

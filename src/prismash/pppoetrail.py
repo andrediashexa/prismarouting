@@ -272,12 +272,15 @@ def verify(path=None):
     the digest, as the configuration trail's verifier does, so a removed
     entry is named as a removal and not as an edit of the innocent entry
     after it. {"files", "checked", "uncovered", "first", "head_seq",
-    "head_sha", "problem"}: `problem` None when intact, else the lines that
-    say where and what.
+    "head_sha", "problem", "kind", "entry"}: `problem` None when intact,
+    else the lines that say where and what; `kind` then "unreadable",
+    "removed" or "altered", and `entry` the entry it names (the API's
+    verdict, docs/bng.md 0.4 item 2).
     """
     files = segments(path)
     rep = {"files": len(files), "checked": 0, "uncovered": [], "first": None,
-           "head_seq": 0, "head_sha": "", "problem": None}
+           "head_seq": 0, "head_sha": "", "problem": None, "kind": "",
+           "entry": 0}
     prev, expect = None, None
     for p in files:
         try:
@@ -285,6 +288,7 @@ def verify(path=None):
         except OSError as e:
             rep["problem"] = [f"{os.path.basename(p)} cannot be read: "
                               f"{e.strerror}"]
+            rep["kind"] = "unreadable"
             return rep
         with fh:
             for n, line in enumerate(fh, 1):
@@ -319,12 +323,14 @@ def verify(path=None):
                             f"{gone} entr{'y was' if gone == 1 else 'ies were'}"
                             f" removed" if gone > 0 else
                             "an entry is out of its place")]
+                    rep["kind"], rep["entry"] = "removed", rec["seq"]
                     return rep
                 if digest(prev, rec["content"]) != rec["sha"]:
                     rep["problem"] = [
                         f"BROKEN at entry {rec['seq']} ({where})",
                         "it does not match its own digest: it was changed "
                         "after it was written"]
+                    rep["kind"], rep["entry"] = "altered", rec["seq"]
                     return rep
                 prev, expect = bytes.fromhex(rec["sha"]), rec["seq"] + 1
                 rep["checked"] += 1

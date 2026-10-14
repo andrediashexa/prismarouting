@@ -312,8 +312,16 @@ In the order they are planned, each its own step on #597:
    server answers, append-only, fsynced and hash-chained, read by `show pppoe
    history` and joined to a public address and port by `show cgnat
    translation ... at <time>`.
-2. **The typed API** for the `pppoe` block and the sessions (a proto change,
-   with `lab/api-grpc.sh`).
+2. **The typed API** for the `pppoe` block and the sessions: done -
+   `GetConfig` / `SetConfig` / `DeleteConfig` areas `pppoe` and `aaa`, every
+   secret write-only (`password_set` / `secret_set` on a read);
+   `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`,
+   `ListPppoeHistory`, `VerifyPppoeHistory`, each the VTY's screen drawn from
+   the one reading its fields carry; `Clear` by id, user, inside address or
+   all (`clear pppoe session address <A.B.C.D>` is new at the prompt too).
+   Additive to `prisma.v1`: a client built from 0.155.6's contract still
+   works, which `lab/api-grpc.sh` drives; `lab/pppoe.sh` holds every read to
+   the VTY's screen on real sessions (docs/api.md, "PPPoE").
 3. **SNMP counters**: done in 0.155.3 - PRISMA-ROUTING-MIB's `prBng`
    (docs/snmp-mib.md): the control plane's state and uptime, sessions up,
    starting, started and stopped, each RADIUS server's Access-Accepts,

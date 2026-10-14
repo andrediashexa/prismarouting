@@ -994,6 +994,167 @@ def uptime_fields(facts, ts):
 
 
 #: The operational readers a worker runs, by name.
+# ------------------------------------------------- PPPoE (#597), typed
+
+#: A PPPoE session id as the control plane gives it: 16 hexadecimal digits.
+PPPOE_SID = re.compile(r"^[0-9a-fA-F]{16}$")
+
+
+def _num(text):
+    """A number the control plane printed, or 0 for anything else."""
+    return int(text) if is_number(str(text or "")) else 0
+
+
+def pppoe_session_fields(row):
+    """One row of pppoe.session_rows() as PppoeSession's fields."""
+    down, _, up = (row.get("rate-limit") or "").partition("/")
+    return {"session_id": (row.get("sid") or "").lower(),
+            "user": row.get("username") or "",
+            "address": row.get("ip") or "",
+            "mac": row.get("calling-sid") or "",
+            "interface": row.get("ifname") or "",
+            "state": row.get("state") or "",
+            "uptime_seconds": _num(row.get("uptime-raw")),
+            "rx_bytes": _num(row.get("rx-bytes-raw")),
+            "tx_bytes": _num(row.get("tx-bytes-raw")),
+            "rate_limit_down_kbit": _num(down),
+            "rate_limit_up_kbit": _num(up)}
+
+
+def pppoe_sessions_fields(facts):
+    """Shell.pppoe_sessions_facts()' reading as PppoeSessions' fields, in
+    the screen's order (pppoe.sessions_screen: by user, then id)."""
+    rows = sorted(facts.get("rows") or [],
+                  key=lambda r: (r.get("username", ""), r.get("sid", "")))
+    return {"running": bool(facts.get("running")),
+            "sessions": [pppoe_session_fields(r) for r in rows]}
+
+
+def pppoe_policer_fields(policers, sw_if_index):
+    """
+    A session's policers out of pppoe.policers()' {name: counts}: accel-ppp
+    names them vyos_<sw_if_index>_<kbit>_<burst>_down|up, as `show pppoe
+    session <id>` finds them - [{"direction", "conform_packets",
+    "dropped_packets"}], down first.
+    """
+    out = []
+    if not sw_if_index:
+        return out
+    for d in ("down", "up"):
+        for name in sorted(policers or {}):
+            if name.startswith(f"vyos_{sw_if_index}_") \
+                    and name.endswith(f"_{d}"):
+                c = policers[name]
+                out.append({"direction": d,
+                            "conform_packets": int(c.get("conform", 0)),
+                            "dropped_packets": int(c.get("dropped", 0))})
+    return out
+
+
+def pppoe_summary_fields(facts):
+    """Shell.pppoe_summary_facts()' reading as PppoeSummary's fields."""
+    import aaa as aaa_mod
+    import pppoe as pppoe_mod
+    held, aaa = facts.get("held"), facts.get("aaa")
+    if not held or pppoe_mod.is_empty(held):
+        return {"configured": False}
+    aaa = aaa or aaa_mod.empty()
+    counts, trail, guard = (facts.get("counts") or {}, facts.get("trail"),
+                            facts.get("guard"))
+    states = facts.get("states") or {}
+    down, up = typedcfg._rate_pair(held["settings"].get("rate-limit-default"))
+    d = aaa["dae"]
+    radius = pppoe_mod.uses_radius(aaa)
+    return {
+        "configured": True, "control_plane": facts.get("status") or "",
+        "sessions_active": int(counts.get("active", 0)),
+        "sessions_starting": int(counts.get("starting", 0)),
+        "sessions_finishing": int(counts.get("finishing", 0)),
+        "trail_known": bool(trail),
+        "trail_written": int((trail or {}).get("written", 0)),
+        "trail_failed": int((trail or {}).get("failed", 0)),
+        "trail_seq": int((trail or {}).get("seq", 0)),
+        "refusals_known": guard is not None,
+        "refused_not_access": int((guard or {}).get("not-access", 0)),
+        "refused_mac_held": int((guard or {}).get("held", 0)),
+        "access_interfaces": list(held["interfaces"]),
+        "radius": radius, "local_users": len(held["users"]),
+        "radius_mode": aaa_mod.setting(aaa, "mode") if radius else "",
+        "radius_servers": [
+            {"address": r["address"], "role": r["role"],
+             "priority": int(r["priority"]),
+             "state": states.get(r["address"], "")}
+            for r in aaa_mod.ordered(aaa)] if radius else [],
+        "accounting": radius and bool(aaa_mod.acct_servers(aaa)),
+        "dynamic_authorization_listen": d["listen"],
+        "dynamic_authorization_port": int(d["port"]) if d["listen"] else 0,
+        "dynamic_authorization_clients": len(d["clients"]),
+        "address_pools": list(held["pools"]),
+        "gateway": held["gateway"],
+        "session_limit": _num(held["settings"].get("session-limit")),
+        "rate_limit_default_down_kbit": down,
+        "rate_limit_default_up_kbit": up}
+
+
+def pppoe_history_words(req):
+    """
+    ListPppoeHistoryRequest's fields as `show pppoe history`'s words, which
+    the VTY's own parser then reads - so the API and the prompt cannot
+    disagree about what `since 2h` or an address means.
+    """
+    words = []
+    for key, field in (("user", "user"), ("address", "address"),
+                       ("session", "session_id"), ("at", "at"),
+                       ("since", "since")):
+        if req.get(field):
+            words += [key, str(req[field])]
+    if req.get("last"):
+        words += ["last", str(int(req["last"]))]
+    return words
+
+
+def pppoe_history_session_fields(s):
+    """
+    One session of pppoetrail.history() as PppoeHistorySession's fields;
+    `start` and `stop` stay epoch seconds (None: not said) for the servicer
+    to make Timestamps of.
+    """
+    return {"user": s.get("user") or "", "address": s.get("address") or "",
+            "session_id": s.get("session") or "", "mac": s.get("mac") or "",
+            "interface": s.get("interface") or "",
+            "start": s.get("start"), "stop": s.get("stop"),
+            "held": s.get("stop") is None, "cause": s.get("cause") or ""}
+
+
+def pppoe_verify_fields(rep, path):
+    """pppoetrail.verify()'s report as PppoeHistoryVerification's fields,
+    the verdict as the enum's suffix ("intact", "no_trail", ...)."""
+    rep = rep or {}
+    if not rep.get("files"):
+        verdict = "no_trail"
+    elif rep.get("problem"):
+        verdict = rep.get("kind") or "altered"
+    elif not rep.get("checked"):
+        verdict = "no_chained_entries"
+    else:
+        verdict = "intact"
+    return {"path": path, "verdict": verdict, "files": int(rep.get("files", 0)),
+            "checked": int(rep.get("checked", 0)),
+            "first_seq": int(rep.get("first") or 0),
+            "uncovered": list(rep.get("uncovered") or []),
+            "head_seq": int(rep.get("head_seq") or 0),
+            "head_sha256": rep.get("head_sha") or "",
+            "entry": int(rep.get("entry") or 0),
+            "problem": list(rep.get("problem") or [])}
+
+
+def ts_ms(epoch):
+    """(seconds, nanos) of an epoch with milliseconds, as the trail keeps
+    them: rounded to the millisecond, so 0.123 is never 0.122999999."""
+    ms = int(round(float(epoch) * 1000))
+    return ms // 1000, (ms % 1000) * 1000000
+
+
 READERS = {
     "interfaces": lambda sh, a: interfaces_of(sh, a or ()),
     "pools": lambda sh, a: pools_of(sh),
@@ -1061,6 +1222,21 @@ READERS = {
     # from the sampler's usage `a` ({"rows", "said"}) - nothing measured.
     "cpu_cores": lambda sh, a: facts_screen(
         sh, lambda: sh.cpu_cores_facts(a), sh.show_system_cpu_cores),
+    # #597, docs/bng.md 0.4 item 2: the PPPoE screens, each drawn from the
+    # one reading the rpc's fields carry. `a` is the session id for one
+    # session, ListPppoeHistoryRequest's fields for the history.
+    "pppoe_sessions": lambda sh, a: facts_screen(
+        sh, sh.pppoe_sessions_facts, sh.show_pppoe_sessions),
+    "pppoe_session": lambda sh, a: facts_screen(
+        sh, lambda: sh.pppoe_session_facts(a),
+        lambda f: sh.show_pppoe_session(a, f)),
+    "pppoe_summary": lambda sh, a: facts_screen(
+        sh, sh.pppoe_summary_facts, sh.show_pppoe_summary),
+    "pppoe_history": lambda sh, a: facts_screen(
+        sh, lambda: sh.pppoe_history_facts(pppoe_history_words(a or {})),
+        sh.show_pppoe_history_of),
+    "pppoe_verify": lambda sh, a: facts_screen(
+        sh, sh.pppoe_verify_facts, sh.show_pppoe_verify),
 }
 
 
@@ -1562,7 +1738,7 @@ def typed_schema(sh, args):
 
 #: An argument a Clear puts on a VTY line (#558, phase 5): one word - an
 #: interface, an address, a system id - never a second statement.
-CLEAR_WORD = re.compile(r"^[A-Za-z0-9_.:/-]{1,64}$")
+CLEAR_WORD = re.compile(r"^[A-Za-z0-9_.:/@-]{1,64}$")
 #: ClearRequest's targets, as the VTY line each one is.
 CLEAR_LINES = {
     "interface_counters": "clear interface counters {name}",
@@ -1572,6 +1748,11 @@ CLEAR_LINES = {
     "ospf_neighbor": "clear ospf neighbor {name}",
     "isis_adjacency": "clear isis adjacency {name}",
     "configuration_pending": "clear configuration pending",
+    # #597: PPPoE sessions, by id, by user, by inside address, or all.
+    "pppoe_session": "clear pppoe session {name}",
+    "pppoe_user": "clear pppoe session user {name}",
+    "pppoe_address": "clear pppoe session address {name}",
+    "pppoe_all": "clear pppoe session all",
 }
 #: BgpMode, as the words after the neighbour.
 BGP_MODES = {"hard": "", "soft": " soft", "soft_in": " soft in",
@@ -3055,7 +3236,8 @@ AREA_OF_FIELD = {"interface": "interfaces", "pool": "pools",
                  "logging": "logging", "static_route": "static",
                  "bgp_neighbor": "bgp", "system": "system",
                  "vrf_device": "vrfs", "bfd_peer": "bfd_peers",
-                 "bfd_profile": "bfd_profiles"}
+                 "bfd_profile": "bfd_profiles", "pppoe": "pppoe",
+                 "aaa": "aaa"}
 
 #: TypedConfig's repeated routing fields (#558 phase 3), by typedcfg's area.
 #: The areas of #558 phase 4, as {area: (TypedConfig field, message,
@@ -3238,6 +3420,18 @@ def pool_dict(m, nat64=False):
                       "private_port": f.private_port} for f in m.forwards]
     for k in ("vrf", "outside_vrf"):
         d[k] = getattr(m, k) if _has(m, k) else None
+    return d
+
+
+def aaa_dict(m):
+    """
+    An AaaConfig as typedcfg's dict (#597): every field, and RadiusConfig's
+    optional numbers None when unset - "no statement", which 0 is not
+    (retries 0 is a value).
+    """
+    d = dict_from_msg(m)
+    for f, _word in typedcfg.RADIUS_NUMBERS:
+        d["radius"][f] = getattr(m.radius, f) if _has(m.radius, f) else None
     return d
 
 
@@ -3695,6 +3889,11 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 getattr(out, field).extend(
                     msg_from_dict(getattr(pb, msg), x) for x in d.get(area, []))
             other_areas_pb(pb, out, d)
+            # #597: the BNG's blocks, secrets never among the fields.
+            if "pppoe" in d:
+                out.pppoe.CopyFrom(msg_from_dict(pb.PppoeConfig, d["pppoe"]))
+            if "aaa" in d:
+                out.aaa.CopyFrom(msg_from_dict(pb.AaaConfig, d["aaa"]))
             return out
 
         # not a unit: an rpc, driven by lab/api-grpc.sh.
@@ -3731,14 +3930,15 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 fail(context, grpc.StatusCode.INVALID_ARGUMENT,
                      "error: name the object to set: interface, pool, "
                      "nat64_pool, logging, static_route, bgp_neighbor, "
-                     "system, vrf_device, bfd_peer or bfd_profile",
-                     stage="usage")
+                     "system, vrf_device, bfd_peer, bfd_profile, pppoe or "
+                     "aaa", stage="usage")
             obj = {"interface": interface_dict, "pool": pool_dict,
                    "nat64_pool": lambda m: pool_dict(m, nat64=True),
                    "logging": logging_dict, "static_route": dict_from_msg,
                    "bgp_neighbor": bgp_edit_dict, "system": dict_from_msg,
                    "vrf_device": dict_from_msg, "bfd_peer": dict_from_msg,
-                   "bfd_profile": dict_from_msg}[which](getattr(req, which))
+                   "bfd_profile": dict_from_msg, "pppoe": dict_from_msg,
+                   "aaa": aaa_dict}[which](getattr(req, which))
             try:
                 r = c["worker"].ask("typed_lines", {
                     "area": AREA_OF_FIELD[which], "object": obj,
@@ -4181,6 +4381,89 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             if f["snippets"]:
                 out.snippets.CopyFrom(pb.TuningSnippets(**f["snippets"]))
             return out
+
+        # not a unit: the PPPoE rpcs (#597), driven by lab/pppoe.sh and
+        # lab/api-grpc.sh; the Shell's pppoe_*_facts() and the pppoe_*_
+        # fields() above are what they do, and are tested.
+        def ListPppoeSessions(self, req, context):
+            got = self._ask(context, "pppoe_sessions")
+            if got["facts"].get("error") is not None:
+                context.abort(grpc.StatusCode.UNAVAILABLE,
+                              got["text"].strip() or got["facts"]["error"])
+            f = pppoe_sessions_fields(got["facts"])
+            return pb.PppoeSessions(
+                running=f["running"], text=got["text"],
+                sessions=[pb.PppoeSession(**x) for x in f["sessions"]])
+
+        # not a unit: an rpc, driven by lab/pppoe.sh.
+        def GetPppoeSession(self, req, context):
+            if not PPPOE_SID.match(req.session_id):
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                              f"a session id is 16 hexadecimal digits, not "
+                              f"{req.session_id!r}")
+            got = self._ask(context, "pppoe_session", req.session_id.lower())
+            f = got["facts"]
+            if f.get("error") is not None:
+                context.abort(grpc.StatusCode.UNAVAILABLE,
+                              got["text"].strip() or f["error"])
+            if not f.get("running") or f.get("row") is None:
+                context.abort(grpc.StatusCode.NOT_FOUND,
+                              got["text"].strip()
+                              or f"no session {req.session_id}")
+            return pb.PppoeSessionDetail(
+                session=pb.PppoeSession(**pppoe_session_fields(f["row"])),
+                sw_if_index=_num(f["sw_if_index"]),
+                policers=[pb.PppoePolicer(**p) for p in pppoe_policer_fields(
+                    f["policers"], f["sw_if_index"])],
+                text=got["text"])
+
+        # not a unit: an rpc, driven by lab/pppoe.sh and lab/api-grpc.sh.
+        def GetPppoeSummary(self, req, context):
+            got = self._ask(context, "pppoe_summary")
+            f = pppoe_summary_fields(got["facts"])
+            servers = f.pop("radius_servers", [])
+            return pb.PppoeSummary(
+                text=got["text"], **f,
+                radius_servers=[pb.PppoeRadiusServerState(**r)
+                                for r in servers])
+
+        # not a unit: an rpc, driven by lab/pppoe.sh.
+        def ListPppoeHistory(self, req, context):
+            got = self._ask(context, "pppoe_history", {
+                "user": req.user, "address": req.address,
+                "session_id": req.session_id, "at": req.at,
+                "since": req.since, "last": req.last})
+            f = got["facts"]
+            if f["why_filter"]:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                              got["text"].strip() or f["why_filter"])
+            if f["why_read"]:
+                context.abort(grpc.StatusCode.UNAVAILABLE,
+                              got["text"].strip() or f["why_read"])
+            out = pb.PppoeHistory(more=int(f["got"].get("more", 0)),
+                                  text=got["text"])
+            for s in f["got"].get("sessions") or []:
+                x = pppoe_history_session_fields(s)
+                start, stop = x.pop("start"), x.pop("stop")
+                h = out.sessions.add(**x)
+                if start is not None:
+                    h.start.seconds, h.start.nanos = ts_ms(start)
+                if stop is not None:
+                    h.stop.seconds, h.stop.nanos = ts_ms(stop)
+            return out
+
+        # not a unit: an rpc, driven by lab/pppoe.sh.
+        def VerifyPppoeHistory(self, req, context):
+            import pppoetrail
+            got = self._ask(context, "pppoe_verify")
+            if got["facts"]["why"]:
+                context.abort(grpc.StatusCode.UNAVAILABLE,
+                              got["text"].strip() or got["facts"]["why"])
+            f = pppoe_verify_fields(got["facts"]["rep"], pppoetrail.TRAIL_PATH)
+            verdict = pb.PppoeHistoryVerification.Verdict.Value(
+                enum_name("VERDICT", f.pop("verdict")))
+            return pb.PppoeHistoryVerification(verdict=verdict,
+                                               text=got["text"], **f)
 
         # not a unit: an rpc, driven by lab/api-grpc.sh's eleventh phase;
         # events_filters(), events_read() and event_pb_fields() are what it

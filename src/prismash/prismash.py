@@ -4752,8 +4752,10 @@ TREE = {
             }),
             # #597: a PPPoE session, ended by the control plane.
             "pppoe": ("PPPoE sessions", {
-                "session": ("end one session, one user's, or all; they "
-                            "redial", "<session-id>, user <name>, or all"),
+                "session": ("end one session, one user's, the one at an "
+                            "address, or all; they redial",
+                            "<session-id>, user <name>, address <A.B.C.D>, "
+                            "or all"),
             }),
             # #572: NAT64's own, by any address in the subscriber's prefix.
             "nat64": ("NAT64 state", {
@@ -25661,7 +25663,7 @@ class Shell:
             print("       clear isis adjacency [<system-id>]")
             print("       clear interface counters [<interface>]")
             print("       clear cgnat subscriber <A.B.C.D>")
-            print("       clear pppoe session <id> | user <name> | all")
+            print(f"       {pppoe_mod.CLEAR_USAGE}")
             print("       clear configuration pending")
             return
         if not self.require(CAP_ALL, "clear bgp"):
@@ -25763,13 +25765,16 @@ class Shell:
 
     def clear_pppoe(self, rest):
         """
-        `clear pppoe session <id> | user <name> | all` (#597): sessions ended
-        by the control plane - PADT to the CPE, Accounting-Stop to RADIUS,
-        the session interface out of the dataplane. The CPE redials; this
-        changes no configuration.
+        `clear pppoe session <id> | user <name> | address <A.B.C.D> | all`
+        (#597): sessions ended by the control plane - PADT to the CPE,
+        Accounting-Stop to RADIUS, the session interface out of the
+        dataplane. The CPE redials; this changes no configuration. By
+        address (docs/bng.md 0.4 item 2, for the API's Clear): the session
+        `show pppoe sessions` lists with that address, ended by its id - the
+        list is the one place the address and the id are read together.
         """
         if rest[:1] != ["session"]:
-            self.err("usage: clear pppoe session <id> | user <name> | all")
+            self.err(f"usage: {pppoe_mod.CLEAR_USAGE}")
             return
         words, why = pppoe_mod.clear_words(rest[1:])
         if why:
@@ -25777,84 +25782,151 @@ class Shell:
             return
         if not self.require(CAP_ALL, "clear pppoe session"):
             return
-        rc, out = self.host_run([pppoe_mod.BNG_CTL, "terminate"] + words)
+        todo = [words]
+        if words[0] == "address":
+            f = self.pppoe_sessions_facts()
+            if not f["running"]:
+                self.err("clear pppoe session: PPPoE is not running")
+                return
+            if f["error"]:
+                self.err_prose("clear pppoe session: the control plane did "
+                               "not answer", f["error"])
+                return
+            todo = [["sid", r["sid"].lower()] for r in f["rows"]
+                    if r["ip"] == words[1]]
+            if not todo:
+                self.err_prose(f"clear pppoe session: no session holds "
+                               f"{words[1]}",
+                               "'show pppoe sessions' lists them")
+                return
+        for w in todo:
+            rc, out = self.host_run([pppoe_mod.BNG_CTL, "terminate"] + w)
+            if rc == 3:
+                self.err("clear pppoe session: PPPoE is not running")
+                return
+            if rc != 0:
+                self.err_prose("clear pppoe session: the control plane "
+                               "refused",
+                               " ".join(out.split()) or "it did not say why")
+                return
+            print("cleared: " + " ".join(w))
+
+    def pppoe_sessions_facts(self):
+        """
+        The control plane's sessions, asked once (#597): {"running": False}
+        when PPPoE does not run, {"error": why} when it did not answer, else
+        {"rows": pppoe.session_rows()}. `show pppoe sessions`, `show pppoe
+        session <id>` and the API's ListPppoeSessions draw from this one
+        reading.
+        """
+        rc, out = self.host_run([pppoe_mod.BNG_CTL, "sessions"])
         if rc == 3:
-            self.err("clear pppoe session: PPPoE is not running")
-            return
+            return {"running": False, "error": None, "rows": []}
         if rc != 0:
-            self.err_prose("clear pppoe session: the control plane refused",
-                           " ".join(out.split()) or "it did not say why")
-            return
-        print("cleared: " + " ".join(words))
+            return {"running": True, "error": " ".join(out.split()),
+                    "rows": []}
+        return {"running": True, "error": None,
+                "rows": pppoe_mod.session_rows(out)}
+
+    def show_pppoe_sessions(self, f):
+        """`show pppoe sessions`, from pppoe_sessions_facts()' reading."""
+        if not f["running"]:
+            print("PPPoE is not running: no sessions")
+        elif f["error"] is not None:
+            self.err_prose("show pppoe sessions: the control plane did not "
+                           "answer", f["error"])
+        else:
+            print("\n".join(pppoe_mod.sessions_screen(f["rows"])))
+
+    def pppoe_session_facts(self, sid):
+        """
+        One session (#607): pppoe_sessions_facts()' reading narrowed to the
+        id, its sw_if_index in the dataplane, found by its MAC, and every
+        policer the dataplane has ({name: counts}, pppoe.policers()).
+        """
+        f = self.pppoe_sessions_facts()
+        rows = [r for r in f["rows"] if r["sid"].lower() == sid.lower()]
+        f.update(row=rows[0] if rows else None, sw_if_index="", policers={})
+        if rows:
+            _rc, vs = self.dp.run("show pppoe session")
+            f["sw_if_index"] = pppoe_mod.session_index(
+                vs if _rc == 0 else "", rows[0]["calling-sid"])
+            _rc, vp = self.dp.run("show policer")
+            f["policers"] = pppoe_mod.policers(vp if _rc == 0 else "")
+        return f
+
+    def show_pppoe_session(self, sid, f):
+        """`show pppoe session <id>`, from pppoe_session_facts()."""
+        if not f["running"]:
+            print("PPPoE is not running: no sessions")
+        elif f["error"] is not None:
+            self.err_prose("show pppoe session: the control plane did not "
+                           "answer", f["error"])
+        elif f["row"] is None:
+            self.err_prose(f"show pppoe session: no session {sid}",
+                           "'show pppoe sessions' lists them")
+        else:
+            print("\n".join(pppoe_mod.session_screen(
+                f["row"], f["sw_if_index"], f["policers"])))
+
+    def pppoe_summary_facts(self):
+        """
+        What `show pppoe summary` says, read once (#597): the committed
+        `pppoe` and `aaa` blocks, the control plane's status and - while it
+        runs - its session counts, the RADIUS servers' states and the
+        session trail's counters out of one `show stat`, and the
+        dataplane's refusals. The API's GetPppoeSummary carries the same.
+        """
+        cfg = self.running_config()
+        f = {"held": cfg.pppoe, "aaa": cfg.aaa, "status": "", "counts": {},
+             "states": {}, "trail": None, "guard": None}
+        if pppoe_mod.is_empty(cfg.pppoe):
+            return f
+        rc, status = self.host_run([pppoe_mod.BNG_CTL, "status"])
+        f["status"] = status.strip() if rc == 0 else "unknown"
+        if f["status"] == "running":
+            rc, out = self.host_run([pppoe_mod.BNG_CTL, "summary"])
+            if rc == 0:
+                f["counts"] = pppoe_mod.stat_counts(out)
+                # Which RADIUS servers accel-ppp has marked down (#607).
+                f["states"] = aaa_mod.server_states(out)
+                # And the session trail's (docs/bng.md 0.7).
+                f["trail"] = pppoe_mod.trail_counts(out)
+        # What the dataplane refused before it reached the control plane
+        # (#597): PPPoE from outside the access interfaces, and a MAC
+        # another access port holds.
+        rc, out = self.dp.run("show bpa pppoe-access")
+        f["guard"] = pppoe_mod.guard_counts(out) if rc == 0 else None
+        return f
+
+    def show_pppoe_summary(self, f):
+        """`show pppoe summary`, from pppoe_summary_facts()' reading."""
+        print("\n".join(pppoe_mod.summary_screen(
+            f["held"], f["status"], f["counts"], f["aaa"], f["states"],
+            f["trail"], f["guard"])))
 
     def show_pppoe(self, args):
         """
-        `show pppoe sessions` and `show pppoe summary` (#597), asked of the
-        prisma-bng container through the host: the sessions are accel-ppp's,
-        and only it knows a session's user.
+        `show pppoe sessions`, `session <id>`, `summary` and `history`
+        (#597), asked of the prisma-bng container through the host: the
+        sessions are accel-ppp's, and only it knows a session's user. Each
+        screen is drawn from one reading (the *_facts() above), which the
+        API's typed calls carry as fields.
         """
         if args == ["sessions"]:
-            rc, out = self.host_run([pppoe_mod.BNG_CTL, "sessions"])
-            if rc == 3:
-                print("PPPoE is not running: no sessions")
-                return
-            if rc != 0:
-                self.err_prose("show pppoe sessions: the control plane did "
-                               "not answer", " ".join(out.split()))
-                return
-            print("\n".join(pppoe_mod.sessions_screen(
-                pppoe_mod.session_rows(out))))
+            self.show_pppoe_sessions(self.pppoe_sessions_facts())
             return
         if len(args) == 2 and args[0] == "session":
             # #607: one session, with what the list has no room for and its
             # policers as VPP counts them.
-            sid = args[1].lower()
-            rc, out = self.host_run([pppoe_mod.BNG_CTL, "sessions"])
-            if rc == 3:
-                print("PPPoE is not running: no sessions")
-                return
-            if rc != 0:
-                self.err_prose("show pppoe session: the control plane did "
-                               "not answer", " ".join(out.split()))
-                return
-            rows = [r for r in pppoe_mod.session_rows(out)
-                    if r["sid"].lower() == sid]
-            if not rows:
-                self.err_prose(f"show pppoe session: no session {args[1]}",
-                               "'show pppoe sessions' lists them")
-                return
-            _rc, vs = self.dp.run("show pppoe session")
-            idx = pppoe_mod.session_index(vs if _rc == 0 else "",
-                                          rows[0]["calling-sid"])
-            _rc, vp = self.dp.run("show policer")
-            print("\n".join(pppoe_mod.session_screen(
-                rows[0], idx, pppoe_mod.policers(vp if _rc == 0 else ""))))
+            self.show_pppoe_session(args[1],
+                                    self.pppoe_session_facts(args[1]))
             return
         if args[:1] == ["history"]:
             self.show_pppoe_history(args[1:])
             return
         if args == ["summary"]:
-            cfg = self.running_config()
-            held = cfg.pppoe
-            rc, status = self.host_run([pppoe_mod.BNG_CTL, "status"])
-            status = status.strip() if rc == 0 else "unknown"
-            counts, states, trail = {}, {}, None
-            if status == "running":
-                rc, out = self.host_run([pppoe_mod.BNG_CTL, "summary"])
-                counts = pppoe_mod.stat_counts(out) if rc == 0 else {}
-                # Which RADIUS servers accel-ppp has marked down (#607):
-                # the same `show stat`, its radius blocks.
-                states = aaa_mod.server_states(out) if rc == 0 else {}
-                # And the session trail's (docs/bng.md 0.7).
-                trail = pppoe_mod.trail_counts(out) if rc == 0 else None
-            # What the dataplane refused before it reached the control
-            # plane (#597): PPPoE from outside the access interfaces, and
-            # a MAC another access port holds.
-            rc, out = self.dp.run("show bpa pppoe-access")
-            guard = pppoe_mod.guard_counts(out) if rc == 0 else None
-            print("\n".join(pppoe_mod.summary_screen(held, status, counts,
-                                                     cfg.aaa, states, trail,
-                                                     guard)))
+            self.show_pppoe_summary(self.pppoe_summary_facts())
             return
         self.err("usage: show pppoe sessions | session <id> | summary | "
                  "history")
@@ -25868,21 +25940,44 @@ class Shell:
         the host (pppoetrail.py), and its hash chain checked.
         """
         if words == ["verify"]:
-            rep, why = pppoetrail.fetch_verify()
-            if why:
-                self.err_prose("show pppoe history verify: not read", why)
-                return
-            print("\n".join(pppoetrail.verify_screen(rep)))
+            self.show_pppoe_verify(self.pppoe_verify_facts())
             return
+        self.show_pppoe_history_of(self.pppoe_history_facts(words))
+
+    def pppoe_history_facts(self, words):
+        """
+        `show pppoe history`'s words read and the trail asked, once:
+        {"why_filter": the VTY's refusal of a filter, "why_read": why the
+        trail was not read, "got": pppoetrail.history()'s answer}.
+        """
         f, why = pppoetrail.parse_show_args(words, events.parse_since)
         if why:
-            self.err_prose("show pppoe history: not a filter it takes", why)
-            return
+            return {"why_filter": why, "why_read": None, "got": None}
         got, why = pppoetrail.fetch(f)
-        if why:
-            self.err_prose("show pppoe history: the trail was not read", why)
-            return
-        print("\n".join(pppoetrail.history_screen(got)))
+        return {"why_filter": None, "why_read": why, "got": got}
+
+    def show_pppoe_history_of(self, f):
+        """`show pppoe history ...`, from pppoe_history_facts()."""
+        if f["why_filter"]:
+            self.err_prose("show pppoe history: not a filter it takes",
+                           f["why_filter"])
+        elif f["why_read"]:
+            self.err_prose("show pppoe history: the trail was not read",
+                           f["why_read"])
+        else:
+            print("\n".join(pppoetrail.history_screen(f["got"])))
+
+    def pppoe_verify_facts(self):
+        """The session trail's chain checked, once: {"rep", "why"}."""
+        rep, why = pppoetrail.fetch_verify()
+        return {"rep": rep, "why": why}
+
+    def show_pppoe_verify(self, f):
+        """`show pppoe history verify`, from pppoe_verify_facts()."""
+        if f["why"]:
+            self.err_prose("show pppoe history verify: not read", f["why"])
+        else:
+            print("\n".join(pppoetrail.verify_screen(f["rep"])))
 
     def show_cgnat_translation(self, args):
         """

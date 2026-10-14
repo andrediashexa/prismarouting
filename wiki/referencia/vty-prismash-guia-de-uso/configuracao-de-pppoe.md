@@ -156,9 +156,12 @@ O segredo de cada servidor e de cada `client` fica na configuração salva, para
 | `show pppoe summary` | se o plano de controle PPPoE está rodando, quantas sessões estão ativas, começando e terminando, cada servidor RADIUS (com `failed` se o plano de controle o deu como fora) e o resumo da configuração |
 | `clear pppoe session <id>` | encerra uma sessão; o id é o da primeira coluna de `show pppoe sessions`, o mesmo `Acct-Session-Id` que o RADIUS recebeu |
 | `clear pppoe session user <nome>` | encerra as sessões de um usuário |
+| `clear pppoe session address <A.B.C.D>` | encerra a sessão que tem aquele endereço interno, achada em `show pppoe sessions` |
 | `clear pppoe session all` | encerra todas       |
 
 Uma sessão encerrada manda PADT ao CPE e Accounting-Stop ao RADIUS; o CPE disca de novo. As interfaces que o dataplane cria para as sessões nunca entram na configuração: são assinantes discando, não algo que alguém configurou.
+
+Tudo isso também está na API de gerência (gRPC), com campos tipados: as sessões, uma sessão com seus policers, o resumo com os contadores do histórico e das recusas, o histórico e a verificação da cadeia, e o `clear` por id, usuário, endereço ou todas. Os blocos `pppoe` e `aaa` são lidos e escritos como campos pelo `GetConfig` e pelo `SetConfig`; os segredos nunca voltam numa leitura.
 
 ## Quem tinha o endereço: o histórico de sessões
 

@@ -50,6 +50,21 @@ mkdir -p /var/log/prisma-routing
 rm -f /var/log/prisma-routing/events.log /var/log/prisma-routing/events.log.1 \
       /var/log/prisma-routing/events.state
 
+# The host's prisma-bng, played (docs/bng.md 0.4 item 2): this lab has no
+# PPPoE control plane - lab/pppoe.sh runs the real one - so a commit of a
+# `pppoe` block is answered as a box with its container stopped answers it,
+# and every read of the sessions as PPPoE not running.
+cat > /tmp/prisma-bng-stub <<'STUB'
+#!/bin/sh
+case "$1" in
+  apply) echo started ;;
+  reload) echo reloaded ;;
+  stop|status) echo stopped ;;
+  *) echo "not running"; exit 3 ;;
+esac
+STUB
+chmod 0755 /tmp/prisma-bng-stub
+export PRISMA_BNG_CTL=/tmp/prisma-bng-stub
 # Two workers, so GetSystem has a worker load to say (#533).
 SC=$(startup_conf test workers)
 vpp -c "$SC" > /tmp/vpp.log 2>&1 &
@@ -680,6 +695,31 @@ printf '%s\n' "$T14" | sed 's/^/  /'
 echo "=========== #598: GetSystem's CPUs, GetHistory cpus ==========="
 T15=$(python3 lab/api_phase15_check.py /tmp/apistubs $C 127.0.0.1:50556 2>&1)
 printf '%s\n' "$T15" | sed 's/^/  /'
+# docs/bng.md 0.4 item 2 (#597): the BNG's blocks as fields, through
+# SetConfig, Commit and GetConfig, held to GetRunning and to the files the
+# commit wrote; then a client built from the contract of OLD_API_TAG - a
+# release before any of it - against this server.
+echo "=========== #597: pppoe and aaa as fields; an old client ==========="
+# A server of its own: phase 8's lives as long as its `sleep 900`.
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50558 --dir $C/box \
+  --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver16.log 2>&1 &
+n=0; until grep -q "prisma.v1 on" /tmp/apiserver16.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
+T16=$(python3 lab/api_phase16_check.py /tmp/apistubs $C 127.0.0.1:50558 new 2>&1)
+printf '%s\n' "$T16" | sed 's/^/  /'
+OLD_API_TAG=${OLD_API_TAG:-v0.155.6}
+OLDT=/tmp/old-api; rm -rf "$OLDT"; mkdir -p "$OLDT"
+# A worktree's .git points outside the bind mount (lab/upgrade.sh says why):
+# then the tree is the one extracted on the host into .build-old/<tag>.
+if [ -f "/src/.build-old/$OLD_API_TAG/api/prisma/v1/prisma.proto" ]; then
+  cp -a "/src/.build-old/$OLD_API_TAG/." "$OLDT/"
+else
+  git -c safe.directory=/src -C /src archive "$OLD_API_TAG" api tools/gen-api.sh \
+    2>/dev/null | tar -x -C "$OLDT" 2>/dev/null
+fi
+OLDGEN=$(sh "$OLDT/tools/gen-api.sh" /tmp/apistubs-old 2>&1 && echo generated)
+echo "  $OLD_API_TAG's contract: $(sha256sum "$OLDT/api/prisma/v1/prisma.proto" 2>/dev/null | cut -c1-16) - stubs $OLDGEN"
+T16O=$(python3 lab/api_phase16_check.py /tmp/apistubs-old $C 127.0.0.1:50558 old 2>&1)
+printf '%s\n' "$T16O" | sed 's/^/  /'
 pkill -f "^sleep 900$"
 TAIL=$(tail -5 /tmp/apiserver.log)
 
@@ -970,8 +1010,25 @@ expect "  the sampler's last window, ended seconds ago" t15 cpu-usage-recent
 expect "  cpu_cores_text is show system cpu cores, a row per CPU, 79 wide" t15 cpu-text
 expect "  GetHistory cpus: every CPU in each sample, the workers polling" t15 history-cpus
 expect "  and only when asked: a bare request carries none" t15 history-cpus-asked
+t16() { printf '%s\n%s\n' "$T16" "$T16O" | grep -q "^RESULT $1 ok"; }
+expect "#597: SetConfig stages pppoe and aaa at their paths, every secret blanked in the reply" t16 set-lines
+expect "  GetConfig of the candidate: the fields set, secret_set, no secret, retries 0 a value" t16 candidate-read
+expect "  committed: GetConfig of the running configuration is the candidate's, no secret; GetRunning has both blocks" t16 commit-running
+expect "  and the files the commit wrote carry the secrets the API set" t16 secrets-reached-the-box
+expect "  a SetConfig of an interface, and one naming radius.timeout_seconds, keep the rest" t16 omitted-kept
+expect "  a server listed with no secret keeps its own; the failover order changed" t16 secret-kept
+expect "  a new server with no secret: INVALID_ARGUMENT" t16 new-server-needs-secret
+expect "  GetConfig with no area answers pppoe and aaa too" t16 every-area
+expect "  the PPPoE reads with the control plane stopped: not running, the summary says so" t16 pppoe-reads
+expect "  Clear of PPPoE sessions with nothing running: FAILED_PRECONDITION" t16 clear-not-running
+expect "  DeleteConfig area pppoe and aaa removes each block" t16 deleted
+expect_in "#597: the old contract's stubs come out of $OLD_API_TAG" "generated" "$OLDGEN"
+expect "  an old client: GetConfig with no area parses past the fields it does not know" t16 old-getconfig
+expect "  an old client: SetConfig, Commit and GetConfig of an interface" t16 old-setconfig
+expect "  an old client: Clear, GetSchema, ListEvents, Show" t16 old-rest
 TAIL8=$(tail -5 /tmp/apiserver8.log)
 expect_not_in "  and that server raised nothing" "Traceback" "$TAIL8"
+expect_not_in "  and #597's server raised nothing" "Traceback" "$(cat /tmp/apiserver16.log)"
 expect_not_in "the server raised nothing" "Traceback" "$TAIL"
 expect "a second server on the same port is refused at the bind ($SECOND)" \
   test "$SECOND" = 1

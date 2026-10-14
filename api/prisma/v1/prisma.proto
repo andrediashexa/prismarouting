@@ -400,8 +400,8 @@ message GetConfigRequest {
   // Empty reads the running configuration; set, that candidate's.
   string candidate_id = 1;
   // "interfaces", "pools", "logging", and the routing half (#558 phase 3):
-  // "static", "bgp", "ospf", "ospf6", "isis", "interface_routing". Empty is
-  // every area.
+  // "static", "bgp", "ospf", "ospf6", "isis", "interface_routing"; the
+  // BNG's (#597): "pppoe" and "aaa". Empty is every area.
   repeated string areas = 2;
 }
 
@@ -622,6 +622,120 @@ message TypedConfig {
   // area "bfd". A BGP neighbour's and a static route's BFD are on those.
   repeated BfdPeerConfig bfd_peers = 26;
   repeated BfdProfileConfig bfd_profiles = 27;
+  // The BNG (#597, docs/bng.md 0.4 item 2): the `pppoe` block, area
+  // "pppoe", and the `aaa` block - RADIUS - area "aaa". SECRETS ARE NEVER
+  // READ: a local user's password, a RADIUS server's and a dynamic-
+  // authorization client's secret are `password_set` / `secret_set`.
+  PppoeConfig pppoe = 31;
+  AaaConfig aaa = 32;
+}
+
+// The `pppoe` block (#597). A field at its default is a statement the block
+// does not have, as everywhere in TypedConfig.
+message PppoeConfig {
+  // Read only: false when the configuration has no `pppoe` block at all
+  // (PPPoE is off, the control plane does not run).
+  bool configured = 1;
+  // The access interfaces, in the order written: a card, or a
+  // sub-interface with one VLAN tag. Up to 16.
+  repeated string interfaces = 2;
+  // The box's address on every session (IPCP's local address).
+  string gateway = 3;
+  // Each a prefix ("100.64.0.0/22") or a range ("100.64.0.10-100.64.0.200"),
+  // in the order written; for subscribers RADIUS gives no address.
+  repeated string address_pools = 4;
+  // Up to 2 resolvers, in the order written.
+  repeated string dns_servers = 5;
+  // "pap", "chap", "mschap-v2", in the order written; empty: no
+  // statement, all three offered.
+  repeated string authentication = 6;
+  // 0: no limit.
+  uint32 session_limit = 7;
+  // 0: no statement, 1492.
+  uint32 mtu = 8;
+  // 0: no clamp.
+  uint32 tcp_mss = 9;
+  // "": no statement, the box's name in PADO.
+  string ac_name = 10;
+  // `rate-limit default <down>/<up>`, kbit/s, for a session RADIUS gives no
+  // rate; both 0: no statement. Both are set or neither is.
+  uint32 rate_limit_default_down_kbit = 11;
+  uint32 rate_limit_default_up_kbit = 12;
+  // `local-user`s (for a lab without RADIUS), by name.
+  repeated PppoeLocalUser local_users = 13;
+}
+
+message PppoeLocalUser {
+  string name = 1;
+  // Read only: a password is configured. It is never read.
+  bool password_set = 2;
+  // Write only: the password to set. Empty keeps the user's current one;
+  // a user the block does not have yet needs one. Never filled on a read.
+  string password = 3;
+}
+
+// The `aaa` block (#607): RADIUS, under `aaa` > `radius`.
+message AaaConfig {
+  // Read only: false when the configuration has no `aaa` block.
+  bool configured = 1;
+  RadiusConfig radius = 2;
+}
+
+message RadiusConfig {
+  // By priority, lowest (tried first) first; up to 8.
+  repeated RadiusServerConfig servers = 1;
+  // "failover" or "round-robin"; "": no statement (failover).
+  string mode = 2;
+  // Unset: no statement, the default - timeout 3 s, retries 1, dead-time
+  // 30 s, interim-interval 300 s. retries 0 and interim-interval 0 (no
+  // interim updates) are values, not absences.
+  optional uint32 timeout_seconds = 3;
+  optional uint32 retries = 4;
+  optional uint32 dead_time_seconds = 5;
+  // "": no statement, "prisma-routing".
+  string nas_identifier = 6;
+  optional uint32 interim_interval_seconds = 7;
+  // The Disconnect/CoA listener: "" listens nowhere. Its port is 3799 when
+  // not stated; 0 on a read only when there is no listener.
+  string dynamic_authorization_listen = 8;
+  uint32 dynamic_authorization_port = 9;
+  // Who may send Disconnect and CoA, by address; up to 16.
+  repeated RadiusClientConfig dynamic_authorization_clients = 10;
+  // Rate profiles: a Cisco policy name RADIUS may send, and its rates.
+  repeated RateProfileConfig rate_profiles = 11;
+}
+
+message RadiusServerConfig {
+  string address = 1;
+  // Read only: always true for a configured server; its secret is never
+  // read.
+  bool secret_set = 2;
+  // Write only: the shared secret. Empty keeps the server's current one; a
+  // server the block does not have yet needs one. Never filled on a read.
+  string secret = 3;
+  // 0 on a write: the default, 1812 / 1813. A read says the port.
+  uint32 auth_port = 4;
+  uint32 acct_port = 5;
+  // "both", "auth" or "acct"; "" on a write is "both".
+  string role = 6;
+  // 1-255, the lowest tried first in failover. 0 on a write: the server's
+  // current priority, or for a new one the next after the highest.
+  uint32 priority = 7;
+}
+
+message RadiusClientConfig {
+  string address = 1;
+  // Read only; the secret is never read.
+  bool secret_set = 2;
+  // Write only, as RadiusServerConfig.secret.
+  string secret = 3;
+}
+
+message RateProfileConfig {
+  string name = 1;
+  // kbit/s; 0 is no limit that way.
+  uint32 down_kbit = 2;
+  uint32 up_kbit = 3;
 }
 
 
@@ -1242,6 +1356,14 @@ message SetConfigRequest {
     // one) or "timers.<field>" (that one).
     BfdPeerConfig bfd_peer = 10;
     BfdProfileConfig bfd_profile = 11;
+    // #597: the `pppoe` block and the `aaa` block, each set as one object.
+    // Their fields are named in `fields` as PppoeConfig's ("interfaces",
+    // "local_users", "rate_limit_default" for both rates) and as
+    // "radius.<field>" for AaaConfig's ("radius.servers", "radius.timeout_
+    // seconds", "radius.dynamic_authorization" for the listener and its
+    // port). A secret left empty keeps the one configured.
+    PppoeConfig pppoe = 16;
+    AaaConfig aaa = 17;
   }
   // The fields to change, by their names in the message above ("mtu",
   // "ipv4", "collectors"; "ports" for port_first/port_last, "vlan" for the
@@ -1262,7 +1384,8 @@ message SetConfigResponse {
 message DeleteConfigRequest {
   string candidate_id = 1;
   // "interfaces", "pools", "nat64", "logging", "static", "bgp", "vrfs" or
-  // "bfd". "bfd" removes the profile `name`, or the session `bfd_peer` (by
+  // "bfd"; "pppoe" or "aaa" (#597), each the whole block (`no pppoe`,
+  // `no aaa`), no name. "bfd" removes the profile `name`, or the session `bfd_peer` (by
   // its key fields), or - neither given - the whole `bfd` block, body and all.
   string area = 2;
   // The interface, pool or VRF device.
@@ -1573,6 +1696,257 @@ service OperationalService {
   // answer, so a deadline is set above it. INVALID_ARGUMENT for seconds
   // above 60. Any account.
   rpc GetTuningAdvice(GetTuningAdviceRequest) returns (TuningAdvice);
+  // #597, docs/bng.md 0.4 item 2: the BNG's PPPoE sessions, typed. Each is
+  // the VTY's screen of the same name drawn from the one reading the fields
+  // carry, the screen verbatim in `text`, as phase 7's. Any account, as any
+  // account may type them. The sessions are the control plane's (accel-ppp
+  // in the prisma-bng container), asked through the host: a box with PPPoE
+  // not running answers `running` false and no session, never an error.
+  //
+  // `show pppoe sessions`: every session, with its user, address, MAC,
+  // state, uptime, traffic and rate limit.
+  rpc ListPppoeSessions(ListPppoeSessionsRequest) returns (PppoeSessions);
+  // `show pppoe session <id>`: one session, and its policers as the
+  // dataplane counts them. INVALID_ARGUMENT for an id that is not 16
+  // hexadecimal digits; NOT_FOUND for one no session has.
+  rpc GetPppoeSession(GetPppoeSessionRequest) returns (PppoeSessionDetail);
+  // `show pppoe summary`: the control plane's state, the sessions by state,
+  // the session trail's counters, what the dataplane refused before it
+  // reached the control plane, and the configuration it runs on - RADIUS
+  // servers with the state accel-ppp holds each in.
+  rpc GetPppoeSummary(GetPppoeSummaryRequest) returns (PppoeSummary);
+  // `show pppoe history [user <name>] [address <a>] [session <id>] [at <t> |
+  // since <t>] [last <n>]` (docs/bng.md 0.7): who held which inside address
+  // from when to when, from the box's own session trail, oldest first.
+  // INVALID_ARGUMENT, in the VTY's words, for a filter it refuses;
+  // UNAVAILABLE when the trail could not be read.
+  rpc ListPppoeHistory(ListPppoeHistoryRequest) returns (PppoeHistory);
+  // `show pppoe history verify`: the session trail's hash chain checked.
+  rpc VerifyPppoeHistory(VerifyPppoeHistoryRequest)
+      returns (PppoeHistoryVerification);
+}
+
+// ------------------------------------------------- PPPoE sessions (#597)
+
+message ListPppoeSessionsRequest {}
+
+message PppoeSession {
+  // accel-ppp's session id: 16 hexadecimal digits, lower case, the
+  // Acct-Session-Id RADIUS was sent and the id `clear pppoe session` and
+  // the session trail use.
+  string session_id = 1;
+  // The user it authenticated as; "" while it has not yet.
+  string user = 2;
+  // The subscriber's inside address; "" before IPCP gave one.
+  string address = 3;
+  // The CPE's MAC, aa:bb:cc:dd:ee:ff.
+  string mac = 4;
+  // The session's interface as the control plane names it.
+  string interface = 5;
+  // "active"; "starting" (authenticating) or "finishing" otherwise.
+  string state = 6;
+  // Gauge: seconds since the session came up.
+  uint64 uptime_seconds = 7;
+  // Counters since the session came up, reset with it: bytes from the
+  // subscriber (received) and to it (sent).
+  uint64 rx_bytes = 8;
+  uint64 tx_bytes = 9;
+  // The session's policer rates, kbit/s; 0 is no limit that way, and both
+  // 0 is a session with no rate limit.
+  uint32 rate_limit_down_kbit = 10;
+  uint32 rate_limit_up_kbit = 11;
+}
+
+message PppoeSessions {
+  // False: PPPoE is not running (not configured, or its control plane is
+  // down) - no session, and `text` says so.
+  bool running = 1;
+  // In the screen's order: by user, then session id.
+  repeated PppoeSession sessions = 2;
+  // `show pppoe sessions`, verbatim.
+  string text = 3;
+}
+
+message GetPppoeSessionRequest {
+  string session_id = 1;
+}
+
+message PppoePolicer {
+  // "down" (to the subscriber) or "up" (from it).
+  string direction = 1;
+  // Counters since the policer was made with the session: packets passed,
+  // and dropped past the rate.
+  uint64 conform_packets = 2;
+  uint64 dropped_packets = 3;
+}
+
+message PppoeSessionDetail {
+  PppoeSession session = 1;
+  // The session interface's index in the dataplane; 0 when it was not
+  // found there (then no policer is read).
+  uint32 sw_if_index = 2;
+  // One per direction the session is limited in; none for no limit.
+  repeated PppoePolicer policers = 3;
+  // `show pppoe session <id>`, verbatim.
+  string text = 4;
+}
+
+message GetPppoeSummaryRequest {}
+
+message PppoeRadiusServerState {
+  string address = 1;
+  // "both", "auth" or "acct".
+  string role = 2;
+  uint32 priority = 3;
+  // As accel-ppp holds it: "active", or "failed" while inside its dead-
+  // time; "" when the control plane does not run or did not say.
+  string state = 4;
+}
+
+message PppoeSummary {
+  // False: no `pppoe` block; every other field is empty.
+  bool configured = 1;
+  // "running"; "stopped" (configured, not running); "not-configured"
+  // (committed, its files not written); "no-containers" (a box that runs
+  // the dataplane as units); "unknown" (the host did not answer).
+  string control_plane = 2;
+  // Gauges, while running.
+  uint32 sessions_active = 3;
+  uint32 sessions_starting = 4;
+  uint32 sessions_finishing = 5;
+  // The session trail (docs/bng.md 0.7), read while running. trail_known
+  // false: not read (not running), or a control plane with no trail module.
+  // Counters since the control plane started: entries written, entries it
+  // could NOT write (a session the box cannot answer for), and the last
+  // sequence number written - the chain's, which does not restart.
+  bool trail_known = 6;
+  uint64 trail_written = 7;
+  uint64 trail_failed = 8;
+  uint64 trail_seq = 9;
+  // What the dataplane refused before it reached the control plane,
+  // discovery and session frames together, counters since the dataplane
+  // started: PPPoE from an interface that is not an access interface, and
+  // a MAC another access port holds a session for. refusals_known false:
+  // the dataplane did not say.
+  bool refusals_known = 10;
+  uint64 refused_not_access = 11;
+  uint64 refused_mac_held = 12;
+  // The configuration it runs on.
+  repeated string access_interfaces = 13;
+  // True: authenticated against RADIUS (`aaa radius` has a server); false:
+  // against local_users, for a lab.
+  bool radius = 14;
+  uint32 local_users = 15;
+  // "failover" or "round-robin" (with RADIUS).
+  string radius_mode = 16;
+  repeated PppoeRadiusServerState radius_servers = 17;
+  // False with RADIUS when no server takes accounting: accounting is off.
+  bool accounting = 18;
+  // The Disconnect/CoA listener ("" none), its port, how many clients.
+  string dynamic_authorization_listen = 19;
+  uint32 dynamic_authorization_port = 20;
+  uint32 dynamic_authorization_clients = 21;
+  // Empty: addresses from RADIUS only.
+  repeated string address_pools = 22;
+  string gateway = 23;
+  // 0: no limit.
+  uint32 session_limit = 24;
+  // The rate of a session RADIUS gives none, kbit/s; both 0: none.
+  uint32 rate_limit_default_down_kbit = 25;
+  uint32 rate_limit_default_up_kbit = 26;
+  // `show pppoe summary`, verbatim.
+  string text = 27;
+}
+
+message ListPppoeHistoryRequest {
+  // Each "" is no filter; the filters AND.
+  string user = 1;
+  // An inside address, IPv4.
+  string address = 2;
+  // 16 hexadecimal digits.
+  string session_id = 3;
+  // An instant: the sessions that held it then. As `show log since`:
+  // relative ("30m", "2d") or an ISO date or time (with "Z" or an offset;
+  // none is the box's own zone).
+  string at = 4;
+  // A period: the sessions held at any time from then on. Not with `at`.
+  string since = 5;
+  // The newest `last` of what matches, 1-2000. 0 with no `at`: the VTY's
+  // default, the last 50; 0 with `at`: every one.
+  uint32 last = 6;
+}
+
+message PppoeHistorySession {
+  string user = 1;
+  string address = 2;
+  string session_id = 3;
+  string mac = 4;
+  // The access interface it came in on.
+  string interface = 5;
+  // When it was given the address; unset when the trail does not say.
+  google.protobuf.Timestamp start = 6;
+  // When it gave the address back; unset while `held`.
+  google.protobuf.Timestamp stop = 7;
+  // True: no stop recorded - still held, or held when the trail ends.
+  bool held = 8;
+  // Why it ended, as RADIUS's Acct-Terminate-Cause names it
+  // ("User-Request", "Lost-Carrier", "Admin-Reset", "NAS-Request"...), or
+  // "Control-Plane-Lost" for a control plane that ended without closing it.
+  string cause = 9;
+}
+
+message PppoeHistory {
+  // Oldest first.
+  repeated PppoeHistorySession sessions = 1;
+  // How many older sessions match and were not returned (the trail answers
+  // at most 2000 a call): narrow the filters.
+  uint64 more = 2;
+  // `show pppoe history ...` for the same filters, verbatim.
+  string text = 3;
+}
+
+message VerifyPppoeHistoryRequest {}
+
+message PppoeHistoryVerification {
+  enum Verdict {
+    VERDICT_UNSPECIFIED = 0;
+    // Every chained entry verifies.
+    VERDICT_INTACT = 1;
+    // No trail: no PPPoE session has been recorded on this box.
+    VERDICT_NO_TRAIL = 2;
+    // Files, and no chained entry in them: nothing is covered.
+    VERDICT_NO_CHAINED_ENTRIES = 3;
+    // Entry `entry` does not match its own digest: it was changed after it
+    // was written.
+    VERDICT_ALTERED = 4;
+    // The sequence jumps before entry `entry`: entries were removed, or one
+    // is out of its place.
+    VERDICT_REMOVED = 5;
+    // A file of the trail could not be read.
+    VERDICT_UNREADABLE = 6;
+  }
+  // The live file; the earlier months are beside it.
+  string path = 1;
+  Verdict verdict = 2;
+  // How many files, the live one and one a month before it.
+  uint32 files = 3;
+  // Entries verified (before the problem, when there is one).
+  uint64 checked = 4;
+  // The first entry the files hold: not 1 when the earlier files are no
+  // longer on the box.
+  uint64 first_seq = 5;
+  // Lines that are not an entry - a write cut short - "<file> line <n>".
+  repeated string uncovered = 6;
+  // The last verified entry and its digest: compare with a copy kept off
+  // the box.
+  uint64 head_seq = 7;
+  string head_sha256 = 8;
+  // VERDICT_ALTERED, VERDICT_REMOVED: the entry named.
+  uint64 entry = 9;
+  // The problem, in the screen's words; empty when intact.
+  repeated string problem = 10;
+  // `show pppoe history verify`, verbatim.
+  string text = 11;
 }
 
 // ------------------------------------------- the box's record of events (#588)
@@ -2676,6 +3050,17 @@ message ClearRequest {
     // `clear configuration pending` (#575): give up what the boot left out
     // for a missing card, so `save` writes again. No `name`.
     TARGET_CONFIGURATION_PENDING = 7;
+    // #597: PPPoE sessions ended by the control plane - a PADT to the CPE,
+    // Accounting-Stop to RADIUS; the CPE redials. `clear pppoe session
+    // <name>`: the session whose id is `name`.
+    TARGET_PPPOE_SESSION = 8;
+    // `clear pppoe session user <name>`: every session of that user.
+    TARGET_PPPOE_USER = 9;
+    // `clear pppoe session address <name>`: the session holding that inside
+    // address.
+    TARGET_PPPOE_ADDRESS = 10;
+    // `clear pppoe session all`: every session. No `name`.
+    TARGET_PPPOE_ALL = 11;
   }
   Target target = 1;
   string name = 2;

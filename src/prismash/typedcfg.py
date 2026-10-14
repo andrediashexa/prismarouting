@@ -40,7 +40,9 @@ ROUTING_AREAS = ("static", "bgp", "ospf", "ospf6", "isis", "interface_routing",
 OTHER_AREAS = ("system", "users", "snmp_users", "policy", "route_maps",
                "frr_lists", "rpki", "routing_attachments", "vrfs", "vrrp",
                "bundles", "cgnat_globals")
-AREAS = CONFIG_AREAS + ROUTING_AREAS + OTHER_AREAS
+#: The BNG's blocks (#597, docs/bng.md 0.4 item 2): `pppoe` and `aaa`.
+BNG_AREAS = ("pppoe", "aaa")
+AREAS = CONFIG_AREAS + ROUTING_AREAS + OTHER_AREAS + BNG_AREAS
 
 #: The CGNAT log streams, as `logging <transport> ...` names them.
 TRANSPORTS = ("udp", "tcp", "syslog")
@@ -240,6 +242,10 @@ def config_typed(cfg, areas=()):
         out.update(routing_typed(cfg, want & set(ROUTING_AREAS)))
     if want & set(OTHER_AREAS):
         out.update(system_areas_typed(cfg, want & set(OTHER_AREAS)))
+    if "pppoe" in want:
+        out["pppoe"] = pppoe_typed(cfg)
+    if "aaa" in want:
+        out["aaa"] = aaa_typed(cfg)
     # Whatever the areas: the lines a client must show read only.
     out["box_owned"] = box_owned_lines(cfg)
     return out
@@ -1777,6 +1783,295 @@ def system_areas_typed(cfg, areas):
     return {a: SYSTEM_READERS[a](cfg) for a in SYSTEM_AREAS if a in areas}
 
 
+# ------------------------------------------------------------ the BNG (#597)
+#
+# THE MODEL IS THE VTY'S: cfg.pppoe and cfg.aaa are the dicts pppoe.stage()
+# and aaa.stage() build from what is typed and from the saved file, the same
+# ones `show running-config` writes out (pppoe.body, aaa.body). Read here,
+# never reparsed. SECRETS ARE NEVER READ: a local user's password and a
+# RADIUS secret are `password_set` / `secret_set`; a write takes one, and
+# an empty one keeps what the block holds - the lines are written with the
+# secret the candidate holds, and shown_lines() blanks it in every reply.
+
+#: PppoeConfig's fields a SetConfig names; "rate_limit_default" is both
+#: rates.
+PPPOE_FIELDS = ("interfaces", "gateway", "address_pools", "dns_servers",
+                "authentication", "session_limit", "mtu", "tcp_mss",
+                "ac_name", "rate_limit_default", "local_users")
+#: AaaConfig's, by block and field; "radius.dynamic_authorization" is the
+#: listener and its port.
+AAA_FIELDS = ("radius.servers", "radius.mode", "radius.timeout_seconds",
+              "radius.retries", "radius.dead_time_seconds",
+              "radius.nas_identifier", "radius.interim_interval_seconds",
+              "radius.dynamic_authorization",
+              "radius.dynamic_authorization_clients", "radius.rate_profiles")
+PPPOE_PATH = [pppoe_mod.PPPOE_HIERARCHY]
+AAA_PATH = [aaa_mod.AAA_HIERARCHY, aaa_mod.RADIUS_LEVEL]
+#: RadiusConfig's numeric settings, as aaa's statement each one is.
+RADIUS_NUMBERS = (("timeout_seconds", "timeout"), ("retries", "retries"),
+                  ("dead_time_seconds", "dead-time"),
+                  ("interim_interval_seconds", "interim-interval"))
+#: PppoeConfig's numeric settings, as pppoe's statement each one is.
+PPPOE_NUMBERS = (("session_limit", "session-limit"), ("mtu", "mtu"),
+                 ("tcp_mss", "tcp-mss"))
+
+
+def _rate_pair(word):
+    """`rate-limit default`'s "<down>/<up>" as two kbit/s, (0, 0) unset."""
+    down, _, up = (word or "").partition("/")
+    return (pppoe_mod.rate_kbit(down) or 0, pppoe_mod.rate_kbit(up) or 0)
+
+
+def pppoe_typed(cfg):
+    """The `pppoe` block of Config `cfg` as PppoeConfig's fields."""
+    return pppoe_held_typed(cfg.pppoe)
+
+
+def pppoe_held_typed(held):
+    """pppoe's model (pppoe.empty()'s shape) as PppoeConfig's fields."""
+    s = held["settings"]
+    down, up = _rate_pair(s.get("rate-limit-default"))
+    return {"configured": not pppoe_mod.is_empty(held),
+            "interfaces": list(held["interfaces"]),
+            "gateway": held["gateway"],
+            "address_pools": list(held["pools"]),
+            "dns_servers": list(held["dns"]),
+            "authentication": s.get("authentication", "").split(),
+            "session_limit": _int(s.get("session-limit")),
+            "mtu": _int(s.get("mtu")), "tcp_mss": _int(s.get("tcp-mss")),
+            "ac_name": s.get("ac-name", ""),
+            "rate_limit_default_down_kbit": down,
+            "rate_limit_default_up_kbit": up,
+            "local_users": [{"name": n, "password_set": True}
+                            for n in sorted(held["users"])]}
+
+
+def aaa_typed(cfg):
+    """The `aaa` block of Config `cfg` as AaaConfig's fields: RADIUS."""
+    return aaa_held_typed(cfg.aaa)
+
+
+def aaa_held_typed(held):
+    """aaa's model (aaa.empty()'s shape) as AaaConfig's fields."""
+    s, d = held["settings"], held["dae"]
+    radius = {
+        "servers": [{"address": r["address"], "secret_set": True,
+                     "auth_port": _int(r["auth-port"]),
+                     "acct_port": _int(r["acct-port"]), "role": r["role"],
+                     "priority": _int(r["priority"])}
+                    for r in aaa_mod.ordered(held)],
+        "mode": s.get("mode", ""),
+        "nas_identifier": s.get("nas-identifier", ""),
+        "dynamic_authorization_listen": d["listen"],
+        "dynamic_authorization_port": _int(d["port"]) if d["listen"] else 0,
+        "dynamic_authorization_clients": [
+            {"address": a, "secret_set": True}
+            for a in sorted(d["clients"], key=_addr_key)],
+        "rate_profiles": [
+            {"name": n, "down_kbit": aaa_mod.profile_rate(p["down"]) or 0,
+             "up_kbit": aaa_mod.profile_rate(p["up"]) or 0}
+            for n, p in sorted(held["profiles"].items())]}
+    for field, key in RADIUS_NUMBERS:
+        radius[field] = int(s[key]) if key in s else None
+    return {"configured": not aaa_mod.is_empty(held), "radius": radius}
+
+
+def _addr_key(a):
+    """An IPv4 address as a sort key: numerically, as aaa.body() sorts."""
+    return tuple(int(x) for x in a.split("."))
+
+
+def _profile_word(kbit):
+    """A rate profile's rate as written: 0, or 20M / 1500K / 1G."""
+    return pppoe_mod.rate_words(kbit) if kbit else "0"
+
+
+def _secret_lines(kind, held, want, word, new_why):
+    """
+    Lines that take {name: secret} `held` to the entries `want` ({"name" or
+    "address", and a write-only secret}): removals first; a listed entry with
+    no secret keeps its own, and a new one with none is refused (new_why).
+    `kind` is the statement ("local-user", "dynamic-authorization client"),
+    `word` the keyword before the secret.
+    """
+    out, names = [], []
+    for w in want:
+        name = w.get("name") or w.get("address") or ""
+        if not name:
+            raise ValueError(f"{kind}: every entry needs its name")
+        names.append(name)
+    out += [f"no {kind} {n}" for n in held if n not in names]
+    for w in want:
+        name = w.get("name") or w.get("address")
+        secret = w.get("password") or w.get("secret") or ""
+        if not secret:
+            if name not in held:
+                raise ValueError(new_why.format(name=name))
+            continue
+        if held.get(name) != secret:
+            out.append(f"{kind} {name} {word} {secret}")
+    return out
+
+
+def pppoe_lines(held, desired, fields=()):
+    """
+    The lines, under `pppoe`, that take the block `held` (cfg.pppoe) to
+    `desired` (PppoeConfig's fields) for the fields named - only what
+    differs, removals first. A local user listed with no password keeps its
+    own; one not listed is removed.
+    """
+    now = pppoe_held_typed(held)
+    out = []
+    for f in _mask(fields, PPPOE_FIELDS):
+        want = desired.get(f)
+        if f == "interfaces":
+            out += _list_lines("interface", now[f], list(want or []))
+        elif f == "address_pools":
+            out += _list_lines("address-pool", now[f], list(want or []))
+        elif f == "dns_servers":
+            out += _list_lines("dns", now[f], list(want or []))
+        elif f == "gateway":
+            if (want or "") != now[f]:
+                out.append(f"gateway {want}" if want else "no gateway")
+        elif f == "authentication":
+            want = list(want or [])
+            if want != now[f]:
+                out.append("authentication " + " ".join(want) if want
+                           else "no authentication")
+        elif f == "ac_name":
+            if (want or "") != now[f]:
+                out.append(f"ac-name {want}" if want else "no ac-name")
+        elif f == "rate_limit_default":
+            d = int(desired.get("rate_limit_default_down_kbit") or 0)
+            u = int(desired.get("rate_limit_default_up_kbit") or 0)
+            if (d, u) == (now["rate_limit_default_down_kbit"],
+                          now["rate_limit_default_up_kbit"]):
+                continue
+            if not d and not u:
+                out.append("no rate-limit default")
+            elif not d or not u:
+                raise ValueError("rate_limit_default: both rates, or "
+                                 "neither (no rate-limit default)")
+            else:
+                out.append("rate-limit default "
+                           f"{pppoe_mod.rate_words(d)}/"
+                           f"{pppoe_mod.rate_words(u)}")
+        elif f == "local_users":
+            out += _secret_lines(
+                "local-user", held["users"], list(want or []), "password",
+                "local_users: {name} is a new user and needs a password")
+        else:
+            word = dict(PPPOE_NUMBERS)[f]
+            want = int(want or 0)
+            if want != now[f]:
+                out.append(f"{word} {want}" if want else f"no {word}")
+    return out
+
+
+def _server_line(r, cur):
+    """
+    The `server` statement a RadiusServerConfig dict `r` is, against the
+    server `cur` the block holds at its address (None: a new one), or None
+    when nothing of it changes.
+    """
+    secret = r.get("secret") or (cur or {}).get("secret") or ""
+    if not secret:
+        raise ValueError(f"radius.servers: {r.get('address')} is a new server "
+                         f"and needs a secret")
+    want = {"secret": secret,
+            "auth-port": str(r.get("auth_port") or aaa_mod.AUTH_PORT),
+            "acct-port": str(r.get("acct_port") or aaa_mod.ACCT_PORT),
+            "role": r.get("role") or "both",
+            "priority": str(r.get("priority") or "")}
+    if not want["priority"] and cur:
+        want["priority"] = cur["priority"]
+    if cur and all(cur.get(k) == v for k, v in want.items()):
+        return None
+    line = f"server {r['address']} secret {secret}"
+    for k, dflt in (("auth-port", aaa_mod.AUTH_PORT),
+                    ("acct-port", aaa_mod.ACCT_PORT)):
+        if want[k] != dflt:
+            line += f" {k} {want[k]}"
+    if want["role"] != "both":
+        line += f" role {want['role']}"
+    if want["priority"]:
+        line += f" priority {want['priority']}"
+    return line
+
+
+def aaa_lines(held, desired, fields=()):
+    """
+    The lines, under `aaa` > `radius`, that take the block `held` (cfg.aaa)
+    to `desired` (AaaConfig's fields) for the fields named ("radius.servers"
+    ...) - only what differs, removals first. A server or a client listed
+    with no secret keeps its own; one not listed is removed.
+    """
+    now = aaa_held_typed(held)["radius"]
+    want_r = desired.get("radius") or {}
+    s, d = held["settings"], held["dae"]
+    out = []
+    for name in _mask(fields, AAA_FIELDS):
+        f = name.split(".", 1)[1]
+        want = want_r.get(f)
+        if f == "servers":
+            want = list(want or [])
+            addrs = [r.get("address") or "" for r in want]
+            if "" in addrs:
+                raise ValueError("radius.servers: every server needs its "
+                                 "address")
+            out += [f"no server {r['address']}" for r in held["servers"]
+                    if r["address"] not in addrs]
+            cur = {r["address"]: r for r in held["servers"]}
+            for r in want:
+                line = _server_line(r, cur.get(r["address"]))
+                if line:
+                    out.append(line)
+        elif f in ("mode", "nas_identifier"):
+            word = f.replace("_", "-")
+            if (want or "") != now[f]:
+                out.append(f"{word} {want}" if want else f"no {word}")
+        elif f == "dynamic_authorization":
+            listen = want_r.get("dynamic_authorization_listen") or ""
+            port = str(want_r.get("dynamic_authorization_port")
+                       or aaa_mod.DAE_PORT)
+            if not listen:
+                if d["listen"]:
+                    out.append("no dynamic-authorization listen")
+            elif (listen, port) != (d["listen"], d["port"]):
+                out.append(f"dynamic-authorization listen {listen}"
+                           + (f" port {port}" if port != aaa_mod.DAE_PORT
+                              else ""))
+        elif f == "dynamic_authorization_clients":
+            out += _secret_lines(
+                "dynamic-authorization client", d["clients"],
+                list(want or []), "secret",
+                "radius.dynamic_authorization_clients: {name} is a new "
+                "client and needs a secret")
+        elif f == "rate_profiles":
+            want = list(want or [])
+            names = [p.get("name") or "" for p in want]
+            out += [f"no rate-profile {n}" for n in held["profiles"]
+                    if n not in names]
+            for p in want:
+                dw = _profile_word(int(p.get("down_kbit") or 0))
+                uw = _profile_word(int(p.get("up_kbit") or 0))
+                cur = held["profiles"].get(p.get("name"))
+                if cur and (aaa_mod.profile_rate(cur["down"]),
+                            aaa_mod.profile_rate(cur["up"])) == (
+                        int(p.get("down_kbit") or 0),
+                        int(p.get("up_kbit") or 0)):
+                    continue
+                out.append(f"rate-profile {p.get('name')} down {dw} up {uw}")
+        else:
+            word = dict(RADIUS_NUMBERS)[f]
+            if want is None:
+                if word in s:
+                    out.append(f"no {word}")
+            elif str(int(want)) != s.get(word):
+                out.append(f"{word} {int(want)}")
+    return out
+
+
 # ------------------------------------------------------- box-owned lines
 
 #: Statements the running configuration holds that are the BOX's, not the
@@ -2114,8 +2409,14 @@ def delete_lines(area, name="", transport="", prefix="", next_hop="",
         if not name:
             raise ValueError("vrfs: name the VRF device to remove")
         return [], [f"no vrf {name} table"]
+    # #597: the whole block - its parts are removed with SetConfig.
+    if area == "pppoe":
+        return [], [f"no {pppoe_mod.PPPOE_HIERARCHY}"]
+    if area == "aaa":
+        return [], [f"no {aaa_mod.AAA_HIERARCHY}"]
     raise ValueError(f"unknown area {area!r}: the removable areas are "
-                     f"interfaces, pools, nat64, logging, static, bgp, vrfs")
+                     f"interfaces, pools, nat64, logging, static, bgp, vrfs, "
+                     f"pppoe, aaa")
 
 
 # ------------------------------------------------------------------ schema
@@ -2232,6 +2533,12 @@ def config_modes(P):
         # VTY hands the block to FRR as it is; this is FRR's syntax.
         ("vrf", "vrf <name>", '["vrf <name>"]', VRF_FRR_BLOCK, adm,
          ["vrf <name>"]),
+        # The BNG (#597, docs/bng.md 0.4 item 2): `pppoe`, and RADIUS under
+        # `aaa` > `radius` (#607) - areas "pppoe" and "aaa".
+        ("pppoe", "pppoe", '["pppoe"]', P.TREE["pppoe"], adm, ["pppoe"]),
+        ("aaa", "aaa", '["aaa"]', P.TREE["aaa"], adm, ["aaa"]),
+        ("aaa radius", "aaa > radius", '["aaa","radius"]', P.TREE["radius"],
+         adm, ["aaa", "radius"]),
     ]
 
 
@@ -2250,7 +2557,11 @@ TYPED_MODES = {"interface (port)": ("interfaces", None),
                                      "vrf")),
                # #559 phase 3: SetConfig's `bfd_peer` and `bfd_profile`.
                "bfd": ("bfd", ("peer", "profile")),
-               "bfd peer": ("bfd", None), "bfd profile": ("bfd", None)}
+               "bfd peer": ("bfd", None), "bfd profile": ("bfd", None),
+               # #597: SetConfig's `pppoe` and `aaa`, every statement of
+               # each - a secret is a write-only field, never read.
+               "pppoe": ("pppoe", None), "aaa": ("aaa", ("radius",)),
+               "aaa radius": ("aaa", None)}
 
 #: The modes GetConfig READS as fields though they are written as lines
 #: (#558 phases 3 and 4): their statements are `read_typed`, and `typed`
@@ -2834,9 +3145,13 @@ def edit_for(cfg, area, obj, fields=()):
         cur = next((p for p in bfd_typed(cfg)["profiles"]
                     if p["name"] == obj.get("name")), None)
         return list(BFD_PATH), bfd_profile_lines(cur, obj, fields)
+    if area == "pppoe":
+        return list(PPPOE_PATH), pppoe_lines(cfg.pppoe, obj, fields)
+    if area == "aaa":
+        return list(AAA_PATH), aaa_lines(cfg.aaa, obj, fields)
     raise ValueError(f"unknown area {area!r}: the editable areas are "
                      f"interfaces, pools, nat64, logging, static, bgp, "
-                     f"system, vrfs, bfd_peers, bfd_profiles")
+                     f"system, vrfs, bfd_peers, bfd_profiles, pppoe, aaa")
 
 
 def names_for(cfg, area, known_interfaces=()):

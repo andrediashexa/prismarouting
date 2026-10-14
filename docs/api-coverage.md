@@ -21,10 +21,10 @@
 
 | Class | Commands |
 |---|---|
-| typed | 778 |
-| text | 13 |
-| none | 1 |
-| n/a | 55 |
+| typed | 834 |
+| text | 1 |
+| none | 0 |
+| n/a | 58 |
 
 Configuration statements are counted one per grammar path. Every one
 is written as the line it is at the prompt, at the level `path`
@@ -37,7 +37,6 @@ reachable the same way: Edit passes them on as the VTY would.
 
 | Command | Phase |
 |---|---|
-| `clear pppoe session` (operational) | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
 
 ## Phases
 
@@ -156,16 +155,16 @@ screen as text, for a console.
 | `show nat64 subscriber <IPv6-address>` | typed | OperationalService.GetSubscriber | every account | an IPv6 address: the NAT64 subscriber (#572) |
 | `show nat64 translation <public-address> <port>` | typed | OperationalService.LookupTranslation | every account | a NAT64 pool's public address answers its /56 (#572) |
 | `show aaa radius dictionary` | text | OperationalService.Show | every account |  |
-| `show pppoe sessions` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe session <session-id>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe summary` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history user <name>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history address <A.B.C.D>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history session <session-id>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history at <time>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history since <time>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history last <n>` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
-| `show pppoe history verify` | text | OperationalService.Show | every account | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `show pppoe sessions` | typed | OperationalService.ListPppoeSessions | every account | #597 |
+| `show pppoe session <session-id>` | typed | OperationalService.GetPppoeSession | every account | its policers too (#597) |
+| `show pppoe summary` | typed | OperationalService.GetPppoeSummary | every account | the trail's and the refusals' counters, RADIUS's states (#597) |
+| `show pppoe history user <name>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history address <A.B.C.D>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history session <session-id>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history at <time>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history since <time>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history last <n>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history verify` | typed | OperationalService.VerifyPppoeHistory | every account | #597 |
 | `show configuration compare` | typed | ConfigService.Compare | every account |  |
 | `show configuration pending` | typed | OperationalService.GetPendingConfiguration | every account | and the health service prisma.v1.Configuration (#575) |
 | `show running-config` | typed | ConfigService.GetRunning | every account | the configuration as text, with its revision |
@@ -206,7 +205,7 @@ screen as text, for a console.
 | `clear bgp <neighbour>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear interface counters [<interface>]` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear cgnat subscriber <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
-| `clear pppoe session <session-id>, user <name>, or all` | none | - | administrator | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4) |
+| `clear pppoe session <session-id>, user <name>, address <A.B.C.D>, or all` | typed | OperationalService.Clear | administrator | TARGET_PPPOE_SESSION, _USER, _ADDRESS, _ALL (#597) |
 | `clear nat64 subscriber <IPv6-address>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear ospf process` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
 | `clear ospf neighbor <A.B.C.D>` | typed | OperationalService.Clear | administrator | a ClearRequest target per clear; delivered in 0.149.25 |
@@ -259,8 +258,8 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `router isis <isis-instance>` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `interface <interface>, or a name that creates one` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `system` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
-| `pppoe` | text | ConfigService.Edit (lines) / GetRunning | #597: PPPoE's first increment; the typed API is phase 1's next step (docs/bng.md 0.4); GetConfig has no area for it |
-| `aaa` | text | ConfigService.Edit (lines) / GetRunning |  |
+| `pppoe` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
+| `aaa` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `policy-options` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
 | `hostname <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `dns server <address>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
@@ -1216,3 +1215,70 @@ Entered with `vrf <name>`; `EditRequest.path` = `["vrf <name>"]`; changed by: ad
 |---|---|---|---|
 | `ip route <A.B.C.D/M> <next-hop>... [tag <1-4294967295>] [<1-255>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
 | `ipv6 route <X:X::X:X/M> <next-hop>... [tag <1-4294967295>] [<1-255>]` | typed | ConfigService.GetConfig (fields) / Edit (lines) | read as fields since 0.149.22; written as lines |
+
+## Configuration: pppoe
+
+Entered with `pppoe`; `EditRequest.path` = `["pppoe"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `interface <interface>, or a name that creates one` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `gateway <A.B.C.D>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `address-pool <prefix> \| <first>-<last>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `dns <A.B.C.D>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `authentication pap\|chap\|mschap-v2 ...` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `session-limit <1-1000000>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `mtu <576-1500>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `tcp-mss <536-1460>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `ac-name <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `rate-limit default <download>/<upload>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `local-user <name> password <password>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no interface <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no gateway` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no address-pool <prefix> \| <first>-<last>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no dns <A.B.C.D>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no authentication` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no session-limit` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no mtu` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no tcp-mss` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no ac-name` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no rate-limit default` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no local-user <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `exit` | n/a | - | the session's |
+
+## Configuration: aaa
+
+Entered with `aaa`; `EditRequest.path` = `["aaa"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `radius` | typed | ConfigService.Edit (path) | enters the block; its statements are classified under it, and GetConfig reads them by area |
+| `exit` | n/a | - | the session's |
+
+## Configuration: aaa radius
+
+Entered with `aaa > radius`; `EditRequest.path` = `["aaa","radius"]`; changed by: administrator.
+
+| Statement | Class | API | Notes |
+|---|---|---|---|
+| `server <A.B.C.D> secret <secret> [auth-port <n>] [acct-port <n>] [role auth\|acct\|both] [priority <1-255>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `mode failover\|round-robin` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `timeout <1-60>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `retries <0-10>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `dead-time <1-3600>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `nas-identifier <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `interim-interval <0\|60-86400>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `dynamic-authorization listen <A.B.C.D> [port <n>]` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `dynamic-authorization client <A.B.C.D> secret <secret>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `rate-profile <name> down <rate> up <rate>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no server <A.B.C.D>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no mode` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no timeout` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no retries` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no dead-time` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no nas-identifier` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no interim-interval` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no dynamic-authorization listen` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no dynamic-authorization client <A.B.C.D>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no rate-profile <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `exit` | n/a | - | the session's |
