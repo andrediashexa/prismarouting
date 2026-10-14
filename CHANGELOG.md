@@ -77,6 +77,66 @@ version has a chance of seeing it.
 
 ### Added
 
+* **IPv6 on PPPoE subscriber sessions: IPv6CP, the WAN /64 by SLAAC,
+  DHCPv6 prefix delegation.** ([#609](https://github.com/andrediashexa/hexarouting/issues/609))
+  docs/bng.md 0.8. Under `pppoe`: `ipv6 prefix-pool <prefix>` (each
+  session's WAN /64, advertised by RA), `ipv6 delegated-pool <prefix> length
+  <n>` (a prefix delegated by DHCPv6), `ipv6 dns <address>`, and `ipv6
+  enable` for prefixes from RADIUS only - `Framed-IPv6-Prefix` and
+  `Delegated-IPv6-Prefix`, which win over the pools. With no `ipv6`
+  statement accel-ppp is told `ipv6=deny`, as before: a box that configures
+  nothing changes nothing. A commit refuses IPv6 with no prefix pool and no
+  RADIUS, and pools that overlap.
+  * **The dataplane half is the PPPoE guard's.** VPP 26.06's pppoe plugin
+    decapsulates every PPP-IPv6 frame into ip6-input: measured, the CPE's
+    Router Solicitation and DHCPv6 Solicit died there (`ip6-not-enabled`),
+    and accel-ppp's Router Advertisements, sent back on the control plane's
+    TAP, died in pppoe-input ("no such sessions"). accel-ppp-ng's VPP hooks
+    already wait for them on the session's PPP channel. The guard now sends
+    a session's RS and its DHCPv6 to a server (to a link-scope address, no
+    extension header) to the control plane as an LCP frame goes, held to the
+    port its MAC is held by, and a new node on the TAP's device-input takes
+    the control plane's PPP-IPv6 off it to the subscriber. No change to VPP.
+    `show bpa pppoe-access` counts both.
+  * **Everything else is accel-ppp's own:** ipv6pool, ipv6_nd (SLAAC: M off,
+    A on - its default with DHCPv6 loaded was the other way round), and
+    ipv6_dhcp; its VPP hooks route each prefix through the session
+    interface. The session's policer is on IPv6's arcs too (one bucket for
+    both families), and accounting carries `Framed-IPv6-Prefix` and
+    `Framed-Interface-Id` in the Start and `Delegated-IPv6-Prefix` in an
+    interim sent when it is delegated.
+  * **Who held an IPv6 address.** The session trail's start carries the WAN
+    prefix, and a new entry, `delegate`, the delegated prefix with the
+    instant it was delegated, which the stop repeats. `show pppoe history
+    address <IPv6 address>` names the session whose WAN prefix holds it, or
+    whose delegated prefix did at that instant. `show pppoe sessions` lists
+    each session's prefixes on lines of their own; `show pppoe session <id>`
+    and `show pppoe summary` show them too.
+  * **The API, additively:** `PppoeConfig.ipv6_enable`,
+    `ipv6_prefix_pools`, `ipv6_delegated_pools` (`PppoeDelegatedPool`) and
+    `ipv6_dns_servers`; `PppoeSession.ipv6_prefix` and
+    `ipv6_delegated_prefix`; `PppoeSummary.ipv6` and its pools;
+    `PppoeHistorySession.ipv6_prefix`, `ipv6_delegated_prefix` and
+    `delegated`; `ListPppoeHistoryRequest.address` takes an IPv6 address.
+    Unlike every other field, a `SetConfig` of `pppoe` with an empty
+    `fields` applies the four IPv6 fields only when it sets one, so a client
+    built before them that writes the block whole leaves the box's IPv6
+    alone.
+  * **The MSS clamp on IPv6 too**, 20 bytes under `tcp-mss`.
+  * **An IPv4-only session gets IPv6 dropped again.** accel-ppp's VPP hook
+    lets IPv6 in on a session that negotiated it (`ip6-not-enabled` off) and
+    never shuts it, and VPP's plugin hands the interface to the next
+    session: an IPv4-only subscriber on it would have had its IPv6
+    forwarded. The session hook puts the drop back on a session with no IPv6
+    prefix; `lab/pppoe.sh` dials one on the interface an IPv6 session left.
+  * **A control plane killed with -9 no longer leaves IPv6 routes behind.**
+    Found by the lab with the CPEs dual-stack: the record of what a dead
+    accel-pppd left listed its IPv4 routes only, the sessions' IPv6 prefixes
+    stayed routed through their interfaces, and after the restart one
+    subscriber's IPv4 downloads went out with another's MAC (0.155.0's
+    crossed-downloads defect, again). The IPv6 routes are listed and removed
+    before the sessions now; the same lab measured 0 crossed.
+
 ### Fixed
 
 ## 0.155.11 - the PPPoE session trail's head sent off the box

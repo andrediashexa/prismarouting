@@ -106,6 +106,23 @@
 #   * GetConfig's pppoe and aaa areas, secret_set and no secret in a byte;
 #   * Clear by address, by id and by user ends the session, which redials,
 #     and the trail closes it; an account without the role is refused.
+# and IPv6 on the sessions (#609, docs/bng.md 0.8), section 23, with real
+# CPEs dialling with pppd's +ipv6, the kernel doing SLAAC and dhcpcd asking
+# for a delegated prefix:
+#   * the WAN /64 from `ipv6 prefix-pool` by RA, and a /56 delegated by
+#     DHCPv6 from `ipv6 delegated-pool` - or, for sub8, RADIUS's
+#     Delegated-IPv6-Prefix - each reached from the internet through VPP and
+#     answered back, and still after the API's commits;
+#   * the dataplane's guard counted the RS and DHCPv6 it sent to the control
+#     plane and the answers it took off it;
+#   * the session's 20/10 Mbit/s plan holds over IPv6, iperf3 within 10%;
+#   * show pppoe sessions / session / summary, the trail (the start's prefix,
+#     the delegate entry), show pppoe history by an IPv6 address - at an
+#     instant before the delegation, nobody - and the API, carry the
+#     prefixes; RADIUS's Start the WAN prefix and an interim the delegated
+#     one;
+#   * an IPv4-only session on the interface an IPv6 session left gets IPv6
+#     dropped again.
 MODE=${1:-on}
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -126,7 +143,7 @@ use_binary_api
 echo "=========== 1. THE CONTROL PLANE, BUILT THE WAY THE IMAGE BUILDS IT ==========="
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   $(sh /src/build/accel-ppp-build.sh --deps) ppp pppoe freeradius \
-  freeradius-utils iperf3 ethtool \
+  freeradius-utils iperf3 ethtool dhcpcd-base \
   > /tmp/apt.log 2>&1 || { echo "  apt failed"; tail -5 /tmp/apt.log; }
 if sh /src/build/accel-ppp-build.sh /opt/accel-root > /tmp/accel-build.log 2>&1; then
   cp -a /opt/accel-root/. /
@@ -182,6 +199,9 @@ ip netns exec inet ip link set lo up
 ip netns exec inet ip link set wanp up
 ip netns exec inet ip addr add 200.150.0.2/24 dev wanp
 ip netns exec inet ip route add 200.150.0.16/30 via 200.150.0.1
+# The internet's IPv6 (#609): the subscribers' prefixes are routed to the box.
+ip netns exec inet ip -6 addr add 2001:db8:ffff::2/64 dev wanp nodad
+ip netns exec inet ip -6 route add default via 2001:db8:ffff::1
 # No segmentation offload toward the dataplane. The "internet"'s TCP would
 # hand VPP's af_packet 64 kB GSO frames, VPP would PPPoE-encapsulate them
 # whole, and the kernel cannot segment a PPPoE frame on its way out of
@@ -202,7 +222,9 @@ ip netns exec plain ip route add default via 100.64.1.1
 # with LCP echoes, as a real one does (faster here): a control plane killed
 # with -9 sends no PADT, and the echo is how a CPE learns to redial.
 # s5 is sub1's MAC again, on VLAN 100 (section 19); s6 only sends PADIs.
-for i in 1 2 3 4 5 6; do
+# s7 and s8 dial with IPv6 (#609, section 23): sub7 from the pools, sub8 its
+# delegated prefix from RADIUS.
+for i in 1 2 3 4 5 6 7 8; do
   ip netns add "s$i"
   ip link add "cli$i" type veth peer name "br$i"
   ip link set "br$i" master br0; ip link set "br$i" up
@@ -247,7 +269,16 @@ refuse-chap
 refuse-mschap"
 peer 4 cli4 ""
 peer 5 cli5.100 ""
-printf '"sub1" * "pw1" *\n"sub2" * "pw2" *\n"sub3" * "pw3" *\n"sub4" * "WRONG" *\n"sub5" * "pw5" *\n' \
+# IPv6CP asked for (#609): pppd's +ipv6. Debian's pppd 2.4.9 negotiates it
+# without the word too (measured: sub1 to sub3, dialling with none, had
+# SLAAC addresses once the box offered IPv6), so every CPE here is dual-
+# stack, as most are in the field; sub8's twin says noipv6, for the
+# interface an IPv6 session leaves behind (section 23).
+peer 7 cli7 "+ipv6"
+peer 8 cli8 "noipv6"
+mv /etc/ppp/peers/sub8 /etc/ppp/peers/sub8v4
+peer 8 cli8 "+ipv6"
+printf '"sub1" * "pw1" *\n"sub2" * "pw2" *\n"sub3" * "pw3" *\n"sub4" * "WRONG" *\n"sub5" * "pw5" *\n"sub7" * "pw7" *\n"sub8" * "pw8" *\n' \
   > /etc/ppp/pap-secrets
 cp /etc/ppp/pap-secrets /etc/ppp/chap-secrets
 
@@ -278,6 +309,11 @@ sub3 Cleartext-Password := "pw3"
      Cisco-AVPair += "ip:sub-qos-policy-in=UP15"
 sub4 Cleartext-Password := "pw4"
 sub5 Cleartext-Password := "pw5"
+sub7 Cleartext-Password := "pw7"
+     Prisma-Rate-Limit-Down = 20000,
+     Prisma-Rate-Limit-Up = 10000
+sub8 Cleartext-Password := "pw8"
+     Delegated-IPv6-Prefix = 2001:db8:280:100::/56
 U
 rm -rf /var/log/freeradius/radacct
 # Two servers, one configuration copied twice, each listening on its own
@@ -359,7 +395,7 @@ vppctl set interface state host-acc0.100 up
   echo configure
   printf 'nat\ncgnat\npool lab\nprefix-inside 100.64.0.0/22\n'
   printf 'prefix-outside 200.150.0.16/30\nblock-size 512\nexit\nexit\nexit\n'
-  printf 'interface host-wan0\nipv4 address 200.150.0.1/24\ncgnat outside\nexit\n'
+  printf 'interface host-wan0\nipv4 address 200.150.0.1/24\nipv6 address 2001:db8:ffff::1/64\ncgnat outside\nexit\n'
   printf 'interface host-lan0\nipv4 address 100.64.1.1/24\ncgnat inside\nexit\n'
   printf 'interface host-acc0.100\nvlan 100\nexit\n'
   # RADIUS under `aaa` (#607), in both modes: what `off` leaves out is
@@ -389,6 +425,9 @@ address-pool 100.64.0.10-100.64.0.200
 dns 8.8.8.8
 dns 1.1.1.1
 tcp-mss 1452
+ipv6 prefix-pool 2001:db8:100::/48
+ipv6 delegated-pool 2001:db8:200::/40 length 56
+ipv6 dns 2001:4860:4860::8888
 exit
 V
   fi
@@ -1444,6 +1483,132 @@ sleep 4
 echo "  the files are format ${FMT_NOW:-?} now; the host's watcher: $(tick)"
 
 echo
+echo "=========== 23. IPv6 ON THE SESSIONS (#609, docs/bng.md 0.8) ==========="
+# Two CPEs dial with IPv6CP: sub7, its WAN /64 and its delegated /56 from the
+# pools, with a 20/10 Mbit/s plan; sub8, its delegated prefix from RADIUS's
+# Delegated-IPv6-Prefix. The WAN prefix by RA - the CPE's kernel does SLAAC -
+# and the delegated one by DHCPv6 - dhcpcd, as a CPE router asks for it.
+# Both reach the control plane only because the dataplane's PPPoE guard
+# sends a session's RS and DHCPv6 up the TAP and takes the answers off it.
+P6=/var/log/prisma-routing/pppoe-sessions.log
+TRAIL6_L0=$(wc -l < "$P6" 2>/dev/null || echo 0)
+for i in 7 8; do
+  timeout 3600 ip netns exec "s$i" pppd call "sub$i" > "/tmp/pppd$i.log" 2>&1 &
+done
+W7=$(wait_user sub7 90); W8=$(wait_user sub8 90)
+echo "  sub7 up after $W7 s, sub8 after $W8 s"
+# slaac <n> - the global address sub<n>'s kernel made from the RA, or ""
+slaac() {
+  _a=""
+  for _k in $(seq 1 20); do
+    _a=$(ip netns exec "s$1" ip -6 -o addr show scope global 2>/dev/null \
+         | awk '$2 ~ /^ppp/ {sub(/\/.*/, "", $4); print $4; exit}')
+    [ -n "$_a" ] && break
+    sleep 1
+  done
+  echo "$_a"
+}
+# pd <n> - dhcpcd on sub<n>'s PPP device: the delegated prefix's first /64
+# numbered on lo, as a CPE numbers its LAN; prints the lo address, or ""
+pd() {
+  _ppp=$(ip netns exec "s$1" ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^ppp/ {print $2; exit}')
+  printf 'ipv6only\nnoipv6rs\nnohook resolv.conf\nia_pd 1 lo/0/64/1\n' > /tmp/dhcpcd$1.conf
+  ip netns exec "s$1" timeout 40 dhcpcd -f /tmp/dhcpcd$1.conf -6 -1 -B -t 30 \
+    "${_ppp:-ppp0}" > /tmp/dhcpcd$1.log 2>&1
+  ip netns exec "s$1" ip -6 -o addr show dev lo scope global 2>/dev/null \
+    | awk '{sub(/\/.*/, "", $4); print $4; exit}'
+}
+SL7=$(slaac 7); SL8=$(slaac 8)
+echo "  SLAAC: sub7 ${SL7:-none}, sub8 ${SL8:-none}"
+ip netns exec s7 ip -6 route | sed 's/^/    s7: /'
+PDA7=$(pd 7); PDA8=$(pd 8)
+grep -iE "delegated prefix|ADV|REPLY6|error|timed out" /tmp/dhcpcd7.log /tmp/dhcpcd8.log | sed 's/^/    /'
+echo "  delegated, numbered on lo: sub7 ${PDA7:-none}, sub8 ${PDA8:-none}"
+PD7=$(sed -n 's/.*delegated prefix \([0-9a-f:]*\/[0-9]*\).*/\1/p' /tmp/dhcpcd7.log | head -1)
+PD8=$(sed -n 's/.*delegated prefix \([0-9a-f:]*\/[0-9]*\).*/\1/p' /tmp/dhcpcd8.log | head -1)
+echo "  sub7 delegated ${PD7:-none} (the pool 2001:db8:200::/40), sub8 ${PD8:-none} (RADIUS: 2001:db8:280:100::/56)"
+# Across the dataplane, both ways: the internet pings an address in each
+# delegated prefix and in sub7's WAN prefix, and sees the reply.
+P6_7=$(ip netns exec inet ping -6 -c 3 -i 0.3 -W 2 "${PDA7:-::1}" 2>&1 | grep -o '[0-9]*% packet loss')
+P6_8=$(ip netns exec inet ping -6 -c 3 -i 0.3 -W 2 "${PDA8:-::1}" 2>&1 | grep -o '[0-9]*% packet loss')
+P6_W=$(ip netns exec inet ping -6 -c 3 -i 0.3 -W 2 "${SL7:-::1}" 2>&1 | grep -o '[0-9]*% packet loss')
+echo "  the internet to sub7's delegated ${P6_7:-?}, sub8's ${P6_8:-?}, sub7's SLAAC ${P6_W:-?}"
+FIB7=$(vppctl show ip6 fib "${PD7:-::/128}" 2>/dev/null | tr -d '\r')
+echo "$FIB7" | grep -E "^[0-9a-f:]+/|pppoe_session" | head -3 | sed 's/^/    /'
+# The guard's own count of what it sent up and took down.
+G6=$(vppctl show bpa pppoe-access 2>/dev/null | tr -d '\r')
+echo "$G6" | grep -E "^ip6|^control" | sed 's/^/  guard: /'
+G6_UP=$(echo "$G6" | sed -n 's/^ip6 to the control plane \([0-9]*\) from it \([0-9]*\)$/\1/p')
+G6_DN=$(echo "$G6" | sed -n 's/^ip6 to the control plane \([0-9]*\) from it \([0-9]*\)$/\2/p')
+# The plan applies to IPv6 too: VPP's policer is on both families' arcs.
+# bw6 <n> [-R] - Mbit/s over IPv6 through sub<n>'s session, as bw() over IPv4
+bw6() {
+  ip netns exec inet iperf3 -s -1 -B 2001:db8:ffff::2 > /dev/null 2>&1 &
+  _isp=$!
+  sleep 1
+  timeout 45 ip netns exec "s$1" iperf3 -6 -c 2001:db8:ffff::2 -t 15 -J ${2:-} 2>/dev/null \
+    | python3 -c 'import json, sys
+try:
+    print(round(json.load(sys.stdin)["end"]["sum_received"]["bits_per_second"] / 1e6, 1))
+except Exception:
+    print(0)'
+  kill "$_isp" 2>/dev/null; wait "$_isp" 2>/dev/null
+}
+DOWN6=$(bw6 7 -R); UP6=$(bw6 7)
+echo "  sub7, plan 20M down / 10M up, over IPv6: ${DOWN6} down, ${UP6} up (Mbit/s)"
+SHOW6=$($HX -c "show pppoe sessions" 2>&1)
+echo "$SHOW6" | sed 's/^/  /'
+SID7=$(sid_of sub7)
+DETAIL7=$($HX -c "show pppoe session ${SID7:-0}" 2>&1)
+echo "$DETAIL7" | grep -E "^(ipv6|delegated|address)" | sed 's/^/  /'
+SUM6=$($HX -c "show pppoe summary" 2>&1)
+echo "$SUM6" | grep '^ipv6' | sed 's/^/  /'
+# The session trail: sub7's start with its WAN prefix, then a delegate entry
+# when DHCPv6 gave it the /56; who held an IPv6 address, from the trail.
+TRAIL6=$(tail -n "+$((TRAIL6_L0 + 1))" "$P6" 2>/dev/null)
+echo "$TRAIL6" | grep -E " (start|delegate) session .* user sub[78] " | cut -c1-220 | sed 's/^/  trail: /'
+START7=$(echo "$TRAIL6" | grep " start session .* user sub7 " | tail -1)
+DELEG7=$(echo "$TRAIL6" | grep " delegate session .* user sub7 " | tail -1)
+T_START7=$(echo "$START7" | cut -d' ' -f1)
+NOW6=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+HIST6=$($HX -c "show pppoe history address ${PDA7:-::1} at $NOW6" 2>&1)
+HIST6_W=$($HX -c "show pppoe history address ${SL7:-::1} at $NOW6" 2>&1)
+HIST6_EARLY=$($HX -c "show pppoe history address ${PDA7:-::1} at ${T_START7:-2000-01-01T00:00:00Z}" 2>&1)
+echo "$HIST6" | sed 's/^/  history, the delegated address now: /'
+echo "$HIST6_EARLY" | sed 's/^/  history, the same at the session start: /'
+# RADIUS accounting: the WAN prefix in the Start, the delegated one in the
+# interim accel-ppp sends the moment it delegates (EV_FORCE_INTERIM_UPDATE).
+sleep 2
+ACCT6=$(cat /var/log/freeradius/radacct/127.0.0.1/detail-* 2>/dev/null)
+A6_START=$(echo "$ACCT6" | awk 'BEGIN { RS = "" } /Acct-Status-Type = Start/ && /User-Name = "sub7"/ {r = $0} END {print r}')
+A6_INT=$(echo "$ACCT6" | awk 'BEGIN { RS = "" } /Interim-Update/ && /User-Name = "sub7"/ && /Delegated-IPv6-Prefix/ {r = $0} END {print r}')
+echo "$A6_START" | grep -E "Framed-IPv6-Prefix|Framed-Interface-Id" | sed 's/^/  acct Start:/'
+echo "$A6_INT" | grep -E "Delegated-IPv6-Prefix" | sed 's/^/  acct Interim:/'
+A8_INT=$(echo "$ACCT6" | awk 'BEGIN { RS = "" } /User-Name = "sub8"/ && /Delegated-IPv6-Prefix/ {r = $0} END {print r}')
+# THE INTERFACE AN IPv6 SESSION LEAVES BEHIND. accel-ppp's VPP hook lets
+# IPv6 in on a session that has it (ip6-not-enabled off) and never shuts it
+# again, and VPP's plugin hands the interface to the next session: sub8
+# hangs up and dials again IPv4-only, and must get the IPv6 drop back.
+I8=$(vppctl show pppoe session | tr -d '\r' | awk '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)} /client-mac 02:aa:00:00:00:08/ {print idx; exit}')
+for _p in $(pgrep -x pppd); do
+  case "$(tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null)" in
+    *"call sub8 "*) kill -TERM "$_p" ;;
+  esac
+done
+_n=0; while [ -n "$(sid_of sub8)" ] && [ $_n -lt 30 ]; do sleep 1; _n=$((_n + 1)); done
+timeout 3600 ip netns exec s8 pppd call sub8v4 > /tmp/pppd8v4.log 2>&1 &
+W8B=$(wait_user sub8 90)
+I8B=$(vppctl show pppoe session | tr -d '\r' | awk '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)} /client-mac 02:aa:00:00:00:08/ {print idx; exit}')
+N8B=$(vppctl show interface | tr -d '\r' | awk -v i="${I8B:-x}" '/^[^ ]/ && $2 == i {print $1; exit}')
+F8B=$(vppctl show interface features "${N8B:-none}" 2>/dev/null | tr -d '\r' | sed -n '/^ip6-unicast:/,/^[a-z0-9-]*:$/p')
+N7=$(vppctl show interface | tr -d '\r' | awk -v i="$(vppctl show pppoe session | tr -d '\r' | awk '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)} /client-mac 02:aa:00:00:00:07/ {print idx; exit}')" '/^[^ ]/ && $2 == i {print $1; exit}')
+F7=$(vppctl show interface features "${N7:-none}" 2>/dev/null | tr -d '\r' | sed -n '/^ip6-unicast:/,/^[a-z0-9-]*:$/p')
+echo "  sub8 was sw_if_index ${I8:-?}; IPv4-only after $W8B s, ${I8B:-?} (${N8B:-?}); its ip6-unicast arc:"
+echo "$F8B" | sed 's/^/    /'
+echo "  sub7's (IPv6) ip6-unicast arc:"
+echo "$F7" | sed 's/^/    /'
+
+echo
 echo "=========== 22. THE TYPED API (docs/bng.md 0.4 item 2) ==========="
 # The management API on these sessions, as prisma-web will read them: mutual
 # TLS, root's certificate and a read-only account's, the stubs generated from
@@ -1517,6 +1682,10 @@ done
 kill "$DOORS22" 2>/dev/null; wait "$DOORS22" 2>/dev/null
 rm -f /run/prisma-routing/doors.sock
 export PRISMA_BNG_CTL=$PRISMA_BNG_CTL_LAB
+
+# After the API's commits and clears: sub7's delegated prefix still routed.
+P6_AFTER=$(ip netns exec inet ping -6 -c 3 -i 0.3 -W 2 "${PDA7:-::1}" 2>&1 | grep -o '[0-9]*% packet loss')
+echo "  sub7's delegated prefix after section 22's commits: ${P6_AFTER:-?}"
 
 echo
 echo "=========== 11. no pppoe ==========="
@@ -1767,13 +1936,13 @@ expect "  and the uptime is absent ($(bv f 2.0))" test -z "$(bv f 2.0)"
 # The session trail (docs/bng.md 0.7): the box's own record of who held
 # which inside address from when to when.
 expect "trail: sub1's cleared session has its stop, user, MAC, interface, address and cause" \
-  sh -c "echo '$STOP_OLD' | grep -q ' user sub1 mac 02:aa:00:00:00:01 interface host-acc0 address 100.64.0.77 since .* cause NAS-Request '"
+  sh -c "echo '$STOP_OLD' | grep -q ' user sub1 mac 02:aa:00:00:00:01 interface host-acc0 address 100.64.0.77\( prefix [0-9a-f:]*\/[0-9]*\)\? since .* cause NAS-Request '"
 expect "  the cause RADIUS was sent for it, word for word (${RAD_CAUSE1:-none})" \
   test "${RAD_CAUSE1:-none}" = NAS-Request
 expect "  written at the clear (${C0} <= ${T_STOP} <= ${C1} + 2)" \
   between "$C0" "${T_STOP:-0}" "$(python3 -c "print(${C1:-0} + 2)")"
 expect "  the next session's start: sub1 on 100.64.0.77 again, after that stop" \
-  sh -c "echo '$START_NEW' | grep -q ' user sub1 mac 02:aa:00:00:00:01 interface host-acc0 address 100.64.0.77 seq ' && python3 -c 'import sys; sys.exit(not ${T_START:-0} >= ${T_STOP:-1})'"
+  sh -c "echo '$START_NEW' | grep -q ' user sub1 mac 02:aa:00:00:00:01 interface host-acc0 address 100.64.0.77\( prefix [0-9a-f:]*\/[0-9]*\)\? seq ' && python3 -c 'import sys; sys.exit(not ${T_START:-0} >= ${T_STOP:-1})'"
 expect_in "  show pppoe history lists both" "sub1 held 100.64.0.77" "$HIST1"
 expect "a control plane killed with -9: every session it held closed as Control-Plane-Lost (${LOST})" \
   sh -c "test '$LOST' -ge 3 && test '$LOST' -eq $(echo $UP_SIDS | wc -w)"
@@ -1866,5 +2035,64 @@ expect "  and its CPE, dialling again, has the MAC's session (${MOVED} s)" \
   sh -c "test '$MOVED' != none && test '$MOVED' -le 20"
 expect "the format upgrade wrote the files again (format ${FMT_NOW})" \
   sh -c "test -n '${FMT_NOW}' && test '${FMT_NOW}' != 3"
+# #609: IPv6 on the sessions.
+in6() { python3 -c 'import ipaddress, sys
+try:
+    sys.exit(not ipaddress.IPv6Address(sys.argv[1]) in ipaddress.IPv6Network(sys.argv[2]))
+except ValueError:
+    sys.exit(1)' "$1" "$2"; }
+expect "IPv6: sub7 dialled with IPv6CP and its kernel made a SLAAC address in the pool's /64 (${SL7:-none})" \
+  in6 "${SL7:-x}" 2001:db8:100::/48
+expect "  and sub8 too (${SL8:-none})" in6 "${SL8:-x}" 2001:db8:100::/48
+sub6() { python3 -c 'import ipaddress, sys
+try:
+    n = ipaddress.IPv6Network(sys.argv[1])
+    sys.exit(not (n.prefixlen == int(sys.argv[3]) and n.subnet_of(ipaddress.IPv6Network(sys.argv[2]))))
+except ValueError:
+    sys.exit(1)' "$1" "$2" "$3"; }
+expect "  sub7 was delegated a /56 of the delegated pool by DHCPv6 (${PD7:-none})" \
+  sub6 "${PD7:-x}" 2001:db8:200::/40 56
+expect "  sub8's is RADIUS's Delegated-IPv6-Prefix, not the pool's (${PD8:-none})" \
+  test "${PD8:-x}" = 2001:db8:280:100::/56
+expect "  the internet reaches an address in sub7's delegated prefix through VPP, and the reply comes back (${P6_7:-none})" \
+  test "${P6_7:-x}" = "0% packet loss"
+expect "  and in sub8's, RADIUS's (${P6_8:-none})" test "${P6_8:-x}" = "0% packet loss"
+expect "  and sub7's SLAAC address (${P6_W:-none})" test "${P6_W:-x}" = "0% packet loss"
+expect "  the delegated prefix is a route through the session interface in VPP" \
+  sh -c "echo \"\$1\" | grep -q 'pppoe_session'" _ "$FIB7"
+expect "  the dataplane sent the CPEs' RS and DHCPv6 to the control plane (${G6_UP:-?}) and its answers to them (${G6_DN:-?})" \
+  sh -c "test '${G6_UP:-0}' -ge 4 && test '${G6_DN:-0}' -ge 4"
+expect "  still routed after the API's commits and clears (${P6_AFTER:-none})" \
+  test "${P6_AFTER:-x}" = "0% packet loss"
+expect "  sub7's 20/10 Mbit/s plan holds over IPv6: ${DOWN6} down" within "${DOWN6:-0}" 20
+expect "    ${UP6} up" within "${UP6:-0}" 10
+expect "  show pppoe sessions: sub7's WAN prefix and its delegated one under it" \
+  sh -c "echo \"\$1\" | grep -qE '^ +ipv6 2001:db8:100:[0-9a-f:]*/64\$' && echo \"\$1\" | grep -qx ' *delegated ${PD7:-x}'" _ "$SHOW6"
+expect "  show pppoe session <id>: both prefixes" \
+  sh -c "echo \"\$1\" | grep -q '^ipv6 prefix  *2001:db8:100:' && echo \"\$1\" | grep -q '^delegated  *${PD7:-x}'" _ "$DETAIL7"
+expect_in "  show pppoe summary: where each comes from" \
+  "2001:db8:200::/40, a /56 each by DHCPv6" "$SUM6"
+expect "  the trail: sub7's start carries its WAN prefix" \
+  sh -c "echo '$START7' | grep -q ' prefix 2001:db8:100:[0-9a-f:]*/64 seq '"
+expect "  and a delegate entry its delegated prefix, from when" \
+  sh -c "echo '$DELEG7' | grep -q ' delegated ${PD7:-x} delegated-since 20[0-9-]*T[0-9:.]*Z since $T_START7 '"
+expect_in "  show pppoe history address <an address of it> at now names sub7" "sub7 held" "$HIST6"
+expect_in "  and with its prefixes" "delegated ${PD7:-x} from" "$HIST6"
+expect_in "  the SLAAC address names sub7 too" "sub7 held" "$HIST6_W"
+expect_in "  at the session's start, before DHCPv6 delegated it, nobody held the delegated prefix" \
+  "no PPPoE session matches" "$HIST6_EARLY"
+expect "  RADIUS: the Start carries Framed-IPv6-Prefix and Framed-Interface-Id" \
+  sh -c "echo \"\$1\" | grep -q 'Framed-IPv6-Prefix = 2001:db8:100:' && echo \"\$1\" | grep -q 'Framed-Interface-Id'" _ "$A6_START"
+expect "  and an interim the delegated prefix, sent when it was delegated" \
+  sh -c "echo \"\$1\" | grep -q 'Delegated-IPv6-Prefix = ${PD7:-x}'" _ "$A6_INT"
+expect "  sub8's accounting its RADIUS prefix" \
+  sh -c "echo \"\$1\" | grep -q 'Delegated-IPv6-Prefix = 2001:db8:280:100::/56'" _ "$A8_INT"
+expect "  an IPv6 session's interface lets IPv6 in (no ip6-not-enabled)" \
+  sh -c "echo \"\$1\" | grep -q '^ip6-unicast:' && ! echo \"\$1\" | grep -q ip6-not-enabled" _ "$F7"
+expect "  sub8, IPv4-only on the interface its IPv6 session left (${I8:-?} -> ${I8B:-?}), has IPv6 dropped again" \
+  sh -c "test -n '${I8:-}' && test '${I8:-x}' = '${I8B:-y}' && echo \"\$1\" | grep -q ip6-not-enabled" _ "$F8B"
+expect "API: ListPppoeSessions carries sub7's IPv6 prefixes as the screen shows them" a22 sessions-ipv6
+expect "  GetConfig and GetPppoeSummary the IPv6 pools" a22 config-ipv6
+expect "  ListPppoeHistory names sub7 for an address of its delegated prefix, with when" a22 history-ipv6
 
 verdict

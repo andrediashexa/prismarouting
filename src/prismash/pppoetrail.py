@@ -30,6 +30,7 @@ as any account may `show pppoe sessions` - the same users and addresses.
 """
 import calendar
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -46,7 +47,9 @@ SHOW_LAST = 50
 #: The most sessions one answer carries: the door's reply is one line of at
 #: most 1 MiB (doors._read_line), and a session is about 300 bytes of JSON.
 ROWS_MAX = 2000
-KINDS = ("start", "stop", "carry", "restart")
+#: `delegate` since #609: a session restated with the IPv6 prefix DHCPv6
+#: delegated it, at the moment it was.
+KINDS = ("start", "stop", "carry", "restart", "delegate")
 #: How far from a file's end last_entry() looks for its last entry. An entry
 #: is about 300 bytes, and one whose user name is 192 bytes all escaped
 #: (%XX) under 900: 64 KiB is seventy entries of the longest kind, so an end
@@ -268,7 +271,9 @@ def _session(rec):
             "mac": unescape(f.get("mac", "-")),
             "interface": unescape(f.get("interface", "-")),
             "address": f.get("address", ""), "start": since, "stop": None,
-            "cause": ""}
+            "cause": "", "prefix": f.get("prefix", ""),
+            "delegated": f.get("delegated", ""),
+            "delegated_since": parse_stamp(f.get("delegated-since", ""))}
 
 
 def sessions(recs):
@@ -282,11 +287,16 @@ def sessions(recs):
     out, open_ = [], {}
     for rec in recs:
         kind, sid = rec["kind"], rec["fields"].get("session", "")
-        if kind in ("start", "carry"):
+        if kind in ("start", "carry", "delegate"):
             if sid not in open_:
                 s = _session(rec)
                 open_[sid] = s
                 out.append(s)
+            elif kind == "delegate":
+                # The prefix DHCPv6 delegated the session open (#609).
+                late = _session(rec)
+                open_[sid].update(delegated=late["delegated"],
+                                  delegated_since=late["delegated_since"])
         elif kind == "stop":
             s = open_.pop(sid, None)
             if s is None:
@@ -310,7 +320,7 @@ def select(found, user=None, address=None, session=None, at=None,
     for s in found:
         if user is not None and s["user"] != user:
             continue
-        if address is not None and s["address"] != address:
+        if address is not None and not holds(s, address, at):
             continue
         if session is not None and s["session"].lower() != session.lower():
             continue
@@ -323,6 +333,35 @@ def select(found, user=None, address=None, session=None, at=None,
     if last:
         out = out[-last:]
     return out
+
+
+def holds(s, address, at=None):
+    """
+    Whether session `s` held `address`: its inside address, for an IPv4
+    one; for an IPv6 one (#609), an address in its WAN prefix or in its
+    delegated prefix - the latter only from when it was delegated, when `at`
+    asks for an instant: before that the prefix was the pool's, or the
+    previous holder's.
+    """
+    if ":" not in address:
+        return s["address"] == address
+    try:
+        a = ipaddress.IPv6Address(address)
+    except ValueError:
+        return False
+    for key in ("prefix", "delegated"):
+        try:
+            inside = bool(s.get(key)) and a in ipaddress.IPv6Network(s[key])
+        except ValueError:
+            inside = False
+        if not inside:
+            continue
+        if key == "delegated" and at is not None and \
+                s.get("delegated_since") is not None and \
+                at < s["delegated_since"]:
+            continue
+        return True
+    return False
 
 
 def history(filters, path=None):
@@ -457,7 +496,7 @@ def parse_show_args(words, parse_time, now=None):
         key = words[i]
         if key not in keys:
             return None, (f"'{key}': show pppoe history takes user <name>, "
-                          f"address <A.B.C.D>, session <id>, at <time>, "
+                          f"address <a>, session <id>, at <time>, "
                           f"since <time>, last <n>, or verify")
         if key in f:
             return None, f"'{key}' is given twice"
@@ -474,10 +513,20 @@ def parse_show_args(words, parse_time, now=None):
             except ValueError as e:
                 return None, str(e)
         elif key == "address":
-            if not re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", val) or \
+            if ":" in val:
+                # An IPv6 address (#609): the session whose WAN or
+                # delegated prefix holds it.
+                try:
+                    f["address"] = str(ipaddress.IPv6Address(val))
+                except ValueError:
+                    return None, (f"an address is an inside IPv4 one or "
+                                  f"an IPv6 one: {val}")
+            elif not re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", val) or \
                     any(int(x) > 255 for x in val.split(".")):
-                return None, f"an inside address is IPv4: {val}"
-            f["address"] = ".".join(str(int(x)) for x in val.split("."))
+                return None, (f"an address is an inside IPv4 one or an "
+                              f"IPv6 one: {val}")
+            else:
+                f["address"] = ".".join(str(int(x)) for x in val.split("."))
         elif key == "session":
             if not _SID.match(val):
                 return None, f"a session id is hexadecimal: {val}"
@@ -493,14 +542,23 @@ def parse_show_args(words, parse_time, now=None):
 
 
 def session_lines(s, indent=""):
-    """One session, three lines: who held what, when, and which session."""
+    """One session: who held what, when, and which session - and its IPv6
+    prefixes, a line each, when it had any (#609)."""
     end = stamp(s["stop"]) if s["stop"] is not None else "still held"
     begin = stamp(s["start"]) if s["start"] is not None else "?"
     cause = f"  {s['cause']}" if s.get("cause") else ""
-    return [f"{indent}{s['user'] or '-'} held {s['address']}",
-            f"{indent}  from {begin}  to {end}{cause}",
-            f"{indent}  session {s['session']}  mac {s['mac'] or '-'}  "
-            f"on {s['interface'] or '-'}"]
+    out = [f"{indent}{s['user'] or '-'} held {s['address']}",
+           f"{indent}  from {begin}  to {end}{cause}",
+           f"{indent}  session {s['session']}  mac {s['mac'] or '-'}  "
+           f"on {s['interface'] or '-'}"]
+    # IPv6 (#609): the prefixes, a line each, the delegated one with when.
+    if s.get("prefix"):
+        out.append(f"{indent}  ipv6 {s['prefix']}")
+    if s.get("delegated"):
+        when = stamp(s["delegated_since"]) \
+            if s.get("delegated_since") is not None else "?"
+        out.append(f"{indent}  delegated {s['delegated']} from {when}")
+    return out
 
 
 def translation_rows(inside, when, held, why=None, configured=True):

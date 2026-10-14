@@ -202,6 +202,25 @@ int main(void)
 	      "  a file of that name already there: never overwritten, nothing moves");
 	unlink(aside);
 	unlink(path);
+
+	printf("\n=== a delegated prefix (#609) ===\n");
+	memset(&t, 0, sizeof(t));
+	snprintf(path, sizeof(path), "%s/d.log", dir);
+	put(&t, path, "2026-10-14T14:00:00.000Z start session 0000000000000009 user sub9 mac 02:aa:00:00:00:09 interface host-acc0 address 100.64.0.19 prefix 2001:db8:100::/64");
+	put(&t, path, "2026-10-14T14:20:00.000Z delegate session 0000000000000009 user sub9 mac 02:aa:00:00:00:09 interface host-acc0 address 100.64.0.19 prefix 2001:db8:100::/64 delegated 2001:db8:200::/56 delegated-since 2026-10-14T14:20:00.000Z since 2026-10-14T14:00:00.000Z");
+	CHECK(prisma_trail_recover(&r, path, &open) == 0 && r.seq == 2 && open && !open->next,
+	      "a start and its delegate are one session left open");
+	CHECK(open && !strcmp(open->since, "2026-10-14T14:00:00.000Z"),
+	      "  its since is still the start's, not the delegation's");
+	CHECK(open && strstr(open->fields, "delegated 2001:db8:200::/56 delegated-since 2026-10-14T14:20:00.000Z")
+	      && strstr(open->fields, "prefix 2001:db8:100::/64") && !strstr(open->fields, " since "),
+	      "  and what a Control-Plane-Lost stop repeats holds the prefix delegated, and when");
+	prisma_trail_free(open);
+	put(&t, path, "2026-10-14T15:00:00.000Z stop session 0000000000000009 user sub9 mac 02:aa:00:00:00:09 interface host-acc0 address 100.64.0.19 prefix 2001:db8:100::/64 delegated 2001:db8:200::/56 delegated-since 2026-10-14T14:20:00.000Z since 2026-10-14T14:00:00.000Z cause User-Request");
+	CHECK(prisma_trail_recover(&r, path, &open) == 0 && !open,
+	      "  and its stop closes it");
+	prisma_trail_free(open);
+	unlink(path);
 	rmdir(dir);
 
 	if (fails) { printf("\n%d FAILURES\n", fails); return 1; }

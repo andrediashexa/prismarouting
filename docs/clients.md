@@ -27,6 +27,13 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.12 - IPv6 on PPPoE sessions: SLAAC and a delegated prefix
+
+* **Contract:** additive (`prisma.proto` sha256 `f9a8eda173b07ae71ddcebf2edc8fc704505a7a30a8a38b0422fb39f47b93c8f`; 0.155.11's was `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`). New fields only, no number reused or renumbered: `PppoeConfig.ipv6_enable` (14), `ipv6_prefix_pools` (15), `ipv6_delegated_pools` (16, the new message `PppoeDelegatedPool` with `prefix` and `length`), `ipv6_dns_servers` (17); the session's `ipv6_prefix` and `ipv6_delegated_prefix`; the summary's `ipv6`, `ipv6_prefix_pools` and `ipv6_delegated_pools`; the history entry's `ipv6_prefix`, `ipv6_delegated_prefix` and `delegated` (a Timestamp). `""` means none - an IPv4-only session has both prefixes empty.
+* **`SetConfig` of `pppoe` with an empty `fields` does NOT touch the four IPv6 fields unless the request sets one of them** (#609). This is an exception to the "empty means every field" rule, on purpose: a client built before 0.155.12 that writes the `pppoe` block whole would otherwise turn the box's IPv6 off. To remove IPv6, name the fields (`"ipv6_enable"`, `"ipv6_prefix_pools"`, `"ipv6_delegated_pools"`, `"ipv6_dns_servers"`) with empty values. docs/api.md says the same.
+* **`ListPppoeHistory` takes an IPv6 address** in `address`: it names the sessions whose WAN /64 held it, or whose delegated prefix held it from the time it was delegated (`delegated`) - asked before delegation, it names nobody.
+* **`GetSchema`** gains the `ipv6` statements under `pppoe`, and the digest changes. A box that configures no `ipv6` behaves as 0.155.11: IPv6CP is refused. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.11 - the PPPoE session trail's head sent off the box
 
 * **Contract:** unchanged (`prisma.proto` sha256 `a3e837230c432d56e82f3b0b9d1385140aeec2746a2b91ac74060f45dd22a8ff`, the same as 0.155.10). No message, field or number changes.

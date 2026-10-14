@@ -126,7 +126,50 @@ check(sorted(["10.0.0.9", "10.0.0.10"], key=T._addr_key)
 check(T._profile_word(0) == "0" and T._profile_word(15000) == "15M",
       "_profile_word: a profile's rate as written")
 
+p6 = T.pppoe_held_typed(PP.empty())
+check(p6["ipv6_enable"] is False and p6["ipv6_prefix_pools"] == []
+      and p6["ipv6_delegated_pools"] == [] and p6["ipv6_dns_servers"] == [],
+      "pppoe_held_typed: no IPv6 reads as none (#609)")
+h6 = PP.empty()
+for ln in ("ipv6 prefix-pool 2001:db8:100::/48",
+           "ipv6 delegated-pool 2001:db8:200::/40 length 56",
+           "ipv6 dns 2001:db8::53"):
+    PP.stage(h6, ["pppoe"] + ln.split())
+p6 = T.pppoe_held_typed(h6)
+check(p6["ipv6_prefix_pools"] == ["2001:db8:100::/48"]
+      and p6["ipv6_delegated_pools"] == [{"prefix": "2001:db8:200::/40",
+                                          "length": 56}]
+      and p6["ipv6_dns_servers"] == ["2001:db8::53"],
+      f"pppoe_held_typed: the IPv6 statements as fields: {p6}")
+
 print("=== edits: what differs, as the prompt takes it ===")
+check(T.pppoe_lines(h6, p6) == [], "IPv6: a read written back is no line")
+check(T.pppoe_lines(h6, dict(p6, ipv6_prefix_pools=[],
+                             ipv6_delegated_pools=[], ipv6_dns_servers=[]))
+      == [], "IPv6: a whole write with no IPv6 field set and no `fields` "
+      "leaves the box's IPv6 alone - a client built before them")
+lines = T.pppoe_lines(h6, dict(p6, ipv6_prefix_pools=[]),
+                      ["ipv6_prefix_pools", "ipv6_dns_servers"])
+check(lines == ["no ipv6 prefix-pool 2001:db8:100::/48"],
+      f"IPv6: named, an empty list removes: {lines}")
+lines = T.pppoe_lines(h6, dict(p6, ipv6_enable=True, ipv6_delegated_pools=[
+    {"prefix": "2001:db8:200::/40", "length": 60},
+    {"prefix": "2001:db8:300::/40", "length": 56}], ipv6_dns_servers=[]))
+check(lines == ["ipv6 enable", "ipv6 delegated-pool 2001:db8:200::/40 "
+                "length 60", "ipv6 delegated-pool 2001:db8:300::/40 length 56",
+                "no ipv6 dns 2001:db8::53"],
+      f"IPv6: a whole write that sets one applies all four: {lines}")
+check(T._delegated_lines([{"prefix": "a::/40", "length": 56}], [])
+      == ["no ipv6 delegated-pool a::/40"],
+      "_delegated_lines: a pool not listed is removed")
+try:
+    T._delegated_lines([], [{"prefix": "a::/40"}])
+    check(False, "_delegated_lines refuses a pool with no length")
+except ValueError as ex:
+    check("its length" in str(ex), f"_delegated_lines refuses: {ex}")
+h, why = staged_pppoe(h6, lines)
+check(why is None and T.pppoe_held_typed(h)["ipv6_enable"],
+      f"IPv6: the lines staged by the prompt's rule: {why}")
 check(T.pppoe_lines(cfg.pppoe, p) == [] and T.aaa_lines(cfg.aaa, a) == [],
       "a read written back is no line at all")
 want = dict(p, interfaces=["host-acc0"], mtu=1400, ac_name="bng1",
@@ -291,8 +334,16 @@ check(x == {"session_id": "8aa8eb1ab0657546", "user": "sub1",
             "address": "100.64.0.77", "mac": "02:aa:00:00:00:01",
             "interface": "pppoe_session1", "state": "active",
             "uptime_seconds": 90061, "rx_bytes": 0, "tx_bytes": 0,
-            "rate_limit_down_kbit": 20000, "rate_limit_up_kbit": 10000},
+            "rate_limit_down_kbit": 20000, "rate_limit_up_kbit": 10000,
+            "ipv6_prefix": "", "ipv6_delegated_prefix": ""},
       f"pppoe_session_fields: a row as PppoeSession, the id lower case: {x}")
+x = API.pppoe_session_fields(dict(TABLE[1], **{
+    "ip6": "2001:db8:100::dc6a:c745:4ec:fd66/64",
+    "ip6-dp": "2001:db8:200::/56"}))
+check(x["ipv6_prefix"] == "2001:db8:100::/64"
+      and x["ipv6_delegated_prefix"] == "2001:db8:200::/56",
+      "pppoe_session_fields: the IPv6 prefixes, as the screen shows them "
+      "(#609)")
 x = API.pppoe_session_fields(TABLE[2])
 check(x["state"] == "starting" and x["uptime_seconds"] == 0
       and x["rate_limit_down_kbit"] == 0 and x["user"] == "",
@@ -357,6 +408,23 @@ x = API.pppoe_history_session_fields({
 check(x["held"] and x["stop"] is None and x["start"] == 1.5
       and x["session_id"] == "7a" and x["interface"] == "ens19",
       "pppoe_history_session_fields: a session still held")
+x = API.pppoe_history_session_fields({
+    "session": "7b", "address": "100.64.0.12", "start": 1.0, "stop": 9.0,
+    "prefix": "2001:db8:100::/64", "delegated": "2001:db8:200::/56",
+    "delegated_since": 2.5})
+check(x["ipv6_prefix"] == "2001:db8:100::/64" and x["delegated"] == 2.5
+      and x["ipv6_delegated_prefix"] == "2001:db8:200::/56" and not x["held"],
+      "pppoe_history_session_fields: the IPv6 prefixes and when one was "
+      "delegated (#609)")
+h6s = PP.empty()
+for ln in ("interface host-acc0", "gateway 100.64.0.1",
+           "ipv6 delegated-pool 2001:db8:200::/40 length 56"):
+    PP.stage(h6s, ["pppoe"] + ln.split())
+x = API.pppoe_summary_fields({"held": h6s, "status": "running"})
+check(x["ipv6"] and x["ipv6_prefix_pools"] == []
+      and x["ipv6_delegated_pools"] == [{"prefix": "2001:db8:200::/40",
+                                         "length": 56}],
+      f"pppoe_summary_fields: IPv6 on and its pools (#609): {x}")
 check(API.ts_ms(1760000000.123) == (1760000000, 123000000)
       and API.ts_ms(5) == (5, 0), "ts_ms: the trail's milliseconds exactly")
 for rep, verdict in (({"files": 0}, "no_trail"),

@@ -42,6 +42,17 @@ Prisma-Rate-Limit-Down and -Up, integers in kbit/s - by the operator's
 decision the primary form; Cisco-AVPair's rate-limit and sub-qos-policy
 forms are read too (build/prisma_rate.c), and Prisma's wins when both are
 there. MikroTik's is not read.
+
+IPv6 (#609, docs/bng.md 0.8). `ipv6 ...` under `pppoe` turns IPv6CP on
+(`ipv6=allow`; with no `ipv6` statement it stays `deny`, as before). The
+session's WAN /64 is advertised by RA - SLAAC - out of `ipv6 prefix-pool` or
+RADIUS's Framed-IPv6-Prefix, and a prefix is delegated by DHCPv6 out of
+`ipv6 delegated-pool` or RADIUS's Delegated-IPv6-Prefix; accel-ppp's ipv6_nd
+and ipv6_dhcp answer both, and its VPP hooks route each prefix through the
+session interface. They answer at all because the dataplane's PPPoE guard
+sends a session's RS and DHCPv6 to the control plane's TAP and takes the
+answers off it (src/plugins/bpa/bpa_pppoe_guard.h): stock VPP decapsulates
+every PPP-IPv6 frame into ip6-input, where both died.
 """
 import ipaddress
 import os
@@ -145,15 +156,36 @@ _IFNAME = re.compile(r"^[A-Za-z0-9._/:-]{1,63}$")
 NOT_SHOWN = "<set, not shown>"
 
 
+def empty_ipv6():
+    """The `ipv6 ...` statements of a block with none (#609)."""
+    return {"enable": False, "pools": [], "delegated": [], "dns": []}
+
+
 def empty():
     """The model of a box with no PPPoE."""
     return {"interfaces": [], "gateway": "", "pools": [], "dns": [],
-            "settings": {}, "users": {}}
+            "settings": {}, "users": {}, "ipv6": empty_ipv6()}
+
+
+def v6(held):
+    """The block's IPv6 statements (#609); a model built before them has
+    none."""
+    return held.get("ipv6") or empty_ipv6()
+
+
+def ipv6_on(held):
+    """
+    True when sessions negotiate IPv6CP (#609): any `ipv6` statement. With
+    none accel-ppp is told `ipv6=deny`, as every release before it was, so
+    a box that configures nothing for IPv6 behaves as it did.
+    """
+    s = v6(held)
+    return bool(s["enable"] or s["pools"] or s["delegated"] or s["dns"])
 
 
 def is_empty(held) -> bool:
     """True when nothing is configured: the container does not run."""
-    return held == empty()
+    return dict(held, ipv6=v6(held)) == empty()
 
 
 def _addr4(word):
@@ -181,6 +213,56 @@ def pool_error(word):
                 f"range <first>-<last>")
     if int(ipaddress.IPv4Address(b)) < int(ipaddress.IPv4Address(a)):
         return "address-pool: the range ends before it starts"
+    return None
+
+
+#: The shortest IPv6 pool a statement takes, and the longest a delegated
+#: prefix may be: a /64 is the most a CPE can number one LAN with by SLAAC.
+V6_POOL_MIN, V6_PREFIX_MAX = 16, 64
+#: The WAN prefix a session is given out of `ipv6 prefix-pool`: one /64, the
+#: length SLAAC needs (RFC 4862 5.5.3 with a 64-bit interface identifier).
+V6_WAN_LENGTH = 64
+
+
+def prefix6(word):
+    """`word` as an IPv6 prefix (an ipaddress.IPv6Network, host bits clear),
+    or None."""
+    try:
+        net = ipaddress.IPv6Network(word, strict=True)
+    except ValueError:
+        return None
+    return net if "/" in word else None
+
+
+def _addr6(word):
+    """`word` as an IPv6 address, compressed, or None."""
+    try:
+        return str(ipaddress.IPv6Address(word))
+    except (ValueError, ipaddress.AddressValueError):
+        return None
+
+
+def ipv6_pool_error(kind, word, length=None):
+    """
+    Why `word` cannot be an `ipv6 prefix-pool` (kind "prefix-pool") or, with
+    `length`, an `ipv6 delegated-pool`, or None.
+    """
+    net = prefix6(word)
+    if net is None:
+        return (f"ipv6 {kind}: '{word}' is not an IPv6 prefix with its host "
+                f"bits clear, as 2001:db8:100::/40")
+    if kind == "prefix-pool":
+        if not V6_POOL_MIN <= net.prefixlen <= V6_WAN_LENGTH:
+            return (f"ipv6 prefix-pool: /{V6_POOL_MIN} to /{V6_WAN_LENGTH}: "
+                    f"each session is given a /{V6_WAN_LENGTH} of it")
+        return None
+    n = _number(length or "", V6_POOL_MIN, V6_PREFIX_MAX)
+    if n is None:
+        return (f"ipv6 delegated-pool <prefix> length <{V6_POOL_MIN}-"
+                f"{V6_PREFIX_MAX}>: the prefix each session is delegated")
+    if not V6_POOL_MIN <= net.prefixlen <= n:
+        return (f"ipv6 delegated-pool: a /{net.prefixlen} cannot be cut into "
+                f"/{n}s")
     return None
 
 
@@ -242,10 +324,86 @@ def setting_error(key, value):
 #: The statements, as `?` offers them and the refusal lists them.
 STATEMENTS = ("interface", "gateway", "address-pool", "dns",
               "authentication", "session-limit", "mtu", "tcp-mss", "ac-name",
-              "rate-limit", "local-user")
+              "rate-limit", "local-user", "ipv6")
 SAYS = ("under 'pppoe': interface, gateway, address-pool, dns, "
         "authentication, session-limit, mtu, tcp-mss, ac-name, rate-limit, "
-        "local-user")
+        "local-user, ipv6")
+#: `ipv6 ...` (#609): what each takes, as the refusal lists it.
+IPV6_SAYS = ("ipv6 enable | prefix-pool <prefix> | delegated-pool <prefix> "
+             "length <n> | dns <address>")
+V6_POOLS_MAX = 16
+
+
+def stage_ipv6(held, args, neg):
+    """`[no] ipv6 ...` (#609) applied to `held`; None, or why not."""
+    s = held.setdefault("ipv6", empty_ipv6())
+    if neg and not args:
+        held["ipv6"] = empty_ipv6()
+        return None
+    if not args:
+        return IPV6_SAYS
+    kw, rest = args[0], args[1:]
+    if kw == "enable":
+        if rest:
+            return "ipv6 enable"
+        s["enable"] = not neg
+        return None
+    if kw == "prefix-pool":
+        if len(rest) != 1:
+            return "ipv6 prefix-pool <prefix>: a /64 of it for each session"
+        why = ipv6_pool_error(kw, rest[0])
+        if why:
+            return why
+        p = str(prefix6(rest[0]))
+        if neg:
+            if p not in s["pools"]:
+                return f"no ipv6 prefix-pool: {p} is not a pool here"
+            s["pools"].remove(p)
+        elif p not in s["pools"]:
+            if len(s["pools"]) >= V6_POOLS_MAX:
+                return f"at most {V6_POOLS_MAX} IPv6 prefix pools"
+            s["pools"].append(p)
+        return None
+    if kw == "delegated-pool":
+        if neg:
+            if len(rest) not in (1, 3) or not prefix6(rest[0]):
+                return "no ipv6 delegated-pool <prefix>"
+            p = str(prefix6(rest[0]))
+            gone = [d for d in s["delegated"] if d[0] == p]
+            if not gone:
+                return f"no ipv6 delegated-pool: {p} is not a pool here"
+            s["delegated"].remove(gone[0])
+            return None
+        if len(rest) != 3 or rest[1] != "length":
+            return ("ipv6 delegated-pool <prefix> length <n>: a /n of it for "
+                    "each session, by DHCPv6")
+        why = ipv6_pool_error(kw, rest[0], rest[2])
+        if why:
+            return why
+        p, n = str(prefix6(rest[0])), str(int(rest[2]))
+        have = [d for d in s["delegated"] if d[0] == p]
+        if have:
+            have[0][1] = n
+        else:
+            if len(s["delegated"]) >= V6_POOLS_MAX:
+                return f"at most {V6_POOLS_MAX} IPv6 delegated pools"
+            s["delegated"].append([p, n])
+        return None
+    if kw == "dns":
+        a = _addr6(rest[0]) if len(rest) == 1 else None
+        if not a:
+            return ("ipv6 dns <address>: an IPv6 resolver given to the "
+                    "subscriber")
+        if neg:
+            if a not in s["dns"]:
+                return f"no ipv6 dns: {a} is not a resolver here"
+            s["dns"].remove(a)
+        elif a not in s["dns"]:
+            if len(s["dns"]) >= DNS_MAX:
+                return f"at most {DNS_MAX} IPv6 resolvers"
+            s["dns"].append(a)
+        return None
+    return IPV6_SAYS
 
 
 def stage(held, words):
@@ -318,6 +476,8 @@ def stage(held, words):
                 return f"at most {DNS_MAX} resolvers: IPCP carries two"
             held["dns"].append(a)
         return None
+    if kw == "ipv6":
+        return stage_ipv6(held, args, neg)
     if kw == "radius":
         # #607: one spelling. A saved file's are read into `aaa radius`
         # before they get here (config.py); typed, they are told where.
@@ -389,6 +549,12 @@ def body(held):
         out.append(f"rate-limit default {s['rate-limit-default']}")
     out += [f"local-user {n} password {held['users'][n]}"
             for n in sorted(held["users"])]
+    s6 = v6(held)
+    if s6["enable"]:
+        out.append("ipv6 enable")
+    out += [f"ipv6 prefix-pool {p}" for p in s6["pools"]]
+    out += [f"ipv6 delegated-pool {p} length {n}" for p, n in s6["delegated"]]
+    out += [f"ipv6 dns {a}" for a in s6["dns"]]
     return out
 
 
@@ -554,6 +720,32 @@ def check(held, aaa=None):
     if not held["pools"] and not uses_radius(aaa):
         why.append("pppoe: no address-pool, and no RADIUS under 'aaa "
                    "radius' to give a Framed-IP-Address")
+    why += ipv6_check(held, aaa)
+    return why
+
+
+def ipv6_check(held, aaa):
+    """
+    What makes the block's IPv6 one the control plane cannot serve (#609),
+    as check()'s rows. A session's DHCPv6 is answered only once it has a WAN
+    prefix (accel-ppp's dhcpv6.c starts on a session whose IPv6CP gave one),
+    so a delegated pool alone delegates nothing; and two pools that overlap
+    would give one prefix to two subscribers.
+    """
+    s = v6(held)
+    if not ipv6_on(held):
+        return []
+    why = []
+    if not s["pools"] and not uses_radius(aaa):
+        why.append("pppoe: IPv6 with no 'ipv6 prefix-pool' and no RADIUS "
+                   "under 'aaa radius' to give a Framed-IPv6-Prefix")
+    nets = [ipaddress.IPv6Network(p) for p in s["pools"]] + \
+        [ipaddress.IPv6Network(p) for p, _ in s["delegated"]]
+    for i, a in enumerate(nets):
+        for b in nets[i + 1:]:
+            if a.overlaps(b):
+                why.append(f"pppoe: the IPv6 pools {a} and {b} overlap: one "
+                           f"prefix would be given to two subscribers")
     return why
 
 
@@ -667,6 +859,13 @@ def modules(held, aaa):
     mods.append("radius" if uses_radius(aaa) else "chap-secrets")
     if held["pools"]:
         mods.append("ippool")
+    # IPv6 (#609): after radius, as ippool is, so RADIUS's Framed-IPv6-
+    # Prefix and Delegated-IPv6-Prefix are asked before the pools.
+    if ipv6_on(held):
+        s6 = v6(held)
+        if s6["pools"] or s6["delegated"]:
+            mods.append("ipv6pool")
+        mods += ["ipv6_nd", "ipv6_dhcp"]
     # After radius, whose Access-Accept and CoA events it takes.
     mods.append("shaper")
     mods.append("pppd_compat")
@@ -713,7 +912,12 @@ def accel_conf(held, acc, aaa=None, max_sessions=None):
         "", "[common]", "single-session=replace"]
     out.append(f"max-sessions={max_sessions or session_limit(held)}")
     out += ["", "[ppp]", "verbose=1", f"mtu={mtu}", f"mru={mtu}",
-            "ipv4=require", "ipv6=deny", "lcp-echo-interval=20",
+            "ipv4=require", "ipv6=allow" if ipv6_on(held) else "ipv6=deny"]
+    if ipv6_on(held):
+        # The box is fe80::1 on every session; the CPE's own identifier is
+        # taken (Framed-Interface-Id from RADIUS when it gives one).
+        out += ["ipv6-intf-id=0:0:0:1", "ipv6-accept-peer-intf-id=1"]
+    out += ["lcp-echo-interval=20",
             "lcp-echo-failure=3",
             "", "[pppoe]", "verbose=1",
             f"ac-name={setting(held, 'ac-name')}"]
@@ -729,12 +933,50 @@ def accel_conf(held, acc, aaa=None, max_sessions=None):
     if held["pools"]:
         out += ["", "[ip-pool]", f"gw-ip-address={held['gateway']}"]
         out += held["pools"]
+    if ipv6_on(held):
+        out += [""] + ipv6_sections(held)
     out += [""] + shaper_section(held, aaa)
     out += [""] + trail_section(acc)
     out += ["", "[pppd-compat]", f"ip-up={SESSION_HOOK}", "verbose=1",
             "", "[log]", f"log-file={LOG_DIR}/accel-ppp.log", "level=3",
             "copy=1", ""]
     return "\n".join(out)
+
+
+#: A delegated prefix's and the WAN prefix's lifetimes, in DHCPv6 and RA:
+#: a week preferred, thirty days valid - accel-ppp's own example values.
+V6_PREFERRED, V6_VALID = 604800, 2592000
+
+
+def ipv6_sections(held):
+    """
+    accel-ppp.conf's IPv6 (#609): the pools, RA, DHCPv6 and the resolvers.
+
+      [ipv6-nd] AdvManagedFlag=0, AdvAutonomousFlag=1: the WAN /64 by SLAAC.
+                accel-ppp's defaults with ipv6_dhcp loaded are the other way
+                round (M on, A off: an address by DHCPv6 IA_NA only), which a
+                CPE that does not ask for IA_NA - pppd's Linux, most routers -
+                answers with no WAN address at all. O on: DHCPv6 is there,
+                for the delegated prefix and the resolvers.
+      [ipv6-dhcp] route-via-gw=0: the delegated prefix routed through the
+                session interface; the VPP hooks route by interface anyway
+                (vppiputils.c ignores a gateway).
+    """
+    s = v6(held)
+    out = []
+    if s["pools"] or s["delegated"]:
+        out += ["[ipv6-pool]"]
+        out += [f"{p},{V6_WAN_LENGTH}" for p in s["pools"]]
+        out += [f"delegate={p},{n}" for p, n in s["delegated"]]
+        out.append("")
+    out += ["[ipv6-nd]", "AdvManagedFlag=0", "AdvOtherConfigFlag=1",
+            "AdvAutonomousFlag=1", f"AdvValidLifetime={V6_VALID}",
+            f"AdvPreferredLifetime={V6_PREFERRED}", "verbose=1",
+            "", "[ipv6-dhcp]", "verbose=1", f"pref-lifetime={V6_PREFERRED}",
+            f"valid-lifetime={V6_VALID}", "route-via-gw=0"]
+    if s["dns"]:
+        out += ["", "[ipv6-dns]"] + [f"dns={a}" for a in s["dns"]]
+    return out
 
 
 def chap_secrets(held):
@@ -871,22 +1113,52 @@ def read_conf(path=None):
 
 # --------------------------------------------------------------- operation
 
-#: The columns prisma-bng asks accel-cmd for (`prisma-bng sessions`).
+#: The columns prisma-bng asks accel-cmd for (`prisma-bng sessions`); the
+#: last two, the IPv6 WAN address and the delegated prefix, since #609.
 SESSION_COLUMNS = ("sid", "ifname", "username", "ip", "calling-sid", "state",
-                   "uptime-raw", "rx-bytes-raw", "tx-bytes-raw", "rate-limit")
+                   "uptime-raw", "rx-bytes-raw", "tx-bytes-raw", "rate-limit",
+                   "ip6", "ip6-dp")
+#: What a host's prisma-bng older than #609 asks for: the first ten. The VTY
+#: (mgmt) and the host's script are upgraded at different moments, and an
+#: answer of either width is read.
+SESSION_COLUMNS_V4 = SESSION_COLUMNS[:10]
 
 
 def session_rows(text):
-    """accel-cmd's `show sessions` table as dicts, keyed by SESSION_COLUMNS."""
+    """accel-cmd's `show sessions` table as dicts, keyed by SESSION_COLUMNS
+    (the IPv6 ones "" when the table has none)."""
     rows = []
     for line in text.splitlines():
         if "|" not in line or line.lstrip().startswith("sid "):
             continue
         cells = [c.strip() for c in line.split("|")]
+        if len(cells) == len(SESSION_COLUMNS_V4):
+            cells += ["", ""]
         if len(cells) != len(SESSION_COLUMNS):
             continue
         rows.append(dict(zip(SESSION_COLUMNS, cells)))
     return rows
+
+
+def wan_prefix(cell):
+    """
+    accel-ppp's `ip6` column - the CPE's address on its WAN prefix, built
+    from the prefix and the identifier IPv6CP gave it, `<address>/<len>` -
+    as the prefix the session holds ("2001:db8:100::/64"), or "". The address
+    itself is the CPE's to choose by SLAAC; the prefix is what was given.
+    """
+    try:
+        return str(ipaddress.IPv6Interface(cell).network) if cell else ""
+    except ValueError:
+        return ""
+
+
+def delegated_prefix(cell):
+    """accel-ppp's `ip6-dp` column as a prefix, or ""."""
+    try:
+        return str(ipaddress.IPv6Network(cell, strict=False)) if cell else ""
+    except ValueError:
+        return ""
 
 
 def _uptime(raw):
@@ -929,6 +1201,14 @@ def sessions_screen(rows):
                    f"{r['ip'] or '-':<15} "
                    f"{limit_words(r.get('rate-limit')):<15} "
                    f"{(_uptime(r['uptime-raw']) if r['state'] == 'active' else r['state']):>11}")
+        # IPv6 (#609): a line of its own under the session, each prefix
+        # being up to 43 characters - the row has no room for them.
+        wan = wan_prefix(r.get("ip6", ""))
+        dp = delegated_prefix(r.get("ip6-dp", ""))
+        if wan:
+            out.append(f"{'':<18}ipv6 {wan}")
+        if dp:
+            out.append(f"{'':<18}delegated {dp}")
     out.append(f"{len(rows)} session(s)")
     return out
 
@@ -982,8 +1262,14 @@ def session_screen(row, sw_if_index="", pols=None):
     pols = pols or {}
     out = [f"{'session':<14}{row['sid']}",
            f"{'user':<14}{row['username']}",
-           f"{'address':<14}{row['ip'] or '-'}",
-           f"{'mac':<14}{row['calling-sid'] or '-'}",
+           f"{'address':<14}{row['ip'] or '-'}"]
+    # IPv6 (#609): the WAN prefix RA advertised and the one DHCPv6
+    # delegated; neither row on a session without IPv6.
+    if wan_prefix(row.get("ip6", "")):
+        out.append(f"{'ipv6 prefix':<14}{wan_prefix(row['ip6'])}")
+    if delegated_prefix(row.get("ip6-dp", "")):
+        out.append(f"{'delegated':<14}{delegated_prefix(row['ip6-dp'])}")
+    out += [f"{'mac':<14}{row['calling-sid'] or '-'}",
            f"{'state':<14}{row['state']}",
            f"{'uptime':<14}{_uptime(row['uptime-raw'])}",
            f"{'traffic':<14}{row['rx-bytes-raw'] or 0} bytes from the "
@@ -1110,6 +1396,7 @@ def summary_screen(held, status, counts, aaa=None, states=None, trail=None,
                    f"user(s), for a lab")
     out.append(f"{'addresses':<22}" + (", ".join(held["pools"])
                                        or "from RADIUS only"))
+    out += ipv6_summary_rows(held)
     out.append(f"{'gateway':<22}{held['gateway']}")
     limit = session_limit(held)
     row = f"{limit}" + ("" if "session-limit" in held["settings"]
@@ -1122,6 +1409,23 @@ def summary_screen(held, status, counts, aaa=None, states=None, trail=None,
                + (limit_words("/".join(str(rate_kbit(x))
                                        for x in dflt.split("/")))
                   if dflt else "none"))
+    return out
+
+
+def ipv6_summary_rows(held):
+    """`show pppoe summary`'s IPv6 rows (#609): off, or where the WAN /64s
+    and the delegated prefixes come from - a row a pool, so every row fits a
+    console whatever the pool."""
+    if not ipv6_on(held):
+        return [f"{'ipv6':<22}off"]
+    s = v6(held)
+    out = [f"{'ipv6':<22}{p}, a /{V6_WAN_LENGTH} each by RA"
+           for p in s["pools"]] or [f"{'ipv6':<22}WAN prefix from RADIUS "
+                                    f"only"]
+    out += [f"{'ipv6 delegated':<22}{p}, a /{n} each by DHCPv6"
+            for p, n in s["delegated"]]
+    if not s["delegated"]:
+        out.append(f"{'ipv6 delegated':<22}from RADIUS only")
     return out
 
 

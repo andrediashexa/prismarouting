@@ -285,7 +285,10 @@ TYPED_CONFIG = {
     # RadiusServerConfig.secret), never read.
     "pppoe": ("interface", "gateway", "address-pool", "dns", "authentication",
               "session-limit", "mtu", "tcp-mss", "ac-name", "rate-limit",
-              "local-user"),
+              "local-user",
+              # #609: PppoeConfig.ipv6_enable, ipv6_prefix_pools,
+              # ipv6_delegated_pools, ipv6_dns_servers.
+              "ipv6"),
     "aaa radius": ("server", "mode", "timeout", "retries", "dead-time",
                    "nas-identifier", "interim-interval",
                    "dynamic-authorization", "rate-profile"),
@@ -719,6 +722,9 @@ def render():
         if level != "operational":
             continue
         cmd = " ".join(words) + (f" {hint}" if hint else "")
+        # A `|` in a hint ends the table's cell (#609: `show pppoe history
+        # address <A.B.C.D> | <X:X::X:X>`), as it would a statement's below.
+        cmd = cmd.replace("|", "\\|")
         lines.append(f"| `{cmd}` | {cls} | {api} | {role} | {note} |")
     for level, enter, path, _g, role in CONFIG_LEVELS:
         lines += ["", f"## Configuration: {level}", "",

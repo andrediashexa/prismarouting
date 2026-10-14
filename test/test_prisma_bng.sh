@@ -113,7 +113,7 @@ check "sessions of a stopped container: rc 3, nothing asked" "[ $rc -eq 3 ] && !
 echo true > "$T/running"
 $BNG sessions > /dev/null 2>&1
 check "sessions asked of accel-ppp in the container, by its columns" \
-  "grep -q 'exec prisma-bng-cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw,rate-limit' '$T/log'"
+  "grep -q 'exec prisma-bng-cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw,rate-limit,ip6,ip6-dp' '$T/log'"
 echo false > "$T/running"; : > "$T/log"
 out=$($BNG reload 2>&1); rc=$?
 check "reload of a stopped container: rc 3, nothing asked (#607)" \
@@ -161,7 +161,9 @@ case "\$*" in
   "show interface features"*) cat "$T/features" 2>/dev/null ;;
   "show policer") cat "$T/policers" 2>/dev/null ;;
   "show ip fib") cat "$T/fib" 2>/dev/null ;;
+  "show ip6 fib") cat "$T/fib6" 2>/dev/null ;;
   "show interface") printf '%s\n' "              Name               Idx    State" "pppoe_session3                    12     up" ;;
+  "set bpa pppoe-access cp"*) if [ -f "$T/guardout-cp" ]; then cat "$T/guardout-cp"; else cat "$T/guardout" 2>/dev/null; fi ;;
   "set bpa pppoe-access"*) cat "$T/guardout" 2>/dev/null ;;
 esac
 EOF
@@ -193,19 +195,24 @@ check "  one VLAN device for the tag, none for untagged" \
 check "  and the plugin told the TAP is its control plane" \
   "grep -q 'vppctl create pppoe cp cp-if-index 9' '$T/vlog'"
 check "  and the dataplane told which interfaces PPPoE is taken from: an old access.env's card and its VLAN, by name" \
-  "grep -qx 'vppctl set bpa pppoe-access ge0 ge0.100' '$T/vlog'"
+  "grep -qx 'vppctl set bpa pppoe-access cp tap1863 ge0 ge0.100' '$T/vlog'"
 check "sw_index: the TAP's index" "[ \"\$(sw_index tap1863)\" = 9 ]"
 check "access_names: format 4's ACCESS, as written" \
   "[ \"\$(ACCESS='ge0 ge0.300' access_names)\" = 'ge0 ge0.300' ]"
 : > "$T/vlog"
 check "guard: the set replaced, 0 when the dataplane says nothing" \
-  "guard 'ge0' && grep -qx 'vppctl set bpa pppoe-access ge0' '$T/vlog'"
+  "guard 'ge0' && grep -qx 'vppctl set bpa pppoe-access cp tap1863 ge0' '$T/vlog'"
 echo "set bpa pppoe-access: unknown interface 'ge9'" > "$T/guardout"
 check "guard: a refusal is a failure, said" "! guard ge9 2>/dev/null"
 echo "set bpa pppoe-access: unknown input 'ge0'" > "$T/guardout"
 check "guard: a plugin older than the guard is said and passed, not a crash loop" \
   "guard ge0 2>&1 | grep -q 'from every interface' && guard ge0 2>/dev/null"
 rm -f "$T/guardout"
+echo "set bpa pppoe-access: unknown input 'cp tap1863 ge0'" > "$T/guardout-cp"
+: > "$T/vlog"
+check "guard: a plugin older than #609's 'cp' is said, and the access interfaces set without it" \
+  "guard ge0 2>&1 | grep -q \"takes no 'cp'\" && grep -qx 'vppctl set bpa pppoe-access ge0' '$T/vlog' && guard ge0 2>/dev/null"
+rm -f "$T/guardout-cp"
 check "exit_reason: a code" "[ \"\$(exit_reason 1 0)\" = 'accel-pppd exited with code 1' ]"
 check "exit_reason: a signal, named" \
   "[ \"\$(exit_reason 137 0)\" = 'accel-pppd was killed by signal 9 (KILL)' ]"
@@ -264,6 +271,20 @@ printf '%s\n' "[0] sw-if-index 12 client-ip 0.0.0.0 session-id 448 encap-if-inde
 n=$(stale_state)
 check "stale_state: a dead daemon's routes through its sessions, once each, then the sessions - for accel-pppd to remove in that order (#607)" \
   "[ '$n' = 2 ] && [ \"\$(sed -n 1p '$T/run/bng/stale-state')\" = 'route 100.64.0.77/32 12' ] && [ \"\$(sed -n 2p '$T/run/bng/stale-state')\" = 'session 02:aa:00:00:00:02 448' ]"
+# `show ip6 fib`'s, as VPP 26.06 printed it in lab/pppoe.sh (#609).
+printf '%s\n' "ipv6-VRF:0, fib_index:0, flow hash:[src dst sport dport proto flowlabel ] epoch:0 flags:none locks:[default-route:1, ]" \
+  "::/0" "  unicast-ip6-chain" "    [0] [@0]: dpo-drop ip6" \
+  "2001:db8:100:2::/64" "  unicast-ip6-chain" \
+  "    [0] [@6]: ipv6 [features] via 0.0.0.0 pppoe_session3: mtu:1492 next:11 flags:[features ]" \
+  "2001:db8:200:100::/56" "    [0] [@6]: ipv6 via 0.0.0.0 pppoe_session3: mtu:1492" \
+  "fe80::/10" "    [0] [@14]: ip6-link-local" \
+  "2001:db8:ffff::/64" "    [0] [@4]: ipv6-glean: [src:2001:db8:ffff::/64] host-wan0" > "$T/fib6"
+n=$(stale_state)
+check "stale_state: and its IPv6 routes too, after IPv4's and before the sessions (#609)" \
+  "[ '$n' = 4 ] && [ \"\$(sed -n 2p '$T/run/bng/stale-state')\" = 'route 2001:db8:100:2::/64 12' ] && [ \"\$(sed -n 3p '$T/run/bng/stale-state')\" = 'route 2001:db8:200:100::/56 12' ] && [ \"\$(sed -n 4p '$T/run/bng/stale-state')\" = 'session 02:aa:00:00:00:02 448' ]"
+check "  the link-local, the default and a card's prefix are not a session's" \
+  "! grep -q 'fe80\\|::/0\\|ffff' '$T/run/bng/stale-state'"
+rm -f "$T/fib6"
 check "  VPP's own 0.0.0.0/32 and a route through a card are not a session's" \
   "! grep -q '0.0.0.0/32\\|100.64.1.0' '$T/run/bng/stale-state'"
 printf 'x=1\n' > "$T/etc/bng/accel-ppp.conf"
@@ -296,7 +317,7 @@ unplumb
 check "unplumb: the VLAN device out, and the cp and the TAP LEFT - taking them out crashes VPP" \
   "grep -q 'ip link del pppoe-cp.100' '$T/vlog' && ! grep -q 'cp-if-index 9 del' '$T/vlog' && ! grep -q 'delete tap' '$T/vlog'"
 check "  and no interface is access any more: PPPoE refused where it arrives" \
-  "grep -qx 'vppctl set bpa pppoe-access' '$T/vlog'"
+  "grep -qx 'vppctl set bpa pppoe-access cp tap1863' '$T/vlog'"
 printf '  pppoe-input\n' > "$T/features"; : > "$T/vlog"
 plumb
 check "plumb on a TAP already laid: the cp not enabled a second time" \
@@ -314,11 +335,23 @@ printf 'PARENT=ge0\nVLANS="0"\nMTU=1492\nTCP_MSS=1452\n' > "$T/etc/bng/access.en
 : > "$T/features"; : > "$T/vlog"
 sh "$REPO/appliance/prisma-bng-session" pppoe_session3 none 0 100.64.0.1 100.64.0.10 x
 check "the CGNAT attached, the PPPoE MTU and the MSS clamp set" \
-  "grep -q 'set interface bpa in2out pppoe_session3' '$T/vlog' && grep -q 'set interface mtu packet 1492 pppoe_session3' '$T/vlog' && grep -q 'set interface tcp-mss-clamp pppoe_session3 ip4 enable ip4-mss 1452 ip6 disable' '$T/vlog'"
-printf '  bpa-in2out\n  tcp-mss-clamping-ip4-in\n' > "$T/features"; : > "$T/vlog"
+  "grep -q 'set interface bpa in2out pppoe_session3' '$T/vlog' && grep -q 'set interface mtu packet 1492 pppoe_session3' '$T/vlog' && grep -q 'set interface tcp-mss-clamp pppoe_session3 ip4 enable ip4-mss 1452 ip6 enable ip6-mss 1432' '$T/vlog'"
+check "  and a session with no IPv6 has IPv6 dropped on its interface (#609)" \
+  "grep -q 'set interface feature pppoe_session3 ip6-not-enabled arc ip6-unicast' '$T/vlog'"
+printf 'ip6-multicast:\n  ip6-not-enabled\nip6-unicast:\n  tcp-mss-clamping-ip6-in\nip4-unicast:\n  bpa-in2out\n  tcp-mss-clamping-ip4-in\n' > "$T/features"; : > "$T/vlog"
 sh "$REPO/appliance/prisma-bng-session" pppoe_session3 none 0 100.64.0.1 100.64.0.10 x
-check "on a recycled interface that has them, neither is added again" \
-  "! grep -q 'bpa in2out' '$T/vlog' && ! grep -q 'tcp-mss-clamp' '$T/vlog'"
+check "the IPv6 drop judged on ip6-unicast: ip6-multicast's, which the hook leaves, is not it (#609)" \
+  "grep -q 'set interface feature pppoe_session3 ip6-not-enabled arc ip6-unicast' '$T/vlog'"
+printf 'ip6-multicast:\n  ip6-not-enabled\nip6-unicast:\n  ip6-not-enabled\nip4-unicast:\n  bpa-in2out\n  tcp-mss-clamping-ip4-in\n' > "$T/features"; : > "$T/vlog"
+sh "$REPO/appliance/prisma-bng-session" pppoe_session3 none 0 100.64.0.1 100.64.0.10 x
+check "on a recycled interface that has them, the attach and the IPv6 drop are not added again" \
+  "! grep -q 'bpa in2out' '$T/vlog' && ! grep -q 'ip6-not-enabled' '$T/vlog'"
+check "  and the clamp is set again, which VPP holds once whatever it is asked" \
+  "grep -q 'tcp-mss-clamp pppoe_session3 ip4 enable ip4-mss 1452 ip6 enable ip6-mss 1432' '$T/vlog'"
+: > "$T/features"; : > "$T/vlog"
+IPV6_PREFIX=2001:db8:100::1/64 sh "$REPO/appliance/prisma-bng-session" pppoe_session3 none 0 100.64.0.1 100.64.0.10 x
+check "a session with an IPv6 prefix keeps the IPv6 accel-ppp's hook let in" \
+  "! grep -q 'ip6-not-enabled' '$T/vlog'"
 printf 'PARENT=ge0\nVLANS="0"\nMTU=1492\n' > "$T/etc/bng/access.env"
 : > "$T/features"; : > "$T/vlog"
 sh "$REPO/appliance/prisma-bng-session" pppoe_session4 none 0 a b c

@@ -48,7 +48,34 @@ frame (u64 key, u32 rx, int is_access, int is_discovery, u8 code, u16 proto,
        u32 now)
 {
   return bpa_pppoe_guard_verdict (tbl, LOG2, key, rx, is_access,
-				  is_discovery, code, proto, now, HOLD);
+				  is_discovery, code, proto, 0, now, HOLD);
+}
+
+/* A session's IPv6 control frame (#609): an RS, a DHCPv6 Solicit. */
+static bpa_pppoe_verdict_t
+frame6 (u64 key, u32 rx, int is_access, u32 now)
+{
+  return bpa_pppoe_guard_verdict (tbl, LOG2, key, rx, is_access, 0, 0,
+				  BPA_PPP_IP6, 1, now, HOLD);
+}
+
+/* An IPv6 header to `dst` (16 bytes) carrying `nh`, and 4 bytes of the
+ * next header: ICMPv6 type, or UDP source and destination ports. */
+static u32
+ip6 (u8 *p, const u8 *dst, u8 nh, u8 b0, u8 b1, u8 b2, u8 b3)
+{
+  memset (p, 0, BPA_IP6_HEADER + 8);
+  p[0] = 0x60;
+  p[6] = nh;
+  p[7] = 255;
+  p[8] = 0xfe;
+  p[9] = 0x80;
+  memcpy (p + 24, dst, 16);
+  p[BPA_IP6_HEADER] = b0;
+  p[BPA_IP6_HEADER + 1] = b1;
+  p[BPA_IP6_HEADER + 2] = b2;
+  p[BPA_IP6_HEADER + 3] = b3;
+  return BPA_IP6_HEADER + 8;
 }
 
 int
@@ -174,12 +201,112 @@ main (void)
   printf ("  [ ok ] bounded\n");
 
   printf ("\n=== the node's hot-path test is the verdict's ===\n");
-  CHECK (!bpa_pppoe_needs_table (0, BPA_PPP_IP4) &&
-	   !bpa_pppoe_needs_table (0, BPA_PPP_IP6),
+  CHECK (!bpa_pppoe_needs_table (0, BPA_PPP_IP4, 0) &&
+	   !bpa_pppoe_needs_table (0, BPA_PPP_IP6, 0),
 	 "IP data never takes the lock");
-  CHECK (bpa_pppoe_needs_table (0, LCP) && bpa_pppoe_needs_table (1, 0),
+  CHECK (bpa_pppoe_needs_table (0, LCP, 0) && bpa_pppoe_needs_table (1, 0, 0),
 	 "control and discovery do");
+  CHECK (bpa_pppoe_needs_table (0, BPA_PPP_IP6, 1),
+	 "and an IPv6 control frame does: it reaches the control plane, "
+	 "whose dispatch node learns its MAC's port");
   printf ("  [ ok ] hot path\n");
+
+  printf ("\n=== IPv6 a session's control plane answers (#609) ===\n");
+  {
+    const u8 allrouters[16] = { 0xff, 0x02, [15] = 0x02 };
+    const u8 alldhcp[16] = { 0xff, 0x02, [13] = 0x01, [14] = 0x00,
+			     [15] = 0x02 };
+    const u8 ll[16] = { 0xfe, 0x80, [15] = 0x01 };
+    const u8 global[16] = { 0x20, 0x01, 0x0d, 0xb8, [15] = 0x01 };
+    u8 p[BPA_IP6_HEADER + 8];
+    u32 n;
+
+    n = ip6 (p, allrouters, 58, BPA_ICMP6_ROUTER_SOLICIT, 0, 0, 0);
+    CHECK (bpa_pppoe_ip6_is_control (p, n), "an RS to ff02::2");
+    n = ip6 (p, ll, 58, BPA_ICMP6_ROUTER_SOLICIT, 0, 0, 0);
+    CHECK (bpa_pppoe_ip6_is_control (p, n), "an RS to the BNG's fe80::1");
+    n = ip6 (p, alldhcp, 17, 0x02, 0x22, 0x02, 0x23);
+    CHECK (bpa_pppoe_ip6_is_control (p, n),
+	   "a DHCPv6 Solicit, 546 to 547, to ff02::1:2");
+    n = ip6 (p, ll, 17, 0x02, 0x22, 0x02, 0x23);
+    CHECK (bpa_pppoe_ip6_is_control (p, n), "a DHCPv6 Renew to fe80::1");
+    n = ip6 (p, global, 17, 0x02, 0x22, 0x02, 0x23);
+    CHECK (!bpa_pppoe_ip6_is_control (p, n),
+	   "UDP 547 to a global address is the subscriber's traffic "
+	   "(a relay behind the CPE), forwarded");
+    n = ip6 (p, global, 58, BPA_ICMP6_ROUTER_SOLICIT, 0, 0, 0);
+    CHECK (!bpa_pppoe_ip6_is_control (p, n), "an RS to a global address");
+    n = ip6 (p, allrouters, 58, 128, 0, 0, 0);
+    CHECK (!bpa_pppoe_ip6_is_control (p, n),
+	   "an echo request is not the control plane's");
+    n = ip6 (p, allrouters, 0, 0, 0, 0, 0);
+    CHECK (!bpa_pppoe_ip6_is_control (p, n),
+	   "an extension header first (MLD's hop-by-hop) is not read past");
+    n = ip6 (p, alldhcp, 6, 0x02, 0x22, 0x02, 0x23);
+    CHECK (!bpa_pppoe_ip6_is_control (p, n), "TCP to port 547 is not DHCPv6");
+    n = ip6 (p, allrouters, 58, BPA_ICMP6_ROUTER_SOLICIT, 0, 0, 0);
+    CHECK (!bpa_pppoe_ip6_is_control (p, BPA_IP6_HEADER + 3),
+	   "a frame too short to hold the type is not read past its end");
+    p[0] = 0x45;
+    CHECK (!bpa_pppoe_ip6_is_control (p, n), "an IPv4 header is not IPv6");
+  }
+  printf ("  [ ok ] the IPv6 to punt\n");
+
+  printf ("\n=== an IPv6 control frame is judged as a control frame ===\n");
+  memset (tbl, 0, sizeof (tbl));
+  CHECK (frame6 (k1, UPSTREAM, 0, 400) == BPA_PPPOE_NOT_ACCESS,
+	 "an RS from the upstream is refused");
+  CHECK (frame (k1, ACC_A, 1, 0, 0, LCP, 401) == BPA_PPPOE_PASS,
+	 "sub1's LCP on A");
+  CHECK (frame6 (k1, ACC_A, 1, 402) == BPA_PPPOE_PUNT,
+	 "sub1's RS on A goes to the control plane");
+  CHECK (frame6 (k1, ACC_B, 1, 403) == BPA_PPPOE_HELD,
+	 "sub1's MAC sending an RS from B is refused: it would move sub1's "
+	 "port in the plugin's link table, as an LCP frame would");
+  e = bpa_pppoe_held_find (tbl, LOG2, k1);
+  CHECK (e && e->sw_if_index == ACC_A && e->seen == 402,
+	 "A still holds it, refreshed by the RS");
+  CHECK (frame (k1, ACC_B, 1, 0, 0, BPA_PPP_IP6, 404) == BPA_PPPOE_PASS,
+	 "IPv6 data is still never judged against the table");
+  printf ("  [ ok ] IPv6 control\n");
+
+  printf ("\n=== the control plane's own IPv6, off its TAP (#609) ===\n");
+  {
+    u8 f[64];
+    u32 at = 0;
+    memset (f, 0, sizeof (f));
+    f[12] = 0x88;
+    f[13] = 0x64;
+    f[14] = 0x11;
+    f[20] = 0x00;
+    f[21] = 0x57;
+    CHECK (bpa_pppoe_cp_is_ip6 (f, 64, &at) && at == 14,
+	   "an untagged PPP-IPv6 session frame: the PPPoE header at 14, %u",
+	   at);
+    f[21] = 0x21;
+    CHECK (!bpa_pppoe_cp_is_ip6 (f, 64, &at), "PPP-IPv4 is not taken");
+    f[21] = 0x57;
+    f[13] = 0x63;
+    CHECK (!bpa_pppoe_cp_is_ip6 (f, 64, &at), "nor a discovery frame");
+    memset (f, 0, sizeof (f));
+    f[12] = 0x81;
+    f[13] = 0x00;
+    f[15] = 100;
+    f[16] = 0x88;
+    f[17] = 0x64;
+    f[18] = 0x11;
+    f[24] = 0x00;
+    f[25] = 0x57;
+    CHECK (bpa_pppoe_cp_is_ip6 (f, 64, &at) && at == 18,
+	   "on VLAN 100 (pppoe-cp.100): the PPPoE header at 18, %u", at);
+    CHECK (!bpa_pppoe_cp_is_ip6 (f, 25, &at),
+	   "a frame cut before its PPP protocol is not read past its end");
+    f[12] = 0x86;
+    f[13] = 0xdd;
+    CHECK (!bpa_pppoe_cp_is_ip6 (f, 64, &at),
+	   "the TAP's own IPv6 (the kernel's RS on pppoe-cp) is not taken");
+  }
+  printf ("  [ ok ] from the control plane\n");
 
   return bpa_test_verdict (checks, failures);
 }

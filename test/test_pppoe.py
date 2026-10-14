@@ -827,5 +827,154 @@ check("PPPoE is not configured" in out, "show_pppoe summary: nothing set")
 rv, out = said(lambda: shell().show_pppoe(["nonsense"]))
 check("usage: show pppoe" in out, "show_pppoe: usage")
 
+print("\n=== IPv6 on the sessions (#609) ===")
+h6, whys = staged("interface host-acc0", "gateway 100.64.0.1",
+                  "address-pool 100.64.0.0/24", "local-user a password b",
+                  "ipv6 prefix-pool 2001:db8:100::/48",
+                  "ipv6 delegated-pool 2001:db8:200::/40 length 56",
+                  "ipv6 dns 2001:4860:4860::8888")
+check(whys == [None] * len(whys) and P.ipv6_on(h6)
+      and P.v6(h6) == {"enable": False, "pools": ["2001:db8:100::/48"],
+                       "delegated": [["2001:db8:200::/40", "56"]],
+                       "dns": ["2001:4860:4860::8888"]},
+      f"stage_ipv6: the pools and a resolver taken: {whys} {P.v6(h6)}")
+h = {"interfaces": []}
+check(P.stage_ipv6(h, ["dns", "2001:db8::53"], False) is None
+      and h["ipv6"]["dns"] == ["2001:db8::53"]
+      and P.stage_ipv6(h, [], True) is None and h["ipv6"] == P.empty_ipv6(),
+      "stage_ipv6: on a model built before #609, its ipv6 made; `no ipv6` "
+      "empties it")
+check(not P.ipv6_on(P.empty()) and P.v6({"interfaces": []}) ==
+      P.empty_ipv6() and P.empty()["ipv6"] == P.empty_ipv6(),
+      "ipv6_on / v6 / empty_ipv6: nothing IPv6 is IPv6 off, and a model "
+      "built before #609 reads as none")
+for line, want in (("ipv6 prefix-pool 2001:db8:100::1/48", "host bits"),
+                   ("ipv6 prefix-pool 2001:db8::/80", "/16 to /64"),
+                   ("ipv6 prefix-pool 100.64.0.0/24", "not an IPv6 prefix"),
+                   ("ipv6 delegated-pool 2001:db8:200::/56 length 48",
+                    "cannot be cut"),
+                   ("ipv6 delegated-pool 2001:db8:200::/40", "length <n>"),
+                   ("ipv6 delegated-pool 2001:db8:200::/40 length 72",
+                    "length <16-64>"),
+                   ("ipv6 dns 8.8.8.8", "IPv6 resolver"),
+                   ("ipv6 bogus", "ipv6 enable | prefix-pool"),
+                   ("ipv6", "ipv6 enable | prefix-pool")):
+    h = P.empty()
+    why = P.stage(h, ["pppoe"] + line.split())
+    check(why and want in why and P.is_empty(h),
+          f"stage_ipv6: '{line}' refused, nothing staged: {why}")
+check(P.ipv6_pool_error("prefix-pool", "2001:db8:100::/48") is None
+      and P.ipv6_pool_error("delegated-pool", "2001:db8::/40", "56") is None
+      and "cannot be cut" in P.ipv6_pool_error("delegated-pool",
+                                                "2001:db8::/60", "56"),
+      "ipv6_pool_error: a pool and a delegated length")
+check(str(P.prefix6("2001:db8::/32")) == "2001:db8::/32"
+      and P.prefix6("2001:db8::1/32") is None and P.prefix6("2001:db8::")
+      is None and P._addr6("2001:0db8::0001") == "2001:db8::1"
+      and P._addr6("1.2.3.4") is None,
+      "prefix6 / _addr6: a prefix with its host bits clear; an address")
+h = P.empty()
+P.stage(h, "pppoe ipv6 delegated-pool 2001:db8:200::/40 length 56".split())
+P.stage(h, "pppoe ipv6 delegated-pool 2001:db8:200::/40 length 60".split())
+check(P.v6(h)["delegated"] == [["2001:db8:200::/40", "60"]],
+      "stage_ipv6: a delegated pool given again takes the new length")
+check(P.stage(h, "no pppoe ipv6 delegated-pool 2001:db8:200::/40".split())
+      is None and P.is_empty(h),
+      "stage_ipv6: no delegated-pool by its prefix alone")
+P.stage(h, "pppoe ipv6 enable".split())
+check(P.ipv6_on(h) and P.body(h) == ["ipv6 enable"]
+      and P.stage(h, ["no", "pppoe", "ipv6"]) is None and P.is_empty(h),
+      "stage_ipv6: enable alone is IPv6 on; `no ipv6` takes all of it")
+check(P.body(h6)[-3:] == ["ipv6 prefix-pool 2001:db8:100::/48",
+                          "ipv6 delegated-pool 2001:db8:200::/40 length 56",
+                          "ipv6 dns 2001:4860:4860::8888"],
+      f"body: the IPv6 statements, as typed: {P.body(h6)}")
+cfg6 = Config.parse("\n".join(P.nest(h6)) + "\n")
+check(cfg6.pppoe["ipv6"] == h6["ipv6"] and not cfg6.unknown,
+      "the saved file reads the IPv6 statements back")
+
+check(P.check(h6) == [], f"check: a pool each way is servable: {P.check(h6)}")
+h = staged("interface host-acc0", "gateway 100.64.0.1",
+           "address-pool 100.64.0.0/24", "local-user a password b",
+           "ipv6 delegated-pool 2001:db8:200::/40 length 56")[0]
+check(any("no 'ipv6 prefix-pool'" in w for w in P.check(h)),
+      "ipv6_check: a delegated pool and no WAN prefix from anywhere: DHCPv6 "
+      "would never answer")
+check(P.ipv6_check(h, AA) == [],
+      "ipv6_check: with RADIUS, the WAN prefix may come from it")
+P.stage(h, "pppoe ipv6 prefix-pool 2001:db8:200::/48".split())
+check(any("overlap" in w for w in P.ipv6_check(h, A_mod.empty())),
+      "ipv6_check: two pools that overlap are refused")
+check(P.ipv6_check(P.empty(), A_mod.empty()) == [],
+      "ipv6_check: no IPv6, nothing to say")
+
+acc6, _ = P.access(h6, {})
+conf6 = P.accel_conf(h6, acc6)
+check("ipv6=allow" in conf6 and "ipv6-intf-id=0:0:0:1" in conf6
+      and "\nipv6pool\nipv6_nd\nipv6_dhcp\n" in conf6
+      and "2001:db8:100::/48,64" in conf6
+      and "delegate=2001:db8:200::/40,56" in conf6
+      and "AdvManagedFlag=0" in conf6 and "AdvAutonomousFlag=1" in conf6
+      and "dns=2001:4860:4860::8888" in conf6,
+      "accel_conf: IPv6CP allowed, the pools, SLAAC on and M off, DHCPv6")
+conf4 = P.accel_conf(held, P.access(held, {"host-acc0.100":
+                                           {"outer": "100"}})[0])
+check("ipv6=deny" in conf4 and "ipv6_nd" not in conf4
+      and "[ipv6-" not in conf4,
+      "accel_conf: no IPv6 statement, ipv6=deny and nothing IPv6 - what "
+      "every release before wrote")
+sec = P.ipv6_sections(staged("ipv6 enable")[0])
+check(sec[0] == "[ipv6-nd]" and "[ipv6-pool]" not in sec
+      and "[ipv6-dns]" not in sec,
+      "ipv6_sections: RADIUS only, no pool section")
+check("ipv6pool" not in P.modules(staged("ipv6 enable")[0], AA)
+      and P.modules(h6, A_mod.empty()).index("ipv6pool") >
+      P.modules(h6, A_mod.empty()).index("chap-secrets"),
+      "modules: ipv6pool only with a pool, after the authentication source")
+
+T6 = TABLE.replace("rate-limit\n", "rate-limit | ip6 | ip6-dp\n").replace(
+    "|            \n", "|            |      |      \n")
+T6 = T6.replace(
+    "| 20000/10000\n",
+    "| 20000/10000 | 2001:db8:100::dc6a:c745:4ec:fd66/64 | "
+    "2001:db8:200::/56\n").replace(
+    "| 0            |\n", "| 0            | | |\n")
+r6 = P.session_rows(T6)
+check(len(r6) == 2 and r6[1]["ip6"].startswith("2001:db8:100::dc6a")
+      and r6[1]["ip6-dp"] == "2001:db8:200::/56" and r6[0]["ip6"] == "",
+      f"session_rows: the twelve columns since #609: {r6}")
+check(P.session_rows(TABLE)[1]["ip6"] == "" and len(P.session_rows(TABLE))
+      == 2, "session_rows: an older host's ten columns still read")
+check(P.wan_prefix("2001:db8:100::dc6a:c745:4ec:fd66/64") ==
+      "2001:db8:100::/64" and P.wan_prefix("") == ""
+      and P.wan_prefix("junk") == "",
+      "wan_prefix: the CPE's address as the prefix it was given")
+check(P.delegated_prefix("2001:db8:200::/56") == "2001:db8:200::/56"
+      and P.delegated_prefix("x") == "",
+      "delegated_prefix: the delegated prefix, or nothing")
+scr6 = P.sessions_screen(r6)
+check(scr6[2].strip() == "ipv6 2001:db8:100::/64"
+      and scr6[3].strip() == "delegated 2001:db8:200::/56"
+      and scr6[1].startswith("8aa8eb1ab0657546")
+      and scr6[-1] == "2 session(s)" and all(len(x) <= 79 for x in scr6),
+      f"sessions_screen: a session's prefixes on lines of their own: {scr6}")
+one6 = P.session_screen(r6[1], "", {})
+check(any(x.startswith("ipv6 prefix") and "2001:db8:100::/64" in x
+          for x in one6)
+      and any(x.startswith("delegated") and "/56" in x for x in one6)
+      and not any("ipv6" in x for x in P.session_screen(r6[0], "", {})),
+      f"session_screen: the prefixes, none on an IPv4-only one: {one6}")
+rows = P.ipv6_summary_rows(h6)
+check(rows == ["ipv6                  2001:db8:100::/48, a /64 each by RA",
+               "ipv6 delegated        2001:db8:200::/40, a /56 each by "
+               "DHCPv6"]
+      and P.ipv6_summary_rows(P.empty()) == ["ipv6                  off"]
+      and "RADIUS only" in P.ipv6_summary_rows(staged("ipv6 enable")[0])[0],
+      f"ipv6_summary_rows: where each prefix comes from: {rows}")
+s6 = P.summary_screen(h6, "stopped", {})
+check(any(x.startswith("ipv6 ") for x in s6) and all(len(x) <= 79
+                                                      for x in s6),
+      "summary_screen: the IPv6 rows")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

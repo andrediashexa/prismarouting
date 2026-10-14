@@ -146,9 +146,20 @@ access_names() {
 # answered with a PADO, and sub1's MAC on VLAN 100 took sub1's session down
 # again and again. VPP's plugin takes PPPoE from every interface and keys
 # its control plane's way back by the MAC alone.
+#
+# `cp <TAP>` (#609): the TAP is where a session's IPv6 control plane is - its
+# RS and DHCPv6 are sent up to it, and what accel-ppp answers is taken off it
+# to the subscriber (docs/bng.md 0.8). A plugin older than that refuses the
+# word, and IPv4 is served as before without it.
 guard() {
   # shellcheck disable=SC2086
-  _out=$(vc set bpa pppoe-access $1)
+  _out=$(vc set bpa pppoe-access cp "$TAP" $1)
+  case "$_out" in
+    *"unknown input 'cp "*)
+      say "the dataplane's plugin takes no 'cp': a session's IPv6 cannot reach the control plane"
+      # shellcheck disable=SC2086
+      _out=$(vc set bpa pppoe-access $1) ;;
+  esac
   case "$_out" in
     "") return 0 ;;
     # A plugin older than the guard: PPPoE works as it did, from every
@@ -285,17 +296,25 @@ unpoison() {
 
 # stale_state - what a dead control plane left, for the next accel-pppd to
 # remove in the graceful order (#607): `route <prefix> <sw_if_index>` for each
-# route through a session interface (VPP's own 0.0.0.0/32 aside), then
-# `session <client-mac> <session-id>` for each session; prints how many lines.
-# accel-pppd reads it ($PRISMA_BNG_STALE, the patch's vppiputils.c) before
-# its first session: deleting the sessions here, before their routes, left
-# their adjacencies behind and crossed subscribers' downloads.
+# route through a session interface (VPP's own 0.0.0.0/32 aside), IPv4's and
+# then IPv6's, then `session <client-mac> <session-id>` for each session;
+# prints how many lines. accel-pppd reads it ($PRISMA_BNG_STALE, the patch's
+# vppiputils.c) before its first session: deleting the sessions here, before
+# their routes, left their adjacencies behind and crossed subscribers'
+# downloads.
+#
+# IPv6's TOO (#609), and measured why: with the sessions dual-stack, a
+# control plane killed with -9 left each session's WAN /64 and delegated
+# prefix routed through its interface, this read only IPv4's, and after the
+# next control plane's sessions came up on the recycled interfaces sub1's
+# IPv4 downloads went out with sub2's MAC (lab/pppoe.sh section 12, `show
+# adj`) - 0.6's defect 1 again.
 stale_state() {
   vc show interface | awk '$1 ~ /^pppoe_session[0-9]+$/ {print $1, $2}' \
     > "$RUN_DIR/session-ifs"
-  vc show ip fib | awk -v f="$RUN_DIR/session-ifs" '
+  { vc show ip fib; vc show ip6 fib; } | awk -v f="$RUN_DIR/session-ifs" '
     BEGIN { while ((getline l < f) > 0) { split(l, w, " "); idx[w[1]] = w[2] } }
-    /^[0-9]+\.[0-9.]+\/[0-9]+( |$)/ { pfx = $1; next }
+    /^[0-9]+\.[0-9.]+\/[0-9]+( |$)/ || /^[0-9a-f]*:[0-9a-f:]*\/[0-9]+( |$)/ { pfx = $1; next }
     pfx != "0.0.0.0/32" && match($0, /pppoe_session[0-9]+/) {
       n = substr($0, RSTART, RLENGTH)
       if ((n in idx) && !seen[pfx " " n]++) print "route", pfx, idx[n] }' \

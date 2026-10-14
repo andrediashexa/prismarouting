@@ -1007,6 +1007,7 @@ def _num(text):
 
 def pppoe_session_fields(row):
     """One row of pppoe.session_rows() as PppoeSession's fields."""
+    import pppoe as pppoe_mod
     down, _, up = (row.get("rate-limit") or "").partition("/")
     return {"session_id": (row.get("sid") or "").lower(),
             "user": row.get("username") or "",
@@ -1018,7 +1019,11 @@ def pppoe_session_fields(row):
             "rx_bytes": _num(row.get("rx-bytes-raw")),
             "tx_bytes": _num(row.get("tx-bytes-raw")),
             "rate_limit_down_kbit": _num(down),
-            "rate_limit_up_kbit": _num(up)}
+            "rate_limit_up_kbit": _num(up),
+            # IPv6 (#609), as the screen shows them.
+            "ipv6_prefix": pppoe_mod.wan_prefix(row.get("ip6") or ""),
+            "ipv6_delegated_prefix": pppoe_mod.delegated_prefix(
+                row.get("ip6-dp") or "")}
 
 
 def pppoe_sessions_fields(facts):
@@ -1093,7 +1098,11 @@ def pppoe_summary_fields(facts):
         "gateway": held["gateway"],
         "session_limit": _num(held["settings"].get("session-limit")),
         "rate_limit_default_down_kbit": down,
-        "rate_limit_default_up_kbit": up}
+        "rate_limit_default_up_kbit": up,
+        "ipv6": pppoe_mod.ipv6_on(held),
+        "ipv6_prefix_pools": list(pppoe_mod.v6(held)["pools"]),
+        "ipv6_delegated_pools": [{"prefix": p, "length": int(n)} for p, n
+                                 in pppoe_mod.v6(held)["delegated"]]}
 
 
 def pppoe_history_words(req):
@@ -1123,7 +1132,10 @@ def pppoe_history_session_fields(s):
             "session_id": s.get("session") or "", "mac": s.get("mac") or "",
             "interface": s.get("interface") or "",
             "start": s.get("start"), "stop": s.get("stop"),
-            "held": s.get("stop") is None, "cause": s.get("cause") or ""}
+            "held": s.get("stop") is None, "cause": s.get("cause") or "",
+            "ipv6_prefix": s.get("prefix") or "",
+            "ipv6_delegated_prefix": s.get("delegated") or "",
+            "delegated": s.get("delegated_since")}
 
 
 def pppoe_verify_fields(rep, path):
@@ -4422,10 +4434,13 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             got = self._ask(context, "pppoe_summary")
             f = pppoe_summary_fields(got["facts"])
             servers = f.pop("radius_servers", [])
+            pools6 = f.pop("ipv6_delegated_pools", [])
             return pb.PppoeSummary(
                 text=got["text"], **f,
                 radius_servers=[pb.PppoeRadiusServerState(**r)
-                                for r in servers])
+                                for r in servers],
+                ipv6_delegated_pools=[pb.PppoeDelegatedPool(**d)
+                                      for d in pools6])
 
         # not a unit: an rpc, driven by lab/pppoe.sh.
         def ListPppoeHistory(self, req, context):
@@ -4445,11 +4460,14 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
             for s in f["got"].get("sessions") or []:
                 x = pppoe_history_session_fields(s)
                 start, stop = x.pop("start"), x.pop("stop")
+                dg = x.pop("delegated")
                 h = out.sessions.add(**x)
                 if start is not None:
                     h.start.seconds, h.start.nanos = ts_ms(start)
                 if stop is not None:
                     h.stop.seconds, h.stop.nanos = ts_ms(stop)
+                if dg is not None:
+                    h.delegated.seconds, h.delegated.nanos = ts_ms(dg)
             return out
 
         # not a unit: an rpc, driven by lab/pppoe.sh.

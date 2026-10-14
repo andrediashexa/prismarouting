@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 834 |
+| typed | 842 |
 | text | 1 |
 | none | 0 |
 | n/a | 58 |
@@ -120,7 +120,7 @@ screen as text, for a console.
 | Command | Class | API | Who | Notes |
 |---|---|---|---|---|
 | `configure` | typed | ConfigService.OpenCandidate | every account |  |
-| `test policy <policy> [route|rib] <prefix>` | typed | OperationalService.TestPolicy | every account |  |
+| `test policy <policy> [route\|rib] <prefix>` | typed | OperationalService.TestPolicy | every account |  |
 | `start shell` | n/a | - | administrator | never through the API: a shell is every capability at once |
 | `ping <host>` | typed | OperationalService.Ping (a stream) | every account | a reply per message, then the summary |
 | `traceroute <host>` | typed | OperationalService.Traceroute (a stream) | every account | a hop per message |
@@ -159,7 +159,7 @@ screen as text, for a console.
 | `show pppoe session <session-id>` | typed | OperationalService.GetPppoeSession | every account | its policers too (#597) |
 | `show pppoe summary` | typed | OperationalService.GetPppoeSummary | every account | the trail's and the refusals' counters, RADIUS's states (#597) |
 | `show pppoe history user <name>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
-| `show pppoe history address <A.B.C.D>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
+| `show pppoe history address <A.B.C.D> \| <X:X::X:X>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
 | `show pppoe history session <session-id>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
 | `show pppoe history at <time>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
 | `show pppoe history since <time>` | typed | OperationalService.ListPppoeHistory | every account | the same filters (#597) |
@@ -192,7 +192,7 @@ screen as text, for a console.
 | `show snmp mib` | typed | OperationalService.GetSnmpFile (KIND_MIB) | every account | the file, with the enterprise number in it |
 | `show snmp zabbix-template` | typed | OperationalService.GetSnmpFile (KIND_ZABBIX_TEMPLATE) | every account | the JSON Zabbix 7.0 imports |
 | `show lacp` | typed | OperationalService.ListBundles | every account |  |
-| `show policy [<policy> | route <prefix>]` | typed | OperationalService.ListPolicies / GetPolicyCounters / TestPolicy | every account |  |
+| `show policy [<policy> \| route <prefix>]` | typed | OperationalService.ListPolicies / GetPolicyCounters / TestPolicy | every account |  |
 | `show system cpu [cores]` | typed | OperationalService.GetSystem | every account | worker_load per worker; `cores`: cpu_topology, cpu_usage per CPU and cpu_cores_text, GetHistory cpus (#598) |
 | `show system memory` | typed | OperationalService.GetSystem | every account | memory_total/used/hugepages bytes |
 | `show system hardware` | typed | OperationalService.GetSystem | every account | unsupported_sfp_configured/booted (#574) |
@@ -1233,6 +1233,10 @@ Entered with `pppoe`; `EditRequest.path` = `["pppoe"]`; changed by: administrato
 | `ac-name <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `rate-limit default <download>/<upload>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `local-user <name> password <password>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `ipv6 enable` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `ipv6 prefix-pool <X:X::/len>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `ipv6 delegated-pool <X:X::/len> length <16-64>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `ipv6 dns <X:X::X>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no interface <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no gateway` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no address-pool <prefix> \| <first>-<last>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
@@ -1244,6 +1248,10 @@ Entered with `pppoe`; `EditRequest.path` = `["pppoe"]`; changed by: administrato
 | `no ac-name` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no rate-limit default` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no local-user <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no ipv6 enable` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no ipv6 prefix-pool <X:X::/len>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no ipv6 delegated-pool <X:X::/len>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no ipv6 dns <X:X::X>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `exit` | n/a | - | the session's |
 
 ## Configuration: aaa

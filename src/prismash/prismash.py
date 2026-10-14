@@ -2542,8 +2542,9 @@ SHOW = {
         # behind this public port at that instant".
         "history": ("who held which inside address, from when to when", {
             "user": ("one subscriber's sessions", "<name>"),
-            "address": ("the sessions that held an inside address",
-                        "<A.B.C.D>"),
+            "address": ("the sessions that held an inside address, or an "
+                        "IPv6 address in their prefixes",
+                        "<A.B.C.D> | <X:X::X:X>"),
             "session": ("one session, by its id", "<session-id>"),
             "at": ("only the sessions held at this instant",
                    "<time>"),
@@ -5088,6 +5089,14 @@ TREE["pppoe"] = {
                     "<download>/<upload>")}),
     "local-user": ("a user and password, for a lab without RADIUS",
                    "<name> password <password>"),
+    # #609: IPv6CP, the WAN /64 by RA, a delegated prefix by DHCPv6.
+    "ipv6": ("IPv6 on the sessions: IPv6CP, SLAAC, DHCPv6-PD", {
+        "enable": ("IPv6CP on, the prefixes from RADIUS only", None),
+        "prefix-pool": ("each session's WAN /64, by RA", "<X:X::/len>"),
+        "delegated-pool": ("each session's delegated prefix, by DHCPv6",
+                           "<X:X::/len> length <16-64>"),
+        "dns": ("an IPv6 resolver given to the subscriber; up to 2",
+                "<X:X::X>")}),
     "no": ("take a statement out", {
         "interface": ("an access interface", "<name>"),
         "gateway": ("the gateway", None),
@@ -5100,7 +5109,12 @@ TREE["pppoe"] = {
         "ac-name": ("back to prisma-routing", None),
         "rate-limit": ("a rate-limit setting", {
             "default": ("no limit for a session RADIUS gives none", None)}),
-        "local-user": ("a local user", "<name>")}),
+        "local-user": ("a local user", "<name>"),
+        "ipv6": ("IPv6 off, or one IPv6 statement", {
+            "enable": ("the bare enable", None),
+            "prefix-pool": ("a WAN prefix pool", "<X:X::/len>"),
+            "delegated-pool": ("a delegated pool", "<X:X::/len>"),
+            "dns": ("an IPv6 resolver", "<X:X::X>")})}),
     "exit": ("leave 'pppoe'", None),
     **_EVERY_LEVEL,
 }

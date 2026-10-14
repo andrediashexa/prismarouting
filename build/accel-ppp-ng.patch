@@ -31,10 +31,10 @@ index 6badcd5..aa63bb1 100644
  
 diff --git a/accel-pppd/extra/prisma_trail_mod.c b/accel-pppd/extra/prisma_trail_mod.c
 new file mode 100644
-index 0000000..c470b94
+index 0000000..afaf442
 --- /dev/null
 +++ b/accel-pppd/extra/prisma_trail_mod.c
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,292 @@
 +/*
 + * Prisma Routing (#597): the PPPoE session trail, written by the control
 + * plane itself - who held which inside address from when to when, appended
@@ -54,6 +54,17 @@ index 0000000..c470b94
 + *          back to the pool. At EV_SES_FINISHED the address is already free,
 + *          and another session could be given it and write its start before
 + *          this one's stop: two holders of one address at one instant.
++ *   delegate  EV_FORCE_INTERIM_UPDATE with the session's delegated prefix
++ *          new (#609) - what accel-ppp's dhcpv6 fires the moment it takes a
++ *          prefix from the pool or from RADIUS for the session, which can be
++ *          long after the session began (a router behind the CPE plugged in
++ *          later); the session restated with ` delegated <p> delegated-since
++ *          <t>`, which its stop and any carry repeat. Its prefix goes back
++ *          to the pool at EV_SES_FINISHED (dhcpv6's ev_ses_finished), after
++ *          the stop, as the address does.
++ * A start carries the session's IPv6 WAN prefix (` prefix <p>`) when IPv6CP
++ * gave it one: IPv6CP is done before the session is up, so it is known at
++ * EV_SES_ACCT_START, and it is held for the session's life.
 + * At start the module reads its file back: the chain continues where it
 + * ended, and every session it leaves open - a control plane killed with -9
 + * wrote no stop - is closed with cause Control-Plane-Lost, then a `restart`
@@ -83,8 +94,9 @@ index 0000000..c470b94
 +struct trail_pd {
 +	struct ap_private pd;
 +	struct list_head open;		/* on open_sessions while it is held */
-+	char fields[768];		/* session ... address <a> */
++	char fields[768];		/* session ... address <a> [prefix <p>] */
 +	char since[32];
++	int delegated;			/* ` delegated <p> ...` is in fields (#609) */
 +};
 +
 +static void *pd_key;
@@ -170,10 +182,27 @@ index 0000000..c470b94
 +	return NULL;
 +}
 +
++/* `a` - a session's IPv6 prefix, accel-ppp's ipv6db entry - as text,
++ * <network>/<length>, the host bits off whatever they were given as. */
++static void prefix_text(const struct ipv6db_addr_t *a, char *out, size_t size)
++{
++	struct in6_addr net = a->addr;
++	char text[INET6_ADDRSTRLEN];
++	int len = a->prefix_len, i;
++
++	for (i = 0; i < 16; i++) {
++		int keep = len >= 8 * (i + 1) ? 8 : len > 8 * i ? len - 8 * i : 0;
++		net.s6_addr[i] &= (unsigned char)(0xff00 >> keep);
++	}
++	inet_ntop(AF_INET6, &net, text, sizeof(text));
++	snprintf(out, size, "%s/%d", text, len);
++}
++
 +static void ev_ses_acct_start(struct ap_session *ses)
 +{
 +	char user[PRISMA_TRAIL_FIELD + 1], mac[PRISMA_TRAIL_FIELD + 1], iface[PRISMA_TRAIL_FIELD + 1];
 +	char key[300], addr[INET_ADDRSTRLEN], body[PRISMA_TRAIL_LINE + 64];
++	char v6[INET6_ADDRSTRLEN + 16] = "";
 +	const char *named = NULL;
 +	struct in_addr a;
 +	struct trail_pd *p;
@@ -197,8 +226,16 @@ index 0000000..c470b94
 +	prisma_trail_escape(named ? named : ses->ctrl ? ses->ctrl->ifname : NULL, iface, sizeof(iface));
 +	a.s_addr = ses->ipv4->peer_addr;
 +	inet_ntop(AF_INET, &a, addr, sizeof(addr));
-+	snprintf(p->fields, sizeof(p->fields), "session %s user %s mac %s interface %s address %s",
-+		 ses->sessionid, user, mac, iface, addr);
++	/* IPv6CP's WAN prefix (#609), the one RA advertises: from RADIUS
++	 * (Framed-IPv6-Prefix) or the pool, held for the session's life. */
++	if (ses->ipv6 && !list_empty(&ses->ipv6->addr_list)) {
++		struct ipv6db_addr_t *w = list_first_entry(&ses->ipv6->addr_list,
++							   typeof(*w), entry);
++		if (w->prefix_len)
++			prefix_text(w, v6, sizeof(v6));
++	}
++	snprintf(p->fields, sizeof(p->fields), "session %s user %s mac %s interface %s address %s%s%s",
++		 ses->sessionid, user, mac, iface, addr, *v6 ? " prefix " : "", v6);
 +	now_stamp(p->since);
 +	snprintf(body, sizeof(body), "%s start %s", p->since, p->fields);
 +	list_add_tail(&p->pd.entry, &ses->pd_list);
@@ -218,6 +255,31 @@ index 0000000..c470b94
 +	trail_put(stamp, body, NULL, p);
 +	list_del(&p->pd.entry);
 +	free(p);
++}
++
++/*
++ * The session's delegated prefix, the moment accel-ppp's dhcpv6 took it
++ * (#609): it fires EV_FORCE_INTERIM_UPDATE then, for RADIUS's interim, and
++ * at no other time with ipv6_dp new. Written once a session; a renew keeps
++ * the prefix and fires nothing.
++ */
++static void ev_force_interim(struct ap_session *ses)
++{
++	char stamp[32], dp[INET6_ADDRSTRLEN + 16], body[PRISMA_TRAIL_LINE + 128];
++	struct trail_pd *p = find_pd(ses);
++	struct ipv6db_addr_t *a;
++	size_t n;
++
++	if (!p || p->delegated || !ses->ipv6_dp || list_empty(&ses->ipv6_dp->prefix_list))
++		return;
++	a = list_first_entry(&ses->ipv6_dp->prefix_list, typeof(*a), entry);
++	prefix_text(a, dp, sizeof(dp));
++	now_stamp(stamp);
++	n = strlen(p->fields);
++	snprintf(p->fields + n, sizeof(p->fields) - n, " delegated %s delegated-since %s", dp, stamp);
++	p->delegated = 1;
++	snprintf(body, sizeof(body), "%s delegate %s since %s", stamp, p->fields, p->since);
++	trail_put(stamp, body, NULL, NULL);
 +}
 +
 +/* accel-ppp's `show stat`: what was written and what could not be. */
@@ -260,6 +322,7 @@ index 0000000..c470b94
 +
 +	triton_event_register_handler(EV_SES_ACCT_START, (triton_event_func)ev_ses_acct_start);
 +	triton_event_register_handler(EV_SES_PRE_FINISHED, (triton_event_func)ev_ses_pre_finished);
++	triton_event_register_handler(EV_FORCE_INTERIM_UPDATE, (triton_event_func)ev_force_interim);
 +	cli_register_simple_cmd2(show_stat_exec, NULL, 2, "show", "stat");
 +}
 +
@@ -914,7 +977,7 @@ index 56666a6..aa4bd0a 100644
  DEFINE_INIT(20, vpphooks_init);
 \ No newline at end of file
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vppiputils.c b/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
-index e9be8b3..5655919 100644
+index e9be8b3..b4037c0 100644
 --- a/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
 +++ b/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
 @@ -5,6 +5,9 @@
@@ -927,7 +990,7 @@ index e9be8b3..5655919 100644
  
  #include "ap_session.h"
  #include "triton.h"
-@@ -203,3 +206,93 @@ int vpp_iproute_flush(struct ap_session *ses)
+@@ -203,3 +206,107 @@ int vpp_iproute_flush(struct ap_session *ses)
  
  	return 0;
  }
@@ -950,7 +1013,8 @@ index e9be8b3..5655919 100644
 + * one would have, in that order, before its first session.
 + *
 + * WHAT IS STALE IS READ OFF A FILE the entrypoint wrote with vppctl
-+ * ($PRISMA_BNG_STALE: `route <a.b.c.d>/<len> <sw_if_index>` and `session
++ * ($PRISMA_BNG_STALE: `route <a.b.c.d>/<len> <sw_if_index>` - or an IPv6
++ * prefix, #609 - and `session
 + * <client-mac> <session-id>` lines), and not dumped here: a VAPI dump from
 + * this module aborted accel-pppd (`vapi_get_swap_to_host_func: Assertion id
 + * < __vapi_metadata.count` - the control-ping reply a dump waits for is a
@@ -980,10 +1044,18 @@ index e9be8b3..5655919 100644
 +		return 0;
 +
 +	vpp_get();
-+	/* the routes first */
++	/* the routes first - IPv4's and, since #609, IPv6's: a session's WAN
++	 * /64 and its delegated prefix left routed through a recycled interface
++	 * kept its adjacencies alive, measured in lab/pppoe.sh as downloads
++	 * crossed again after a kill -9 */
 +	while (fgets(line, sizeof(line), f)) {
-+		if (sscanf(line, "%15s %63[0-9.]/%u %u", kind, a, &len, &sw) != 4 || strcmp(kind, "route")
-+				|| len > 32 || !inet_aton(a, &dst))
++		struct in6_addr dst6;
++		int v6;
++
++		if (sscanf(line, "%15s %63[0-9a-fA-F.:]/%u %u", kind, a, &len, &sw) != 4 || strcmp(kind, "route"))
++			continue;
++		v6 = strchr(a, ':') != NULL;
++		if (v6 ? (len > 128 || inet_pton(AF_INET6, a, &dst6) != 1) : (len > 32 || !inet_aton(a, &dst)))
 +			continue;
 +		vpp_lock();
 +		ctx = vpp_get_vapi();
@@ -992,8 +1064,13 @@ index e9be8b3..5655919 100644
 +			if (req) {
 +				req->payload.is_add = 0;
 +				req->payload.is_multipath = 1;
-+				req->payload.route.prefix.address.af = ADDRESS_IP4;
-+				memcpy(req->payload.route.prefix.address.un.ip4, &dst.s_addr, 4);
++				if (v6) {
++					req->payload.route.prefix.address.af = ADDRESS_IP6;
++					memcpy(req->payload.route.prefix.address.un.ip6, &dst6, 16);
++				} else {
++					req->payload.route.prefix.address.af = ADDRESS_IP4;
++					memcpy(req->payload.route.prefix.address.un.ip4, &dst.s_addr, 4);
++				}
 +				req->payload.route.prefix.len = len;
 +				req->payload.route.n_paths = 1;
 +				req->payload.route.paths[0].sw_if_index = sw;

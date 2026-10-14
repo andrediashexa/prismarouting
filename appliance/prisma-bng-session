@@ -15,7 +15,13 @@
 #   * the PPPoE MTU on the session interface, so a packet too big for the
 #     access link after the 8 bytes of PPPoE is fragmented or refused there
 #     and not dropped silently by the card;
-#   * the TCP MSS clamp, when one is configured, on the session interface.
+#   * the TCP MSS clamp, when one is configured, on the session interface -
+#     IPv4's as configured, IPv6's 20 bytes less (its header is 40, not 20);
+#   * IPv6 dropped on a session that has none (#609): accel-ppp's VPP hook
+#     turns ip6-not-enabled off for a session with IPv6 and never on again,
+#     so the next session on the recycled interface - IPv4 only - would have
+#     its IPv6 forwarded. accel-ppp gives this hook IPV6_PREFIX for a session
+#     with an IPv6 prefix (pppd_compat.c), and none otherwise.
 #
 # IDEMPOTENT, AND THE REASON IS MEASURED. VPP's pppoe plugin never deletes a
 # session interface: it hides it and hands it to the next session. Its
@@ -43,10 +49,23 @@ if [ -n "${MTU:-}" ]; then
   vc set interface mtu packet "$MTU" "$IF" > /dev/null
 fi
 if [ -n "${TCP_MSS:-}" ]; then
-  case "$features" in
-    *tcp-mss-clamp*) ;;
-    *) vc set interface tcp-mss-clamp "$IF" ip4 enable ip4-mss "$TCP_MSS" \
-         ip6 disable > /dev/null ;;
+  # Not asked of the features first, unlike the attach: VPP's mss_clamp
+  # keeps each interface's directions and enables a feature only when one
+  # changes (mss_clamp.c mssc_enable_disable, read at 26.06), so this is
+  # idempotent by itself - and on an interface recycled from before #609 it
+  # sets the IPv6 half that was not there.
+  vc set interface tcp-mss-clamp "$IF" ip4 enable ip4-mss "$TCP_MSS" \
+    ip6 enable ip6-mss "$((TCP_MSS - 20))" > /dev/null
+fi
+if [ -z "${IPV6_PREFIX:-}" ]; then
+  # The ip6-unicast arc's, and not the whole screen's: ip6-not-enabled is on
+  # ip6-multicast as well, where accel-ppp's hook leaves it, and a match
+  # there read as "dropped already" (measured in lab/pppoe.sh, the first
+  # cut of this).
+  unicast6=$(printf '%s\n' "$features" | awk '/^ip6-unicast:/ {f = 1; next} /^[^ ]/ {f = 0} f')
+  case "$unicast6" in
+    *ip6-not-enabled*) ;;
+    *) vc set interface feature "$IF" ip6-not-enabled arc ip6-unicast > /dev/null ;;
   esac
 fi
 exit 0

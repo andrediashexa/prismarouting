@@ -157,7 +157,7 @@ main() {
       fi ;;
     sessions)
       running || { echo "not running"; exit 3; }
-      cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw,rate-limit ;;
+      cli show sessions sid,ifname,username,ip,calling-sid,state,uptime-raw,rx-bytes-raw,tx-bytes-raw,rate-limit,ip6,ip6-dp ;;
     summary)
       running || { echo "not running"; exit 3; }
       cli show stat ;;
