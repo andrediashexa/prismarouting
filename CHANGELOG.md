@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.11 - the PPPoE session trail's head sent off the box
+
+### Added
+
 * **The PPPoE session trail's head leaves the box.** ([#597](https://github.com/andrediashexa/hexarouting/issues/597))
   docs/bng.md 0.7. Since 0.155.4 `show pppoe history verify` printed the
   hash chain's head and told the operator to compare it "with a copy kept
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   pass, nothing written between, wrote none. One run of it found a redial
   writing seq 65 a second after the first pass said 64, and the second pass
   saying it - rightly - so the pair is taken while the trail stands still.
-
-### Fixed
 
 ## 0.155.10 - an administrator configures PPPoE and RADIUS through the API
 
