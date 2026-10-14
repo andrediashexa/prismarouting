@@ -803,6 +803,27 @@ def file_format(bng=None):
     return ""
 
 
+def share_dir(bng=None):
+    """
+    BNG_DIR group-writable, as /etc/prisma-routing is (#597): made by root's
+    load under root's umask it came out 2750, and an administrator that is
+    not root - the API's account - could not write accel-ppp.conf.new there
+    ("Permission denied", prisma-bench, 0.155.9). Only its owner, root, can
+    change it, so the load calls this on every boot as well as each write;
+    anybody else's call does nothing, and needs to do nothing once it is.
+    True when the directory is group-writable afterwards.
+    """
+    bng = bng or BNG_DIR
+    try:
+        os.chmod(bng, 0o2770)
+    except OSError:
+        pass
+    try:
+        return os.stat(bng).st_mode & 0o070 == 0o070
+    except OSError:
+        return False
+
+
 def write_files(held, acc, conf=None, bng=None, aaa=None, max_sessions=None):
     """
     The model into pppoe.conf and, when it is set, the container's files into
@@ -821,6 +842,7 @@ def write_files(held, acc, conf=None, bng=None, aaa=None, max_sessions=None):
                     os.unlink(p)
             return True, "not configured"
         os.makedirs(bng, mode=0o770, exist_ok=True)
+        share_dir(bng)
         _write(os.path.join(bng, "accel-ppp.conf"),
                accel_conf(held, acc, aaa, max_sessions))
         _write(os.path.join(bng, "chap-secrets"), chap_secrets(held))

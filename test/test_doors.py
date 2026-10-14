@@ -909,6 +909,19 @@ _r = doors.answer(json.dumps({"argv": ["systemctl", "reboot"]}), 1000,
 check(_r["rc"] == 126, f"and prisma-admin opens no other door: {_r}")
 check(doors.answer(json.dumps({"argv": _term}), 0, execute=_tx)["rc"] == 0,
       "root still ends them")
+# And the container's own doors, which a commit of `pppoe` or `aaa` opens: on
+# 0.155.9 an administrator's commit through the API could not apply.
+for _verb in ("apply", "stop", "reload"):
+    _argv = [doors.pppoe.BNG_CTL_HOST, _verb]
+    _ran.clear()
+    _r = doors.answer(json.dumps({"argv": _argv}), 1000, execute=_tx,
+                      is_admin=lambda u: True, is_operator=lambda u: False)
+    check(_r["rc"] == 0 and _ran, f"a prisma-admin member: prisma-bng {_verb}: {_r}")
+    _ran.clear()
+    _r = doors.answer(json.dumps({"argv": _argv}), 1000, execute=_tx,
+                      is_admin=lambda u: False, is_operator=lambda u: True)
+    check(_r["rc"] == 126 and not _ran and "prisma-admin" in _r["out"],
+          f"anybody else: prisma-bng {_verb} refused, nothing run: {_r}")
 check(doors.account_is_admin(os.getuid()) is False
       and doors.account_is_admin(2 ** 31 - 7) is False,
       "account_is_admin(): False on a host with no prisma-admin group, and "

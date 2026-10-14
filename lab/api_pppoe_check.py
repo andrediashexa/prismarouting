@@ -297,7 +297,51 @@ def clears():
            f"{len(reads.sessions)} session(s) for netview")
 
 
+def commit():
+    """
+    A commit through the API as an administrator that is not root (#597):
+    on 0.155.9 prisma-bench refused one - the PPPoE files' directory was
+    root's 2750 and the container's doors root's alone - while every commit
+    this lab made went as root. An `aaa` change: it writes accel-ppp.conf
+    again and opens the reload door, and restarts nothing - a `pppoe` one
+    would add two restarts to the ones the lab counts, and past four in five
+    minutes the watcher holds them in a summary (eventwatch.flap_admit).
+    """
+    cfg_adm = rpc.ConfigServiceStub(channel("labadmin"))
+    radius = cfg.GetConfig(pb.GetConfigRequest(areas=["aaa"]),
+                           timeout=60).aaa.radius
+    before = radius.timeout_seconds if radius.HasField("timeout_seconds") \
+        else None
+    want = 7 if before != 7 else 8
+    c = cfg_adm.OpenCandidate(pb.OpenCandidateRequest(), timeout=60)
+    cfg_adm.SetConfig(pb.SetConfigRequest(
+        candidate_id=c.candidate_id,
+        aaa=pb.AaaConfig(radius=pb.RadiusConfig(timeout_seconds=want)),
+        fields=["radius.timeout_seconds"]), timeout=60)
+    try:
+        cfg_adm.Commit(pb.CommitRequest(
+            candidate_id=c.candidate_id,
+            comment="lab: an administrator's commit"), timeout=300)
+        code = "OK"
+    except grpc.RpcError as e:
+        code = f"{e.code().name}: {' '.join((e.details() or '').split())[:400]}"
+    shown = vty("show pppoe summary")
+    conf = open("/etc/prisma-routing/bng/accel-ppp.conf").read()
+    result("commit-as-administrator", code == "OK"
+           and f"timeout {want} s" in shown and f"timeout={want}" in conf,
+           f"commit {code}, timeout {want} (was {before}): "
+           f"{[l for l in shown.splitlines() if 'timeout' in l]}")
+    c = cfg.OpenCandidate(pb.OpenCandidateRequest(), timeout=60)
+    back = pb.RadiusConfig()
+    if before is not None:
+        back.timeout_seconds = before
+    cfg.SetConfig(pb.SetConfigRequest(
+        candidate_id=c.candidate_id, aaa=pb.AaaConfig(radius=back),
+        fields=["radius.timeout_seconds"]), timeout=60)
+    cfg.Commit(pb.CommitRequest(candidate_id=c.candidate_id,
+                                comment="lab: the timeout back"), timeout=300)
+
 for name, fn in (("sessions", sessions), ("session", one), ("summary", summary),
                  ("history", history), ("verify", verify), ("config", config),
-                 ("clears", clears)):
+                 ("clears", clears), ("commit", commit)):
     run(name, fn)

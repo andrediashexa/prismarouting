@@ -1402,12 +1402,22 @@ for _who in server:prisma-api root:root netview:netview labadmin:labadmin; do
 done
 cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
 id netview > /dev/null 2>&1 || useradd -M -s /usr/sbin/nologin netview
-# An administrator that is not root (#597): the API's clears go as it.
-for _g in prisma-admin prisma-cgnat; do
+# An administrator that is not root (#597): the API's clears and a commit
+# go as it. With the groups `role administrator` writes, and the three
+# every account the VTY owns is given (docs/routing.md, Roles) - without
+# vpp the dataplane's API is closed to it and no candidate can be opened.
+for _g in prisma-admin prisma-cgnat vpp frr frrvty; do
   getent group $_g > /dev/null 2>&1 || groupadd --system $_g
 done
-id labadmin > /dev/null 2>&1 || \
-  useradd -M -s /usr/sbin/nologin -G prisma-admin,prisma-cgnat labadmin
+id labadmin > /dev/null 2>&1 || useradd -M -s /usr/sbin/nologin \
+  -G prisma-admin,prisma-cgnat,vpp,frr,frrvty labadmin
+# And /etc/prisma-routing as appliance/install.sh leaves it on a box: setgid
+# prisma-cgnat, 2770, its files the group's. Not the bng directory's mode,
+# which is the VTY's to get right (pppoe.share_dir) and what this checks.
+mkdir -p /etc/prisma-routing/rollback
+chgrp -R prisma-cgnat /etc/prisma-routing
+chmod 2770 /etc/prisma-routing /etc/prisma-routing/rollback
+for _f in /etc/prisma-routing/*.conf; do chmod 0660 "$_f"; done
 # The host's doors, as on a box: each account's worker asks the host for
 # the sessions and the trail through them, and a read-only account is
 # answered what its VTY would be.
@@ -1509,6 +1519,7 @@ expect "API: Clear by user ends that user's session" a22 clear-user
 expect "  an address no session holds: FAILED_PRECONDITION, nothing ended" a22 clear-address-nobody
 expect "  an account without the role: PERMISSION_DENIED, the session kept" a22 clear-no-role
 expect "  and it still reads the sessions" a22 reads-any-account
+expect "API: an administrator that is not root commits aaa; accel-ppp.conf is written and RADIUS read again" a22 commit-as-administrator
 expect_not_in "  and the API server raised nothing" "Traceback" "$APILOG22"
 expect_in "PAP: sub1 has a session" " sub1 " "$SHOW"
 expect_in "CHAP: sub2 has a session" " sub2 " "$SHOW"
