@@ -1580,7 +1580,7 @@ HIST6=$($HX -c "show pppoe history address ${PDA7:-::1} at $NOW6" 2>&1)
 HIST6_W=$($HX -c "show pppoe history address ${SL7:-::1} at $NOW6" 2>&1)
 HIST6_EARLY=$($HX -c "show pppoe history address ${PDA7:-::1} at ${T_START7:-2000-01-01T00:00:00Z}" 2>&1)
 HIST8=$($HX -c "show pppoe history address ${PDA8:-::1} at $NOW6" 2>&1)
-echo "$HIST8" | sed 's/^/  history, sub8's RADIUS-delegated address now: /'
+echo "$HIST8" | sed 's/^/  history, the RADIUS-delegated address of sub8 now: /'
 echo "$HIST6" | sed 's/^/  history, the delegated address now: /'
 echo "$HIST6_EARLY" | sed 's/^/  history, the same at the session start: /'
 # RADIUS accounting: the WAN prefix in the Start, the delegated one in the
