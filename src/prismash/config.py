@@ -4460,11 +4460,12 @@ class Config:
 
         `pppoe` > `session-limit` is that statement (#597): accel-ppp refuses
         a session past it (`max-sessions`), so it is enforced, and it is the
-        number. A `pppoe` block with no limit enforces none, and adds
-        nothing here - the operator sets one to have the segment sized.
+        number. A `pppoe` block with no limit holds
+        pppoe.SESSION_LIMIT_DEFAULT, enforced the same way. It used to hold
+        none and add nothing here, and the box it described aborted between
+        7,500 and 8,000 sessions (docs/bng.md 0.4 item 5).
         """
-        limit = self.pppoe["settings"].get("session-limit", "0")
-        return int(limit) if is_number(limit) else 0
+        return pppoe_mod.session_limit(self.pppoe)
 
     def dataplane_interfaces(self) -> int:
         """

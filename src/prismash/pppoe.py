@@ -92,7 +92,27 @@ DNS_MAX = 2
 POOLS_MAX = 16
 INTERFACES_MAX = 16
 USERS_MAX = 1000
+#: What the grammar takes, and what a saved file is READ with: 0.154.0 took
+#: up to a million, and a file holding one is a box that must still come up
+#: (#593's rule). What a commit takes is SESSION_LIMIT_MEASURED.
 SESSION_LIMIT_MAX = 1000000
+#: Every PPPoE session is an interface in the dataplane - counters in the
+#: statistics segment and all - and a segment that runs out is SIGABRT, the
+#: whole dataplane (docs/bng.md 2.1 and 0.4 item 5). So the control plane
+#: ALWAYS has a ceiling, and a `pppoe` block with no `session-limit` holds
+#: this many: what the tuner sizes the segment for on such a box, and what
+#: accel-ppp refuses past. Before this, no statement was no ceiling and no
+#: sizing: lab/pppoe-scale.sh measured VPP's 32 MB default aborting between
+#: 7,500 and 8,000 sessions on one thread and between 5,000 and 5,500 with
+#: three workers. 16,000 fits the smallest segment the tuner gives (a quarter
+#: of a 2 GB control plane, 512 MB) on a box of up to 40 threads.
+SESSION_LIMIT_DEFAULT = 16000
+#: The most a commit takes: measured working by lab/pppoe-scale.sh, sessions
+#: made, attached to the CGNAT and the dataplane still answering, on the
+#: segment the tuner sized for them, with no worker and with one and three
+#: (docs/bng.md 0.4 item 5). Above it nothing was measured, and a ceiling
+#: nobody has seen hold is not one this box offers.
+SESSION_LIMIT_MEASURED = 100000
 MTU_MIN, MTU_MAX = 576, 1500
 MSS_MIN, MSS_MAX = 536, 1460
 
@@ -410,6 +430,99 @@ def setting(held, key):
     return held["settings"].get(key, DEFAULTS.get(key, ""))
 
 
+def session_limit(held):
+    """
+    The sessions this block lets the box hold: its `session-limit`, else
+    SESSION_LIMIT_DEFAULT; 0 with no PPPoE. The number the tuner sizes the
+    statistics segment for (Config.runtime_interfaces) and, with
+    segment_room(), the one accel-ppp is told.
+    """
+    if is_empty(held):
+        return 0
+    v = held["settings"].get("session-limit", "")
+    return int(v) if is_number(v) else SESSION_LIMIT_DEFAULT
+
+
+_SEGMENT = re.compile(r"size ([0-9.]+)([kmg]),.*'stat segment'", re.IGNORECASE)
+
+
+def segment_mb(show_segment):
+    """
+    The running statistics segment's size in MB, whole, from `show
+    statistics segment /sys/vector_rate verbose` (the one entry, so the
+    command does not list every interface's counters to say it); None when
+    it does not say.
+
+    VPP'S ANSWER, and not startup.conf's: the tuner may have written a new
+    file since the dataplane started (a tune.env change, an upgrade), and the
+    segment a session is created in is the one VPP mapped at its start.
+    """
+    m = _SEGMENT.search(show_segment or "")
+    if not m:
+        return None
+    n = float(m.group(1)) * {"k": 1 / 1024, "m": 1,
+                             "g": 1024}[m.group(2).lower()]
+    return int(n)
+
+
+def thread_count(show_threads):
+    """The dataplane's threads - its main one and every worker - from `show
+    threads`; 0 when it lists none."""
+    return sum(1 for line in (show_threads or "").splitlines()
+               if len(line.split()) > 1
+               and (line.split()[1] == "vpp_main"
+                    or line.split()[1].startswith("vpp_wk_")))
+
+
+def segment_room(tune, mb, threads, others):
+    """
+    How many sessions a statistics segment of `mb` MB holds beside `others`
+    interfaces on `threads` threads, by the TUNER'S arithmetic
+    (statseg_interfaces_for, tuneadvice.load_tuner()) - the one that sized
+    it, so a segment sized for a limit holds that limit and a second copy of
+    the formula cannot drift from the first. None when there is no tuner.
+
+    Deleted sessions do not come back into it: the plugin keeps a deleted
+    session's interface for the next one (pppoe.c, free_pppoe_session_hw_if_
+    indices), so a redial costs the segment nothing new, and an interface
+    once counted stays counted.
+    """
+    if tune is None or not mb or not threads:
+        return None
+    return max(0, tune.statseg_interfaces_for(mb, threads) - others)
+
+
+def box_segment_mb(tune, total_gb, control_plane_gb=None):
+    """
+    The largest statistics segment the tuner gives this box at its next boot:
+    a quarter of the RAM its control plane keeps, which is the configured
+    figure or a quarter of the RAM and at least 2 GB - the tuner's own rule
+    (plan(), statseg_ceiling_mb). None when there is no tuner or no RAM.
+    """
+    if tune is None or not total_gb:
+        return None
+    for_os = control_plane_gb or max(2, total_gb // 4)
+    return tune.statseg_ceiling_mb(for_os)
+
+
+def limit_error(limit, box_room, threads, box_mb):
+    """
+    Why a commit may not take `limit` sessions, or None: more than was ever
+    measured working, or more than the largest segment this box's RAM lets
+    the tuner give it holds (`box_room`, from segment_room on box_segment_mb;
+    None when that could not be worked out, and then only the first).
+    """
+    if limit > SESSION_LIMIT_MEASURED:
+        return (f"pppoe: session-limit {limit} is more than was measured "
+                f"working, {SESSION_LIMIT_MEASURED} (docs/bng.md 0.4)")
+    if box_room is not None and limit > box_room:
+        return (f"pppoe: {limit} sessions need more statistics segment than "
+                f"this box gives: its {box_mb} MB, a quarter of the RAM its "
+                f"control plane keeps, holds {box_room} on {threads} "
+                f"thread(s). Lower session-limit, or add RAM")
+    return None
+
+
 def uses_radius(aaa):
     """
     True when PPPoE authenticates against RADIUS: whenever `aaa radius` has
@@ -497,7 +610,10 @@ def cp_name(vlan):
 #: box upgraded with PPPoE running starts recording at its next load.
 #: 5: access.env names the access interfaces (ACCESS), which the entrypoint
 #: hands the dataplane's PPPoE guard (#597, docs/bng.md 0.3 item 9).
-FORMAT = "5"
+#: 6: `max-sessions` always, the limit or SESSION_LIMIT_DEFAULT, and never
+#: more than the running statistics segment holds (docs/bng.md 0.4 item 5) -
+#: a box upgraded with PPPoE and no limit gets a ceiling at its next load.
+FORMAT = "6"
 FORMAT_LINE = f"# prisma-bng format {FORMAT}"
 
 
@@ -572,11 +688,18 @@ def trail_section(acc):
     return out
 
 
-def accel_conf(held, acc, aaa=None):
+def accel_conf(held, acc, aaa=None, max_sessions=None):
     """
     accel-ppp.conf, generated. `acc` is access()'s list, `aaa` the `aaa`
-    block. The CLI section is not here: the entrypoint adds it with a
-    password made at each start.
+    block, `max_sessions` the ceiling accel-ppp enforces when it is not
+    session_limit()'s - the lower one the running statistics segment holds
+    (prismash.Shell.pppoe_room). The CLI section is not here: the entrypoint
+    adds it with a password made at each start.
+
+    `max-sessions` IS ALWAYS WRITTEN (#597, docs/bng.md 0.4 item 5): with no
+    statement it was absent, accel-ppp had no ceiling, and the dataplane met
+    one as SIGABRT. accel-ppp counts active and starting sessions against
+    it and answers no PADI and no PADR past it (pppoe.c, conf_max_sessions).
     """
     aaa = aaa if aaa is not None else aaa_mod.empty()
     mods = modules(held, aaa)
@@ -588,8 +711,7 @@ def accel_conf(held, acc, aaa=None):
         "", "[core]", f"log-error={LOG_DIR}/accel-ppp-error.log",
         "thread-count=4",
         "", "[common]", "single-session=replace"]
-    if "session-limit" in held["settings"]:
-        out.append(f"max-sessions={held['settings']['session-limit']}")
+    out.append(f"max-sessions={max_sessions or session_limit(held)}")
     out += ["", "[ppp]", "verbose=1", f"mtu={mtu}", f"mru={mtu}",
             "ipv4=require", "ipv6=deny", "lcp-echo-interval=20",
             "lcp-echo-failure=3",
@@ -655,6 +777,20 @@ def _write(path, text):
     os.replace(tmp, path)
 
 
+def enforced_limit(bng=None):
+    """The `max-sessions` the container's accel-ppp.conf holds - the ceiling
+    in force - or None when there is no file or it names none."""
+    try:
+        with open(os.path.join(bng or BNG_DIR, "accel-ppp.conf")) as f:
+            for line in f:
+                k, _, v = line.strip().partition("=")
+                if k == "max-sessions" and is_number(v):
+                    return int(v)
+    except OSError:
+        pass
+    return None
+
+
 def file_format(bng=None):
     """The FORMAT the container's accel-ppp.conf was generated in, or ""."""
     try:
@@ -667,11 +803,12 @@ def file_format(bng=None):
     return ""
 
 
-def write_files(held, acc, conf=None, bng=None, aaa=None):
+def write_files(held, acc, conf=None, bng=None, aaa=None, max_sessions=None):
     """
     The model into pppoe.conf and, when it is set, the container's files into
     BNG_DIR; with nothing set, both removed. (True, what) or (False, why).
-    `aaa` is the `aaa` block the [radius] section is written from.
+    `aaa` is the `aaa` block the [radius] section is written from,
+    `max_sessions` accel_conf()'s.
     """
     conf = conf or CONF_PATH
     bng = bng or BNG_DIR
@@ -685,7 +822,7 @@ def write_files(held, acc, conf=None, bng=None, aaa=None):
             return True, "not configured"
         os.makedirs(bng, mode=0o770, exist_ok=True)
         _write(os.path.join(bng, "accel-ppp.conf"),
-               accel_conf(held, acc, aaa))
+               accel_conf(held, acc, aaa, max_sessions))
         _write(os.path.join(bng, "chap-secrets"), chap_secrets(held))
         _write(os.path.join(bng, "access.env"), access_env(held, acc))
         _write(conf, "\n".join(nest(held)) + "\n")
@@ -905,13 +1042,15 @@ def guard_counts(text):
 
 
 def summary_screen(held, status, counts, aaa=None, states=None, trail=None,
-                   guard=None):
+                   guard=None, enforced=None):
     """
     `show pppoe summary`: the container, the sessions, the configuration -
     and, with RADIUS, each server and whether accel-ppp has it marked down
     (`states`, aaa.server_states()); with `guard` (guard_counts()), the
     PPPoE frames the dataplane refused before they reached the control
-    plane.
+    plane; with `enforced` (enforced_limit()), the ceiling in force when it
+    is lower than the configured one, which is a box that has not restarted
+    its dataplane since the limit was raised.
     """
     aaa = aaa if aaa is not None else aaa_mod.empty()
     if is_empty(held):
@@ -950,8 +1089,12 @@ def summary_screen(held, status, counts, aaa=None, states=None, trail=None,
     out.append(f"{'addresses':<22}" + (", ".join(held["pools"])
                                        or "from RADIUS only"))
     out.append(f"{'gateway':<22}{held['gateway']}")
-    if "session-limit" in held["settings"]:
-        out.append(f"{'session limit':<22}{held['settings']['session-limit']}")
+    limit = session_limit(held)
+    row = f"{limit}" + ("" if "session-limit" in held["settings"]
+                        else ", the default")
+    if enforced is not None and enforced < limit:
+        row += f"; {enforced} until the next reboot"
+    out.append(f"{'session limit':<22}{row}")
     dflt = held["settings"].get("rate-limit-default")
     out.append(f"{'rate limit':<22}from RADIUS (Prisma-Rate-Limit-*), else "
                + (limit_words("/".join(str(rate_kbit(x))

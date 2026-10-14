@@ -736,8 +736,9 @@ def configured_interfaces(path):
 
     What it does NOT count is an interface created while the box runs that
     the configuration does not bound: Config.runtime_interfaces() is the
-    number, and it is zero until something that creates them states its own
-    ceiling there.
+    number. A `pppoe` block always bounds its sessions - its session-limit,
+    or 16,000 with none (docs/bng.md 0.4 item 5) - and accel-ppp refuses
+    past what the segment this boot sized holds.
 
     Never raises. This runs as root before VPP on every boot, and a
     configuration this program could not read is a reason to leave the segment

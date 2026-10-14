@@ -36,7 +36,7 @@ Toda mudança no bloco `pppoe` reinicia o plano de controle PPPoE: **todas as se
 | `address-pool <prefixo>` ou `<primeiro>-<último>` | endereços para quem o RADIUS não manda `Framed-IP-Address`. Até 16 |
 | `dns <endereço>` | um resolvedor entregue ao CPE. Até 2 |
 | `authentication pap chap mschap-v2` | os métodos oferecidos; os três se omitido |
-| `session-limit <n>` | no máximo tantas sessões |
+| `session-limit <n>` | no máximo tantas sessões; 16.000 se omitido. Cada sessão é uma interface no dataplane, e o segmento de estatísticas é dimensionado para esse número no boot, a partir da configuração salva. O `commit` recusa mais de 100.000 (o máximo medido) e mais do que a RAM da caixa deixa o segmento comportar; até o próximo reboot, a caixa aceita só o que o segmento em uso comporta, e o `show pppoe summary` diz isso |
 | `mtu <576-1500>` | MTU e MRU do PPP; 1492 se omitido |
 | `tcp-mss <536-1460>` | limita o MSS do TCP em cada sessão |
 | `rate-limit default <download>/<upload>` | o limite de banda de uma sessão para a qual o RADIUS não mandou nenhum, em kbit/s ou com K, M ou G (`20M/10M`); sem ele, essa sessão não tem limite |

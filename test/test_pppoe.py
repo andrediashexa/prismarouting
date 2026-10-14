@@ -186,9 +186,70 @@ check(a.delta_to(b)["pppoe_changed"] is True, "diff: one resolver more, changed"
 
 check(Config.parse("pppoe\n session-limit 4000\n exit\n").runtime_interfaces()
       == 4000 and Config.parse("pppoe\n mtu 1480\n exit\n")
-      .runtime_interfaces() == 0 and Config().runtime_interfaces() == 0,
+      .runtime_interfaces() == P.SESSION_LIMIT_DEFAULT == 16000
+      and Config().runtime_interfaces() == 0,
       "runtime_interfaces: the session limit the BNG enforces, which the "
-      "tuner sizes the statistics segment for; no limit, nothing")
+      "tuner sizes the statistics segment for; a block with no limit holds "
+      "the default (docs/bng.md 0.4 item 5), no block nothing")
+
+print("\n=== the session ceiling: the statistics segment holds it ===")
+check(P.session_limit(P.empty()) == 0
+      and P.session_limit(staged("mtu 1480")[0]) == 16000
+      and P.session_limit(staged("session-limit 40000")[0]) == 40000,
+      "session_limit: none with no PPPoE, the default with no statement, "
+      "else the statement")
+check(P.stage(P.empty(), "pppoe session-limit 1000000".split()) is None
+      and P.stage(P.empty(), "pppoe session-limit 1000001".split()),
+      "stage: a saved file's limit up to 0.154.0's million is still READ - "
+      "a refusal at boot is a box with no subscribers; a commit refuses it")
+SEG = ("Entry: /sys/vector_rate (type 9)\n"
+       "base 0x7f5b4a363000, size 930.00m, locked, name 'stat segment'\n"
+       "  total: 930.00M, used: 491.09M, free: 438.91M\n")
+check(P.segment_mb(SEG) == 930
+      and P.segment_mb(SEG.replace("930.00m", "1.50g")) == 1536
+      and P.segment_mb(SEG.replace("930.00m", "32.00m")) == 32
+      and P.segment_mb("") is None
+      and P.segment_mb("base 0x1, size 512m, name 'main heap'") is None,
+      "segment_mb: the stat segment's size as VPP mapped it, not the heap's")
+THREADS = ("ID     Name                Type        LWP\n"
+           "0      vpp_main                        1950\n"
+           "1      vpp_wk_0            workers     1953\n"
+           "2      vpp_wk_1            workers     1954\n"
+           "3      vpp_wk_2            workers     1955\n")
+check(P.thread_count(THREADS) == 4 and P.thread_count("") == 0,
+      "thread_count: the main thread and every worker")
+import tuneadvice  # noqa: E402
+T = tuneadvice.load_tuner()
+check(T is not None, "the tuner loads from the source tree")
+# The tuner's own size for N sessions holds N - the property the clamp
+# rests on: a box booted on a segment sized for its limit is held at it.
+for n, th in ((16000, 1), (40000, 4), (100000, 4), (7, 8)):
+    mb = T.statseg_mb_for(n + 5, th) or T.STATSEG_DEFAULT_MB
+    check(P.segment_room(T, mb, th, 5) >= n,
+          f"segment_room: the tuner's size for {n} sessions and 5 "
+          f"interfaces, {mb} MB on {th} thread(s), holds {n}")
+check(P.segment_room(T, 32, 4, 10) == T.statseg_interfaces_for(32, 4) - 10
+      < 5000 and P.segment_room(T, 32, 1, 0) < 7500,
+      "segment_room: VPP's 32 MB default holds fewer than lab/pppoe-scale.sh "
+      "saw it abort at - 5,000 on four threads, 7,500 on one")
+check(P.segment_room(None, 32, 1, 0) is None
+      and P.segment_room(T, None, 1, 0) is None
+      and P.segment_room(T, 32, 0, 0) is None
+      and P.segment_room(T, 1, 4, 10000) == 0,
+      "segment_room: nothing said without a tuner, a size or the threads; "
+      "never below none")
+check(P.box_segment_mb(T, 8) == 512 and P.box_segment_mb(T, 64) == 4096
+      and P.box_segment_mb(T, 64, 4) == 1024
+      and P.box_segment_mb(None, 8) is None and P.box_segment_mb(T, 0) is None,
+      "box_segment_mb: a quarter of what the control plane keeps - the "
+      "configured figure, else a quarter of the RAM and at least 2 GB")
+check(P.limit_error(100000, None, 4, None) is None
+      and "more than was measured working, 100000"
+      in P.limit_error(100001, None, 4, None)
+      and P.limit_error(40000, 55000, 4, 512) is None
+      and "holds 50000 on 9 thread(s)" in P.limit_error(60000, 50000, 9, 512),
+      "limit_error: past what was measured, or past what this box's RAM "
+      "lets the segment hold, refused")
 
 print("\n=== secrets: never on a screen ===")
 shown = P.redact(nested + ["pppoe radius server 192.0.2.1 secret s3cr3t! "
@@ -283,6 +344,10 @@ check("auth_chap_md5" not in ac and "[cli]" not in ac
 h2, _ = staged("interface ge0", "gateway 100.64.0.1",
                "address-pool 100.64.0.0/24", "local-user a password b")
 ac2 = P.accel_conf(h2, P.access(h2, {})[0])
+check("max-sessions=16000" in ac2.splitlines()
+      and "max-sessions=1200" in P.accel_conf(h, acc, AA, 1200).splitlines(),
+      "accel_conf: max-sessions ALWAYS - the default with no statement, the "
+      "segment's when it holds fewer")
 check(P.modules(h2, A_mod.empty())[-4:-2] == ["ippool", "shaper"]
       and "chap-secrets" in P.modules(h2, A_mod.empty())
       and "radius" in P.modules(h2, AA),
@@ -297,6 +362,8 @@ check("PARENT=ge0" in env and 'VLANS="0 100"' in env and "TCP_MSS=1452" in env
 check('ACCESS="ge0 ge0.100"' in env,
       f"access_env: the access interfaces by the dataplane's names, for "
       f"its PPPoE guard (format 4): {env!r}")
+check(P.enforced_limit(os.path.join(_root, "no-such")) is None,
+      "enforced_limit: none with no file")
 ok, msg = P.write_files(h, acc, aaa=AA)
 bng = os.environ["PRISMA_BNG_DIR"]
 check(P.file_format() == P.FORMAT and P.file_format("/proc/no") == "",
@@ -309,6 +376,11 @@ check(ok and all(stat.S_IMODE(os.stat(os.path.join(bng, f)).st_mode) == 0o660
       "write_files: written 0660, the configuring group's and never the "
       "world's - they carry the secret")
 check(P.read_conf() == h, "read_conf: pppoe.conf read back as the model")
+check(P.enforced_limit() == 900, "enforced_limit: the max-sessions in force")
+ok, _ = P.write_files(h, acc, aaa=AA, max_sessions=300)
+check(ok and P.enforced_limit() == 300,
+      "write_files: a lower ceiling handed on, read back as the one in force")
+P.write_files(h, acc, aaa=AA)
 ok, msg = P.write_files(P.empty(), [])
 check(ok and msg == "not configured" and not os.path.exists(P.CONF_PATH)
       and not os.path.exists(os.path.join(bng, "accel-ppp.conf")),
@@ -389,6 +461,18 @@ check(s[0].endswith("running") and "3 active" in s[1]
       and P.summary_screen(P.empty(), "x", {}) == ["PPPoE is not configured"]
       and "NOT running" in P.summary_screen(h, "stopped", {})[0],
       "summary_screen: the control plane, the sessions, the configuration")
+_lim = lambda rows: [x for x in rows if x.startswith("session limit")]
+check(_lim(s) == [f"{'session limit':<22}900"]
+      and _lim(P.summary_screen(h, "running", {}, AA, enforced=900))
+      == [f"{'session limit':<22}900"]
+      and _lim(P.summary_screen(h2, "running", {}, enforced=3400))
+      == [f"{'session limit':<22}16000, the default; 3400 until the next "
+          f"reboot"]
+      and max(len(x) for x in P.summary_screen(
+          staged("session-limit 1000000")[0], "running", {},
+          enforced=999999)) <= 79,
+      "summary_screen: the limit always, the default said, and a ceiling "
+      "the running segment holds lower than it, at most 79 columns")
 # The session trail's block (docs/bng.md 0.7), and the row it gives the
 # summary: what it could not write said in capitals (mutation: failed read
 # as written).
@@ -561,6 +645,57 @@ check(rv is False and "error: pppoe: could not write" in out
       and not os.path.exists(log),
       "apply_pppoe: files that cannot be written refuse the commit, and the "
       "host is asked nothing")
+# THE CEILING, against a running segment (docs/bng.md 0.4 item 5). A box of
+# 8 GB and four threads: its control plane keeps 2 GB, the tuner gives the
+# segment at most 512 MB.
+_mi = os.path.join(_root, "meminfo")
+with open(_mi, "w") as f:
+    f.write("MemTotal:        8388608 kB\n")
+
+
+def roomy(seg_mb, booting=False):
+    sh = shell(Dp({"show interface": IFS, "show threads": (0, THREADS),
+                   "show statistics segment": (
+                       0, SEG.replace("930.00m", f"{seg_mb}.00m"))}),
+               booting=booting)
+    sh.MEMINFO = _mi
+    sh.TUNE_ENV = os.path.join(_root, "no-tune.env")
+    return sh
+
+
+r = roomy(32).pppoe_room(tgt)
+check(r["threads"] == 4 and r["live_mb"] == 32 and r["box_mb"] == 512
+      and r["live_room"] == T.statseg_interfaces_for(32, 4)
+      - tgt.dataplane_interfaces() + tgt.runtime_interfaces()
+      and r["box_room"] > 50000,
+      f"pppoe_room: the running segment's and the box's, by the tuner: {r}")
+log = ctl(0, "started")
+rv, out = said(lambda: roomy(32).apply_pppoe(tgt))
+check(rv is True and P.enforced_limit() == r["live_room"] < 16000
+      and "at most" in out and "until the next reboot" in out
+      and "sizes it for 16000" in out,
+      f"apply_pppoe: on VPP's 32 MB a box with no limit is held at what the "
+      f"segment holds, and told: {out!r}")
+_sized = T.statseg_mb_for(tgt.dataplane_interfaces(), 4)
+rv, out = said(lambda: roomy(_sized).apply_pppoe(tgt))
+check(rv is True and P.enforced_limit() == 16000 and "at most" not in out,
+      f"apply_pppoe: on the segment the tuner sized for it ({_sized} MB), "
+      f"the limit itself and nothing said")
+big = Config.parse(tgt.text().replace(" gateway 100.64.0.1\n",
+                                      " gateway 100.64.0.1\n"
+                                      " session-limit 90000\n"))
+check(P.session_limit(big.pppoe) == 90000, "the 90,000 target parses")
+log = ctl(0, "started")
+rv, out = said(lambda: roomy(512).apply_pppoe(big))
+check(rv is False and "not applied" in out and "holds" in out
+      and not os.path.exists(log),
+      f"apply_pppoe: more sessions than this box's RAM lets the segment "
+      f"hold is refused at a commit, the host asked nothing: {out!r}")
+rv, out = said(lambda: roomy(512, booting=True).apply_pppoe(big))
+check(rv is True and P.enforced_limit() == P.segment_room(T, 512, 4, 2)
+      and P.enforced_limit() < 90000,
+      "apply_pppoe: at boot the same file is loaded, held at what the "
+      "segment holds")
 log = ctl(0, "stopped")
 rv, out = said(lambda: shell(Dp({"show interface": IFS})).apply_pppoe(Config()))
 check(rv is True and open(log).read().split() == ["stop"]
