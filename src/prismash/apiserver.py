@@ -3516,9 +3516,9 @@ def action_reason(output):
     "action" stage, and the host's door refusing an account that is not
     root - which the VTY prints under its own verdict - as a permission.
     """
-    if re.search(r"only root (may|and prisma-operator's members may)",
-                 output or "") or "permission denied for this account" in \
-            (output or ""):
+    if re.search(r"only root (may|and prisma-(operator|admin)'s members "
+                 r"may)", output or "") or "permission denied for this " \
+            "account" in (output or "") or denied(output or ""):
         return "permission"
     return refusal_reason(output, stage="action")["reason"]
 

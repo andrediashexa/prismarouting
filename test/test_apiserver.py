@@ -1787,6 +1787,10 @@ check(not _r["ok"] and A.action_reason(_r["output"]) == "permission",
       f"hostrun: the host's root-only door, as a permission: {_r}")
 check(not A.hostrun(_HostShell(), "upgrade", "1.2")["ok"],
       "hostrun: a version that is not a release starts nothing")
+check(A.action_reason("error: clear pppoe session: the control plane refused "
+                      "the host's door: end PPPoE sessions: only root and "
+                      "prisma-admin's members may\n") == "permission",
+      "action_reason: the PPPoE door refusing a non-administrator (#597)")
 check(A.action_reason("error: usage: clear interface counters [<interface>]\n") == "usage"
       and A.action_reason("error: x\n") == "other",
       "action_reason: a usage line, and an action's other refusals")

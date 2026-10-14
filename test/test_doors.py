@@ -887,6 +887,33 @@ check(doors.account_is_operator(os.getuid()) is False
       "account_is_operator(): False on a host with no prisma-operator group, "
       "and for a uid the system cannot describe")
 
+# #597 on 0.155.8: ending PPPoE sessions was root's door alone, so the API's
+# Clear - acting as the certificate's account, an administrator, never root -
+# was refused on prisma-bench ("only root may"). prisma-admin's members open
+# it now, the administrator role the VTY asks for; nobody else does.
+_term = [doors.pppoe.BNG_CTL_HOST, "terminate", "all"]
+_ran = []
+_tx = lambda a, s, t: (_ran.append(a), (0, "ok"))[1]
+_r = doors.answer(json.dumps({"argv": _term}), 1000, execute=_tx,
+                  is_admin=lambda u: True, is_operator=lambda u: False)
+check(_r["rc"] == 0 and _ran, f"a prisma-admin member ends PPPoE sessions: {_r}")
+_ran.clear()
+_r = doors.answer(json.dumps({"argv": _term}), 1000, execute=_tx,
+                  is_admin=lambda u: False, is_operator=lambda u: True)
+check(_r["rc"] == 126 and not _ran
+      and "only root and prisma-admin's members may" in _r["out"],
+      f"an operator outside prisma-admin is refused, nothing run: {_r}")
+_r = doors.answer(json.dumps({"argv": ["systemctl", "reboot"]}), 1000,
+                  execute=_tx, is_admin=lambda u: True,
+                  is_operator=lambda u: False)
+check(_r["rc"] == 126, f"and prisma-admin opens no other door: {_r}")
+check(doors.answer(json.dumps({"argv": _term}), 0, execute=_tx)["rc"] == 0,
+      "root still ends them")
+check(doors.account_is_admin(os.getuid()) is False
+      and doors.account_is_admin(2 ** 31 - 7) is False,
+      "account_is_admin(): False on a host with no prisma-admin group, and "
+      "for a uid the system cannot describe")
+
 _r = doors.answer(json.dumps({"argv": list(doors.UPGRADE_CHECK_ARGV)}), 1000,
                   execute=lambda a, s, t: (0, "newest published: 0.149.26"),
                   is_operator=lambda u: False)

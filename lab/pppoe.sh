@@ -1388,7 +1388,7 @@ echo "=========== 22. THE TYPED API (docs/bng.md 0.4 item 2) ==========="
 C=/tmp/api; rm -rf $C; mkdir -p $C/box
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=lab clients CA" \
   -keyout $C/ca.key -out $C/ca.crt 2>/dev/null
-for _who in server:prisma-api root:root netview:netview; do
+for _who in server:prisma-api root:root netview:netview labadmin:labadmin; do
   _n=${_who%%:*}; _cn=${_who#*:}
   openssl req -newkey rsa:2048 -nodes -subj "/CN=$_cn" -keyout $C/$_n.key \
     -out $C/$_n.csr 2>/dev/null
@@ -1402,6 +1402,12 @@ for _who in server:prisma-api root:root netview:netview; do
 done
 cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
 id netview > /dev/null 2>&1 || useradd -M -s /usr/sbin/nologin netview
+# An administrator that is not root (#597): the API's clears go as it.
+for _g in prisma-admin prisma-cgnat; do
+  getent group $_g > /dev/null 2>&1 || groupadd --system $_g
+done
+id labadmin > /dev/null 2>&1 || \
+  useradd -M -s /usr/sbin/nologin -G prisma-admin,prisma-cgnat labadmin
 # The host's doors, as on a box: each account's worker asks the host for
 # the sessions and the trail through them, and a read-only account is
 # answered what its VTY would be.
