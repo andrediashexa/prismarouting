@@ -1127,10 +1127,13 @@ the same lab: 0 crossed, sub1 19.6 down and 9.9 up through its 20/10 plan.
   `GetPppoeSummary` the pools, `ListPppoeHistory` named sub7 for an address
   of its delegated prefix with its `delegated` time.
 
+The whole lab passed single-threaded and again with three dataplane
+workers (`LAB_WORKERS=3`: 230 checks each; over IPv6 sub7's plan measured
+19.3 down and 9.8 up, the guard 48 up and 169 down).
+
 **Not measured:** a real CPE router (the lab's are Linux pppd and dhcpcd;
-the bench's Debian CPE is the next reading), the RA and DHCPv6 punt with VPP
-workers, and how many sessions' IPv6 the control plane's TAP carries at
-scale - an RS or a Solicit is a few packets a session per renewal, as LCP's
+the bench's Debian CPE is the next reading), and how many sessions' IPv6 the
+control plane's TAP carries at scale - an RS or a Solicit is a few packets a session per renewal, as LCP's
 echoes are, and it takes the path they take.
 
 ## Where every number here comes from
