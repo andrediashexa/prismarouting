@@ -79,6 +79,8 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.14 - BNG phase 1, RADIUS and IPv6 on PPPoE delivered
+
 ### Documentation
 
 * **docs/roadmap.md: BNG phase 1 (#597), RADIUS under `aaa` (#607) and IPv6
