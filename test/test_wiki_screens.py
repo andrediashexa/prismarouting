@@ -2526,12 +2526,20 @@ for tree, rel, lineno, rows, (how, t, *rest) in findings:
 # What is left of the loosening, named rather than counted. A hole that holds
 # two words is either a slot this file could not read or a page carrying a
 # word the box does not print, and the first is the only one allowed here.
+# Counted once per row of the source and what its hole holds, not per page:
+# the wiki's Spanish and English pages (2026-10-17) quote the Portuguese
+# page's screens line for line, and the same lean on three pages is one lean
+# - it took the count from 5 to 11 with no new shape. Every page quoting one
+# is still listed.
 spaced.sort()
-print(f"\n  {len(spaced)} accepted match(es) lean on a hole holding more than "
-      f"one word, against a ceiling of {SPACED_AT_MOST}:")
+leans = {(origin, got) for _rel, _lineno, origin, _slot, got in spaced}
+print(f"\n  {len(leans)} accepted match(es) lean on a hole holding more than "
+      f"one word, against a ceiling of {SPACED_AT_MOST}, quoted on "
+      f"{len(spaced)} page line(s):")
 for rel, lineno, origin, slot, got in spaced:
     print(f"    {rel}:{lineno}  {origin}  the hole for {slot.expr} "
           f"({slot.why}) holds {got!r}")
+spaced = sorted(leans)
 check(len(spaced) <= SPACED_AT_MOST,
       f"{len(spaced)} accepted match(es) lean on a hole holding more than one "
       f"word, above the ceiling of {SPACED_AT_MOST}. A hole that swallows a "
