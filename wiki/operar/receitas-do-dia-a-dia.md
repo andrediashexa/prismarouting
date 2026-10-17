@@ -165,7 +165,7 @@ commit remap                 aplica de fato
 
 Os números saem do `commit check`, antes de aplicar, e o `commit` comum imprime os mesmos ao recusar. Não são estimativa: o dataplane roda a mesma aritmética que rodaria depois, então a contagem é exata e vem com dois assinantes de exemplo. Registre esse número no chamado — é quantos clientes vão ligar.
 
-O procedimento completo dos dois caminhos, com o que muda e o que não muda, está em [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
+O procedimento completo dos dois caminhos, com o que muda e o que não muda, está em [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
 
 # Trocar timeouts
 
@@ -406,6 +406,6 @@ save
 
 # Ver também
 
-* [Comandos show](/doc/comandos-show-YlNji1X5W4) — como ler cada resposta
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — a referência dos campos usados aqui
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — por que `commit` e `save` são dois passos
+* [Comandos show](/s/wiki/doc/comandos-show-YlNji1X5W4) — como ler cada resposta
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — a referência dos campos usados aqui
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — por que `commit` e `save` são dois passos

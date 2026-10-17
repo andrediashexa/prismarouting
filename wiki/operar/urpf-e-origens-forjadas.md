@@ -85,6 +85,6 @@ Com `urpf strict` na interface interna, `show interface` confirmando o modo e o 
 
 # Ver também
 
-* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — o bloco `interface` onde `urpf` é configurado
-* [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — o registro que isto protege
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — por onde começar quando um assinante some
+* [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — o bloco `interface` onde `urpf` é configurado
+* [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — o registro que isto protege
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — por onde começar quando um assinante some

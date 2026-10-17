@@ -129,13 +129,13 @@ Por padrão, o **download** de cada sessão passa por uma fila própria no datap
 
 Medido num plano de 20 Mbit/s, o shaper contra o policer:
 
-| | shaper | policer |
-|---|---|---|
+|     | shaper | policer |
+|-----|--------|---------|
 | uma conexão TCP | 19,3 Mbit/s, 17 retransmissões | 19,7 Mbit/s, 823 retransmissões |
-| ping durante essa conexão | 25 ms | 12 ms |
+| ping durante essa conexão | 25 ms  | 12 ms   |
 | quatro conexões dividindo o plano | por igual (Jain 0,994) | desigual (Jain 0,832) |
 | UDP a 40 Mbit/s | chega o plano, 19,6 | chega o plano, 20,3 |
-| ping durante esse UDP | até 104 ms: a fila cheia | 12 ms |
+| ping durante esse UDP | até 104 ms: a fila cheia | 12 ms   |
 
 O shaper mede o plano em bytes IP, sem os cabeçalhos PPPoE e Ethernet, por isso um teste de velocidade TCP lê um pouco abaixo de 20 (o máximo é 19,47). Um assinante que manda UDP acima do plano sem parar espera, no próprio tráfego, até o tamanho da fila; o dos outros assinantes não é afetado.
 

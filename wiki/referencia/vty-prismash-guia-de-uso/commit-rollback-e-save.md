@@ -306,7 +306,7 @@ O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de pr
 
 ### `block-stride applies to bpa pools only, not to pool <nome>`
 
-O `block-stride` diz a que distância fica o **segundo** bloco de um assinante que encheu o primeiro, contada ao longo dos blocos **mapeados** do endereço público dele. Num pool `deterministic` o bloco a mais não sai dali: sai da **reserva**, que é um conjunto à parte com regra própria de escolha - um bloco livre da reserva no próprio endereço do assinante, se a fatia daquele worker tiver um; senão, qualquer bloco livre que a fatia daquele worker tenha na reserva, em qualquer endereço, como descreve a página de [configuração de pool](/doc/configuracao-de-pool-btyS572Ih6). Esse caminho nunca passa pelos blocos mapeados, e por isso o `block-stride` nunca é lido ali - em nenhum tamanho, e em nenhuma máquina.
+O `block-stride` diz a que distância fica o **segundo** bloco de um assinante que encheu o primeiro, contada ao longo dos blocos **mapeados** do endereço público dele. Num pool `deterministic` o bloco a mais não sai dali: sai da **reserva**, que é um conjunto à parte com regra própria de escolha - um bloco livre da reserva no próprio endereço do assinante, se a fatia daquele worker tiver um; senão, qualquer bloco livre que a fatia daquele worker tenha na reserva, em qualquer endereço, como descreve a página de [configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6). Esse caminho nunca passa pelos blocos mapeados, e por isso o `block-stride` nunca é lido ali - em nenhum tamanho, e em nenhuma máquina.
 
 A recusa mostra as duas linhas em conflito, o `mode` e o `block-stride`, porque qualquer uma das duas resolve e qual delas mudar é decisão sua: tire o `block-stride`, ou ponha o pool em `mode bpa`.
 
@@ -449,7 +449,7 @@ commit check                  valida sem tocar no equipamento
 
 Quem seria re-mapeado sai do `commit check` e, com os mesmos números, da recusa do `commit` comum que pede `commit remap`.
 
-Uma troca em muitas linhas pode ser vista antes de entrar na candidata: `replace pattern <regex> with <substituto> | compare` mostra a diferença e diz se o resultado passaria, sem guardar nada. `replace pattern` e `rename` mudam só a candidata, então tudo o que está nesta página — `show configuration compare`, `commit check`, `commit confirmed`, `rollback 0` — vale para o resultado como vale para linhas digitadas. As duas estão em [VTY prismash — guia de uso](/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh).
+Uma troca em muitas linhas pode ser vista antes de entrar na candidata: `replace pattern <regex> with <substituto> | compare` mostra a diferença e diz se o resultado passaria, sem guardar nada. `replace pattern` e `rename` mudam só a candidata, então tudo o que está nesta página — `show configuration compare`, `commit check`, `commit confirmed`, `rollback 0` — vale para o resultado como vale para linhas digitadas. As duas estão em [VTY prismash — guia de uso](/s/wiki/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh).
 
 ## Sair sem aplicar
 
@@ -483,5 +483,5 @@ O mesmo vale quando o desfazer automático de um `commit confirmed` encontra uma
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — quais mudanças exigem `commit remap`
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — a ordem de boot que aplica o que foi salvo
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — quais mudanças exigem `commit remap`
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — a ordem de boot que aplica o que foi salvo

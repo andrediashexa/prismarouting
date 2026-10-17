@@ -58,12 +58,12 @@ No nível de `address-family` valem `neighbor` (a lista por família, abaixo), `
 | `timers` | `<keepalive> <hold>` | temporizadores da sessão |
 | `maximum-prefix` | `<n> [<pct>] [restart <min>]` | derruba a sessão acima desse número de prefixos |
 | `next-hop-self` |           | anuncia esta caixa como próximo salto |
-| `bfd`   | `[profile <nome>]` | acompanha a sessão por BFD, para a falha ser de milissegundos e não de minutos; com `profile`, nos tempos daquele perfil (veja [BFD](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m), seção BFD) |
+| `bfd`   | `[profile <nome>]` | acompanha a sessão por BFD, para a falha ser de milissegundos e não de minutos; com `profile`, nos tempos daquele perfil (veja [BFD](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m), seção BFD) |
 | `shutdown` |           | segura a sessão derrubada, mantendo a configuração |
 | `peer-group` | `<nome>`  | põe o vizinho num peer group |
 | `capability extended-nexthop` |           | rotas IPv4 por cima de uma sessão IPv6; é o que uma sessão sem endereço no enlace usa |
 
-Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS`, `default-originate`, `advertise`, `maximum-prefix` e `next-hop-self`. Os dois últimos aparecem nas duas listas de propósito: valem por família, e o roteamento aceita os dois lugares. `default-originate policy <política>` e `advertise` estão em [Política de roteamento](/doc/politica-de-roteamento-policy-options-DULDDxEALE); na configuração em vigor o `advertise` aparece como `advertise-map`, a forma em que o roteamento o guarda.
+Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS`, `default-originate`, `advertise`, `maximum-prefix` e `next-hop-self`. Os dois últimos aparecem nas duas listas de propósito: valem por família, e o roteamento aceita os dois lugares. `default-originate policy <política>` e `advertise` estão em [Política de roteamento](/s/wiki/doc/politica-de-roteamento-policy-options-DULDDxEALE); na configuração em vigor o `advertise` aparece como `advertise-map`, a forma em que o roteamento o guarda.
 
 Essa tabela é o que o `prismash` **confere**. O BGP do roteamento entende muito mais do que isso, e o que não está aqui é repassado sem leitura - o que é legítimo, e é por isso que sai marcado com `<- not checked` no `show this` e no `show configuration`. Vale reparar que `soft-reconfiguration inbound` está na lista da família de endereço e não na lista de cima: digitada direto dentro de `router bgp`, ela sai marcada.
 
@@ -271,7 +271,7 @@ Dentro de uma cláusula de route-map:
 | `on-match next` ou `on-match goto <seq>` |           | o que fazer quando a cláusula casa |
 | `description` | `<texto>` | para que serve a cláusula |
 
-O que não está nessas tabelas também chega ao roteamento, marcado com `<- not checked`. Os detalhes — a ordem das cláusulas, o que é recusado, a faixa `ge`/`le`, as expressões de AS-path — estão em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
+O que não está nessas tabelas também chega ao roteamento, marcado com `<- not checked`. Os detalhes — a ordem das cláusulas, o que é recusado, a faixa `ge`/`le`, as expressões de AS-path — estão em [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
 
 # O que é recusado antes de chegar ao roteamento
 
@@ -559,5 +559,5 @@ Confira pelo efeito, não pelo texto: `show bgp <prefixo>` no vizinho deve mostr
 
 # Ver também
 
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — prefix-lists, políticas e o prefixo público de um pool
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — como uma mudança é aplicada e desfeita
+* [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — prefix-lists, políticas e o prefixo público de um pool
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — como uma mudança é aplicada e desfeita

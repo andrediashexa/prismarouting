@@ -169,8 +169,8 @@ A resposta é a versão do kernel seguida de `-prisma`, por exemplo `6.1.187-pri
 
 # Ver também
 
-* [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — onde cada conta cai e o que cada papel alcança
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — os comandos que o serviço de portas executa
-* [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) — a mídia que traz o kernel
-* [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — o que o pacote de atualização traz e o que não traz
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — o autoteste de boot
+* [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) — onde cada conta cai e o que cada papel alcança
+* [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — os comandos que o serviço de portas executa
+* [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — a mídia que traz o kernel
+* [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — o que o pacote de atualização traz e o que não traz
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — o autoteste de boot

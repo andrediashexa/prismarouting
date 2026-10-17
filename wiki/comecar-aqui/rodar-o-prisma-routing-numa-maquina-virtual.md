@@ -161,7 +161,7 @@ A caixa numa VM serve para avaliar funcionalidade, configuração e comportament
 
 # Ver também
 
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — quanto de máquina e de endereços o seu caso exige
-* [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) — a instalação em disco, passo a passo
-* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — `mtu`, endereços e o bloco `interface`
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — o autoteste de boot e o que ele diz
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — quanto de máquina e de endereços o seu caso exige
+* [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — a instalação em disco, passo a passo
+* [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — `mtu`, endereços e o bloco `interface`
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — o autoteste de boot e o que ele diz

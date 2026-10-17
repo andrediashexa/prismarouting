@@ -4,12 +4,12 @@ Tudo que é preciso para sair de uma máquina sem sistema e chegar a um CGNAT tr
 
 | Página | Responde |
 |--------|----------|
-| [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) | Quanta máquina, quantos IPs públicos e quanto log o seu caso exige |
-| [Rodar o Prisma Routing numa máquina virtual](/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5) | Memória, CPU, placas virtio, páginas de 1 GB, desligar pela VTY e o que uma medição numa VM mede |
-| [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) | Como a ISO instala, o que ela pergunta e como automatizar |
-| [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) | Onde você cai ao entrar, e quem pode mudar o quê |
-| [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) | Do disco vazio até assinantes navegando, em dez passos |
-| [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7) | Das duas portas ao primeiro assinante traduzido, com a tela que a caixa mostra em cada passo |
+| [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) | Quanta máquina, quantos IPs públicos e quanto log o seu caso exige |
+| [Rodar o Prisma Routing numa máquina virtual](/s/wiki/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5) | Memória, CPU, placas virtio, páginas de 1 GB, desligar pela VTY e o que uma medição numa VM mede |
+| [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) | Como a ISO instala, o que ela pergunta e como automatizar |
+| [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) | Onde você cai ao entrar, e quem pode mudar o quê |
+| [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) | Do disco vazio até assinantes navegando, em dez passos |
+| [Configurar o CGNAT passo a passo](/s/wiki/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7) | Das duas portas ao primeiro assinante traduzido, com a tela que a caixa mostra em cada passo |
 
 
 :::info
@@ -19,6 +19,6 @@ Tudo que é preciso para sair de uma máquina sem sistema e chegar a um CGNAT tr
 
 # Ver também
 
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — depois que estiver no ar
-* [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — `system upgrade`, e o que fazer antes do próximo reboot
-* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o mapeamento é uma conta e não uma tabela
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — depois que estiver no ar
+* [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — `system upgrade`, e o que fazer antes do próximo reboot
+* [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o mapeamento é uma conta e não uma tabela

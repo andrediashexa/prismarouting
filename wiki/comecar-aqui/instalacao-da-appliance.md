@@ -11,7 +11,7 @@ prisma> system upgrade
 prisma> system upgrade <versão>
 ```
 
-Sem versão, ele só diz qual versão a caixa roda e qual é a mais nova publicada. Com versão, baixa o pacote do diretório público, recusa o pacote se ele não bater com o `sha256` e aplica. O resto, inclusive o `save` antes do próximo reboot, está em [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X).
+Sem versão, ele só diz qual versão a caixa roda e qual é a mais nova publicada. Com versão, baixa o pacote do diretório público, recusa o pacote se ele não bater com o `sha256` e aplica. O resto, inclusive o `save` antes do próximo reboot, está em [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X).
 
 ```mermaid
 flowchart TD
@@ -141,7 +141,7 @@ echo "auto ens19" >> $F
 echo "iface ens19 inet dhcp" >> $F
 ```
 
-Endereço estático leva `inet static` e uma linha `address`. O outro caminho, sem shell, é nomear na VTY a placa dos assinantes em `system` > `dataplane` > `interface <placa>`: o dataplane passa a reivindicar só ela, e as demais ficam com o Linux. Ver [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+Endereço estático leva `inet static` e uma linha `address`. O outro caminho, sem shell, é nomear na VTY a placa dos assinantes em `system` > `dataplane` > `interface <placa>`: o dataplane passa a reivindicar só ela, e as demais ficam com o Linux. Ver [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7).
 
 :::
 
@@ -180,7 +180,7 @@ Essas chaves não vão para o disco: a instalação apaga o que veio na mídia e
 
 
 :::warning
-**A caixa recém-instalada está limpa; o aviso é sobre a mídia.** As outras caixas que foram instaladas dessa mesma mídia continuam respondendo com aquela chave até alguém gerar chaves novas em cada uma. O procedimento, e o que ele custa a quem administra, estão em [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt), na seção sobre o autoteste dizer que as chaves SSH não foram geradas na caixa.
+**A caixa recém-instalada está limpa; o aviso é sobre a mídia.** As outras caixas que foram instaladas dessa mesma mídia continuam respondendo com aquela chave até alguém gerar chaves novas em cada uma. O procedimento, e o que ele custa a quem administra, estão em [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt), na seção sobre o autoteste dizer que as chaves SSH não foram geradas na caixa.
 
 :::
 
@@ -365,12 +365,12 @@ A mídia de cada versão é instalada em disco e bootada sem a mídia antes de s
 
 
 :::success
-Self-test **sem** `**[FAIL]**` e `show version` respondendo: a instalação está válida. "Pronto" sozinho não basta: é a linha da API binária que diz que um pool pode ser criado. O próximo passo é [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+Self-test **sem** `**[FAIL]**` e `show version` respondendo: a instalação está válida. "Pronto" sozinho não basta: é a linha da API binária que diz que um pool pode ser criado. O próximo passo é [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7).
 
 :::
 
 # Ver também
 
-* [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — onde você cai ao entrar, e quem pode o quê
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — a máquina e o disco antes de instalar
-* [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — depois de instalada
+* [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) — onde você cai ao entrar, e quem pode o quê
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — a máquina e o disco antes de instalar
+* [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — depois de instalada

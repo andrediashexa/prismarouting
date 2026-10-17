@@ -221,10 +221,10 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `clear cgnat subscriber <A.B.C.D>` | encerra todas as sessões de um assinante. O bloco de portas dele não volta na hora: fica reservado pelo hold-down e é liberado depois, com o registro de liberação no log, como numa expiração. Operadores de CGNAT também podem |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `save`  | grava a configuração em vigor em disco |
-| `system upgrade [<versão>]` | sem versão, diz qual versão a caixa roda e qual é a mais nova publicada, sem mudar nada; com versão, baixa o pacote, recusa se o `sha256` não conferir e roda a atualização mostrando o que ela diz. A versão em uso e as anteriores são recusadas. Na prática, só root, como o `system reboot` |
+| `system upgrade [<versão>]` | sem versão, diz qual versão a caixa roda e qual é a mais nova publicada, sem mudar nada; com versão, baixa o pacote, recusa se o `sha256` não conferir e roda a atualização mostrando o que ela diz. A versão em uso e as anteriores são recusadas. Só `root` ou uma conta com `operator`, como o `system reboot` |
 | `system dataplane restart` | para e sobe o dataplane de novo: **para de encaminhar e descarta o bloco de portas de todo assinante**. É o que leva para o DPDK uma placa adicionada com a caixa rodando. Diz o que custa antes de agir |
-| `system reboot` | reinicia a caixa. **Só root, hoje.** Uma conta `prisma-admin` que não é root passa pela VTY e é recusada na hora de reiniciar, porque a appliance não concede isso a nenhuma conta além do root. Antes de agir, avisa o que custa: toda sessão nesta caixa termina; o dataplane para; **se há algo em vigor que o boot não repõe e não foi salvo, isso se perde no boot** (`save` o mantém; contas, SSH e SNMP ficam na caixa e não contam, então uma appliance recém-instalada, sem nada salvo, não é avisada); **se há um** `**commit confirmed**` **sem confirmar, a caixa volta revertida** (`commit` confirma). Os dois últimos são medidos na hora e só aparecem quando são verdade. Depois, a caixa volta sozinha assumindo a placa dela — nada precisa ser digitado no console dela |
-| `system shutdown` | desliga a caixa. **Só root, hoje**, como o `system reboot`, e com os mesmos avisos — sessões, dataplane, o que não foi salvo, o que não foi confirmado. Uma diferença: ela fica desligada até alguém ligá-la de novo, e só então volta assumindo a placa sozinha |
+| `system reboot` | reinicia a caixa. **Só** `**root**` **ou uma conta com** `**operator**` (o grupo `prisma-operator`, desde a 0.149.26). Ser `administrator` não basta: quem não tem `operator` é recusado antes de qualquer coisa acontecer. Antes de agir, avisa o que custa: toda sessão nesta caixa termina; o dataplane para; **se há algo em vigor que o boot não repõe e não foi salvo, isso se perde no boot** (`save` o mantém; contas, SSH e SNMP ficam na caixa e não contam, então uma appliance recém-instalada, sem nada salvo, não é avisada); **se há um** `**commit confirmed**` **sem confirmar, a caixa volta revertida** (`commit` confirma). Os dois últimos são medidos na hora e só aparecem quando são verdade. Depois, a caixa volta sozinha assumindo a placa dela — nada precisa ser digitado no console dela |
+| `system shutdown` | desliga a caixa. **Só** `**root**` **ou uma conta com** `**operator**`, como o `system reboot`, e com os mesmos avisos — sessões, dataplane, o que não foi salvo, o que não foi confirmado. Uma diferença: ela fica desligada até alguém ligá-la de novo, e só então volta assumindo a placa sozinha |
 | `install` | instala o Prisma Routing num disco desta máquina — **só existe rodando a partir da ISO** |
 | `exit`  | encerra a sessão |
 
@@ -403,14 +403,14 @@ Os blocos que têm muitas declarações estão documentados à parte, cada um co
 
 | Bloco | Página |
 |-------|--------|
-| `interface <nome>` — endereços, VLAN, VRF, MTU, MAC, lado do CGNAT, VRRP, OSPF e IS-IS na interface, loopbacks, bundles | [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) |
-| `pool <nome>`, dentro de `nat` > `cgnat` | [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) |
-| o nível `cgnat` — logging, timeouts globais, memória | [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) |
-| `router bgp`, `rpki` | [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) |
-| `policy-options` — listas, `policy-statement` e termos, aplicados no BGP, no OSPF e IS-IS e no que vai para a tabela de encaminhamento | [Política de roteamento (policy-options)](/doc/politica-de-roteamento-policy-options-DULDDxEALE) |
-| `router static`, OSPF, IS-IS, route-maps, `ssh`, `user`, `snmp`, `dns` | [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) |
-| `pppoe` — interfaces de acesso, endereços, limites, sessões | [Configuração de PPPoE](configuracao-de-pppoe.md) |
-| `aaa` > `radius` — servidores RADIUS, failover, Disconnect e CoA | [Configuração de PPPoE](configuracao-de-pppoe.md) |
+| `interface <nome>` — endereços, VLAN, VRF, MTU, MAC, lado do CGNAT, VRRP, OSPF e IS-IS na interface, loopbacks, bundles | [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) |
+| `pool <nome>`, dentro de `nat` > `cgnat` | [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) |
+| o nível `cgnat` — logging, timeouts globais, memória | [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) |
+| `router bgp`, `rpki` | [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ) |
+| `policy-options` — listas, `policy-statement` e termos, aplicados no BGP, no OSPF e IS-IS e no que vai para a tabela de encaminhamento | [Política de roteamento (policy-options)](/s/wiki/doc/politica-de-roteamento-policy-options-DULDDxEALE) |
+| `router static`, OSPF, IS-IS, route-maps, `ssh`, `user`, `snmp`, `dns` | [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) |
+| `pppoe` — interfaces de acesso, endereços, limites, sessões | [Configuração de PPPoE](/s/wiki/doc/configuracao-de-pppoe-bfl7lzpl2O) |
+| `aaa` > `radius` — servidores RADIUS, failover, Disconnect e CoA | [Configuração de PPPoE](/s/wiki/doc/configuracao-de-pppoe-bfl7lzpl2O) |
 
 ## Um nome de interface que não existe é recusado
 
@@ -507,11 +507,11 @@ O prompt nomeia onde você está, inclusive qual pool ou qual interface: `[edit 
 
 # Ver também
 
-* [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a VTY aplicada do começo ao fim
-* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — endereços, VLAN, VRF e o resto do bloco de interface
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — campo a campo, e quais derrubam sessão
-* [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, peer groups, famílias de endereço, política e RPKI
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — rotas estáticas, IGPs, contas e o agente SNMP
-* [Commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — aplicar, desfazer e gravar
-* [Comandos show](/doc/comandos-show-YlNji1X5W4) — tudo que a caixa mostra
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — tarefas prontas, sem precisar montar do zero
+* [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) — a VTY aplicada do começo ao fim
+* [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — endereços, VLAN, VRF e o resto do bloco de interface
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — campo a campo, e quais derrubam sessão
+* [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, peer groups, famílias de endereço, política e RPKI
+* [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — rotas estáticas, IGPs, contas e o agente SNMP
+* [Commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — aplicar, desfazer e gravar
+* [Comandos show](/s/wiki/doc/comandos-show-YlNji1X5W4) — tudo que a caixa mostra
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — tarefas prontas, sem precisar montar do zero

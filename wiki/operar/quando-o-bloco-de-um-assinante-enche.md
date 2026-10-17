@@ -304,7 +304,7 @@ As três recusas em zero e o assinante longe do total do bloco: o problema não 
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) - `max-blocks`, `reserve`, `initial-allocation`, `block-stride`, `max-sessions` e `max-session-rate`
-* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — os assinantes perto do limite e as recusas, vistos pela NMS
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — escolher `block-size` para que isso seja raro
-* [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — quando o pool inteiro, e não um assinante, está no limite
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) - `max-blocks`, `reserve`, `initial-allocation`, `block-stride`, `max-sessions` e `max-session-rate`
+* [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb) — os assinantes perto do limite e as recusas, vistos pela NMS
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — escolher `block-size` para que isso seja raro
+* [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — quando o pool inteiro, e não um assinante, está no limite

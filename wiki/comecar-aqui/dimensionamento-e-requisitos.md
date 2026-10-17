@@ -148,7 +148,7 @@ Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a 
 
 O kernel da caixa é o do Prisma Routing: o mesmo código e a mesma configuração do kernel do Debian, recompilados, e `uname -r` termina em `-prisma`. Ficam **fora** as classes de módulo que um roteador não usa: som, Wi-Fi, Bluetooth, NFC, captura de vídeo, joystick, tela sensível ao toque, rádio amador, CAN, 802.15.4, modem celular, FireWire, sensores industriais, placas de vídeo AMD e NVIDIA dedicadas e os drivers experimentais (*staging*).
 
-**Toda placa de rede, todo controlador de disco e todo driver de virtualização,** `**vfio**` **e** `**uio**` **continuam.** Uma máquina cujo hardware de rede e de disco o Debian 12 reconhece é reconhecida aqui. Um kernel novo, inclusive uma correção de segurança dele, chega **na mídia de instalação** de uma versão nova, não pelo `apt` e não pelo pacote de atualização: o pacote troca os arquivos do produto e não traz kernel. Numa caixa já em serviço, isso significa reinstalar a partir da mídia, com o que [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) diz sobre o que a reinstalação apaga.
+**Toda placa de rede, todo controlador de disco e todo driver de virtualização,** `**vfio**` **e** `**uio**` **continuam.** Uma máquina cujo hardware de rede e de disco o Debian 12 reconhece é reconhecida aqui. Um kernel novo, inclusive uma correção de segurança dele, chega **na mídia de instalação** de uma versão nova, não pelo `apt` e não pelo pacote de atualização: o pacote troca os arquivos do produto e não traz kernel. Numa caixa já em serviço, isso significa reinstalar a partir da mídia, com o que [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) diz sobre o que a reinstalação apaga.
 
 # Se a caixa vai receber a tabela BGP completa
 
@@ -254,7 +254,7 @@ this boot:
   control plane held to 0
 ```
 
-`show system tuning advice` diz se o layout que está rodando é o que a caixa deveria ter — workers desiguais, filas que não batem, thread principal sobrando ou faltando — com a linha da VTY que muda isso, e traz uma tabela de 4 a 32 vCPUs com a divisão recomendada e os workers que o ajuste da caixa tira de cada uma. Numa VM, traz também a fixação de CPUs para o hipervisor: veja [Rodar o Prisma Routing numa máquina virtual](/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5).
+`show system tuning advice` diz se o layout que está rodando é o que a caixa deveria ter — workers desiguais, filas que não batem, thread principal sobrando ou faltando — com a linha da VTY que muda isso, e traz uma tabela de 4 a 32 vCPUs com a divisão recomendada e os workers que o ajuste da caixa tira de cada uma. Numa VM, traz também a fixação de CPUs para o hipervisor: veja [Rodar o Prisma Routing numa máquina virtual](/s/wiki/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5).
 
 ## Memória por papel: plano de controle, CGNAT e buffers
 
@@ -565,6 +565,6 @@ Self-test dizendo pronto, sem aviso de instrução ausente e sem contador de rei
 
 # Ver também
 
-* [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a configuração depois que o hardware está certo
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — onde `block-size` e o modo são escolhidos
-* [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — quando a conta acima mudar
+* [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) — a configuração depois que o hardware está certo
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — onde `block-size` e o modo são escolhidos
+* [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — quando a conta acima mudar

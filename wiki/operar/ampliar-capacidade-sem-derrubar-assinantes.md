@@ -140,7 +140,7 @@ Caixas multi-cliente têm uma terceira opção: amarrar pools a **VRFs**, para q
 
 
 :::info
-**Numa caixa que forma par com outra** (um endereço de serviço em `vrrp`), qualquer mudança de mapeamento feita numa só delas deixa as duas mapeando os assinantes de forma diferente, e o `commit` recusa também por isso até ouvir `commit diverge`. É o esperado: as duas caixas não recebem o `commit` no mesmo instante. Faça a mesma mudança na outra logo em seguida e confira com `show cgnat ha`; o procedimento está em [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic).
+**Numa caixa que forma par com outra** (um endereço de serviço em `vrrp`), qualquer mudança de mapeamento feita numa só delas deixa as duas mapeando os assinantes de forma diferente, e o `commit` recusa também por isso até ouvir `commit diverge`. É o esperado: as duas caixas não recebem o `commit` no mesmo instante. Faça a mesma mudança na outra logo em seguida e confira com `show cgnat ha`; o procedimento está em [Alta disponibilidade](/s/wiki/doc/alta-disponibilidade-Zc1pBKocic).
 
 :::
 
@@ -166,6 +166,6 @@ Cada pool listado com a definição esperada, um assinante de cada um devolvendo
 
 # Ver também
 
-* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — a aritmética que torna isso inevitável
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — a conta de endereços públicos
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — por que `commit remap` existe
+* [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — a aritmética que torna isso inevitável
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — a conta de endereços públicos
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — por que `commit remap` existe

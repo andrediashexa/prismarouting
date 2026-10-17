@@ -46,7 +46,7 @@ error: the one-line CGNAT form is gone
     'interface <name> inside', 'logging ...'
 ```
 
-Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot. Depois de atualizar, e **antes de reiniciar**, rode `save`: ele grava o que está rodando já na forma nova. [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
+Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot. Depois de atualizar, e **antes de reiniciar**, rode `save`: ele grava o que está rodando já na forma nova. [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
 
 :::
 
@@ -65,7 +65,7 @@ Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no bo
 | `no pool <nome>` |           | remove um pool |
 | `no interface <nome>` |           | desabilita CGNAT na interface (a forma antiga; hoje é `no cgnat` no bloco da interface) |
 
-Os campos de dentro de um pool estão na página [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6).
+Os campos de dentro de um pool estão na página [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6).
 
 ## Timeouts globais
 
@@ -80,7 +80,7 @@ Os campos de dentro de um pool estão na página [Configuração de pool](/doc/c
 
 Um pool pode sobrescrever esses valores (ver a página de configuração de pool). Um pool sem timeout próprio herda o global.
 
-Um nome de timeout que não é um dos quatro é recusado no prompt, com a lista dos que existem. Um valor abaixo do piso que a RFC daquele protocolo estabelece é **aplicado** e avisado no `commit`: a decisão é sua, e o aviso existe para que ela seja tomada sabendo. Os pisos, e o que quebra abaixo de cada um, estão em [Timeouts e os pisos das RFCs](/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf).
+Um nome de timeout que não é um dos quatro é recusado no prompt, com a lista dos que existem. Um valor abaixo do piso que a RFC daquele protocolo estabelece é **aplicado** e avisado no `commit`: a decisão é sua, e o aviso existe para que ela seja tomada sabendo. Os pisos, e o que quebra abaixo de cada um, estão em [Timeouts e os pisos das RFCs](/s/wiki/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf).
 
 ## Logging IPFIX
 
@@ -176,12 +176,12 @@ Um arquivo salvo por uma versão anterior, com as linhas dentro de `cgnat`, é l
 
 
 :::info
-**A placa que vai para o dataplane não se escolhe aqui.** Ela é nomeada em `system` > `dataplane` > `interface <placa>`, e `show hardware` marca qual delas carrega a rota padrão — o caminho por onde a caixa é gerenciada. Numa caixa com outra placa, a caixa recusa entregar essa; numa caixa de uma placa só, o endereço de gerência vai junto para o par que o dataplane mantém. O passo a passo está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+**A placa que vai para o dataplane não se escolhe aqui.** Ela é nomeada em `system` > `dataplane` > `interface <placa>`, e `show hardware` marca qual delas carrega a rota padrão — o caminho por onde a caixa é gerenciada. Nomear essa placa é aceito, e o `commit` diz se a entrega derruba a sessão em que você está; numa caixa de uma placa só, o endereço de gerência vai junto para o par que o dataplane mantém. O passo a passo está em [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7).
 
 :::
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — os campos de dentro do pool
-* [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7) — do zero ao primeiro assinante traduzido
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — como aplicar o que foi configurado aqui
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — os campos de dentro do pool
+* [Configurar o CGNAT passo a passo](/s/wiki/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7) — do zero ao primeiro assinante traduzido
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — como aplicar o que foi configurado aqui

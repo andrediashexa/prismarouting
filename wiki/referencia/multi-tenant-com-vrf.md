@@ -125,6 +125,6 @@ Dois pools listados, cada um com a sua VRF, e as consultas pelo endereço públi
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — `vrf` e `outside-vrf` entre os campos de mapeamento
-* [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — VRF resolve tenancy, não capacidade
-* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o índice do assinante é por pool
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — `vrf` e `outside-vrf` entre os campos de mapeamento
+* [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — VRF resolve tenancy, não capacidade
+* [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que o índice do assinante é por pool

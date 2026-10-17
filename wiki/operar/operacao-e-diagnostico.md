@@ -533,10 +533,9 @@ Não reporte como falha — são decisões registradas:
 * **Números de throughput** — bits por segundo não foram medidos em placa que o DPDK controle nativamente. O que **foi** medido é quanto um pacote custa aos nós de tradução, em ciclos de CPU. Qualquer figura em bit/s é não verificada.
 * **Log por fluxo** — recusado por projeto.
 * **Migração graciosa de pool** — daria dois mapeamentos para um assinante, e a aritmética reversa não saberia distingui-los, abrindo mão exatamente da propriedade que o modo determinístico existe para fornecer.
-* **MIB empresarial SNMP** — inativa até alguém registrar um Private Enterprise Number na IANA e configurá-lo.
 
 # Ver também
 
-* [Comandos show](/doc/comandos-show-YlNji1X5W4) — a referência de cada comando de diagnóstico
-* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — os mesmos números na NMS
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — a correção, depois do diagnóstico
+* [Comandos show](/s/wiki/doc/comandos-show-YlNji1X5W4) — a referência de cada comando de diagnóstico
+* [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb) — os mesmos números na NMS
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — a correção, depois do diagnóstico

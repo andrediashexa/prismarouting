@@ -88,7 +88,7 @@ O estado de sessão e o mapa de portas por assinante são **por worker e sem loc
 
 O equipamento resolve isso encaminhando o pacote ao worker dono do assinante, antes de traduzir — e isso é verificado sobre pacotes reais, não sobre contadores. O dono é calculado **do próprio pacote, por aritmética**: na volta, a partir do endereço público e da porta. É isso que dispensa uma tabela compartilhada entre workers.
 
-Com `cgnat-workers <n>`, em `system` > `cpu`, só os últimos `n` workers são donos de assinantes e traduzem; os outros apenas recebem pacotes da placa e os entregam ao dono. Sem esse ajuste, todo worker faz as duas coisas. A página [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) diz como escolher.
+Com `cgnat-workers <n>`, em `system` > `cpu`, só os últimos `n` workers são donos de assinantes e traduzem; os outros apenas recebem pacotes da placa e os entregam ao dono. Sem esse ajuste, todo worker faz as duas coisas. A página [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) diz como escolher.
 
 ## Em BPA, o pool é fatiado por worker
 
@@ -122,7 +122,7 @@ Isso não é otimização, é correção. Derrubar a base inteira de assinantes 
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — onde a teoria vira campo configurável
-* [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — a consequência legal do modo escolhido
-* [Quando o bloco de um assinante enche](/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — `max-blocks`, `reserve` e o que o operador vê
-* [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) — por que a fórmula dispensa sincronismo, e por que BPA não tem essa garantia
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — onde a teoria vira campo configurável
+* [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — a consequência legal do modo escolhido
+* [Quando o bloco de um assinante enche](/s/wiki/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — `max-blocks`, `reserve` e o que o operador vê
+* [Alta disponibilidade](/s/wiki/doc/alta-disponibilidade-Zc1pBKocic) — por que a fórmula dispensa sincronismo, e por que BPA não tem essa garantia

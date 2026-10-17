@@ -362,7 +362,7 @@ interface ens19
  exit
 ```
 
-O prefixo é o `nat64-prefix` de um pool NAT64 desta caixa (veja [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6)). Sem prefixo, `ipv6 nd nat64` anuncia o `64:ff9b::/96`; a linha pode repetir, um prefixo em cada. Os tamanhos aceitos são os da RFC 6052: `/32`, `/40`, `/48`, `/56`, `/64` ou `/96`.
+O prefixo é o `nat64-prefix` de um pool NAT64 desta caixa (veja [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6)). Sem prefixo, `ipv6 nd nat64` anuncia o `64:ff9b::/96`; a linha pode repetir, um prefixo em cada. Os tamanhos aceitos são os da RFC 6052: `/32`, `/40`, `/48`, `/56`, `/64` ou `/96`.
 
 O `commit check` recusa duas coisas, cada uma dizendo o que fazer:
 
@@ -516,7 +516,7 @@ interface ens19
 
 As chaves e senhas aparecem como `<set, not shown>` em `show this`, `show configuration` e `show running-config`. A configuração salva e as revisões de rollback guardam o valor de verdade, ou um rollback não conseguiria restaurá-lo.
 
-O bloco do protocolo (`router ospf`, `router ospf6`, `router isis`) está em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
+O bloco do protocolo (`router ospf`, `router ospf6`, `router isis`) está em [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
 
 ## Removendo um ajuste: `no`
 
@@ -600,7 +600,7 @@ A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o data
 | `interface`, em `system` > `dataplane` | `<placa>` | entrega esta placa ao dataplane no próximo início dele |
 | `no interface`, no mesmo nível |           | a caixa deixa de pegar placa: estado seguro, alcançável por rede |
 
-O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. Um nome que o Linux não tem é recusado na hora em que você digita, com a lista das placas que ele tem; o caso, com o que a caixa imprime, está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. Um nome que o Linux não tem é recusado na hora em que você digita, com a lista das placas que ele tem; o caso, com o que a caixa imprime, está em [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7).
 
 A placa que carrega a rota default **não** é recusada: uma caixa nova é configurada no console, e é o ajuste de boot que, no boot que entrega a placa, lê o caminho de volta por ela e recusa a placa se não conseguir lê-lo.
 
@@ -644,8 +644,8 @@ prisma> system dataplane restart
 
 # Ver também
 
-* [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o nível `cgnat`, e o que o lado de cada interface significa
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — os blocos `router ospf`, `router ospf6` e `router isis`
-* [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) — o par de caixas e o que o VRRP preserva
-* [uRPF e origens forjadas](/doc/urpf-e-origens-forjadas-1Mb4LB6Dhf) — quando usar `strict` e quando `loose`
-* [Multi-tenant com VRF](/doc/multi-tenant-com-vrf-3PDsWxfy6D) — quando cada cliente tem a própria tabela
+* [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o nível `cgnat`, e o que o lado de cada interface significa
+* [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — os blocos `router ospf`, `router ospf6` e `router isis`
+* [Alta disponibilidade](/s/wiki/doc/alta-disponibilidade-Zc1pBKocic) — o par de caixas e o que o VRRP preserva
+* [uRPF e origens forjadas](/s/wiki/doc/urpf-e-origens-forjadas-1Mb4LB6Dhf) — quando usar `strict` e quando `loose`
+* [Multi-tenant com VRF](/s/wiki/doc/multi-tenant-com-vrf-3PDsWxfy6D) — quando cada cliente tem a própria tabela

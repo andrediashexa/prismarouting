@@ -32,7 +32,7 @@ Conta rápida para o determinístico: `assinantes × block-size ÷ 64512` = quan
 
 ## 1. Instalar
 
-Dê boot pela ISO e digite `install`. Ele pergunta disco, hostname, fuso, tamanho do volume de log, rede de gerência e senha de root **antes** de escrever qualquer byte, e o disco de boot nunca aparece na lista de alvos. Os detalhes, e a instalação não assistida, estão em [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5).
+Dê boot pela ISO e digite `install`. Ele pergunta disco, hostname, fuso, tamanho do volume de log, rede de gerência e senha de root **antes** de escrever qualquer byte, e o disco de boot nunca aparece na lista de alvos. Os detalhes, e a instalação não assistida, estão em [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5).
 
 ## 2. Entrar
 
@@ -48,7 +48,7 @@ Três coisas que valem desde o primeiro comando:
 |-------|---------------|
 | Saída longa | todo `show` maior que a tela para em `--More--`: espaço mostra a próxima tela, Enter a próxima linha, `q` ou Ctrl-C param a saída e não a sessão. `\| no-more` no fim do comando mostra tudo de uma vez |
 | Ctrl-C | apaga a linha que está sendo digitada, ou interrompe o comando em curso, e volta ao prompt. Não encerra a sessão. Durante `commit`, `rollback` e o carregamento de uma configuração ele é ignorado |
-| Shell | `start shell` abre um shell no sistema, e `exit` volta para a VTY. Só para `root` e contas `prisma-admin` — ver [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) |
+| Shell | `start shell` abre um shell no sistema, e `exit` volta para a VTY. Só para `root` e contas `prisma-admin` — ver [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) |
 
 A VTY roda num container próprio, o plano de gerência, com a sua conta e o seu papel. Isso não muda nada do que você digita; está explicado na página de acesso.
 
@@ -213,7 +213,7 @@ Anote qual é a de assinantes (*inside*) e qual é a de upstream (*outside*). Co
 
 ## 5. Criar o pool
 
-Este passo e os três seguintes estão, com cada tela que a caixa mostra e a parte do roteamento que falta aqui, em [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7).
+Este passo e os três seguintes estão, com cada tela que a caixa mostra e a parte do roteamento que falta aqui, em [Configurar o CGNAT passo a passo](/s/wiki/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7).
 
 ```
 configure
@@ -313,7 +313,7 @@ show cgnat drops     o que não passou, e por quê
 
 ## E o roteamento?
 
-É configurado na mesma VTY, na mesma sessão e com o mesmo `commit`: rotas estáticas em `router static`, BGP em `router bgp`, e política de roteamento em `policy-options`. O mínimo para o CGNAT funcionar — a rota default e o anúncio do pool — está em [Configurar o CGNAT passo a passo](/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7); o BGP completo, em [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ).
+É configurado na mesma VTY, na mesma sessão e com o mesmo `commit`: rotas estáticas em `router static`, BGP em `router bgp`, e política de roteamento em `policy-options`. O mínimo para o CGNAT funcionar — a rota default e o anúncio do pool — está em [Configurar o CGNAT passo a passo](/s/wiki/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7); o BGP completo, em [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ).
 
 
 :::warning
@@ -335,6 +335,6 @@ Antes de considerar a máquina pronta:
 
 # Ver também
 
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — as tarefas que vêm depois de estar no ar
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — cada campo do pool, campo a campo
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — quando algo não funcionar
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — as tarefas que vêm depois de estar no ar
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — cada campo do pool, campo a campo
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — quando algo não funcionar
