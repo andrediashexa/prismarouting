@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.15 - a queue per PPPoE session: the plan shaped, not only policed
+
+### Added
+
 * **Per-subscriber shaping on PPPoE: a queue per session, the download
   shaped by default.** ([#610](https://github.com/andrediashexa/hexarouting/issues/610))
   docs/bng.md 0.9. VPP 26.06 has no shaper, so the dataplane now has its
@@ -101,8 +107,6 @@ version has a chance of seeing it.
   (`PppoeShaper`), and `PppoeSummary.rate_limit_download` / `_upload`.
   `lab/pppoe.sh` section 24 and `lab/pppoe-shaper.sh` (16,000 sessions,
   2,000 held at their plan, one thread and three workers) are the evidence.
-
-### Fixed
 
 ## 0.155.14 - BNG phase 1, RADIUS and IPv6 on PPPoE delivered
 
