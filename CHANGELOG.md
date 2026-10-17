@@ -79,6 +79,12 @@ version has a chance of seeing it.
 
 ### Fixed
 
+### Documentation
+
+* **docs/roadmap.md: BNG phase 1 (#597), RADIUS under `aaa` (#607) and IPv6
+  on PPPoE (#609) delivered and closed; per-subscriber shaping (#610) is the
+  next BNG item.** ([#610](https://github.com/andrediashexa/hexarouting/issues/610))
+
 ## 0.155.13 - a prefix RADIUS delegates is in the session trail
 
 ### Fixed
