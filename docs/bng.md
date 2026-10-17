@@ -16,6 +16,9 @@ Section 0.4 is what remains of phase 1. IPv6 on the sessions - IPv6CP, the
 WAN /64 by SLAAC, DHCPv6 prefix delegation, with the dataplane's PPPoE guard
 taking the CPE's RS and DHCPv6 to the control plane - is 0.8
 ([#609](https://github.com/andrediashexa/hexarouting/issues/609)).
+Per-subscriber SHAPING - a queue per session in the dataplane, the download
+shaped by default, the policer still there - is 0.9
+([#610](https://github.com/andrediashexa/hexarouting/issues/610)).
 
 **Everything from "Where every number here comes from" down is
 [#170](https://github.com/andrediashexa/hexarouting/issues/170)'s study, kept
@@ -433,7 +436,7 @@ ceiling to the limit.
 **Out of phase 1**, each a later issue: IPv6 (IPv6CP, DHCPv6-PD; built
 since, 0.8), per-
 subscriber SHAPING (VPP has no shaper, 2.2; per-subscriber POLICING is built,
-0.6), QinQ (the plugin parses one tag), IPoE (VPP has no DHCP server, 1.4),
+0.6; shaping built since, in the bpa plugin, 0.9), QinQ (the plugin parses one tag), IPoE (VPP has no DHCP server, 1.4),
 lawful intercept, HA of sessions (3.3). Disconnect and CoA are built (0.6).
 
 ### 0.5 Release
@@ -671,7 +674,8 @@ disables the feature whatever the interface was bound to).
 3. **accel-ppp's `G` was 10^7 kbit** (10 Gbit/s for "1G"), and its rates
    overflowed an int past 2.1 Gbit/s; both fixed.
 
-**What is not built:** per-subscriber SHAPING (VPP has none), a separate
+**What is not built:** per-subscriber SHAPING (VPP has none; built since in
+the bpa plugin, 0.9), a separate
 IPv6 rate (the policer is bound on ip6 too, one bucket for both families -
 0.8), and the
 policer with VPP workers: a policer is bound to the thread that first uses it
@@ -1138,6 +1142,208 @@ workers (`LAB_WORKERS=3`: 230 checks each; over IPv6 sub7's plan measured
 the bench's Debian CPE is the next reading), and how many sessions' IPv6 the
 control plane's TAP carries at scale - an RS or a Solicit is a few packets a session per renewal, as LCP's
 echoes are, and it takes the path they take.
+
+### 0.9 Per-subscriber shaping: a queue per session (#610)
+
+[#610](https://github.com/andrediashexa/hexarouting/issues/610), asked by
+the operator on 2026-10-17: the plan enforced by a **shaper** - what is past
+the rate waits instead of being dropped - and not only by #607's policer.
+VPP 26.06 has no shaper (2.2) and DPDK's hqos is gone, so it is a queueing
+discipline of this product's own, in the bpa plugin. A patch: nothing in the
+kernel, VPP or FRR pins moved, nothing the installer lays.
+
+```
+prisma# [edit pppoe] rate-limit download policer
+prisma# [edit pppoe] no rate-limit download
+```
+
+| Statement | What enforces the plan |
+|---|---|
+| none (the default) | the download by the shaper, the upload by the policer |
+| `rate-limit download shaper` / `policer` | the download |
+| `rate-limit upload shaper` / `policer` | the upload |
+
+The rate comes from where the policer's came from: Prisma's attributes,
+Cisco-AVPair, `aaa radius rate-profile`, `rate-limit default`, and a CoA,
+which changes the shaped rate on the live session and keeps its queue and
+counters. accel-ppp-ng's VPP hook (`build/accel-ppp-ng.patch`,
+`vpppolicer.c`) reads `vpp-down-limiter` / `vpp-up-limiter` from the
+generated `[shaper]` and asks the dataplane for a shaper through the binary
+API's `cli_inband` (`set bpa pppoe-shaper sw-if-index <n> down <kbit>
+queue <ms>`) instead of making a policer. A dataplane that refuses it is
+given the policer: a plan is never left unenforced. A change of either
+statement is a `pppoe` change, so the control plane restarts and every
+session redials on the new choice. The files carry format 7, so an upgraded
+box with PPPoE writes them again at its next load and its sessions redial
+once, as at every format change.
+
+**Why the download is shaped by default and the upload is not.** The
+download is what the operator asked for, and what the measurements below
+show the shaper does better. The upload, measured the same way on an input
+arc (the #610 probe, 10 Mbit/s): the policer read 9.9, 9.7 and 9.1 Mbit/s
+for one TCP flow at 0, +50 and +200 ms against the shaper's 9.6, 9.1 and
+8.5, and added no delay (ping under the flow 12.6 ms against 29.9). The
+subscriber's upload already waits in a queue - the CPE's own, in front of
+its line - and a drop here slows that sender down where its queue is. A
+queue for it on the box would hold buffers of the shared pool for traffic
+the CGNAT has not translated yet. `rate-limit upload shaper` is there for an
+operator who wants it.
+
+**The design, and what each part replaced:**
+
+* **Where it sits.** A feature on the session interface's `ip4-output` and
+  `ip6-output`, after the midchain wrote the PPPoE header, where VPP's
+  `policer output` sits: IPv4 and IPv6 share one bucket, as they do with
+  the policer. The PPPoE and Ethernet headers are not counted, so the plan
+  is the subscriber's IP rate. The upload, when it is shaped, is on
+  `ip4-unicast` and `ip6-unicast`, after shallow reassembly and before the
+  CGNAT. A session with no plan, and every interface that is not a session,
+  never meets it.
+* **One owner thread a session.** A subscriber's download arrives on the
+  worker that owns its CGNAT block (`bpa_handoff.c`), and its IPv6 wherever
+  the card's RSS put it. The first worker one of its packets reaches binds
+  the session (a compare-and-swap). Every other worker hands its packets
+  there through VPP's frame queues, as the policer does. The bucket and the
+  queue are then written by one thread and take no lock.
+* **A packet's verdict** (`bpa_pppoe_shaper.h`, tested alone by
+  `test/test_bpa_pppoe_shaper.c`). It passes at once when the queue is
+  empty and the bucket holds its length. Otherwise it waits at the tail. It
+  is dropped when the session's queue already holds `queue` ms of the rate
+  (100 ms, never under ten packets), or when the box's shapers hold their
+  share of the buffers. The bucket is 2 ms of the rate (never under two
+  packets): the queue absorbs a TCP flow's overshoot, which the policer
+  needed half a second of bucket for.
+* **The queue costs no memory but its buffers.** A waiting packet is linked
+  through its own buffer's metadata (`vnet_buffer2`'s unused words: the
+  next buffer, when it arrived, its length). A shaped session is one 237-byte
+  record a direction, whether it ever queues or not.
+* **CoDel on the queue** (RFC 8289), target 15 ms, interval 200 ms - not
+  the RFC's 5 and 100, measured below. A FIFO in front of the plan fills to
+  its cap under one TCP flow, and every other packet of the subscriber then
+  waits the whole queue.
+* **Who sends what waited.** Each thread keeps a calendar: 2048 slots of
+  100 us, each waiting session in the slot of the tick its head is due, and
+  a bitmap of the occupied slots. The sender, `bpa-pppoe-shaper-tx`, is an
+  input node that is POLLING only while its thread holds a queue and
+  DISABLED otherwise. Each turn goes through the slots that came due. A box
+  with no queue anywhere runs no node of this at all, and a turn with
+  nothing due is a clock read and a compare.
+* **The box's share of buffers.** Every queued packet holds a buffer of the
+  pool every card's receive ring draws on. The shapers together may hold a
+  quarter of it, split over the forwarding threads: 4,096 a worker on
+  prisma-bench's 7 x 16,384. Past that, a packet that would wait is dropped
+  and counted apart from a session's own full queue.
+* **A session's end.** accel-ppp's hook removes the shaper with the session.
+  VPP's pppoe plugin also sets a deleted session's interface down before it
+  hands the interface to the next session, which the plugin hears
+  (`VNET_SW_INTERFACE_ADMIN_UP_DOWN_FUNCTION`), so a control plane killed
+  with -9 leaves no shaper behind (lab/pppoe.sh asserts it). What was
+  queued is freed under the barrier.
+
+**Two cuts were measured and dropped.**
+
+* **A sender that walked every session with a queue at every turn.** Its
+  cost grows with the number of sessions held at their plan at once.
+* **A sender of VPP's `SCHED` kind, woken by VPP's own timer wheel when the
+  first slot is due, polling nothing.** With the probe's TCP flow through a
+  20 Mbit/s plan it delivered 7.8 Mbit/s. A thread whose interfaces are in
+  interrupt mode sleeps in `epoll` for as long as VPP's wheel says, and VPP
+  reads only the wheel's fast ring for that (`vlib/file.c`,
+  `tw_timer_first_expires_in_ticks`). A wake that sits in the slow ring is
+  up to 10 ms late.
+
+  The polling sender's turns cost 123 clocks each when nothing is due
+  (three workers, 17 million turns in 5 s). A worker spins that much anyway
+  on the card it polls; a main thread with no worker spins only while a
+  queue waits.
+
+**Measured, the #610 probe** (a routed path through VPP on veths,
+single-threaded, one 20 Mbit/s download plan, iperf3, one TCP flow 15 s
+unless said; "ping" is a ping across the same path while the load runs):
+
+| | TCP | retransmits | ping under 1 TCP flow | 4 flows, Jain | +50 ms | +200 ms | ping under 2x UDP |
+|---|---|---|---|---|---|---|---|
+| shaper, CoDel 15/200 (shipped) | 19.3 | 17 | 25 ms | 0.994 | 18.8 | 16.5 | 104 ms |
+| shaper, FIFO 100 ms | 19.3 | 12 | 90 ms | 0.956 | 19.0 | 17.7 | 106 ms |
+| policer, half a second (0.155.2) | 19.7 | 823 | 12 ms | 0.832 | 19.4 | 17.9 | 12 ms |
+
+The shaper's 19.3 is the plan counted in IP bytes; TCP's payload of
+20 Mbit/s of IP is 19.47. The policer's 19.7 over 15 s is the plan plus
+what its half second of bucket let through at once. CoDel's target and
+interval, the same probe:
+
+| target / interval | ping under 1 flow | 4 flows | +50 ms | +200 ms | retransmits |
+|---|---|---|---|---|---|
+| 5 / 100 ms (RFC 8289) | 20 ms | 0.993 | 17.9 | 14.1 | 32 |
+| 10 / 100 ms | 20 ms | 0.998 | 18.0 | 14.4 | 28 |
+| 15 / 200 ms | 26 ms | 0.995 | 18.9 | 16.6 | 20 |
+| 20 / 200 ms | 30 ms | 0.999 | 19.0 | 16.8 | 15 |
+| 30 / 300 ms | 39 ms | 0.986 | 19.0 | 14.7 | 10 |
+
+The queue's length as a FIFO, for the record: 25, 50, 100 and 200 ms gave
+a ping under one flow of 25, 47, 89 and 172 ms. The one flow 200 ms away
+got 8.0, 14.2, 17.7 and 17.7.
+
+**What it costs the subscriber:**
+
+* UDP past the plan is held to the plan (19.6 of 40 sent, against the
+  policer's 20.3). A burst that fits the queue arrives whole, paced at the
+  plan.
+* A sustained flood above the plan fills the queue to its cap, so the
+  subscriber's own other traffic waits up to the cap: 104 ms here, against
+  12 through the policer. CoDel cannot bring a sender that does not slow
+  down under its target; that needs a queue per flow inside the session's
+  (fair queueing), which is not built.
+* The per-flow fairness the table shows is TCP's own under CoDel, not a
+  scheduler's.
+
+**Measured, `lab/pppoe-shaper.sh`** (sub-interfaces as the sessions, VPP's
+packet generator as the traffic, a build host other labs ran on; one thread
+and three workers):
+
+| | 1 thread | 3 workers |
+|---|---|---|
+| shaping a session at 1,000 / 16,000 shaped (`set`, a batch of 500) | 11 / 13 us | 12-14 / 11-15 us |
+| removing one, at 1,000 / 16,000 | 11 / 12 us | 15 / 12-14 us |
+| main heap a shaped session | 237 bytes | 237 bytes |
+| 16,000 shaped, idle, 5 s: sender runs | 0 | 0 |
+| 2,000 sessions at twice their 256 kbit/s plan, 10 s: delivered | 517 of 512 Mbit/s | 515-516 of 512 |
+| the same through a policer each | 526 | 526 |
+| shaper (feature) clocks a packet, sessions at their plan | 270-279 | 604-834 |
+| its handoff to the owner thread | - | 1,043-1,355 |
+| the sender's clocks a packet sent | 976 | 1,842 |
+| a sender turn with nothing due | | 123 clocks |
+| policer-output clocks a packet, the same traffic | 243-275 | 447-558 |
+| the pass path (half the plan): shaper / policer | 437-457 / 414-456 | 676-1,005 / 498-668 |
+
+The three-worker figures are higher for both nodes alike. That run's
+streams were split over two workers on purpose, so that every session's
+packets reached two threads and one handed them to the other: the
+handoff's own small frames are in them.
+
+The sender's clocks a packet were taken from the `SCHED` cut above, which
+runs only when a slot is due, at 2.4 to 5.8 packets a run in this sparse
+test (2,000 sessions of 32 packets a second each). The polling sender does
+the same work per packet, plus its turns. In this test the box's buffer
+share was the limit: 2,989 a thread with one thread and 996 a worker with
+three, against 2,000 sessions each wanting fifteen packets of queue. Most
+of the excess was dropped there and counted as the box's, and the plan was
+still delivered whole.
+
+**Not measured:**
+
+* a real card at line rate and the bench's seven workers - the bench run
+  below is what decides it;
+* fair queueing inside a session;
+* the upload shaped on a real CPE;
+* how the box behaves when many subscribers hold the box's buffer share at
+  once for minutes.
+
+The bench test to run before release: 20/10 by RADIUS on `lab-rate`. Run
+one TCP flow each way, and four flows down, to the iperf3 server, and ping
+under the download. Then send UDP at 30 Mbit/s down for 10 s, then a CoA to
+50/20, and read `show pppoe session <id>`. Then repeat the TCP flows with
+`rate-limit download policer` for the comparison.
 
 ## Where every number here comes from
 
