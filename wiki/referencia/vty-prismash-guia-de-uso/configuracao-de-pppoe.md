@@ -302,7 +302,7 @@ QinQ e alta disponibilidade das sessões ainda não existem. Uma sessão é semp
 
 ## Ver também
 
-* [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o pool que traduz as sessões
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — o `prefix-inside` que cobre os endereços das sessões
-* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — a sub-interface com a VLAN de acesso
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — como aplicar o que foi configurado aqui
+* [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o pool que traduz as sessões
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — o `prefix-inside` que cobre os endereços das sessões
+* [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — a sub-interface com a VLAN de acesso
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — como aplicar o que foi configurado aqui
