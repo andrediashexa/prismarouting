@@ -43,6 +43,14 @@ decision the primary form; Cisco-AVPair's rate-limit and sub-qos-policy
 forms are read too (build/prisma_rate.c), and Prisma's wins when both are
 there. MikroTik's is not read.
 
+SHAPING (#610, docs/bng.md 0.9). VPP 26.06 has no shaper, so the download
+is by default the dataplane's own: a queue per session in the bpa plugin
+(src/plugins/bpa/bpa_pppoe_shaper.c), what is past the plan waiting instead
+of being dropped, CoDel keeping the queue short. The hook takes it from the
+same rate as the policer, from every source above and a CoA. `rate-limit
+download|upload shaper|policer` chooses each direction; the upload stays a
+policer by default (the measurements are in docs/bng.md 0.9).
+
 IPv6 (#609, docs/bng.md 0.8). `ipv6 ...` under `pppoe` turns IPv6CP on
 (`ipv6=allow`; with no `ipv6` statement it stays `deny`, as before). The
 session's WAN /64 is advertised by RA - SLAAC - out of `ipv6 prefix-pool` or
@@ -141,6 +149,15 @@ PRISMA_DICTIONARY = "/usr/share/prisma-bng/dictionary.prisma"
 #: second overflow an int (17 Gbit/s; build/accel-ppp-ng.patch moved the
 #: earlier overflow, 2.1 Gbit/s, to 64 bits).
 RATE_MAX_KBIT = 10000000
+#: How a session's plan is enforced, each way (#610, docs/bng.md 0.9): the
+#: dataplane's shaper - a queue per session - or VPP's policer. What a block
+#: with no `rate-limit download|upload` statement gets: the download shaped,
+#: the upload policed.
+LIMITERS = ("shaper", "policer")
+LIMITER_DEFAULT = {"download": "shaper", "upload": "policer"}
+#: The shaper's queue, ms of the plan: the hard cap behind CoDel, which is
+#: what UDP past the plan waits at most (bpa_pppoe_shaper.h).
+SHAPER_QUEUE_MS = 100
 _RATE = re.compile(r"^([0-9]{1,8})([KMG]?)$", re.IGNORECASE)
 
 #: A secret or password: printable ASCII with no space, and none of the
@@ -308,6 +325,10 @@ def setting_error(key, value):
         if rate_kbit(down) is None or rate_kbit(up) is None:
             return ("rate-limit default <download>/<upload>: kbit/s, or "
                     "with K, M or G, as 20M/10M; at most 10G")
+    elif key in ("rate-limit-download", "rate-limit-upload"):
+        if value not in LIMITERS:
+            return (f"rate-limit {key.rsplit('-', 1)[1]} shaper | policer: "
+                    f"a queue, or drops past the plan")
     elif key == "ac-name":
         if not _WORD.match(value):
             return f"{key}: 1-32 letters, digits, '.', '_' or '-'"
@@ -483,9 +504,25 @@ def stage(held, words):
         # before they get here (config.py); typed, they are told where.
         return aaa_mod.MOVED_SAYS
     if kw == "rate-limit":
+        if args[:1] in (["download"], ["upload"]):
+            # #610: how each direction's plan is enforced.
+            key = f"rate-limit-{args[0]}"
+            if neg:
+                if len(args) != 1:
+                    return f"no rate-limit {args[0]}"
+                s.pop(key, None)
+                return None
+            if len(args) != 2:
+                return f"rate-limit {args[0]} shaper | policer"
+            why = setting_error(key, args[1])
+            if why:
+                return why
+            s[key] = args[1]
+            return None
         if args[:1] != ["default"]:
-            return ("rate-limit default <download>/<upload>; a session's own "
-                    "comes from RADIUS, Prisma-Rate-Limit-Down and -Up")
+            return ("rate-limit default <download>/<upload> | download|upload "
+                    "shaper|policer; a session's own comes from RADIUS, "
+                    "Prisma-Rate-Limit-Down and -Up")
         key = "rate-limit-default"
         if neg:
             if len(args) != 1:
@@ -547,6 +584,9 @@ def body(held):
             out.append(f"{k} {s[k]}")
     if "rate-limit-default" in s:
         out.append(f"rate-limit default {s['rate-limit-default']}")
+    for d in ("download", "upload"):
+        if f"rate-limit-{d}" in s:
+            out.append(f"rate-limit {d} {s[f'rate-limit-{d}']}")
     out += [f"local-user {n} password {held['users'][n]}"
             for n in sorted(held["users"])]
     s6 = v6(held)
@@ -805,8 +845,18 @@ def cp_name(vlan):
 #: 6: `max-sessions` always, the limit or SESSION_LIMIT_DEFAULT, and never
 #: more than the running statistics segment holds (docs/bng.md 0.4 item 5) -
 #: a box upgraded with PPPoE and no limit gets a ceiling at its next load.
-FORMAT = "6"
+#: 7: [shaper]'s vpp-down-limiter, vpp-up-limiter and vpp-shaper-queue
+#: (#610) - a box upgraded with PPPoE has its downloads shaped from its next
+#: load, its sessions redialling once, as every format change has.
+FORMAT = "7"
 FORMAT_LINE = f"# prisma-bng format {FORMAT}"
+
+
+def limiter(held, direction):
+    """`shaper` or `policer`: what enforces the plan in `direction`
+    (download, upload) - the block's statement, or LIMITER_DEFAULT."""
+    return held["settings"].get(f"rate-limit-{direction}",
+                                LIMITER_DEFAULT[direction])
 
 
 def shaper_section(held, aaa=None):
@@ -838,7 +888,12 @@ def shaper_section(held, aaa=None):
     out = ["[shaper]", f"vendor={RATE_VENDOR}", f"attr-down={RATE_DOWN}",
            f"attr-up={RATE_UP}", "vpp-policer-type=1r2c",
            f"down-burst-factor={BURST_SECONDS}",
-           f"up-burst-factor={BURST_SECONDS}", "verbose=1"]
+           f"up-burst-factor={BURST_SECONDS}",
+           # #610: what enforces each direction (the patched hook,
+           # vpppolicer.c); always written, so the file says it.
+           f"vpp-down-limiter={limiter(held, 'download')}",
+           f"vpp-up-limiter={limiter(held, 'upload')}",
+           f"vpp-shaper-queue={SHAPER_QUEUE_MS}", "verbose=1"]
     dflt = held["settings"].get("rate-limit-default")
     if dflt:
         down, _, up = dflt.partition("/")
@@ -1234,6 +1289,80 @@ def policers(show_policer):
     return out
 
 
+#: `show bpa pppoe-shaper sw-if-index <n>`'s words for a direction's
+#: counters (src/plugins/bpa/bpa_pppoe_shaper.c bpa_shaper_show_one).
+_SHAPER_HEAD = re.compile(r"sw-if-index (\d+) (down|up) rate (\d+) kbit "
+                          r"queue (\d+) ms limit (\d+) bytes")
+_SHAPER_WORDS = ("queued", "packets", "bytes", "ms", "most", "passed",
+                 "delayed", "dropped-queue", "dropped-codel", "dropped-box",
+                 "delay-avg-us", "delay-max-us")
+
+
+def shapers(show_shaper):
+    """
+    {"down"|"up": {...}} out of the dataplane's `show bpa pppoe-shaper
+    sw-if-index <n>` (#610): a block a shaped direction, its head line
+    `<name> sw-if-index <n> down rate <kbit> kbit queue <ms> ms limit
+    <bytes> bytes ...`, then `queued <p> packets <b> bytes <ms> ms, most
+    <b> bytes`, `passed <n> delayed <n> dropped-queue <n> dropped-codel <n>
+    dropped-box <n> bytes <n>`, `delay-avg-us <n> delay-max-us <n> ...`.
+    Every count an int; a direction with no shaper absent.
+    """
+    out, cur = {}, None
+    for line in show_shaper.splitlines():
+        m = _SHAPER_HEAD.search(line)
+        if m:
+            cur = out.setdefault(m.group(2), {
+                "sw_if_index": int(m.group(1)), "kbit": int(m.group(3)),
+                "queue_ms": int(m.group(4)), "limit_bytes": int(m.group(5))})
+            continue
+        if cur is None:
+            continue
+        w = line.replace(",", " ").split()
+        if w[:1] == ["queued"] and len(w) >= 9:
+            # queued <p> packets <b> bytes <ms> ms most <b> bytes
+            for key, at in (("queued_packets", 1), ("queued_bytes", 3),
+                            ("queued_ms", 5), ("queued_bytes_max", 8)):
+                if is_number(w[at]):
+                    cur[key] = int(w[at])
+            continue
+        for i in range(0, len(w) - 1):
+            if w[i] in _SHAPER_WORDS[5:] and is_number(w[i + 1]):
+                cur[w[i].replace("-", "_")] = int(w[i + 1])
+            elif w[i] == "bytes" and is_number(w[i + 1]):
+                cur["bytes"] = int(w[i + 1])
+    return out
+
+
+def _ms(us):
+    """Microseconds as milliseconds with one decimal: "4.1"."""
+    return f"{us / 1000:.1f}"
+
+
+def shaper_rows(direction, sh):
+    """
+    `show pppoe session <id>`'s rows for a shaped direction (#610): what
+    waits now, what passed and waited and for how long, what was dropped
+    and why. Each fits 79 columns at the dataplane's widest values: a u32
+    for the queue now, a u64 for a counter.
+    """
+    word = "download" if direction == "down" else "upload"
+    lab = f"shaper {direction}"
+    return [
+        f"{lab:<14}{rate_words(sh.get('kbit', 0))}, a queue of "
+        f"{sh.get('queue_ms', 0)} ms ({word})",
+        f"{'':<14}queued now {sh.get('queued_packets', 0)} packets, "
+        f"{sh.get('queued_bytes', 0)} bytes ({sh.get('queued_ms', 0)} ms)",
+        f"{'':<14}passed at once {sh.get('passed', 0)}, delayed "
+        f"{sh.get('delayed', 0)}",
+        f"{'':<14}waited {_ms(sh.get('delay_avg_us', 0))} ms on average",
+        f"{'':<14}waited {_ms(sh.get('delay_max_us', 0))} ms at most",
+        f"{'':<14}dropped {sh.get('dropped_queue', 0)} with the queue full",
+        f"{'':<14}dropped {sh.get('dropped_codel', 0)} by CoDel, the queue "
+        f"standing",
+        f"{'':<14}dropped {sh.get('dropped_box', 0)} for the box's buffers"]
+
+
 def session_index(show_session, mac):
     """
     The sw_if_index of the VPP session whose client is `mac`, or "". By the
@@ -1252,14 +1381,16 @@ def session_index(show_session, mac):
     return ""
 
 
-def session_screen(row, sw_if_index="", pols=None):
+def session_screen(row, sw_if_index="", pols=None, shaped=None):
     """
     `show pppoe session <id>`: one session whole - what the list has no
-    room for, and its policers as VPP counts them. accel-ppp names a
-    session's policers vyos_<sw_if_index>_<kbit>_<burst>_down|up
+    room for, its policers as VPP counts them, and its shapers' queues
+    (#610, `shaped`: shapers()' reading). accel-ppp names a session's
+    policers vyos_<sw_if_index>_<kbit>_<burst>_down|up
     (session_hooks/vyos_vpp/vpppolicer.c), which is how they are found.
     """
     pols = pols or {}
+    shaped = shaped or {}
     out = [f"{'session':<14}{row['sid']}",
            f"{'user':<14}{row['username']}",
            f"{'address':<14}{row['ip'] or '-'}"]
@@ -1284,6 +1415,8 @@ def session_screen(row, sw_if_index="", pols=None):
         for n in mine:
             out.append(f"{'policer ' + d:<14}{pols[n]['conform']} packets "
                        f"passed, {pols[n]['dropped']} dropped ({word})")
+        if d in shaped:
+            out += shaper_rows(d, shaped[d])
     return out
 
 
@@ -1409,6 +1542,9 @@ def summary_screen(held, status, counts, aaa=None, states=None, trail=None,
                + (limit_words("/".join(str(rate_kbit(x))
                                        for x in dflt.split("/")))
                   if dflt else "none"))
+    # #610: what enforces it, each way.
+    out.append(f"{'':<22}download by a {limiter(held, 'download')}, "
+               f"upload by a {limiter(held, 'upload')}")
     return out
 
 

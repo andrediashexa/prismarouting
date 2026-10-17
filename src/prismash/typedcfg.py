@@ -1799,12 +1799,17 @@ PPPOE_FIELDS = ("interfaces", "gateway", "address_pools", "dns_servers",
                 "authentication", "session_limit", "mtu", "tcp_mss",
                 "ac_name", "rate_limit_default", "local_users",
                 "ipv6_enable", "ipv6_prefix_pools", "ipv6_delegated_pools",
-                "ipv6_dns_servers")
+                "ipv6_dns_servers", "rate_limit_download",
+                "rate_limit_upload")
 #: IPv6's (#609), which a SetConfig with an empty `fields` applies only when
 #: it sets one of them: a client built before them writes the block whole
 #: with all four at their defaults, and would otherwise turn the box's IPv6
 #: off without knowing it existed.
-PPPOE_IPV6_FIELDS = PPPOE_FIELDS[-4:]
+PPPOE_IPV6_FIELDS = ("ipv6_enable", "ipv6_prefix_pools",
+                     "ipv6_delegated_pools", "ipv6_dns_servers")
+#: What enforces each direction (#610), the same way and for the same
+#: reason: a client built before them would put a box back on the default.
+PPPOE_LIMITER_FIELDS = ("rate_limit_download", "rate_limit_upload")
 #: AaaConfig's, by block and field; "radius.dynamic_authorization" is the
 #: listener and its port.
 AAA_FIELDS = ("radius.servers", "radius.mode", "radius.timeout_seconds",
@@ -1856,7 +1861,9 @@ def pppoe_held_typed(held):
             "ipv6_delegated_pools": [
                 {"prefix": p, "length": int(n)}
                 for p, n in pppoe_mod.v6(held)["delegated"]],
-            "ipv6_dns_servers": list(pppoe_mod.v6(held)["dns"])}
+            "ipv6_dns_servers": list(pppoe_mod.v6(held)["dns"]),
+            "rate_limit_download": s.get("rate-limit-download", ""),
+            "rate_limit_upload": s.get("rate-limit-upload", "")}
 
 
 def aaa_typed(cfg):
@@ -1936,10 +1943,17 @@ def pppoe_lines(held, desired, fields=()):
     now = pppoe_held_typed(held)
     out = []
     masked = _mask(fields, PPPOE_FIELDS)
-    if not fields and not any(desired.get(f) for f in PPPOE_IPV6_FIELDS):
-        masked = [f for f in masked if f not in PPPOE_IPV6_FIELDS]
+    for group in (PPPOE_IPV6_FIELDS, PPPOE_LIMITER_FIELDS):
+        if not fields and not any(desired.get(f) for f in group):
+            masked = [f for f in masked if f not in group]
     for f in masked:
         want = desired.get(f)
+        if f in PPPOE_LIMITER_FIELDS:
+            d = f.rsplit("_", 1)[1]
+            if (want or "") != now[f]:
+                out.append(f"rate-limit {d} {want}" if want
+                           else f"no rate-limit {d}")
+            continue
         if f == "ipv6_enable":
             if bool(want) != now[f]:
                 out.append("ipv6 enable" if want else "no ipv6 enable")

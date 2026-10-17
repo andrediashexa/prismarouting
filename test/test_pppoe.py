@@ -976,5 +976,73 @@ check(any(x.startswith("ipv6 ") for x in s6) and all(len(x) <= 79
                                                       for x in s6),
       "summary_screen: the IPv6 rows")
 
+# #610: the shaper. What enforces each direction, the statements, the file's
+# lines, and `show bpa pppoe-shaper`'s counters read into the screen.
+hs = P.empty()
+check(P.limiter(hs, "download") == "shaper"
+      and P.limiter(hs, "upload") == "policer",
+      "limiter: with no statement, the download shaped, the upload policed")
+hs, why = staged("rate-limit download policer", "rate-limit upload shaper")
+check(why == [None, None] and P.limiter(hs, "download") == "policer"
+      and P.limiter(hs, "upload") == "shaper"
+      and "rate-limit download policer" in P.body(hs)
+      and "rate-limit upload shaper" in P.body(hs),
+      f"stage: rate-limit download|upload, written back: {P.body(hs)}")
+check(P.stage(hs, ["no", "pppoe", "rate-limit", "download"]) is None
+      and P.limiter(hs, "download") == "shaper"
+      and not any("download" in x for x in P.body(hs)),
+      "stage: no rate-limit download is the default again")
+for bad in ("rate-limit download fast", "rate-limit upload"):
+    w = P.stage(P.empty(), ["pppoe"] + bad.split())
+    check(w and "shaper | policer" in w and len(w) <= 79,
+          f"stage refuses {bad!r}: {w}")
+sec = P.shaper_section(hs)
+check("vpp-down-limiter=shaper" in sec and "vpp-up-limiter=shaper" in sec
+      and f"vpp-shaper-queue={P.SHAPER_QUEUE_MS}" in sec
+      and "vpp-down-limiter=shaper" in P.shaper_section(P.empty())
+      and "vpp-up-limiter=policer" in P.shaper_section(P.empty()),
+      f"shaper_section: the limiters, always written: {sec}")
+SHOW_SHAPER = """pppoe-shaper: 2 down 0 up shaped, 1 with a queue, buffers held 12, 4096 a thread at most
+pppoe_session3 sw-if-index 7 down rate 20000 kbit queue 100 ms limit 250000 bytes burst 5000 bytes owner 1
+  queued 12 packets 18000 bytes 7 ms, most 249984 bytes
+  passed 2935 delayed 59420 dropped-queue 3 dropped-codel 41 dropped-box 0 bytes 90143736
+  delay-avg-us 6782 delay-max-us 101210 codel on
+"""
+sh = P.shapers(SHOW_SHAPER)
+check(set(sh) == {"down"} and sh["down"]["kbit"] == 20000
+      and sh["down"]["queue_ms"] == 100 and sh["down"]["queued_packets"] == 12
+      and sh["down"]["queued_bytes"] == 18000 and sh["down"]["queued_ms"] == 7
+      and sh["down"]["queued_bytes_max"] == 249984
+      and sh["down"]["passed"] == 2935 and sh["down"]["delayed"] == 59420
+      and sh["down"]["dropped_queue"] == 3 and sh["down"]["dropped_codel"] == 41
+      and sh["down"]["dropped_box"] == 0 and sh["down"]["bytes"] == 90143736
+      and sh["down"]["delay_avg_us"] == 6782
+      and sh["down"]["delay_max_us"] == 101210,
+      f"shapers: every counter of a direction, by name: {sh}")
+check(P.shapers("pppoe-shaper: 0 down 0 up shaped") == {} and P.shapers("") == {},
+      "shapers: a session with no shaper, and no answer, are none")
+check(P._ms(6782) == "6.8" and P._ms(0) == "0.0", "_ms: microseconds as ms")
+rows = P.shaper_rows("down", sh["down"])
+check(rows[0].startswith("shaper down   20M, a queue of 100 ms (download)")
+      and any("queued now 12 packets, 18000 bytes (7 ms)" in x for x in rows)
+      and any("passed at once 2935, delayed 59420" in x for x in rows)
+      and any("waited 6.8 ms on average" in x for x in rows)
+      and any("waited 101.2 ms at most" in x for x in rows)
+      and any("dropped 3 with the queue full" in x for x in rows)
+      and any("dropped 41 by CoDel" in x for x in rows),
+      f"shaper_rows: the queue, what waited and how long, the drops: {rows}")
+big = {k: (2 ** 32 - 1 if k.startswith("queued") or k in ("kbit", "queue_ms")
+           else 2 ** 64 - 1) for k in sh["down"]}
+check(all(len(x) <= 79 for x in P.shaper_rows("up", big)),
+      f"shaper_rows: every row fits 79 columns at its widest values: "
+      f"{[len(x) for x in P.shaper_rows('up', big)]}")
+one_s = P.session_screen(P.session_rows(TABLE)[1], "7", {}, sh)
+check(any(x.startswith("shaper down") for x in one_s)
+      and not any(x.startswith("policer down") for x in one_s),
+      f"session_screen: a shaped download's rows: {one_s}")
+check(any("download by a shaper, upload by a policer" in x
+          for x in P.summary_screen(h6, "stopped", {})),
+      "summary_screen: what enforces each way")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

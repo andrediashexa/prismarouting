@@ -5082,11 +5082,16 @@ TREE["pppoe"] = {
     "mtu": ("the PPP MTU and MRU; 1492 when unset", "<576-1500>"),
     "tcp-mss": ("clamp the TCP MSS on every session", "<536-1460>"),
     "ac-name": ("the access concentrator's name in PADO", "<name>"),
-    # #607: a policer on each session, in VPP.
-    "rate-limit": ("each session's download/upload limit, a VPP policer; "
-                   "RADIUS's Prisma-Rate-Limit-Down/-Up", {
+    # #607: a limit on each session, in VPP; #610: by a shaper or a
+    # policer, each way.
+    "rate-limit": ("each session's download/upload limit; RADIUS's "
+                   "Prisma-Rate-Limit-Down/-Up", {
         "default": ("the limit of a session RADIUS gives none",
-                    "<download>/<upload>")}),
+                    "<download>/<upload>"),
+        "download": ("what enforces the download; a shaper when unset",
+                     "shaper|policer"),
+        "upload": ("what enforces the upload; a policer when unset",
+                   "shaper|policer")}),
     "local-user": ("a user and password, for a lab without RADIUS",
                    "<name> password <password>"),
     # #609: IPv6CP, the WAN /64 by RA, a delegated prefix by DHCPv6.
@@ -5108,7 +5113,9 @@ TREE["pppoe"] = {
         "tcp-mss": ("no clamp", None),
         "ac-name": ("back to prisma-routing", None),
         "rate-limit": ("a rate-limit setting", {
-            "default": ("no limit for a session RADIUS gives none", None)}),
+            "default": ("no limit for a session RADIUS gives none", None),
+            "download": ("back to a shaper", None),
+            "upload": ("back to a policer", None)}),
         "local-user": ("a local user", "<name>"),
         "ipv6": ("IPv6 off, or one IPv6 statement", {
             "enable": ("the bare enable", None),
@@ -25934,18 +25941,25 @@ class Shell:
     def pppoe_session_facts(self, sid):
         """
         One session (#607): pppoe_sessions_facts()' reading narrowed to the
-        id, its sw_if_index in the dataplane, found by its MAC, and every
-        policer the dataplane has ({name: counts}, pppoe.policers()).
+        id, its sw_if_index in the dataplane, found by its MAC, every
+        policer the dataplane has ({name: counts}, pppoe.policers()), and
+        the session's shapers (#610, pppoe.shapers()) - none read from a
+        dataplane whose plugin has no shaper.
         """
         f = self.pppoe_sessions_facts()
         rows = [r for r in f["rows"] if r["sid"].lower() == sid.lower()]
-        f.update(row=rows[0] if rows else None, sw_if_index="", policers={})
+        f.update(row=rows[0] if rows else None, sw_if_index="", policers={},
+                 shapers={})
         if rows:
             _rc, vs = self.dp.run("show pppoe session")
             f["sw_if_index"] = pppoe_mod.session_index(
                 vs if _rc == 0 else "", rows[0]["calling-sid"])
             _rc, vp = self.dp.run("show policer")
             f["policers"] = pppoe_mod.policers(vp if _rc == 0 else "")
+            if f["sw_if_index"]:
+                _rc, vh = self.dp.run("show bpa pppoe-shaper sw-if-index "
+                                      + f["sw_if_index"])
+                f["shapers"] = pppoe_mod.shapers(vh if _rc == 0 else "")
         return f
 
     def show_pppoe_session(self, sid, f):
@@ -25960,7 +25974,8 @@ class Shell:
                            "'show pppoe sessions' lists them")
         else:
             print("\n".join(pppoe_mod.session_screen(
-                f["row"], f["sw_if_index"], f["policers"])))
+                f["row"], f["sw_if_index"], f["policers"],
+                f.get("shapers"))))
 
     def pppoe_summary_facts(self):
         """

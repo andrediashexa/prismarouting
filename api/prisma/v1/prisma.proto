@@ -682,6 +682,17 @@ message PppoeConfig {
   repeated PppoeDelegatedPool ipv6_delegated_pools = 16;
   // `ipv6 dns`: up to 2 IPv6 resolvers, in RA (RDNSS) and DHCPv6.
   repeated string ipv6_dns_servers = 17;
+  // How each direction's plan is enforced (#610, docs/bng.md 0.9):
+  // "shaper" - a queue per session in the dataplane, what is past the plan
+  // waits - or "policer" - VPP's, what is past the plan is dropped. "": no
+  // statement, which is the download shaped and the upload policed. Named
+  // in SetConfig's `fields` as "rate_limit_download" and
+  // "rate_limit_upload"; like IPv6's, a SetConfig with an empty `fields`
+  // applies them only when it sets one, so a client built before them,
+  // writing the block whole, leaves the box's choice as it is. A change
+  // restarts the PPPoE control plane: every session redials.
+  string rate_limit_download = 18;
+  string rate_limit_upload = 19;
 }
 
 // An `ipv6 delegated-pool <prefix> length <length>` (#609).
@@ -1733,8 +1744,8 @@ service OperationalService {
   // `show pppoe sessions`: every session, with its user, address, MAC,
   // state, uptime, traffic and rate limit.
   rpc ListPppoeSessions(ListPppoeSessionsRequest) returns (PppoeSessions);
-  // `show pppoe session <id>`: one session, and its policers as the
-  // dataplane counts them. INVALID_ARGUMENT for an id that is not 16
+  // `show pppoe session <id>`: one session, and its policers and shapers
+  // (#610) as the dataplane counts them. INVALID_ARGUMENT for an id that is not 16
   // hexadecimal digits; NOT_FOUND for one no session has.
   rpc GetPppoeSession(GetPppoeSessionRequest) returns (PppoeSessionDetail);
   // `show pppoe summary`: the control plane's state, the sessions by state,
@@ -1811,15 +1822,48 @@ message PppoePolicer {
   uint64 dropped_packets = 3;
 }
 
+// A session's shaper, one direction (#610, docs/bng.md 0.9): `show pppoe
+// session <id>`'s `shaper down|up` rows, the dataplane's own counters since
+// the shaper was made with the session. A CoA keeps them.
+message PppoeShaper {
+  // "down" (to the subscriber) or "up" (from it).
+  string direction = 1;
+  // The plan, kbit/s, and the queue's cap in ms of it.
+  uint32 rate_kbit = 2;
+  uint32 queue_ms = 3;
+  // The queue now: packets, bytes, and how long the last of them will wait.
+  uint32 queued_packets = 4;
+  uint32 queued_bytes = 5;
+  uint32 queued_ms = 6;
+  // The most bytes it has held.
+  uint32 queued_bytes_max = 7;
+  // Packets within the plan, sent at once; past it, queued and sent.
+  uint64 passed_packets = 8;
+  uint64 delayed_packets = 9;
+  // Dropped: the session's queue full; by CoDel, the queue standing above
+  // its target; for the box's buffers, every one the shapers may hold held.
+  uint64 dropped_queue_packets = 10;
+  uint64 dropped_codel_packets = 11;
+  uint64 dropped_box_packets = 12;
+  // Bytes sent, IP - the PPPoE and Ethernet headers not counted.
+  uint64 bytes = 13;
+  // How long a delayed packet waited, microseconds: on average, at most.
+  uint64 delay_avg_us = 14;
+  uint32 delay_max_us = 15;
+}
+
 message PppoeSessionDetail {
   PppoeSession session = 1;
   // The session interface's index in the dataplane; 0 when it was not
   // found there (then no policer is read).
   uint32 sw_if_index = 2;
-  // One per direction the session is limited in; none for no limit.
+  // One per direction the session is limited in BY A POLICER; none for no
+  // limit, or a direction shaped (#610).
   repeated PppoePolicer policers = 3;
   // `show pppoe session <id>`, verbatim.
   string text = 4;
+  // One per direction the session is limited in BY A SHAPER (#610).
+  repeated PppoeShaper shapers = 5;
 }
 
 message GetPppoeSummaryRequest {}
@@ -1892,6 +1936,10 @@ message PppoeSummary {
   bool ipv6 = 28;
   repeated string ipv6_prefix_pools = 29;
   repeated PppoeDelegatedPool ipv6_delegated_pools = 30;
+  // What enforces each direction's plan (#610): "shaper" or "policer" -
+  // the statement, or the default it stands for; never "".
+  string rate_limit_download = 31;
+  string rate_limit_upload = 32;
 }
 
 message ListPppoeHistoryRequest {

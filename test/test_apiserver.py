@@ -1920,5 +1920,18 @@ _u = A.progress_pb(_UPB, {"phase": "failed", "message": "error: x"}, output="err
 check(_u.phase == "FAILED" and _u.diag is not None and _u.diag.reason == 14,
       "progress_pb: a FAILED carries its diagnostics")
 
+# #610: a session's shapers as PppoeShaper's fields, down first.
+_sf = A.pppoe_shaper_fields({"up": {"kbit": 10000}, "down": {
+    "kbit": 20000, "queue_ms": 100, "queued_packets": 3, "queued_bytes": 4500,
+    "queued_ms": 1, "queued_bytes_max": 9000, "passed": 10, "delayed": 20,
+    "dropped_queue": 1, "dropped_codel": 2, "dropped_box": 3, "bytes": 99,
+    "delay_avg_us": 1500, "delay_max_us": 9000}})
+check([s["direction"] for s in _sf] == ["down", "up"]
+      and _sf[0]["rate_kbit"] == 20000 and _sf[0]["delayed_packets"] == 20
+      and _sf[0]["dropped_codel_packets"] == 2
+      and _sf[0]["dropped_box_packets"] == 3 and _sf[0]["delay_max_us"] == 9000
+      and _sf[1]["passed_packets"] == 0 and A.pppoe_shaper_fields(None) == [],
+      f"pppoe_shaper_fields: each direction's counters, down first: {_sf}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
