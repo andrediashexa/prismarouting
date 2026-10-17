@@ -232,9 +232,9 @@ O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatór
 
 # Ver também
 
-* [Montar um par ativo/standby](/doc/montar-um-par-ativostandby-CkNb7AvtnG) — os passos, na ordem, com o que conferir em cada um
-* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
-* [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — o outro lugar onde configuração idêntica importa
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — *Fazer manutenção numa caixa que faz par*
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — a recusa `commit diverge` por inteiro
-* [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) — o estado de cada componente
+* [Montar um par ativo/standby](/s/wiki/doc/montar-um-par-ativostandby-CkNb7AvtnG) — os passos, na ordem, com o que conferir em cada um
+* [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que a fórmula dispensa sincronismo
+* [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — o outro lugar onde configuração idêntica importa
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — *Fazer manutenção numa caixa que faz par*
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — a recusa `commit diverge` por inteiro
+* [Prisma Routing — visão geral](/s/wiki/doc/prisma-routing-visao-geral-cNtWoccoy5) — o estado de cada componente

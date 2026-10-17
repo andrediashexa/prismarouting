@@ -123,6 +123,24 @@
 #     one;
 #   * an IPv4-only session on the interface an IPv6 session left gets IPv6
 #     dropped again.
+# and per-subscriber SHAPING (#610, docs/bng.md 0.9), section 24, on the
+# block with no `rate-limit download` statement - the default; sections 12
+# and 13 are the policer's, the block saying `rate-limit download policer`:
+#   * the download by the dataplane's shaper on the session's IPv4 and IPv6
+#     output, the upload by the policer, from Prisma's attributes and from
+#     Cisco-AVPair alike;
+#   * one TCP flow holds the plan with few retransmits; a ping under it
+#     waits what CoDel keeps, not the whole queue; one flow 200 ms away
+#     still gets 70%;
+#   * a burst within the queue arrives whole, paced at the plan; UDP at twice
+#     the plan delivers exactly the plan, the rest dropped by the queue, and
+#     a ping under it waits at most the queue;
+#   * show pppoe session shows the queue, what waited and for how long;
+#   * a CoA changes the shaped rate on the live session, its counters kept;
+#   * a control plane killed with -9 leaves no shaper behind;
+#   * through the API: the session's shapers, what enforces each way, and a
+#     SetConfig that puts the download policer back; `no pppoe` leaves no
+#     shaper in the dataplane.
 MODE=${1:-on}
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
@@ -391,6 +409,22 @@ POL0=$(vppctl show policer pools 2>/dev/null | tr -d '\r' | sed -n 's/.*policers
 vppctl set interface state host-acc0.100 up
 
 # The configuration as an operator types it, read by the VTY from its input.
+# `rate-limit download policer` (#610): sections 12 and 13 are the policer's
+# evidence, each way, as an operator keeps it; the default - the download
+# by the dataplane's shaper - is section 24's, on the same block without it.
+PPPOE_BLOCK='pppoe
+interface host-acc0
+interface host-acc0.100
+gateway 100.64.0.1
+address-pool 100.64.0.10-100.64.0.200
+dns 8.8.8.8
+dns 1.1.1.1
+tcp-mss 1452
+rate-limit download policer
+ipv6 prefix-pool 2001:db8:100::/48
+ipv6 delegated-pool 2001:db8:200::/40 length 56
+ipv6 dns 2001:4860:4860::8888
+exit'
 {
   echo configure
   printf 'nat\ncgnat\npool lab\nprefix-inside 100.64.0.0/22\n'
@@ -416,20 +450,7 @@ exit
 exit
 V
   if [ "$MODE" != off ]; then
-    cat <<'V'
-pppoe
-interface host-acc0
-interface host-acc0.100
-gateway 100.64.0.1
-address-pool 100.64.0.10-100.64.0.200
-dns 8.8.8.8
-dns 1.1.1.1
-tcp-mss 1452
-ipv6 prefix-pool 2001:db8:100::/48
-ipv6 delegated-pool 2001:db8:200::/40 length 56
-ipv6 dns 2001:4860:4860::8888
-exit
-V
+    echo "$PPPOE_BLOCK"
   fi
   # SNMP (#597), in both modes: the agent's prBng answers a box with no
   # PPPoE too, and `off` reads what it says then.
@@ -1726,6 +1747,9 @@ echo "$LOG_EXIT" | sed 's/^/  /'
 echo "$LOG_RADIUS" | sed 's/^/  /'
 echo "$LOG_ASKED" | sed 's/^/  /'
 cat /run/prisma-routing/bng/runs 2>/dev/null | sed 's/^/  runs: /'
+# What the record is compared with, counted when it was read: section 24's
+# restarts come after it.
+RUNS21=$(wc -l < /run/prisma-routing/bng/runs 2>/dev/null || echo 0)
 # A sentence as the record holds it, unfolded: `show log` folds at 79.
 REC=$(python3 -c 'import json, sys
 for l in open("/var/log/prisma-routing/events.log"):
@@ -1733,6 +1757,187 @@ for l in open("/var/log/prisma-routing/events.log"):
     print(e.get("kind", ""), e.get("component") or e.get("affects", ""),
           e.get("cause", ""), "|", e["text"])' 2>/dev/null)
 echo "$REC" | grep -E "^(start|exit|radius|asked)" | sed 's/^/  record: /'
+
+echo
+echo "=========== 24. SHAPING: A QUEUE PER SESSION, THE DEFAULT (#610, docs/bng.md 0.9) ==========="
+# Sections 12 and 13 ran each plan as VPP's policer - the block said
+# `rate-limit download policer`. Here it says nothing, which is the default:
+# the download by the dataplane's shaper (src/plugins/bpa/bpa_pppoe_shaper.c,
+# a queue per session), the upload by the policer. At the end of the lab,
+# after `no pppoe` (section 11) and the log's reading (section 21): its
+# restarts would otherwise be among the control plane's runs those count.
+# The CPEs never stopped dialling and come back. sub7 (Prisma's attributes,
+# 20/10, dual-stack) is the subscriber; sub3 has its plan in Cisco-AVPair.
+if [ "$MODE" != off ]; then
+  { echo configure; echo "$PPPOE_BLOCK" | grep -v '^rate-limit download'; echo commit; } \
+    | $HX > /tmp/shape-commit.txt 2>&1
+fi
+grep -o "pppoe: [a-z, ]*" /tmp/shape-commit.txt | sed 's/^/  commit: /'
+W7S=$(wait_user sub7 90); W3S=$(wait_user sub3 90); wait_user sub2 60 > /dev/null
+echo "  sub7 up after $W7S s, sub3 after $W3S s"
+LIMITERS=$(grep -E '^vpp-(down|up)-limiter=|^vpp-shaper-queue=' /etc/prisma-routing/bng/accel-ppp.conf | tr '\n' ' ')
+echo "  accel-ppp.conf: $LIMITERS"
+# sess_if <mac> - "<sw_if_index> <name>" of the VPP session of that client
+sess_if() {
+  _i=$(vppctl show pppoe session < /dev/null | tr -d '\r' \
+       | awk -v m="$1" '/sw-if-index/ {for (i = 1; i <= NF; i++) if ($i == "sw-if-index") idx = $(i + 1)}
+                      index($0, "client-mac " m) {print idx; exit}')
+  _n=$(vppctl show interface < /dev/null | tr -d '\r' | awk -v i="${_i:-x}" '/^[^ ]/ && $2 == i {print $1; exit}')
+  echo "${_i:-none} ${_n:-none}"
+}
+set -- $(sess_if 02:aa:00:00:00:07); SIF7=$1; SNAME7=$2
+set -- $(sess_if 02:aa:00:00:00:03); SIF3=$1
+FEAT7=$(vppctl show interface features "$SNAME7" 2>/dev/null | tr -d '\r')
+SH7=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF7" | tr -d '\r')
+SH3=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF3" | tr -d '\r')
+echo "  sub7 is $SNAME7 (sw_if_index $SIF7); its shaper:"
+echo "$SH7" | sed 's/^/    /'
+echo "  sub3 (Cisco-AVPair): $(echo "$SH3" | grep -o 'down rate [0-9]* kbit')"
+OUT7=$(echo "$FEAT7" | sed -n '/^ip4-output:/,/^[a-z0-9-]*:$/p')
+OUT76=$(echo "$FEAT7" | sed -n '/^ip6-output:/,/^[a-z0-9-]*:$/p')
+IN7=$(echo "$FEAT7" | sed -n '/^ip4-unicast:/,/^[a-z0-9-]*:$/p')
+# bwr <n> [-R] - "<Mbit/s> <retransmits>" of one TCP flow, as bw()
+bwr() {
+  _ppp=$(ip netns exec "s$1" ip -o -4 addr show 2>/dev/null | awk '$2 ~ /^ppp/ {print $2; exit}')
+  ip netns exec "s$1" ip route replace default dev "${_ppp:-ppp0}" 2>/dev/null
+  ip netns exec inet iperf3 -s -1 -B 200.150.0.2 > /dev/null 2>&1 &
+  _isp=$!
+  sleep 1
+  timeout 45 ip netns exec "s$1" iperf3 -c 200.150.0.2 -t 15 -J ${2:-} 2>/dev/null \
+    | python3 -c 'import json, sys
+try:
+    e = json.load(sys.stdin)["end"]
+    print(round(e["sum_received"]["bits_per_second"] / 1e6, 1), e["sum_sent"].get("retransmits", "?"))
+except Exception:
+    print(0, "?")'
+  kill "$_isp" 2>/dev/null; wait "$_isp" 2>/dev/null
+}
+# under <n> <what> - sub<n>'s ping to the internet's average, ms, while
+# <what> runs from sub<n>: "tcp" one TCP download, "udp <Mbit/s>" a UDP one
+under() {
+  ip netns exec inet iperf3 -s -1 -B 200.150.0.2 > /dev/null 2>&1 &
+  _isp=$!
+  sleep 1
+  if [ "$2" = tcp ]; then
+    timeout 30 ip netns exec "s$1" iperf3 -c 200.150.0.2 -t 10 -R > /dev/null 2>&1 &
+  else
+    timeout 30 ip netns exec "s$1" iperf3 -c 200.150.0.2 -u -b "${3}M" -l 1400 -t 10 -R > /dev/null 2>&1 &
+  fi
+  _ip=$!
+  sleep 4
+  ip netns exec "s$1" ping -c 30 -i 0.1 200.150.0.2 2>/dev/null | tail -1 | awk -F/ '{print int($5)}'
+  wait "$_ip" 2>/dev/null
+  kill "$_isp" 2>/dev/null; wait "$_isp" 2>/dev/null
+}
+set -- $(bwr 7 -R); DOWN7S=$1; RETX7S=$2
+set -- $(bwr 7); UP7S=$1
+echo "  sub7, 20M down by the shaper, 10M up by the policer: ${DOWN7S} down (${RETX7S} retransmits), ${UP7S} up"
+LAT_TCP=$(under 7 tcp)
+echo "  sub7's ping to the internet under its own TCP download: ${LAT_TCP:-?} ms"
+ip netns exec inet tc qdisc replace dev wanp root netem delay 200ms
+LONG7=$(bw 7 -R)
+ip netns exec inet tc qdisc del dev wanp root 2>/dev/null
+echo "  sub7 over a 200 ms longer path, one TCP flow down: ${LONG7}"
+# A BURST WITHIN THE QUEUE: 120 datagrams of 1400 bytes (168,000 of the
+# queue's 250,000 bytes) sent back to back down sub7's session. A queue
+# takes them all and sends them at the plan - the last ~67 ms after the
+# first; a policer with an empty bucket would drop past it.
+cat > /tmp/burst-srv.py <<'S'
+import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("200.150.0.2", 7777)); s.settimeout(20)
+_, peer = s.recvfrom(64)
+time.sleep(0.5)
+for i in range(120):
+    s.sendto(i.to_bytes(4, "big") + b"b" * 1396, peer)
+S
+cat > /tmp/burst-cli.py <<'S'
+import socket, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(3)
+s.sendto(b"go", ("200.150.0.2", 7777))
+got, first, last = 0, 0, 0
+try:
+    while True:
+        s.recv(2048)
+        now = time.time()
+        first = first or now
+        last = now
+        got += 1
+except socket.timeout:
+    pass
+print(got, int((last - first) * 1000) if got else 0)
+S
+ip netns exec inet python3 /tmp/burst-srv.py &
+_bs=$!
+sleep 1
+BEFORE7=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF7" | tr -d '\r' | sed -n 's/.* delayed \([0-9]*\) .*/\1/p')
+set -- $(ip netns exec s7 python3 /tmp/burst-cli.py); BURST_GOT=$1; BURST_MS=$2
+wait "$_bs" 2>/dev/null
+AFTER7=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF7" | tr -d '\r' | sed -n 's/.* delayed \([0-9]*\) .*/\1/p')
+echo "  a burst of 120 datagrams: ${BURST_GOT:-?} arrived, over ${BURST_MS:-?} ms; delayed ${BEFORE7:-?} -> ${AFTER7:-?}"
+UDP7=$(udp_bw 7 40)
+LAT_UDP=$(under 7 udp 40)
+SH7U=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF7" | tr -d '\r')
+echo "  UDP at 40 Mbit/s down through the 20M shaper: ${UDP7} received; ping under it ${LAT_UDP:-?} ms"
+echo "$SH7U" | sed 's/^/    /'
+DQ7=$(echo "$SH7U" | sed -n 's/.* dropped-queue \([0-9]*\) dropped-codel \([0-9]*\) .*/\1 \2/p')
+DETAIL7S=$($HX -c "show pppoe session $(sid_of sub7)" 2>&1)
+echo "$DETAIL7S" | sed 's/^/  /'
+DOWN76=$(bw6 7 -R)
+echo "  sub7 over IPv6, through the same shaper: ${DOWN76} down"
+SID7S=$(sid_of sub7)
+DLY_BEFORE=$(echo "$SH7U" | sed -n 's/.* delayed \([0-9]*\) .*/\1/p')
+COA_S=$(dae coa daesecret 'User-Name = "sub7"\nPrisma-Rate-Limit-Down = 50000\nPrisma-Rate-Limit-Up = 20000\n')
+echo "$COA_S" | grep -E "Received|No reply" | sed 's/^/  CoA to 50M\/20M: /'
+sleep 1
+SH7C=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF7" | tr -d '\r')
+SID7C=$(sid_of sub7)
+DOWN7C=$(bw 7 -R)
+DLY_AFTER=$(vppctl show bpa pppoe-shaper sw-if-index "$SIF7" | tr -d '\r' | sed -n 's/.* delayed \([0-9]*\) .*/\1/p')
+echo "  after it: $(echo "$SH7C" | grep -o 'down rate [0-9]* kbit'); ${DOWN7C} down; session ${SID7C:-gone} (was ${SID7S:-?}); delayed ${DLY_BEFORE:-?} -> ${DLY_AFTER:-?}"
+DOWN3S=$(bw 3 -R)
+echo "  sub3, Cisco-AVPair's 30M by the shaper: ${DOWN3S} down"
+# A CONTROL PLANE KILLED WITH -9 LEAVES NO SHAPER: the next one deletes the
+# dead one's sessions, VPP's pppoe plugin sets each interface down before it
+# hands it to the next session, and the shaper goes with it.
+APID=$(cat /run/prisma-routing/bng/accel-pppd.pid 2>/dev/null)
+[ -n "$APID" ] && kill -9 "$APID" 2>/dev/null
+echo "  accel-pppd ${APID:-?} killed"
+sleep 5
+wait_user sub7 90 > /dev/null; wait_user sub3 90 > /dev/null; wait_user sub2 60 > /dev/null
+sleep 3
+SHAPED_N=$(vppctl show bpa pppoe-shaper | tr -d '\r' | head -1 | awk '{print $2}')
+LIMITED_N=$($HX -c "show pppoe sessions" 2>&1 | awk 'length($1) == 16 && $NF ~ /:/ && $4 ~ /\// && $4 !~ /^none\// {n++} END {print n + 0}')
+echo "  after the restart: $SHAPED_N session(s) shaped, $LIMITED_N with a download limit"
+# The API: the queue's counters as the screen's, what enforces each way, and
+# the policer back by a SetConfig (lab/api_pppoe_check.py `shaper`).
+python3 /src/src/prismash/doors.py --serve > /tmp/doors24.log 2>&1 &
+DOORS24=$!
+export PRISMA_BNG_CTL=/usr/lib/prisma-routing/prisma-bng
+for _i in 1 2 3 4 5 6 7 8 9 10; do
+  [ -S /run/prisma-routing/doors.sock ] && break; sleep 0.5
+done
+sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50557 \
+  --dir $C/box --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver24.log 2>&1 &
+_n=0; until grep -q "prisma.v1 on" /tmp/apiserver24.log || [ $_n -ge 30 ]; do
+  sleep 0.5; _n=$((_n + 1)); done
+API24=$(python3 lab/api_pppoe_check.py /tmp/apistubs $C 127.0.0.1:50557 "$HX" shaper 2>&1)
+printf '%s\n' "$API24" | sed 's/^/  /'
+for _p in $(pgrep -x sleep); do
+  [ "$(tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null)" = "sleep 900 " ] && kill "$_p"
+done
+kill "$DOORS24" 2>/dev/null; wait "$DOORS24" 2>/dev/null
+rm -f /run/prisma-routing/doors.sock
+export PRISMA_BNG_CTL=$PRISMA_BNG_CTL_LAB
+set -- $(sess_if 02:aa:00:00:00:07); SIF7P=$1; SNAME7P=$2
+FEAT7P=$(vppctl show interface features "$SNAME7P" 2>/dev/null | tr -d '\r')
+DOWN7P=$(bw 7 -R)
+echo "  the download policed again (by the API's commit): ${DOWN7P} down"
+printf 'configure\nno pppoe\ncommit\n' | $HX > /dev/null 2>&1
+sleep 5
+SHAPE_END=$(vppctl show bpa pppoe-shaper | tr -d '\r' | head -1)
+echo "  no pppoe: $SHAPE_END"
 
 echo
 cat /tmp/radius1.log /tmp/radius2.log > /tmp/radius.log
@@ -2003,7 +2208,7 @@ expect_in "  the format upgrade's restart, asked by the load" \
 expect_in "  and no pppoe: the commit asked, the container stopped" \
   "asked bng operator | PPPoE removed by a commit" "$REC"
 expect "  each start and exit the container recorded is in the record once" \
-  test "$(echo "$REC" | grep -cE '^(start|exit) bng')" -eq "$(wc -l < /run/prisma-routing/bng/runs)"
+  test "$(echo "$REC" | grep -cE '^(start|exit) bng')" -eq "${RUNS21:-0}"
 expect_in "  show log kind exit lists them" "exited with code 1" "$LOG_EXIT"
 expect_in "RADIUS: server 1 failed, in show log" \
   "radius   | RADIUS server 127.0.0.1 failed" "$REC"
@@ -2104,5 +2309,62 @@ expect "  sub8, IPv4-only on the interface its IPv6 session left (${I8:-?} -> ${
 expect "API: ListPppoeSessions carries sub7's IPv6 prefixes as the screen shows them" a22 sessions-ipv6
 expect "  GetConfig and GetPppoeSummary the IPv6 pools" a22 config-ipv6
 expect "  ListPppoeHistory names sub7 for an address of its delegated prefix, with when" a22 history-ipv6
+a24() { printf '%s\n' "$API24" | grep -q "^RESULT $1 ok"; }
+expect_in "SHAPING (#610): the block's default is the download shaped, the upload policed" \
+  "vpp-down-limiter=shaper vpp-up-limiter=policer vpp-shaper-queue=100" "$LIMITERS"
+expect_in "  sub7's download by the shaper, on its IPv4 output" "bpa-pppoe-shaper-down" "$OUT7"
+expect_not_in "    and no download policer there" "policer-output" "$OUT7"
+expect_in "    and on its IPv6 output" "bpa-pppoe-shaper-down" "$OUT76"
+expect_in "    its upload still a policer" "policer-input" "$IN7"
+expect_in "  the dataplane holds its plan: 20000 kbit, a 100 ms queue" "down rate 20000 kbit queue 100 ms" "$SH7"
+expect_in "  sub3's Cisco-AVPair plan is shaped too: 30000 kbit" "down rate 30000 kbit" "$SH3"
+expect "  one TCP flow down holds the plan, within 10% of 20M (${DOWN7S})" within "${DOWN7S:-0}" 20
+expect "    with few retransmits: what waits is not dropped (${RETX7S})" \
+  sh -c "test '${RETX7S:-x}' -ge 0 2>/dev/null && test '${RETX7S:-x}' -lt 200"
+expect "    and the upload, policed, within 10% of 10M (${UP7S})" within "${UP7S:-0}" 10
+expect "  a ping under that download waits the queue CoDel keeps, not the queue's 100 ms (${LAT_TCP:-?} ms)" \
+  sh -c "test '${LAT_TCP:-999}' -le 60"
+# 15.2 of 20 (76%) single-threaded and with three workers, where the
+# policer of section 12 read 18.0: CoDel drops a long path's one flow into
+# a smaller window than a half-second bucket lets it keep (docs/bng.md 0.9).
+# The bound is under what was measured by the run-to-run spread, and over
+# 5/100 ms CoDel's 14.1 - the setting this rules out.
+expect "  one TCP flow over a 200 ms longer path gets 70% of the plan down (${LONG7} of 20)" \
+  python3 -c "import sys; sys.exit(not float('${LONG7:-0}') >= 14.5)"
+expect "  a burst of 120 datagrams within the queue arrives whole (${BURST_GOT:-0} of 120)" \
+  test "${BURST_GOT:-0}" -eq 120
+expect "    paced at the plan, not at once: over ${BURST_MS:-0} ms (168,000 bytes at 20M: about 67)" \
+  test "${BURST_MS:-0}" -ge 40
+expect "    delayed, as the shaper counts it (${BEFORE7:-?} -> ${AFTER7:-?})" \
+  sh -c "test \$(( ${AFTER7:-0} - ${BEFORE7:-0} )) -ge 100"
+expect "  UDP at twice the plan: exactly the plan arrives, within 10% (${UDP7})" within "${UDP7:-0}" 20
+expect "    what is past it dropped by the queue (full, or CoDel), not by a bucket (${DQ7:-?})" \
+  sh -c "set -- ${DQ7:-0 0}; test \$((\$1 + \$2)) -gt 0"
+expect "    and a ping under it waits at most the queue, 100 ms (${LAT_UDP:-?} ms)" \
+  sh -c "test '${LAT_UDP:-999}' -le 150"
+expect "  show pppoe session: the shaper's plan and queue" \
+  sh -c "echo \"\$1\" | grep -q '^shaper down  *20M, a queue of 100 ms (download)'" _ "$DETAIL7S"
+expect "    and what waited, and for how long" \
+  sh -c "echo \"\$1\" | grep -qE '^ +passed at once [0-9]+, delayed [1-9][0-9]*\$' && echo \"\$1\" | grep -qE '^ +waited [0-9.]+ ms on average\$'" _ "$DETAIL7S"
+expect "  over IPv6, the same plan: within 10% of 20M (${DOWN76})" within "${DOWN76:-0}" 20
+expect_in "  a CoA is ACKed" "Received CoA-ACK" "$COA_S"
+expect_in "    and changes the shaped rate: 50000 kbit" "down rate 50000 kbit" "$SH7C"
+expect "    on the same session, no redial" test "${SID7C:-x}" = "${SID7S:-y}"
+expect "    keeping its counters (${DLY_BEFORE:-?} -> ${DLY_AFTER:-?})" \
+  sh -c "test '${DLY_AFTER:-0}' -ge '${DLY_BEFORE:-1}'"
+expect "    download now within 10% of 50M (${DOWN7C})" within "${DOWN7C:-0}" 50
+expect "  sub3's Cisco plan holds, within 10% of 30M (${DOWN3S})" within "${DOWN3S:-0}" 30
+expect "  accel-pppd killed with -9: no shaper left on an interface but the limited sessions' ($SHAPED_N shaped, $LIMITED_N limited)" \
+  sh -c "test '${SHAPED_N:-x}' = '${LIMITED_N:-y}' && test '${LIMITED_N:-0}' -ge 2"
+expect "API: GetPppoeSession's shapers are show pppoe session's, its policers the upload's" a24 session-shapers
+expect "  GetPppoeSummary says what enforces each way, as the screen does" a24 summary-limiters
+expect "  GetConfig reads the default as no statement" a24 config-limiters-default
+expect "  SetConfig rate_limit_download policer, committed: the session redials policed each way" a24 switch-to-policer
+expect_in "  the download policer back on sub7's output" "policer-output" "$FEAT7P"
+expect_not_in "    and no shaper" "bpa-pppoe-shaper" "$FEAT7P"
+expect "    within 10% of 20M (${DOWN7P})" within "${DOWN7P:-0}" 20
+expect_in "  no pppoe: no shaper left in the dataplane" \
+  "pppoe-shaper: 0 down 0 up shaped, 0 with a queue, buffers held 0" "$SHAPE_END"
+expect_not_in "  and the API server raised nothing" "Traceback" "$(cat /tmp/apiserver24.log 2>/dev/null)"
 
 verdict

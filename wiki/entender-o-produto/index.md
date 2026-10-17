@@ -4,9 +4,9 @@ Por que o produto é assim. Leia quando precisar decidir arquitetura ou avaliar 
 
 | Página | Responde |
 |--------|----------|
-| [Prisma Routing — visão geral](/doc/prisma-routing-visao-geral-cNtWoccoy5) | O que é o produto, do que é feito e o que ainda não existe |
-| [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) | Determinístico (bloco por fórmula) e BPA (bloco alocado sob demanda): a diferença, a conta e o que cada um exige |
-| [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) | O par ativo/standby com VRRP: como montar, o que a troca preserva e o que ela derruba |
+| [Prisma Routing — visão geral](/s/wiki/doc/prisma-routing-visao-geral-cNtWoccoy5) | O que é o produto, do que é feito e o que ainda não existe |
+| [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) | Determinístico (bloco por fórmula) e BPA (bloco alocado sob demanda): a diferença, a conta e o que cada um exige |
+| [Alta disponibilidade](/s/wiki/doc/alta-disponibilidade-Zc1pBKocic) | O par ativo/standby com VRRP: como montar, o que a troca preserva e o que ela derruba |
 
 # A ideia em uma frase
 
@@ -14,4 +14,4 @@ O CGNAT convencional registra cada fluxo e o log vira o item mais caro do sistem
 
 # Ver também
 
-* [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — a consequência prática dessa escolha
+* [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — a consequência prática dessa escolha

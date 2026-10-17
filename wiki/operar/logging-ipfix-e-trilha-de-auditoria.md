@@ -192,7 +192,7 @@ O monitor só lê: não para, não atrasa e não tira nada da exportação. Se e
 
 ## Bloco preso por encaminhamento de porta também é evento
 
-Um [encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) num pool dinâmico prende o bloco do assinante enquanto o forward existir. Prender gera uma **alocação** e soltar gera uma **liberação**, como qualquer outro bloco: em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado sem registro é um mapeamento que ninguém consegue atribuir depois.
+Um [encaminhamento de porta](/s/wiki/doc/encaminhamento-de-porta-epIZfdmzU3) num pool dinâmico prende o bloco do assinante enquanto o forward existir. Prender gera uma **alocação** e soltar gera uma **liberação**, como qualquer outro bloco: em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado sem registro é um mapeamento que ninguém consegue atribuir depois.
 
 Um segundo forward dentro de um bloco que já está preso **não** gera outro registro — o evento é do bloco, não do forward. Duas alocações do mesmo bloco sem uma liberação entre elas é exatamente a lacuna que faz uma consulta futura responder errado.
 
@@ -531,7 +531,7 @@ Entradas escritas antes da corrente existir continuam legíveis e são reportada
 
 # Ver também
 
-* [Comandos show](/doc/comandos-show-YlNji1X5W4) — como ler `show cgnat translation` e o que ele prova
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — o roteiro para atender uma ordem judicial
-* [Encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) — o bloco preso por um forward, e por que ele é uma alocação
-* [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — o que o volume de log guarda, e o que uma reinstalação apaga
+* [Comandos show](/s/wiki/doc/comandos-show-YlNji1X5W4) — como ler `show cgnat translation` e o que ele prova
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — o roteiro para atender uma ordem judicial
+* [Encaminhamento de porta](/s/wiki/doc/encaminhamento-de-porta-epIZfdmzU3) — o bloco preso por um forward, e por que ele é uma alocação
+* [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — o que o volume de log guarda, e o que uma reinstalação apaga

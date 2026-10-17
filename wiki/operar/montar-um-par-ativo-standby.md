@@ -1,6 +1,6 @@
 # Montar um par ativo/standby
 
-Como pôr duas caixas Prisma Routing sustentando o mesmo endereço de serviço, uma ativa e outra de reserva, e como provar que a troca funciona antes de precisar dela. Para quem já tem as duas caixas instaladas e encaminhando; o porquê de cada escolha está em [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic).
+Como pôr duas caixas Prisma Routing sustentando o mesmo endereço de serviço, uma ativa e outra de reserva, e como provar que a troca funciona antes de precisar dela. Para quem já tem as duas caixas instaladas e encaminhando; o porquê de cada escolha está em [Alta disponibilidade](/s/wiki/doc/alta-disponibilidade-Zc1pBKocic).
 
 
 :::info
@@ -16,7 +16,7 @@ Configure os pools de CGNAT **exatamente iguais** nas duas caixas: prefixos de d
 
 O que não mexe no mapeamento pode diferir sem problema: timeouts, ALGs, clamp de TCP, listas de bypass, limites de sessão e de taxa, encaminhamentos de porta, `block-stride`, alarme de utilização.
 
-Como configurar cada campo está em [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6).
+Como configurar cada campo está em [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6).
 
 # 2. `vrrp` nas portas de dentro e de fora
 
@@ -237,7 +237,7 @@ A recusa não vê a outra caixa mudar depois da cópia — só enxerga o arquivo
 
 # 9. `preempt`: quem volta, retoma
 
-`preempt` está sempre ligado. Quando a caixa A volta — reiniciada, com o cabo de volta, com a prioridade restaurada —, ela **retoma** o endereço de serviço, e as conexões em curso caem de novo nessa segunda troca. O par termina onde a configuração diz, e não onde a última falha deixou. Para tirar a caixa ativa de serviço sem desligá-la, baixe a prioridade dela, como descrito em [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2).
+`preempt` está sempre ligado. Quando a caixa A volta — reiniciada, com o cabo de volta, com a prioridade restaurada —, ela **retoma** o endereço de serviço, e as conexões em curso caem de novo nessa segunda troca. O par termina onde a configuração diz, e não onde a última falha deixou. Para tirar a caixa ativa de serviço sem desligá-la, baixe a prioridade dela, como descrito em [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2).
 
 # 10. Testar a troca
 

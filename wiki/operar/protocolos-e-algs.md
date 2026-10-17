@@ -159,6 +159,6 @@ flowchart TD
 
 # Ver também
 
-* [Comportamento NAT e compatibilidade](/doc/comportamento-nat-e-compatibilidade-8eYzcDTnmJ) — quando o problema é filtragem, não payload
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — os campos `alg` e `tcp-mss`
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — como ligar um ALG passo a passo
+* [Comportamento NAT e compatibilidade](/s/wiki/doc/comportamento-nat-e-compatibilidade-8eYzcDTnmJ) — quando o problema é filtragem, não payload
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — os campos `alg` e `tcp-mss`
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — como ligar um ALG passo a passo

@@ -21,7 +21,7 @@
 
 | Class | Commands |
 |---|---|
-| typed | 842 |
+| typed | 846 |
 | text | 1 |
 | none | 0 |
 | n/a | 58 |
@@ -1232,6 +1232,8 @@ Entered with `pppoe`; `EditRequest.path` = `["pppoe"]`; changed by: administrato
 | `tcp-mss <536-1460>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `ac-name <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `rate-limit default <download>/<upload>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `rate-limit download shaper\|policer` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `rate-limit upload shaper\|policer` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `local-user <name> password <password>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `ipv6 enable` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `ipv6 prefix-pool <X:X::/len>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
@@ -1247,6 +1249,8 @@ Entered with `pppoe`; `EditRequest.path` = `["pppoe"]`; changed by: administrato
 | `no tcp-mss` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no ac-name` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no rate-limit default` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no rate-limit download` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
+| `no rate-limit upload` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no local-user <name>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no ipv6 enable` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |
 | `no ipv6 prefix-pool <X:X::/len>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | and as lines through Edit; GetSchema/ValidateLines check a line (#597) |

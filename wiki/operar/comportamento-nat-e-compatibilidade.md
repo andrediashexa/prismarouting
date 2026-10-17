@@ -74,7 +74,7 @@ configure
 
 É ajuste **aplicado no lugar**: não derruba sessão.
 
-Um [encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) fica **fora** dessa filtragem. `address-dependent` pergunta "o assinante falou com você antes?", e num forward a resposta é não por definição; se ele entrasse no filtro, a porta aberta funcionaria só para quem o assinante respondeu por último.
+Um [encaminhamento de porta](/s/wiki/doc/encaminhamento-de-porta-epIZfdmzU3) fica **fora** dessa filtragem. `address-dependent` pergunta "o assinante falou com você antes?", e num forward a resposta é não por definição; se ele entrasse no filtro, a porta aberta funcionaria só para quem o assinante respondeu por último.
 
 
 :::info
@@ -111,7 +111,7 @@ Esta caixa reescreve o pacote embutido. E reescreve junto o que quase todo mundo
 
 
 :::info
-Para TCP comum existe uma segunda rede de proteção, o *MSS clamp* (`tcp-mss` no pool), que evita o problema antes de ele precisar de aviso. **Dentro de um túnel não existe MSS para ajustar**, e ali o erro ICMP é o único sinal que o assinante tem — é o caso detalhado em [Protocolos e ALGs](/doc/protocolos-e-algs-vZjaCcHaN7), com o que ele exige de você e onde ele para.
+Para TCP comum existe uma segunda rede de proteção, o *MSS clamp* (`tcp-mss` no pool), que evita o problema antes de ele precisar de aviso. **Dentro de um túnel não existe MSS para ajustar**, e ali o erro ICMP é o único sinal que o assinante tem — é o caso detalhado em [Protocolos e ALGs](/s/wiki/doc/protocolos-e-algs-vZjaCcHaN7), com o que ele exige de você e onde ele para.
 
 :::
 
@@ -133,7 +133,7 @@ Se uma aplicação de entrada não funciona, `show cgnat drops` separa o motivo 
 
 # Ver também
 
-* [Protocolos e ALGs](/doc/protocolos-e-algs-vZjaCcHaN7) — quando o problema não é filtragem, é o protocolo carregar endereço no payload
-* [Quando o bloco de um assinante enche](/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — os blocos estendidos, de onde vem a taxa de pareamento
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — `filter` e os demais campos aplicados no lugar
-* [Timeouts e os pisos das RFCs](/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) — a outra causa comum de "desconecta sozinho"
+* [Protocolos e ALGs](/s/wiki/doc/protocolos-e-algs-vZjaCcHaN7) — quando o problema não é filtragem, é o protocolo carregar endereço no payload
+* [Quando o bloco de um assinante enche](/s/wiki/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — os blocos estendidos, de onde vem a taxa de pareamento
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — `filter` e os demais campos aplicados no lugar
+* [Timeouts e os pisos das RFCs](/s/wiki/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) — a outra causa comum de "desconecta sozinho"

@@ -115,7 +115,7 @@ As últimas linhas são as que dizem o motivo. As mais comuns estão no passo 5.
 
 Numa caixa que toma várias placas, uma placa que não pôde ser entregue fica de fora e o dataplane sobe com as outras.
 
-**Uma placa ixgbe que o kernel recusou pelo módulo SFP+.** A placa não aparece em `show hardware`, e o journal do boot (`journalctl -b | grep ixgbe`) diz `unsupported SFP+ or QSFP module type was detected`. O driver recusou o módulo, não a placa. Ligue `unsupported-sfp allow` em `system` > `hardware` e reinicie a caixa; veja [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
+**Uma placa ixgbe que o kernel recusou pelo módulo SFP+.** A placa não aparece em `show hardware`, e o journal do boot (`journalctl -b | grep ixgbe`) diz `unsupported SFP+ or QSFP module type was detected`. O driver recusou o módulo, não a placa. Ligue `unsupported-sfp allow` em `system` > `hardware` e reinicie a caixa; veja [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
 
 **A placa nomeada não existe.** Se `show interface` diz que o nome configurado não recebeu placa, confira o nome em `show hardware` e nomeie de novo (passo 6).
 
@@ -145,7 +145,7 @@ ou
 system reboot
 ```
 
-`system dataplane restart` devolve todas as placas ao Linux, recalcula o ajuste, toma as placas de novo e sobe o dataplane com a configuração **salva**. Uma placa que o vigia tinha devolvido é tomada de novo aqui ou no próximo boot. As duas formas pedem uma conta de administrador.
+`system dataplane restart` devolve todas as placas ao Linux, recalcula o ajuste, toma as placas de novo e sobe o dataplane com a configuração **salva**. Uma placa que o vigia tinha devolvido é tomada de novo aqui ou no próximo boot. As duas formas pedem `root` ou uma conta com `operator`.
 
 
 :::warning
@@ -168,7 +168,7 @@ show hardware
 
 # Ver também
 
-* [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) — o que a instalação pergunta, incluindo a rede de gerência que fica com o Linux
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — memória, CPU e placas
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — por onde começar quando o problema não é a placa
-* [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — quando o conserto é uma versão atual
+* [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — o que a instalação pergunta, incluindo a rede de gerência que fica com o Linux
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — memória, CPU e placas
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — por onde começar quando o problema não é a placa
+* [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — quando o conserto é uma versão atual

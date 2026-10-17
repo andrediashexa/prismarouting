@@ -1056,6 +1056,35 @@ def pppoe_policer_fields(policers, sw_if_index):
     return out
 
 
+def pppoe_shaper_fields(shapers):
+    """
+    A session's shapers (#610) out of pppoe.shapers()' {"down"|"up": counts},
+    as `show pppoe session <id>` shows them - [PppoeShaper's fields], down
+    first.
+    """
+    out = []
+    for d in ("down", "up"):
+        sh = (shapers or {}).get(d)
+        if not sh:
+            continue
+        out.append({"direction": d,
+                    "rate_kbit": int(sh.get("kbit", 0)),
+                    "queue_ms": int(sh.get("queue_ms", 0)),
+                    "queued_packets": int(sh.get("queued_packets", 0)),
+                    "queued_bytes": int(sh.get("queued_bytes", 0)),
+                    "queued_ms": int(sh.get("queued_ms", 0)),
+                    "queued_bytes_max": int(sh.get("queued_bytes_max", 0)),
+                    "passed_packets": int(sh.get("passed", 0)),
+                    "delayed_packets": int(sh.get("delayed", 0)),
+                    "dropped_queue_packets": int(sh.get("dropped_queue", 0)),
+                    "dropped_codel_packets": int(sh.get("dropped_codel", 0)),
+                    "dropped_box_packets": int(sh.get("dropped_box", 0)),
+                    "bytes": int(sh.get("bytes", 0)),
+                    "delay_avg_us": int(sh.get("delay_avg_us", 0)),
+                    "delay_max_us": int(sh.get("delay_max_us", 0))})
+    return out
+
+
 def pppoe_summary_fields(facts):
     """Shell.pppoe_summary_facts()' reading as PppoeSummary's fields."""
     import aaa as aaa_mod
@@ -1102,7 +1131,9 @@ def pppoe_summary_fields(facts):
         "ipv6": pppoe_mod.ipv6_on(held),
         "ipv6_prefix_pools": list(pppoe_mod.v6(held)["pools"]),
         "ipv6_delegated_pools": [{"prefix": p, "length": int(n)} for p, n
-                                 in pppoe_mod.v6(held)["delegated"]]}
+                                 in pppoe_mod.v6(held)["delegated"]],
+        "rate_limit_download": pppoe_mod.limiter(held, "download"),
+        "rate_limit_upload": pppoe_mod.limiter(held, "upload")}
 
 
 def pppoe_history_words(req):
@@ -4427,6 +4458,8 @@ def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
                 sw_if_index=_num(f["sw_if_index"]),
                 policers=[pb.PppoePolicer(**p) for p in pppoe_policer_fields(
                     f["policers"], f["sw_if_index"])],
+                shapers=[pb.PppoeShaper(**s) for s in pppoe_shaper_fields(
+                    f.get("shapers"))],
                 text=got["text"])
 
         # not a unit: an rpc, driven by lab/pppoe.sh and lab/api-grpc.sh.

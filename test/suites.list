@@ -15,6 +15,7 @@
 .build/test_bpa_xcvr
 .build/test_bpa_linkcount
 .build/test_bpa_pppoe_guard
+.build/test_bpa_pppoe_shaper
 .build/test_bpa_rate
 .build/test_bpa_keys
 .build/test_bpa_nat64

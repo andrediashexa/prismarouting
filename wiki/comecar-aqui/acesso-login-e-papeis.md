@@ -137,7 +137,7 @@ prisma# [edit user <nome>] role administrator
 prisma# [edit user <nome>] commit
 ```
 
-O resto — senha, chave SSH, remover a conta — está em [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m). Depois que você cria a conta e dá um papel a ela, o mesmo auto-teste passa a **nomear** a conta que alcança o dataplane:
+O resto — senha, chave SSH, remover a conta — está em [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m). Depois que você cria a conta e dá um papel a ela, o mesmo auto-teste passa a **nomear** a conta que alcança o dataplane:
 
 ```
 [ ok ] the binary API works for netadm, an account that really has the group
@@ -221,5 +221,5 @@ Em arquivos de configuração, `!` inicia comentário — o resto da linha é ig
 
 # Ver também
 
-* [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a sequência completa de configuração
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — como criar contas e ajustar o SSH
+* [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) — a sequência completa de configuração
+* [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — como criar contas e ajustar o SSH

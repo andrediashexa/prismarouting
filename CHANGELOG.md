@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Per-subscriber shaping on PPPoE: a queue per session, the download
+  shaped by default.** ([#610](https://github.com/andrediashexa/hexarouting/issues/610))
+  docs/bng.md 0.9. VPP 26.06 has no shaper, so the dataplane now has its
+  own: past the plan a packet waits instead of being dropped, CoDel keeps
+  the queue short, and a session that is idle costs no node and 237 bytes.
+  The rate comes from where the policer's did - Prisma's RADIUS attributes,
+  Cisco-AVPair, `rate-profile`, `rate-limit default`, a CoA, which changes
+  the shaped rate on the live session. Measured through a 20 Mbit/s plan,
+  the shaper against the policer:
+  * one TCP flow 19.3 Mbit/s with 17 retransmits, against 19.7 with 823;
+  * a ping under that download 25 ms, against 12;
+  * four flows sharing the plan with a Jain index of 0.994, against 0.832.
+
+  The upload stays a policer by default (measured better there).
+  `rate-limit download|upload shaper|policer` under `pppoe` chooses each
+  direction; a change restarts the control plane. The generated files are
+  format 7, so a box upgraded with PPPoE writes them again at its next load,
+  and its sessions redial once. `show pppoe session <id>` shows the queue,
+  what waited and for how long, and what was dropped and why;
+  `show pppoe summary` shows what enforces each way. The API, additively:
+  `PppoeConfig.rate_limit_download` / `_upload`, `PppoeSessionDetail.shapers`
+  (`PppoeShaper`), and `PppoeSummary.rate_limit_download` / `_upload`.
+  `lab/pppoe.sh` section 24 and `lab/pppoe-shaper.sh` (16,000 sessions,
+  2,000 held at their plan, one thread and three workers) are the evidence.
+
 ### Fixed
 
 ## 0.155.14 - BNG phase 1, RADIUS and IPv6 on PPPoE delivered

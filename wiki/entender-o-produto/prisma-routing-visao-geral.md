@@ -92,7 +92,7 @@ Não são lacunas — são decisões registradas:
 
 # Ver também
 
-* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — a aritmética por trás
-* [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) — o par, o que a troca preserva e o que ela derruba
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — RAM, CPU e endereços públicos para o seu caso
-* [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — onde isso vira uma máquina no ar
+* [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — a aritmética por trás
+* [Alta disponibilidade](/s/wiki/doc/alta-disponibilidade-Zc1pBKocic) — o par, o que a troca preserva e o que ela derruba
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — RAM, CPU e endereços públicos para o seu caso
+* [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) — onde isso vira uma máquina no ar

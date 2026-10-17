@@ -40,6 +40,8 @@ Toda mudança no bloco `pppoe` reinicia o plano de controle PPPoE: **todas as se
 | `mtu <576-1500>` | MTU e MRU do PPP; 1492 se omitido |
 | `tcp-mss <536-1460>` | limita o MSS do TCP em cada sessão |
 | `rate-limit default <download>/<upload>` | o limite de banda de uma sessão para a qual o RADIUS não mandou nenhum, em kbit/s ou com K, M ou G (`20M/10M`); sem ele, essa sessão não tem limite |
+| `rate-limit download shaper` ou `policer` | como o limite de download é aplicado: por uma fila (shaper, o padrão) ou por descarte (policer). Veja [Fila ou descarte](#fila-ou-descarte-shaper-e-policer) |
+| `rate-limit upload shaper` ou `policer` | o mesmo para o upload; policer se omitido |
 | `ac-name <nome>` | o nome do concentrador no PADO; `prisma-routing` se omitido |
 | `local-user <nome> password <senha>` | um usuário local, para laboratório sem RADIUS |
 | `ipv6 prefix-pool <prefixo>` | liga o IPv6 nas sessões; cada sessão recebe um /64 deste prefixo como WAN, anunciado por RA (SLAAC). De /16 a /64. Até 16 |
@@ -119,7 +121,33 @@ prisma> show aaa radius dictionary
 
 No FreeRADIUS, salve o que esse comando imprime como `/usr/share/freeradius/dictionary.prisma` e acrescente `$INCLUDE /usr/share/freeradius/dictionary.prisma` ao arquivo `/etc/freeradius/3.0/dictionary`. No IXC ou em outro sistema, cadastre o fornecedor 67033 e os dois atributos da tabela.
 
-O limite é um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. A rajada aceita (o balde do policer) é meio segundo da taxa, nunca menos de 15.000 bytes, venha a taxa dos atributos do Prisma ou do `Cisco-AVPair`: os números de rajada do `Cisco-AVPair` são conferidos e não usados. Meio segundo é o que deixa **uma** conexão TCP, como a de um teste de velocidade, chegar ao plano: com um décimo de segundo (0.155.1) ela chegava à metade (25 Mbit/s num plano de 50), embora o UDP passasse exato. Até a 0.155.0 o balde era oito vezes maior, e um teste curto media de 7% a 90% acima do plano. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
+O upload é aplicado por um policer no dataplane, na interface da própria sessão: o que passa do limite é descartado. O download, por padrão, por uma fila (a seção seguinte); com `rate-limit download policer`, também por um policer. A rajada aceita (o balde do policer) é meio segundo da taxa, nunca menos de 15.000 bytes, venha a taxa dos atributos do Prisma ou do `Cisco-AVPair`: os números de rajada do `Cisco-AVPair` são conferidos e não usados. Meio segundo é o que deixa **uma** conexão TCP, como a de um teste de velocidade, chegar ao plano: com um décimo de segundo (0.155.1) ela chegava à metade (25 Mbit/s num plano de 50), embora o UDP passasse exato. Até a 0.155.0 o balde era oito vezes maior, e um teste curto media de 7% a 90% acima do plano. Uma sessão sem limite do RADIUS recebe o `rate-limit default` do bloco `pppoe`, se houver.
+
+### Fila ou descarte: shaper e policer
+
+Por padrão, o **download** de cada sessão passa por uma fila própria no dataplane (o shaper): o que chega acima do plano espera na fila e sai no ritmo do plano, em vez de ser descartado. A fila guarda até 100 ms do plano (25.000 bytes num plano de 2 Mbit/s, 250.000 num de 20 Mbit/s). Para que um download TCP não a mantenha cheia, a caixa descarta um pacote de vez em quando enquanto a espera passa de 15 ms (CoDel). O **upload** continua por policer: o que passa do plano é descartado.
+
+Medido num plano de 20 Mbit/s, o shaper contra o policer:
+
+|     | shaper | policer |
+|-----|--------|---------|
+| uma conexão TCP | 19,3 Mbit/s, 17 retransmissões | 19,7 Mbit/s, 823 retransmissões |
+| ping durante essa conexão | 25 ms  | 12 ms   |
+| quatro conexões dividindo o plano | por igual (Jain 0,994) | desigual (Jain 0,832) |
+| UDP a 40 Mbit/s | chega o plano, 19,6 | chega o plano, 20,3 |
+| ping durante esse UDP | até 104 ms: a fila cheia | 12 ms   |
+
+O shaper mede o plano em bytes IP, sem os cabeçalhos PPPoE e Ethernet, por isso um teste de velocidade TCP lê um pouco abaixo de 20 (o máximo é 19,47). Um assinante que manda UDP acima do plano sem parar espera, no próprio tráfego, até o tamanho da fila; o dos outros assinantes não é afetado.
+
+Para voltar ao policer no download:
+
+```
+prisma# [edit pppoe] rate-limit download policer
+```
+
+`no rate-limit download` volta ao padrão. A troca, em qualquer sentido, reinicia o plano de controle do PPPoE: todas as sessões caem e discam de novo, já com a nova escolha. O `show pppoe summary` diz o que aplica cada sentido.
+
+Ao atualizar uma caixa que já tem PPPoE, os arquivos do plano de controle são reescritos na próxima carga da configuração. Nessa hora as sessões discam de novo, uma vez, e o download passa para o shaper.
 
 ## IPv6
 
@@ -175,7 +203,7 @@ O segredo de cada servidor e de cada `client` fica na configuração salva, para
 | Comando | O que mostra ou faz |
 |---------|---------------------|
 | `show pppoe sessions` | uma linha por sessão: o id, o usuário, o endereço, o limite (download/upload, `-` sem limite) e há quanto tempo está de pé; uma sessão ainda autenticando diz `start` no lugar do tempo. Uma sessão com IPv6 tem embaixo uma linha `ipv6` com o prefixo da WAN e uma `delegated` com o prefixo delegado |
-| `show pppoe session <id>` | uma sessão inteira: os prefixos IPv6, o MAC do CPE, o tráfego, o limite e, para cada sentido limitado, quantos pacotes o policer deixou passar e quantos descartou |
+| `show pppoe session <id>` | uma sessão inteira: os prefixos IPv6, o MAC do CPE, o tráfego e o limite. Para cada sentido limitado por policer, quantos pacotes ele deixou passar e quantos descartou. Para cada sentido com shaper, o que está na fila agora, quantos pacotes passaram direto e quantos esperaram, quanto esperaram (média e máximo) e o que foi descartado: fila cheia, CoDel, ou buffers da caixa |
 | `show pppoe summary` | se o plano de controle PPPoE está rodando, quantas sessões estão ativas, começando e terminando, cada servidor RADIUS (com `failed` se o plano de controle o deu como fora) e o resumo da configuração |
 | `clear pppoe session <id>` | encerra uma sessão; o id é o da primeira coluna de `show pppoe sessions`, o mesmo `Acct-Session-Id` que o RADIUS recebeu |
 | `clear pppoe session user <nome>` | encerra as sessões de um usuário |
@@ -268,13 +296,13 @@ O resumo deve dizer `running` e contar as sessões ativas; cada assinante que di
 
 
 :::info
-QinQ e alta disponibilidade das sessões ainda não existem. Uma sessão é sempre IPv4 com IPv6 opcional: só IPv6 não existe. O limite de banda é por descarte (policer), não por fila (shaper).
+QinQ e alta disponibilidade das sessões ainda não existem. Uma sessão é sempre IPv4 com IPv6 opcional: só IPv6 não existe. O shaper tem uma fila por sessão, não uma por conexão: um UDP acima do plano faz o resto do tráfego do próprio assinante esperar.
 
 :::
 
 ## Ver também
 
-* [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o pool que traduz as sessões
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — o `prefix-inside` que cobre os endereços das sessões
-* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — a sub-interface com a VLAN de acesso
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — como aplicar o que foi configurado aqui
+* [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o pool que traduz as sessões
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — o `prefix-inside` que cobre os endereços das sessões
+* [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — a sub-interface com a VLAN de acesso
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — como aplicar o que foi configurado aqui

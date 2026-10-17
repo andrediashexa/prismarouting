@@ -1,6 +1,6 @@
 # Onde vão os registros: coletor, transporte e guarda
 
-Para quem opera CGNAT e precisa responder a um ofício: onde ficam os registros de quem usava cada IP público e porta, como eles saem da caixa e o que acontece quando o coletor sai do ar. Os comandos em detalhe estão em [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq); aqui está o porquê de cada escolha.
+Para quem opera CGNAT e precisa responder a um ofício: onde ficam os registros de quem usava cada IP público e porta, como eles saem da caixa e o que acontece quando o coletor sai do ar. Os comandos em detalhe estão em [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq); aqui está o porquê de cada escolha.
 
 # O problema
 
@@ -153,8 +153,8 @@ Antes de dar a guarda por montada, faça o teste que importa: com tráfego de as
 
 # Ver também
 
-* [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — os comandos, o formato do registro, a identidade do assinante e a trilha de configuração
-* [Determinístico e BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que um modo precisa de exportação e o outro quase não
-* [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) — o tamanho do volume de log e o espelho em dois discos
-* [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s) — o disco da caixa e o volume do log
-* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — acompanhar a caixa pela NMS
+* [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — os comandos, o formato do registro, a identidade do assinante e a trilha de configuração
+* [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que um modo precisa de exportação e o outro quase não
+* [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — o tamanho do volume de log e o espelho em dois discos
+* [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — o disco da caixa e o volume do log
+* [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb) — acompanhar a caixa pela NMS

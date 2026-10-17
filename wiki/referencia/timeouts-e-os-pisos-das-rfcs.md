@@ -134,10 +134,10 @@ Nenhum valor marcado abaixo do piso, e `show cgnat top` mostrando os assinantes 
 
 :::
 
-Se o pool está enchendo, encurtar timeout é o último recurso, não o primeiro. Antes dele: [ampliar a capacidade com um segundo pool](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u), reduzir `block-size` numa janela, ou limitar quem está consumindo demais com `max-sessions`.
+Se o pool está enchendo, encurtar timeout é o último recurso, não o primeiro. Antes dele: [ampliar a capacidade com um segundo pool](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u), reduzir `block-size` numa janela, ou limitar quem está consumindo demais com `max-sessions`.
 
 # Ver também
 
-* [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — a alternativa a apertar timeout
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — os campos por pool
-* [Comportamento NAT e compatibilidade](/doc/comportamento-nat-e-compatibilidade-8eYzcDTnmJ) — a outra causa comum de "desconecta sozinho"
+* [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) — a alternativa a apertar timeout
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — os campos por pool
+* [Comportamento NAT e compatibilidade](/s/wiki/doc/comportamento-nat-e-compatibilidade-8eYzcDTnmJ) — a outra causa comum de "desconecta sozinho"

@@ -24,6 +24,7 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_xcvr \
       $(BUILD)/test_bpa_linkcount \
       $(BUILD)/test_bpa_pppoe_guard \
+      $(BUILD)/test_bpa_pppoe_shaper \
       $(BUILD)/test_bpa_rate \
       $(BUILD)/test_bpa_keys $(BUILD)/test_bpa_nat64 \
       $(BUILD)/test_bpa_subblock \
@@ -170,6 +171,13 @@ $(BUILD)/test_bpa_pppoe_guard: test/test_bpa_pppoe_guard.c \
                    src/plugins/bpa/bpa_pppoe_guard.h test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pppoe_guard.c
+
+# A PPPoE session's plan as a queue (#610): the bucket, the queue's verdicts,
+# when a waiting packet may leave, and CoDel - no VPP.
+$(BUILD)/test_bpa_pppoe_shaper: test/test_bpa_pppoe_shaper.c \
+                   src/plugins/bpa/bpa_pppoe_shaper.h test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_pppoe_shaper.c
 
 # The subscriber's creation-rate bucket: two fields and a clock, which is
 # what `max-rate` on a pool buys. It was inside bpa_session.c and nothing

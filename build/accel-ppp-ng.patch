@@ -1017,6 +1017,21 @@ index 56666a6..aa4bd0a 100644
  
  DEFINE_INIT(20, vpphooks_init);
 \ No newline at end of file
+diff --git a/accel-pppd/session_hooks/vyos_vpp/vpphooks.h b/accel-pppd/session_hooks/vyos_vpp/vpphooks.h
+index 26615d3..ad157a5 100644
+--- a/accel-pppd/session_hooks/vyos_vpp/vpphooks.h
++++ b/accel-pppd/session_hooks/vyos_vpp/vpphooks.h
+@@ -21,6 +21,10 @@ struct vpphook_private_data_t {
+ 	uint64_t vpppolicer_down_burst;
+ 	uint32_t vpppolicer_up;
+ 	uint64_t vpppolicer_up_burst;
++	/* Prisma Routing (#610): kbit/s of the dataplane's shaper on this
++	 * session, each way; 0 none. */
++	uint32_t prisma_shaper_down;
++	uint32_t prisma_shaper_up;
+ };
+ 
+ struct vpphook_private_data_t *vpphook_get_pd(struct ap_session *ses);
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vppiputils.c b/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
 index e9be8b3..b4037c0 100644
 --- a/accel-pppd/session_hooks/vyos_vpp/vppiputils.c
@@ -1176,11 +1191,28 @@ index 1bed532..c86dfca 100644
  	err = vapi_pppoe_add_del_session(ctx, req, vpppoe_s_session_del_reply_callback, NULL);
  	vpp_check_error(err);
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c b/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
-index 5c2bd31..45e52e1 100644
+index 5c2bd31..49b6a03 100644
 --- a/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
 +++ b/accel-pppd/session_hooks/vyos_vpp/vpppolicer.c
-@@ -22,6 +22,8 @@
+@@ -7,10 +7,13 @@
+ #include <vapi/vapi.h>
+ #include <vapi/vpe.api.vapi.h>
+ #include <vapi/policer.api.vapi.h>
++#include <vapi/vlib.api.vapi.h>
+ 
+ #include <stdio.h>
++#include <string.h>
+ 
+ #include "ap_session.h"
++#include "log.h"
+ #include "triton.h"
+ #include "events.h"
+ #include "vpputils.h"
+@@ -20,8 +23,11 @@
+ #include "vpppolicer.h"
+ 
  DEFINE_VAPI_MSG_IDS_POLICER_API_JSON
++DEFINE_VAPI_MSG_IDS_VLIB_API_JSON
  
  #define POLICER_NAME_MAX_LEN 64
 +/* Prisma Routing: the smallest bucket, bytes - ten 1500-byte packets */
@@ -1188,7 +1220,75 @@ index 5c2bd31..45e52e1 100644
  
  extern void vpp_check_error(vapi_error_e err);
  
-@@ -121,7 +123,7 @@ static vapi_error_e vpppolicer_add_del_callback(struct vapi_ctx_s *ctx,
+@@ -34,6 +40,67 @@ static uint32_t s_conform_action = SSE2_QOS_ACTION_API_TRANSMIT;
+ static uint32_t s_exceed_action = SSE2_QOS_ACTION_API_TRANSMIT;
+ static uint32_t s_violate_action = SSE2_QOS_ACTION_API_DROP;
+ 
++/* Prisma Routing (#610): a direction's plan as the dataplane's SHAPER - a
++ * queue per session in the bpa plugin (src/plugins/bpa/bpa_pppoe_shaper.c),
++ * which VPP 26.06 does not have - instead of a policer. [shaper]
++ * vpp-down-limiter / vpp-up-limiter = shaper | policer, and
++ * vpp-shaper-queue = the queue in ms. Read at start and at every reload; a
++ * session keeps what it was given until its next rate (a CoA), and its end
++ * removes what it HAS, whatever these say by then. */
++static int s_down_shaper;
++static int s_up_shaper;
++static unsigned int s_shaper_queue_ms = 100;
++
++static vapi_error_e vppshaper_cli_callback(struct vapi_ctx_s *ctx,
++					   void *callback_ctx,
++					   vapi_error_e rv,
++					   bool is_last,
++					   vapi_payload_cli_inband_reply *reply)
++{
++	int *res = callback_ctx;
++
++	/* the command prints nothing when it took the rate; anything it
++	 * prints is its refusal */
++	*res = (rv == VAPI_OK && reply && reply->retval == 0 && reply->reply.length == 0) ? 0 : -1;
++	if (*res && reply && reply->reply.length)
++		log_ppp_warn("vpp: pppoe-shaper: %.*s\n", (int)reply->reply.length, reply->reply.buf);
++	return VAPI_OK;
++}
++
++/* `set bpa pppoe-shaper sw-if-index <n> <dir> <kbit> queue <ms>` through
++ * the binary API's cli_inband: the bpa plugin has no message of its own for
++ * it, and this way the hook needs no header the image does not already
++ * carry. 0 when the dataplane took it. */
++static int vppshaper_set(uint32_t sw_if_index, const char *dir, uint32_t kbit)
++{
++	vapi_error_e err;
++	struct vapi_ctx_s *ctx;
++	vapi_msg_cli_inband *req;
++	char cmd[128];
++	int len, res = -1;
++
++	len = snprintf(cmd, sizeof(cmd), "set bpa pppoe-shaper sw-if-index %u %s %u queue %u",
++		       sw_if_index, dir, kbit, s_shaper_queue_ms);
++	if (len <= 0 || len >= (int)sizeof(cmd))
++		return -1;
++
++	vpp_lock();
++	ctx = vpp_get_vapi();
++	if (ctx == NULL)
++		goto exit;
++	req = vapi_alloc_cli_inband(ctx, len);
++	if (req == NULL)
++		goto exit;
++	memcpy(req->payload.cmd.buf, cmd, len);
++	err = vapi_cli_inband(ctx, req, vppshaper_cli_callback, &res);
++	vpp_check_error(err);
++	if (err != VAPI_OK)
++		res = -1;
++exit:
++	vpp_unlock();
++	return res;
++}
++
+ static vapi_error_e vpppolicer_set_input_callback(struct vapi_ctx_s *ctx,
+ 												void *callback_ctx,
+ 												vapi_error_e rv,
+@@ -121,7 +188,7 @@ static vapi_error_e vpppolicer_add_del_callback(struct vapi_ctx_s *ctx,
  	return rv;
  }
  
@@ -1197,7 +1297,7 @@ index 5c2bd31..45e52e1 100644
  {
  	vapi_error_e err = -1;
  	struct vapi_ctx_s *ctx;
-@@ -143,9 +145,9 @@ static int vpppolicer_add_del(int is_add, const char *policer_name, uint32_t cir
+@@ -143,9 +210,9 @@ static int vpppolicer_add_del(int is_add, const char *policer_name, uint32_t cir
  	req->payload.name[sizeof(req->payload.name) - 1] = 0;
  
  	req->payload.cir = cir_kbits * s_cir_factor;
@@ -1209,7 +1309,16 @@ index 5c2bd31..45e52e1 100644
  
  	req->payload.rate_type = SSE2_QOS_RATE_API_KBPS;
  	req->payload.round_type = SSE2_QOS_ROUND_API_TO_CLOSEST;
-@@ -177,50 +179,61 @@ int vpppolicer_install_limiter(struct ap_session *ses, int down_speed, int down_
+@@ -170,6 +237,8 @@ static void vpppolicer_generate_name(char *name, size_t size, struct ap_session
+ 	snprintf(name, size, "vyos_%d_%d_%ld_%s", vpphook_get_pd(ses)->vpp_sw_if_index, rate, burst, is_up ? "up" : "down");
+ }
+ 
++static int vpppolicer_remove_policers(struct ap_session *ses);
++
+ int vpppolicer_install_limiter(struct ap_session *ses, int down_speed, int down_burst, int up_speed, int up_burst)
+ {
+ 	int ret = 0;
+@@ -177,57 +246,98 @@ int vpppolicer_install_limiter(struct ap_session *ses, int down_speed, int down_
  	char policer_output[POLICER_NAME_MAX_LEN] = {};
  	struct vpphook_private_data_t *vpphook_data = vpphook_get_pd(ses);
  
@@ -1218,6 +1327,9 @@ index 5c2bd31..45e52e1 100644
 -	down_burst = down_burst * 8;
 -	up_speed = up_speed * 8 / 1000;
 -	up_burst = up_burst * 8;
+-
+-	/* Remove previously installed limiter, if exists */
+-	vpppolicer_remove_limiter(ses);
 +	/* convert rate to kbits/s - in 64 bits (Prisma Routing, #607): bytes *
 +	 * 8 overflowed an int past 2.1 Gbit/s.
 +	 *
@@ -1233,9 +1345,26 @@ index 5c2bd31..45e52e1 100644
 +	uint64_t down_cb_bytes = (uint64_t)down_burst < PRISMA_BURST_MIN ? PRISMA_BURST_MIN : (uint64_t)down_burst;
 +	uint32_t up_kbits = (uint64_t)up_speed * 8 / 1000;
 +	uint64_t up_cb_bytes = (uint64_t)up_burst < PRISMA_BURST_MIN ? PRISMA_BURST_MIN : (uint64_t)up_burst;
- 
- 	/* Remove previously installed limiter, if exists */
- 	vpppolicer_remove_limiter(ses);
++
++	/* Remove previously installed policers, if they exist; a shaper is
++	 * changed in place below (Prisma Routing, #610): a CoA keeps its
++	 * queue and its counters. */
++	vpppolicer_remove_policers(ses);
++
++	/* Prisma Routing (#610): the download by the dataplane's shaper. A
++	 * dataplane that refuses it - a bpa plugin older than the shaper - is
++	 * given the policer instead: a plan is never left unenforced. */
++	if (down_kbits && s_down_shaper) {
++		if (!vppshaper_set(vpphook_data->vpp_sw_if_index, "down", down_kbits)) {
++			vpphook_data->prisma_shaper_down = down_kbits;
++			goto up;
++		}
++		log_ppp_warn("vpp: the dataplane has no pppoe-shaper; the download is policed\n");
++	}
++	if (vpphook_data->prisma_shaper_down) {
++		vppshaper_set(vpphook_data->vpp_sw_if_index, "down", 0);
++		vpphook_data->prisma_shaper_down = 0;
++	}
  
 -	if (down_speed) {
 -		vpppolicer_generate_name(policer_output, POLICER_NAME_MAX_LEN - 1, ses, down_speed, down_burst, 0);
@@ -1259,6 +1388,19 @@ index 5c2bd31..45e52e1 100644
 -	if (up_speed) {
 -		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_speed, up_burst, 1);
 -		vpppolicer_add_del(1, policer_input, up_speed, up_burst);
++up:
++	if (up_kbits && s_up_shaper) {
++		if (!vppshaper_set(vpphook_data->vpp_sw_if_index, "up", up_kbits)) {
++			vpphook_data->prisma_shaper_up = up_kbits;
++			goto exit;
++		}
++		log_ppp_warn("vpp: the dataplane has no pppoe-shaper; the upload is policed\n");
++	}
++	if (vpphook_data->prisma_shaper_up) {
++		vppshaper_set(vpphook_data->vpp_sw_if_index, "up", 0);
++		vpphook_data->prisma_shaper_up = 0;
++	}
++
 +	if (up_kbits) {
 +		vpppolicer_generate_name(policer_input, POLICER_NAME_MAX_LEN - 1, ses, up_kbits, up_cb_bytes, 1);
 +		vpppolicer_add_del(1, policer_input, up_kbits, up_cb_bytes);
@@ -1267,7 +1409,7 @@ index 5c2bd31..45e52e1 100644
 -			vpppolicer_add_del(0, policer_input, up_speed, up_burst);
 -			if (down_speed) {
 +			vpppolicer_add_del(0, policer_input, up_kbits, up_cb_bytes);
-+			if (down_kbits) {
++			if (down_kbits && vpphook_data->vpppolicer_down) {
  				vpppolicer_set_output(0, vpphook_data->vpp_sw_if_index, policer_output);
 -				vpppolicer_add_del(0, policer_output, down_speed, down_burst);
 +				vpppolicer_add_del(0, policer_output, down_kbits, down_cb_bytes);
@@ -1294,7 +1436,15 @@ index 5c2bd31..45e52e1 100644
  	}
  
  exit:
-@@ -251,10 +264,11 @@ int vpppolicer_remove_limiter(struct ap_session *ses)
+ 	return ret;
+ }
+ 
+-int vpppolicer_remove_limiter(struct ap_session *ses)
++static int vpppolicer_remove_policers(struct ap_session *ses)
+ {
+ 	int ret = 0;
+ 	char policer_input[64] = {};
+@@ -251,10 +361,11 @@ int vpppolicer_remove_limiter(struct ap_session *ses)
  			goto exit;
  		vpppolicer_add_del(0, policer_input, vpphook_data->vpppolicer_up, vpphook_data->vpppolicer_up_burst);
  
@@ -1310,6 +1460,45 @@ index 5c2bd31..45e52e1 100644
  
  		vpphook_data->vpppolicer_up = 0;
  		vpphook_data->vpppolicer_up_burst = 0;
+@@ -264,6 +375,23 @@ exit:
+ 	return ret;
+ }
+ 
++/* Prisma Routing (#610): the session's policers and its shapers. */
++int vpppolicer_remove_limiter(struct ap_session *ses)
++{
++	struct vpphook_private_data_t *vpphook_data = vpphook_get_pd(ses);
++	int ret = vpppolicer_remove_policers(ses);
++
++	if (vpphook_data->prisma_shaper_down) {
++		vppshaper_set(vpphook_data->vpp_sw_if_index, "down", 0);
++		vpphook_data->prisma_shaper_down = 0;
++	}
++	if (vpphook_data->prisma_shaper_up) {
++		vppshaper_set(vpphook_data->vpp_sw_if_index, "up", 0);
++		vpphook_data->prisma_shaper_up = 0;
++	}
++	return ret;
++}
++
+ static uint32_t vpppolicer_parse_action(const char *opt)
+ {
+ 	uint32_t ret = SSE2_QOS_ACTION_API_DROP;
+@@ -332,6 +460,14 @@ static void vpppolicer_load_config(void)
+ 	opt = conf_get_opt("shaper", "vpp-violate-action");
+ 	if (opt)
+ 		s_violate_action = vpppolicer_parse_action(opt);
++
++	/* Prisma Routing (#610) */
++	opt = conf_get_opt("shaper", "vpp-down-limiter");
++	s_down_shaper = opt && !strcmp(opt, "shaper");
++	opt = conf_get_opt("shaper", "vpp-up-limiter");
++	s_up_shaper = opt && !strcmp(opt, "shaper");
++	opt = conf_get_opt("shaper", "vpp-shaper-queue");
++	s_shaper_queue_ms = opt && atoi(opt) > 0 ? (unsigned int)atoi(opt) : 100;
+ }
+ 
+ static void vpppolicer_init()
 diff --git a/accel-pppd/session_hooks/vyos_vpp/vppstats.c b/accel-pppd/session_hooks/vyos_vpp/vppstats.c
 new file mode 100644
 index 0000000..b326927
@@ -1459,7 +1648,7 @@ index 4ee2300..7d5b9f8 100644
  		return ses->hooks->install_limiter(ses, down_speed, down_burst, up_speed, up_burst);
  	}
 diff --git a/accel-pppd/shaper/shaper.c b/accel-pppd/shaper/shaper.c
-index 3c2a1da..ce1d65d 100644
+index 3c2a1da..4bf4bf2 100644
 --- a/accel-pppd/shaper/shaper.c
 +++ b/accel-pppd/shaper/shaper.c
 @@ -22,6 +22,41 @@
@@ -1762,15 +1951,38 @@ index 3c2a1da..ce1d65d 100644
 +	n = check_radius_attrs(pd, ev->request, 1);
 +	if (n < 0) {
 +		ev->res = -1;
- 		return;
++		return;
 +	}
 +	if (!n)
-+		return;
+ 		return;
 +	ev->handled += n;
  
  	if (pd->temp_down_speed || pd->temp_up_speed)
  		return;
-@@ -1184,6 +1368,8 @@ static void load_config(void)
+@@ -478,10 +662,21 @@ static void ev_radius_coa(struct ev_radius_t *ev)
+ 	}
+ 
+ 	if (pd->down_speed != pd->cur_tr->down_speed || pd->up_speed != pd->cur_tr->up_speed) {
++		int replace = 0;
++
+ 		pd->down_speed = pd->cur_tr->down_speed;
+ 		pd->up_speed = pd->cur_tr->up_speed;
+ 
+-		if (pd->idx && remove_limiter(ev->ses, pd->idx)) {
++#ifdef HAVE_SESSION_HOOKS
++		/* Prisma Routing (#610): the VPP hook's install_limiter replaces
++		 * what the session has, and the dataplane's shaper keeps its queue
++		 * and its counters across a CoA only if it is not removed first -
++		 * measured in lab/pppoe.sh, a CoA to 50M emptied the queue and
++		 * started the counters again (106,322 delayed packets -> 63,082). */
++		replace = ev->ses->hooks && ev->ses->hooks->install_limiter
++			&& (pd->down_speed > 0 || pd->up_speed > 0);
++#endif
++		if (pd->idx && !replace && remove_limiter(ev->ses, pd->idx)) {
+ 			ev->res = -1;
+ 			return;
+ 		}
+@@ -1184,6 +1379,8 @@ static void load_config(void)
  	else
  		conf_fwmark = 0;
  

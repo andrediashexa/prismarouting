@@ -165,6 +165,6 @@ O forward listado no pool, a porta dentro do bloco do assinante, e a conexão en
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — o campo `forward` e os demais aplicados no lugar
-* [Quando o bloco de um assinante enche](/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — o bloco de onde a porta tem de sair
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — a versão curta desta tarefa
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — o campo `forward` e os demais aplicados no lugar
+* [Quando o bloco de um assinante enche](/s/wiki/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — o bloco de onde a porta tem de sair
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — a versão curta desta tarefa

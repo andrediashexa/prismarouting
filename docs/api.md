@@ -435,13 +435,26 @@ reads and `Clear`.
   and `delegated`, when DHCPv6 delegated the second; and
   `ListPppoeHistoryRequest.address` takes an IPv6 address, which names the
   session whose WAN prefix holds it or whose delegated prefix did at `at`.
+* **Shaping (#610, docs/bng.md 0.9).** `PppoeConfig.rate_limit_download`
+  and `rate_limit_upload` are `rate-limit download|upload shaper|policer`:
+  `"shaper"`, `"policer"`, or `""` for no statement - the download shaped,
+  the upload policed. Like IPv6's, a `SetConfig` of `pppoe` with an empty
+  `fields` applies them only when the request sets one, so a client built
+  before them, writing the block whole, leaves the box's choice alone; name
+  them to remove them. A change restarts the PPPoE control plane.
+  `PppoeSummary.rate_limit_download` / `_upload` say what enforces each way,
+  the default spelled out, never `""`.
 * **The sessions.** `ListPppoeSessions` (`show pppoe sessions`): each
   session's id - 16 hexadecimal digits, the Acct-Session-Id RADIUS was sent
   - user, inside address, the CPE's MAC, interface, state, uptime, bytes
   each way and its rate limit in kbit/s, in the screen's order. PPPoE not
   running is `running` false and no session, never an error.
   `GetPppoeSession` (`show pppoe session <id>`) adds the session's index in
-  the dataplane and its policers' packets passed and dropped;
+  the dataplane, its policers' packets passed and dropped, and (#610) its
+  shapers (`PppoeShaper`, one a shaped direction): the plan and the queue's
+  cap, what is queued now, what passed at once and what was delayed, how
+  long a delayed packet waited on average and at most, and what was
+  dropped - the queue full, by CoDel, or for the box's buffers;
   `INVALID_ARGUMENT` for an id that is not 16 hex digits, `NOT_FOUND` for
   one no session has. `GetPppoeSummary` (`show pppoe summary`): the
   control plane's state, the sessions by state, the session trail's

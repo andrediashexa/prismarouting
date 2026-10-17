@@ -308,7 +308,7 @@ Numa importação a política aceita `set local-preference`, `set community`, `s
 
 Não há `rd` nem `route-target` para configurar: o roteamento os escolhe sozinho para esse tipo de importação.
 
-**A VRF do Linux vem de** `**vrf <nome> table <n>**`**.** A VRF do roteamento precisa de uma VRF do Linux com o mesmo nome; declare-a com `vrf red table 10`, na mesma tabela do `vrf 10` das interfaces dela (veja [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ)).
+**A VRF do Linux vem de** `**vrf <nome> table <n>**`**.** A VRF do roteamento precisa de uma VRF do Linux com o mesmo nome; declare-a com `vrf red table 10`, na mesma tabela do `vrf 10` das interfaces dela (veja [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ)).
 
 **A sub-rede conectada de uma VRF também atravessa.** Quando a VRF de origem tem `redistribute connected` e a outra a importa, o roteamento instala essa rota no Linux apontando para a própria VRF de origem, sem próximo salto. Desde a 0.149.0 a caixa leva essa rota para o plano de dados por conta própria: a VRF que importa passa a procurar o destino na tabela da VRF de origem. Não há nada a configurar; cada rota levada aparece uma vez no journal, com o nome das VRFs:
 
@@ -534,7 +534,7 @@ Se a simulação e o roteamento discordarem, a linha diz; se a simulação preci
 
 # Ver também
 
-* [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, peer groups e famílias de endereço, onde `import` e `export` são aplicados
-* [Roteamento, SSH, usuários e SNMP](/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — o OSPF e o IS-IS, e as route-maps e listas escritas na forma do próprio roteamento
-* [commit, rollback e save](/doc/commit-rollback-e-save-jqCB7kxPuA) — como a política vai para o roteamento e como desfazer
-* [Comandos show](/doc/comandos-show-YlNji1X5W4) — `show policy` ao lado dos outros
+* [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, peer groups e famílias de endereço, onde `import` e `export` são aplicados
+* [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — o OSPF e o IS-IS, e as route-maps e listas escritas na forma do próprio roteamento
+* [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA) — como a política vai para o roteamento e como desfazer
+* [Comandos show](/s/wiki/doc/comandos-show-YlNji1X5W4) — `show policy` ao lado dos outros

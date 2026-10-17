@@ -349,7 +349,7 @@ Numa caixa que tem **só essa** placa, ela vai para o dataplane de qualquer jeit
   Nothing is armed and nothing has to be confirmed.
 ```
 
-Não há `commit confirmed` nem reinício a confirmar nessa entrega. O passo a passo está em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+Não há `commit confirmed` nem reinício a confirmar nessa entrega. O passo a passo está em [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7).
 
 Numa caixa sem rota padrão nenhuma, a tela diz isso em vez de simplesmente não marcar nada:
 
@@ -693,7 +693,7 @@ prisma> monitor log kind bgp last 5
 
 `severity`, `source` e `kind` escolhem o que é acompanhado; `last` e `since` o que é mostrado antes. Sem nenhum dos dois, começa agora. Um evento que chega depois da própria hora — a partida do dataplane, que o host registra quando a vê; um login, com a hora do wtmp — aparece quando chega, com a hora dele.
 
-**Mandar para um syslog:** `**system**` **>** `**logging**`**.** O registro vai para até quatro coletores syslog (RFC 5424, UDP ou TCP), cada um com o nível mínimo; quem manda é o próprio vigia, a partir do `events.log`, que serve de fila: um coletor TCP que caiu recebe o que esperou quando volta, sem perder e sem repetir. Veja a configuração em [Roteamento, SSH, usuários e SNMP](roteamento-ssh-usuarios-e-snmp.md). **Não é a exportação de registros do CGNAT** (`nat` > `cgnat` > `logging`), que é o registro de quem usou qual porta pública, para ordem judicial: são duas configurações e dois fluxos separados, e devem ir para coletores diferentes.
+**Mandar para um syslog:** `**system**` **>** `**logging**`**.** O registro vai para até quatro coletores syslog (RFC 5424, UDP ou TCP), cada um com o nível mínimo; quem manda é o próprio vigia, a partir do `events.log`, que serve de fila: um coletor TCP que caiu recebe o que esperou quando volta, sem perder e sem repetir. Veja a configuração em [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m). **Não é a exportação de registros do CGNAT** (`nat` > `cgnat` > `logging`), que é o registro de quem usou qual porta pública, para ordem judicial: são duas configurações e dois fluxos separados, e devem ir para coletores diferentes.
 
 O `show logging` continua sendo o do FRR: a configuração de log de cada daemon de roteamento.
 
@@ -797,5 +797,5 @@ Uma resposta dinâmica **nunca** afirma `FORMULA`. Essa recusa é deliberada: tr
 
 # Ver também
 
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — estes comandos aplicados a um problema real
-* [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — o que responde pelo passado
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — estes comandos aplicados a um problema real
+* [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) — o que responde pelo passado

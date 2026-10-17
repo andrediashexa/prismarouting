@@ -29,7 +29,7 @@ Sem versão, ele diz qual versão a caixa roda e qual é a mais nova publicada, 
 
 Três coisas a saber dele:
 
-* **Só o papel de administrador pode rodá-lo**, como `system reboot`.
+* **Só** `**root**` **ou uma conta com** `**operator**` **pode rodá-lo** (o grupo `prisma-operator`, desde a 0.149.26), como `system reboot`. A consulta, sem versão, qualquer conta pode fazer.
 * **Ctrl-C não interrompe** enquanto o `upgrade` roda: uma caixa atualizada pela metade é pior que uma atualização lenta.
 * **Se o** `**upgrade**` **para no meio**, a VTY diz com que status ele saiu e em que diretório o pacote ficou guardado, para quem for ler o que aconteceu.
 
@@ -283,7 +283,7 @@ Se não houver cópia remota da trilha, **pare aqui**. Ela não se reconstrói d
 
 ## 4. Instale a partir da mídia nova
 
-O procedimento é o de [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) e não muda. Três pontos que são diferentes quando a máquina não é nova:
+O procedimento é o de [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) e não muda. Três pontos que são diferentes quando a máquina não é nova:
 
 * **O disco alvo é o mesmo de antes**, com tudo que está nele, e a confirmação com a palavra `yes` apaga o disco inteiro.
 * **A pergunta sobre quantos gigabytes ficam com o volume de log volta a ser feita.** Responda pelo menos o mesmo número de antes: responder menos encolhe o quanto a caixa aguenta exportando para um coletor inalcançável, sem que nada avise.
@@ -331,7 +331,7 @@ Se o caminho foi a reinstalação, o que **não** volta é o que não saiu da ca
 
 # Ver também
 
-* [Instalação da appliance](/doc/instalacao-da-appliance-06NmxvBDb5) - o instalador em detalhe, o volume de registros e o espelho em dois discos
-* [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) - o que a trilha guarda e como conferir que ela não foi adulterada
-* [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) - a outra mudança que custa uma parada, e como medi-la antes
-* [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) - as contas e os papéis que o passo 6 recria
+* [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) - o instalador em detalhe, o volume de registros e o espelho em dois discos
+* [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) - o que a trilha guarda e como conferir que ela não foi adulterada
+* [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) - a outra mudança que custa uma parada, e como medi-la antes
+* [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) - as contas e os papéis que o passo 6 recria

@@ -307,7 +307,7 @@ prisma# [edit nat / cgnat] logging enable
 prisma# [edit nat / cgnat] commit
 ```
 
-`src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`logging tcp <ip-do-coletor>`, também dentro de `cgnat`), e para um coletor que só entende syslog, `logging syslog <ip-do-coletor> enterprise <n>`. [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença entre os três.
+`src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`logging tcp <ip-do-coletor>`, também dentro de `cgnat`), e para um coletor que só entende syslog, `logging syslog <ip-do-coletor> enterprise <n>`. [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença entre os três.
 
 Se você esquecer, o `commit check` e o `commit` avisam, com o nome do pool e os dois jeitos de exportar. É um aviso, não uma recusa, porque um pool montado antes de o coletor existir é uma configuração válida.
 
@@ -406,7 +406,7 @@ error: this change re-maps subscribers that already have mappings
     state right now
 ```
 
-Para crescer sem derrubar ninguém, o caminho é um **segundo pool**. Ver [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
+Para crescer sem derrubar ninguém, o caminho é um **segundo pool**. Ver [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
 
 :::
 
@@ -432,7 +432,7 @@ Com todos os itens marcados, o assinante sai pela internet com o endereço públ
 
 # Ver também
 
-* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — cada campo do pool, campo a campo
-* [Configuração de CGNAT](/doc/configuracao-de-cgnat-EIWRFS6OnJ) — interfaces, timeouts globais e logging
-* [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — abrir porta, limitar um assinante, ampliar o pool
-* [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) — quando algo não funcionar
+* [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — cada campo do pool, campo a campo
+* [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — interfaces, timeouts globais e logging
+* [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — abrir porta, limitar um assinante, ampliar o pool
+* [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — quando algo não funcionar

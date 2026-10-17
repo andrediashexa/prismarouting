@@ -4,8 +4,10 @@ management API, on the lab's real PPPoE sessions - each typed read held to
 the VTY's own screen of the same command, read by `prismash -c` around it,
 and the sessions cleared through the API by address, by id and by user.
 
-Arguments: <stubs dir> <certs dir> <host:port> <prismash command>. One
-RESULT line per check.
+Arguments: <stubs dir> <certs dir> <host:port> <prismash command> [shaper].
+One RESULT line per check. With `shaper` (lab/pppoe.sh section 24, #610),
+only the shaper's checks: the session's queue, what enforces each direction,
+and the policer put back through SetConfig.
 """
 import re
 import subprocess
@@ -231,6 +233,9 @@ def config():
            and list(t.pppoe.dns_servers) == re.findall(
                r"^ dns (\S+)$", vty("show running-config"), re.M)
            and t.pppoe.tcp_mss == 1452 and t.aaa.configured
+           # #610: the block says `rate-limit download policer` here
+           and t.pppoe.rate_limit_download == "policer"
+           and t.pppoe.rate_limit_upload == ""
            and [(s.address, s.priority, s.secret_set, s.secret) for s in r.servers]
            == [("127.0.0.1", 1, True, ""), ("127.0.0.2", 2, True, "")]
            and r.HasField("dead_time_seconds") and r.dead_time_seconds == 10
@@ -391,6 +396,69 @@ def commit():
         fields=["radius.timeout_seconds"]), timeout=60)
     cfg.Commit(pb.CommitRequest(candidate_id=c.candidate_id,
                                 comment="lab: the timeout back"), timeout=300)
+
+def shaper():
+    """
+    The download shaped by default (#610): GetPppoeSession's shapers are
+    `show pppoe session`'s rows and its policers the upload's alone;
+    GetPppoeSummary and GetConfig say what enforces each direction; and a
+    SetConfig of rate_limit_download "policer", committed, puts the
+    download's policer back on the session that redials.
+    """
+    s = next(x for x in listed().sessions if x.user == "sub7")
+    d = op.GetPppoeSession(pb.GetPppoeSessionRequest(session_id=s.session_id),
+                           timeout=60)
+    screen = vty(f"show pppoe session {s.session_id}")
+    head = re.search(r"^shaper down\s+(\S+), a queue of (\d+) ms", screen,
+                     re.M)
+    seen = re.search(r"^\s+passed at once (\d+), delayed (\d+)", screen, re.M)
+    down = [x for x in d.shapers if x.direction == "down"]
+    result("session-shapers",
+           head and seen and len(down) == 1 and down[0].rate_kbit == 20000
+           and down[0].queue_ms == int(head.group(2))
+           and down[0].delayed_packets >= int(seen.group(2))
+           and [p.direction for p in d.policers] == ["up"]
+           and not [x for x in d.shapers if x.direction == "up"],
+           f"{[(x.direction, x.rate_kbit, x.queue_ms, x.passed_packets, x.delayed_packets, x.dropped_codel_packets) for x in d.shapers]}"
+           f" policers {[p.direction for p in d.policers]} vty "
+           f"{head.groups() if head else None} {seen.groups() if seen else None}")
+    summ = op.GetPppoeSummary(pb.GetPppoeSummaryRequest(), timeout=60)
+    result("summary-limiters",
+           summ.rate_limit_download == "shaper"
+           and summ.rate_limit_upload == "policer"
+           and "download by a shaper, upload by a policer"
+           in vty("show pppoe summary"),
+           f"{summ.rate_limit_download}/{summ.rate_limit_upload}")
+    t = cfg.GetConfig(pb.GetConfigRequest(areas=["pppoe"]), timeout=60)
+    result("config-limiters-default",
+           t.pppoe.rate_limit_download == "" and t.pppoe.rate_limit_upload == "",
+           f"{t.pppoe.rate_limit_download!r}/{t.pppoe.rate_limit_upload!r}")
+    c = cfg.OpenCandidate(pb.OpenCandidateRequest(), timeout=60)
+    cfg.SetConfig(pb.SetConfigRequest(
+        candidate_id=c.candidate_id,
+        pppoe=pb.PppoeConfig(rate_limit_download="policer"),
+        fields=["rate_limit_download"]), timeout=60)
+    cfg.Commit(pb.CommitRequest(candidate_id=c.candidate_id,
+                                comment="lab: the download policed again"),
+               timeout=300)
+    sid = wait_user("sub7", s.session_id)
+    after = op.GetPppoeSession(pb.GetPppoeSessionRequest(session_id=sid),
+                               timeout=60) if sid else None
+    run_cfg = vty("show running-config")
+    result("switch-to-policer",
+           after is not None and not after.shapers
+           and sorted(p.direction for p in after.policers) == ["down", "up"]
+           and " rate-limit download policer" in run_cfg
+           and cfg.GetConfig(pb.GetConfigRequest(areas=["pppoe"]),
+                             timeout=60).pppoe.rate_limit_download == "policer",
+           f"sub7 again {sid or 'NOT'}: shapers "
+           f"{[x.direction for x in after.shapers] if after else None} policers "
+           f"{[p.direction for p in after.policers] if after else None}")
+
+
+if sys.argv[5:] == ["shaper"]:
+    run("shaper", shaper)
+    sys.exit(0)
 
 for name, fn in (("sessions", sessions), ("session", one), ("summary", summary),
                  ("history", history), ("verify", verify), ("config", config),

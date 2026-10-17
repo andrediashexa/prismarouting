@@ -12,7 +12,7 @@ router ospf6
 router isis <nome>
 ```
 
-Tudo que roteia fica debaixo de `router`: os protocolos, e também as rotas que ninguém aprende — as estáticas. Os protocolos são do FRR. Dentro de cada bloco, `?` e TAB oferecem as declarações que esta VTY modela (as tabelas abaixo); o resto da sintaxe do FRR também é aceito, e cada linha é conferida pelo próprio FRR na hora em que é digitada — uma linha que ele não aceita é recusada no prompt, com a resposta dele, e nada é guardado. O BGP tem página própria: [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ).
+Tudo que roteia fica debaixo de `router`: os protocolos, e também as rotas que ninguém aprende — as estáticas. Os protocolos são do FRR. Dentro de cada bloco, `?` e TAB oferecem as declarações que esta VTY modela (as tabelas abaixo); o resto da sintaxe do FRR também é aceito, e cada linha é conferida pelo próprio FRR na hora em que é digitada — uma linha que ele não aceita é recusada no prompt, com a resposta dele, e nada é guardado. O BGP tem página própria: [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ).
 
 `router ospf` e `router ospf6` são **instâncias separadas**, não duas metades da mesma coisa: a primeira carrega IPv4, a segunda carrega IPv6, e uma caixa pode rodar as duas ao mesmo tempo. Elas também não ligam a interface do mesmo jeito. O OSPFv2 aceita `network <prefixo> area <área>` dentro do bloco; o OSPFv3 não tem `network` nenhum - quem coloca a interface na área é `ipv6 ospf6 area <área>` dentro do bloco `interface`:
 
@@ -83,9 +83,9 @@ Não há `network` nem `export` no OSPFv3: a interface entra pela linha `ipv6 os
 | `spf-interval` | `<1-120>` | segundos entre execuções do SPF |
 | `max-lsp-lifetime` | `<350-65535>` | segundos que um LSP vale |
 
-As declarações de OSPF e IS-IS que vão **na interface** (`ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`) estão em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+As declarações de OSPF e IS-IS que vão **na interface** (`ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`) estão em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
 
-`export <política>` recusa uma política que dependa do que só uma rota BGP carrega — comunidade, AS-path, local-preference, prepend, próximo salto —, em vez de ignorá-lo em silêncio. As políticas são escritas em `policy-options`, descrito em [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ); `test policy <política> <prefixo>` diz o que ela faz com uma rota antes de ser aplicada.
+`export <política>` recusa uma política que dependa do que só uma rota BGP carrega — comunidade, AS-path, local-preference, prepend, próximo salto —, em vez de ignorá-lo em silêncio. As políticas são escritas em `policy-options`, descrito em [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ); `test policy <política> <prefixo>` diz o que ela faz com uma rota antes de ser aplicada.
 
 ## Rotas estáticas: o bloco `router static`
 
@@ -121,7 +121,7 @@ Dentro do bloco:
 
 
 :::warning
-**A forma** `**route <prefixo> <próximo-salto>**` **dentro do bloco não existe mais.** Ela é recusada no prompt e também num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe sem configuração nenhuma. Numa caixa que tem rota estática, rode `save` depois de atualizar e antes de reiniciar: ele grava as rotas em vigor já na forma nova. [Levar a caixa para uma versão nova](/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
+**A forma** `**route <prefixo> <próximo-salto>**` **dentro do bloco não existe mais.** Ela é recusada no prompt e também num arquivo salvo. Uma caixa cujo arquivo salvo ainda tem essa forma recusa o arquivo inteiro no boot e sobe sem configuração nenhuma. Numa caixa que tem rota estática, rode `save` depois de atualizar e antes de reiniciar: ele grava as rotas em vigor já na forma nova. [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) explica.
 
 :::
 
@@ -188,7 +188,7 @@ Dentro de um `peer` ou de um `profile`:
 
 O mesmo `profile <nome>` quer dizer duas coisas: no nível do `bfd` ele **cria** o perfil, dentro de um `peer` ele **usa** o perfil. O prompt mostra onde você está.
 
-Quem pede a sessão é o protocolo: `neighbor <endereço> bfd [profile <nome>]` no BGP ([Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ)), e `bfd` depois do próximo salto numa rota estática. Um `peer` no bloco `bfd` serve para dar à sessão tempos próprios, e para ela existir mesmo sem nenhum protocolo pedindo.
+Quem pede a sessão é o protocolo: `neighbor <endereço> bfd [profile <nome>]` no BGP ([Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ)), e `bfd` depois do próximo salto numa rota estática. Um `peer` no bloco `bfd` serve para dar à sessão tempos próprios, e para ela existir mesmo sem nenhum protocolo pedindo.
 
 Para ver:
 
@@ -197,7 +197,7 @@ Para ver:
 
 No OSPF, no OSPFv3 e no IS-IS o BFD vai na interface, com ou sem perfil: `ip ospf bfd`, `ip ospf bfd profile <nome>` (e `ipv6 ospf6 bfd ...`, `isis bfd ...`). A caixa escreve a linha `bfd` sozinha antes da do perfil, porque o FRR recusa o perfil sem ela.
 
-As sessões também saem pela API, campo a campo e com um aviso a cada mudança de estado, e pelo SNMP, na BFD-STD-MIB (RFC 7331), que o agente da própria caixa responde. Ainda não há trap de sessão caindo: para alarme, consulte a tabela da MIB periodicamente.
+As sessões também saem pela API, campo a campo e com um aviso a cada mudança de estado, e pelo SNMP, na BFD-STD-MIB (RFC 7331), que o agente da própria caixa responde. Uma sessão que cai ou volta gera os avisos `bfdSessDown` e `bfdSessUp` da própria MIB (desde a 0.152.3), para cada `snmp trap-host` configurado; veja [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb).
 
 A configuração do BFD também é lida e escrita campo a campo pela API: as sessões e os perfis do bloco `bfd`, o perfil de BFD de um vizinho BGP e o BFD de uma rota estática. Uma sessão é identificada pelo endereço, pelo multihop, pelo endereço local, pela interface e pela VRF, como o FRR a identifica; remover uma sessão, um perfil ou o bloco inteiro remove tudo o que está dentro deles.
 
@@ -326,7 +326,7 @@ Na prática, endereços de pool normalmente **não** são endereços de interfac
 
 # Interfaces
 
-As declarações de interface que importam para o roteamento — `mtu`, que muda a interface do dataplane **e** o TAP dela juntos, `urpf strict|loose|off`, e as linhas de OSPF e IS-IS na porta — estão com o resto do bloco em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ). uRPF numa interface interna é o que impede uma origem forjada de ser traduzida.
+As declarações de interface que importam para o roteamento — `mtu`, que muda a interface do dataplane **e** o TAP dela juntos, `urpf strict|loose|off`, e as linhas de OSPF e IS-IS na porta — estão com o resto do bloco em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ). uRPF numa interface interna é o que impede uma origem forjada de ser traduzida.
 
 
 :::info
@@ -355,7 +355,7 @@ configure
 | `unsupported-sfp allow` | `system` > `hardware` | a placa ixgbe (X520 e família) aceita um módulo SFP+ que a Intel não homologou; `no unsupported-sfp` volta ao padrão, que recusa |
 | `host <endereço> [...]` | `system` > `logging` | manda o registro de eventos da caixa para um syslog; vale **no commit** (veja abaixo) |
 
-Todas, menos `logging`, valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+Todas, menos `logging`, valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
 
 ## Módulo SFP+ não homologado numa placa ixgbe
 
@@ -582,7 +582,7 @@ configure
 | `snmp enabled` | roda o agente ou não | `no`   |
 | `snmp listen-address` | um ou mais endereços de escuta, IPv4 e IPv6 | `127.0.0.1` |
 | `snmp port` | porta UDP    | `161`  |
-| `snmp enterprise-number` | o Private Enterprise Number IANA da sua organização | nenhum |
+| `snmp enterprise-number` | o número sob o qual a MIB do Prisma é servida; `no snmp enterprise-number` volta ao do produto | `67033`, o número do Prisma na IANA |
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | nenhuma |
 
 Com o padrão `127.0.0.1`, o agente só responde de dentro da caixa: para o NMS alcançá-lo, `listen-address` precisa ser um endereço que ele alcança.
@@ -593,7 +593,7 @@ Para responder em IPv4 e IPv6 ao mesmo tempo, liste os dois endereços na mesma 
 
 
 :::info
-A MIB empresarial fica **inativa** até que alguém registre um Private Enterprise Number na IANA e o configure com `snmp enterprise-number`. O projeto não inventa um número que pertence a outra organização.
+A MIB do Prisma é servida sob o número do produto na IANA, **67033**, sem nada a configurar (desde a 0.149.13). `snmp enterprise-number <número>` a serve sob o número da sua organização; veja [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb).
 
 :::
 
@@ -871,7 +871,11 @@ printf 'extendedKeyUsage=clientAuth\n' > client.ext
 openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile client.ext -out webui.crt
 ```
 
-Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`. 2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê. Tudo o que ela muda fica registrado no histórico em nome dela. 3. **O endereço.** A API escuta **só na rede de gerência**:
+Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`.
+
+
+2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê. Tudo o que ela muda fica registrado no histórico em nome dela.
+3. **O endereço.** A API escuta **só na rede de gerência**:
 
 ```
 configure
@@ -909,8 +913,8 @@ O `ping`, o `traceroute` e o `mtr` chegam **linha a linha, enquanto rodam**, cad
 
 # Ver também
 
-* [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — o que cada grupo pode mudar
-* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — OSPF e IS-IS na porta, MTU, uRPF
-* [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, `policy-options` e RPKI
-* [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) — o que o agente SNMP responde
-* [VTY prismash — guia de uso](/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh) — os modos e a árvore de comandos
+* [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) — o que cada grupo pode mudar
+* [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — OSPF e IS-IS na porta, MTU, uRPF
+* [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, `policy-options` e RPKI
+* [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb) — o que o agente SNMP responde
+* [VTY prismash — guia de uso](/s/wiki/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh) — os modos e a árvore de comandos
