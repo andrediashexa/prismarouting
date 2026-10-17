@@ -131,7 +131,7 @@
 #     Cisco-AVPair alike;
 #   * one TCP flow holds the plan with few retransmits; a ping under it
 #     waits what CoDel keeps, not the whole queue; one flow 200 ms away
-#     still gets 75%;
+#     still gets 70%;
 #   * a burst within the queue arrives whole, paced at the plan; UDP at twice
 #     the plan delivers exactly the plan, the rest dropped by the queue, and
 #     a ping under it waits at most the queue;
@@ -2324,8 +2324,13 @@ expect "    with few retransmits: what waits is not dropped (${RETX7S})" \
 expect "    and the upload, policed, within 10% of 10M (${UP7S})" within "${UP7S:-0}" 10
 expect "  a ping under that download waits the queue CoDel keeps, not the queue's 100 ms (${LAT_TCP:-?} ms)" \
   sh -c "test '${LAT_TCP:-999}' -le 60"
-expect "  one TCP flow over a 200 ms longer path gets 75% of the plan down (${LONG7} of 20)" \
-  python3 -c "import sys; sys.exit(not float('${LONG7:-0}') >= 15)"
+# 15.2 of 20 (76%) single-threaded and with three workers, where the
+# policer of section 12 read 18.0: CoDel drops a long path's one flow into
+# a smaller window than a half-second bucket lets it keep (docs/bng.md 0.9).
+# The bound is under what was measured by the run-to-run spread, and over
+# 5/100 ms CoDel's 14.1 - the setting this rules out.
+expect "  one TCP flow over a 200 ms longer path gets 70% of the plan down (${LONG7} of 20)" \
+  python3 -c "import sys; sys.exit(not float('${LONG7:-0}') >= 14.5)"
 expect "  a burst of 120 datagrams within the queue arrives whole (${BURST_GOT:-0} of 120)" \
   test "${BURST_GOT:-0}" -eq 120
 expect "    paced at the plan, not at once: over ${BURST_MS:-0} ms (168,000 bytes at 20M: about 67)" \

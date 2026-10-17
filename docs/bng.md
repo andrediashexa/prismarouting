@@ -1297,6 +1297,25 @@ got 8.0, 14.2, 17.7 and 17.7.
 * The per-flow fairness the table shows is TCP's own under CoDel, not a
   scheduler's.
 
+**Measured, `lab/pppoe.sh` section 24** (2026-10-17; real CPEs, pppd,
+RADIUS, the CGNAT; the same numbers single-threaded and with three
+workers, 269 checks each). sub7 has a 20/10 plan from Prisma's
+attributes, the download shaped and the upload policed:
+
+* one TCP flow down: 19.3 Mbit/s with 16 retransmits; up, policed, 9.9;
+* a ping under that download: 28 ms;
+* one flow 200 ms further away: 15.2 (76%) - where section 12's policer
+  read 18.0, and the one place the shaper measured worse on TCP;
+* a burst of 120 datagrams (168,000 bytes) back to back: all 120 arrived,
+  over 66 ms, the plan's pace;
+* UDP at 40 Mbit/s: 19.6 received, a ping under it 92-93 ms;
+* over IPv6, the same plan: 19.0;
+* a CoA to 50/20: 48.2, on the same session, the counters kept;
+* sub3's 30 Mbit/s plan from Cisco-AVPair: 28.9;
+* accel-pppd killed with -9: two sessions shaped after the redial, the two
+  that have a plan;
+* the policer put back by the API: 19.6.
+
 **Measured, `lab/pppoe-shaper.sh`** (sub-interfaces as the sessions, VPP's
 packet generator as the traffic, a build host other labs ran on; one thread
 and three workers):
