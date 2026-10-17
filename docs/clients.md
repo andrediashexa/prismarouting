@@ -27,6 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.14 - BNG phase 1, RADIUS and IPv6 on PPPoE delivered
+
+* **Contract:** unchanged (`prisma.proto` sha256 `f9a8eda173b07ae71ddcebf2edc8fc704505a7a30a8a38b0422fb39f47b93c8f`, the same as 0.155.13). Nothing a client sees changes: the release carries the roadmap's record that #597, #607 and #609 are delivered, and #610 (per-subscriber shaping) as the next BNG item. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.13 - a prefix RADIUS delegates is in the session trail
 
 * **Contract:** unchanged (`prisma.proto` sha256 `f9a8eda173b07ae71ddcebf2edc8fc704505a7a30a8a38b0422fb39f47b93c8f`, the same as 0.155.12). No message, field or number changes.
