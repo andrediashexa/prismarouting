@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The PPPoE shapers over SNMP: `prBngShaper` (`.1.22.30`) and the
+  Zabbix items and triggers on it.** ([#610](https://github.com/andrediashexa/hexarouting/issues/610))
+  docs/snmp-mib.md, docs/bng.md 0.9. The box's totals of the per-session
+  queues: which of shaper or policer enforces each direction (asked of
+  `prisma-bng limiters` through the doors - `accel-ppp.conf` holds the
+  RADIUS secret), the sessions shaped each way, the queues and what they
+  hold now, the packets passed, delayed and dropped - queue full, CoDel,
+  the box's buffers - and the bytes sent, as Counter64, and the box's
+  shaper buffers held of their cap. **The counters never go back when a
+  session ends**: the dataplane adds an ending shaper's counts to a running
+  total before it resets it (`show bpa pppoe-shaper totals`), so a hangup
+  is not read as a wrap; they restart with the dataplane only. The
+  template raises a high on box-buffer drops sustained five minutes
+  (`{$PRISMA.SHAPER.BOX.DROPS.MAX}`, 0 pps) and a warning on the buffers
+  over `{$PRISMA.SHAPER.BUFFERS.WARN}` (80%). No row per session: measured,
+  the agent's lookup over 16,000 sessions' rows took 1.08-1.18 s a
+  GETNEXT. The totals cost the dataplane 152-163 us a read at 18,000
+  shaped, one thread or three workers, off the worker barrier
+  (`show bpa pppoe-shaper` is now mp-safe).
+
 ### Fixed
 
 ## 0.155.15 - a queue per PPPoE session: the plan shaped, not only policed

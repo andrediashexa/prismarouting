@@ -722,12 +722,18 @@ check(set(_agent.BFD_READS.values()) == {doors.BFD_PEERS_ARGV,
       and all(a in doors.QUERIES for a in _agent.BFD_READS.values()),
       "#571: the agent's two vtysh reads are the two BFD query doors, argv "
       "for argv")
-# And prBng's two (#597): prisma-bng's status and summary, the questions the
-# VTY's `show pppoe` asks - any uid's, Debian-snmp's included.
+# And prBng's three (#597, #610): prisma-bng's status and summary, the
+# questions the VTY's `show pppoe` asks, and which limiter enforces each
+# direction - any uid's, Debian-snmp's included.
 check(_agent.BNG_CTL_HOST == doors.pppoe.BNG_CTL_HOST
       and all(a in doors.QUERIES for a in _agent.BNG_READS.values())
-      and len(_agent.BNG_READS) == 2,
+      and len(_agent.BNG_READS) == 3,
       "#597: the agent's prisma-bng reads are query doors, argv for argv")
+r = doors.answer(json.dumps({"argv": [doors.pppoe.BNG_CTL_HOST, "limiters"]}),
+                 1000, execute=lambda a, st, t: (0, "download shaper\n"
+                                                 "upload policer\n"))
+check(r == {"rc": 0, "out": "download shaper\nupload policer\n"},
+      f"#610: uid 1000 - Debian-snmp's kind - may ask the limiters: {r}")
 for argv, why in (
         ([doors.VTYSH_HOST, "-c", "configure terminal"], "configuration"),
         ([doors.VTYSH_HOST, "-c", "show running-config"], "another show"),

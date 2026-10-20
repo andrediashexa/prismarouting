@@ -384,6 +384,11 @@ QUERIES = {
     (pppoe.BNG_CTL_HOST, "status"): "ask whether the PPPoE container runs",
     (pppoe.BNG_CTL_HOST, "sessions"): "list the PPPoE sessions",
     (pppoe.BNG_CTL_HOST, "summary"): "read the PPPoE counters",
+    # Which of shaper or policer enforces each direction's plan (#610): the
+    # SNMP agent's prBngShaperDownLimiter and -UpLimiter. accel-ppp.conf
+    # holds the RADIUS secret and is not Debian-snmp's to read; the two
+    # words are what `show pppoe summary` prints to any account.
+    (pppoe.BNG_CTL_HOST, "limiters"): "ask what enforces the PPPoE plans",
 }
 
 def query_of(argv):

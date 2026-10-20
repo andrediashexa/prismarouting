@@ -285,18 +285,78 @@ expect "under the plan nearly nothing waits (queued $Q_PASS of $((P_PASS + Q_PAS
   test "$Q_PASS" -le $(( (P_PASS + Q_PASS) / 20 ))
 
 echo
-echo "=========== 5. every session ends: nothing left behind ==========="
+echo "=========== 5. what an NMS reads: the box's totals, at $((SESSIONS + BUSY)) shaped (#610) ==========="
+# The SNMP agent's prBngShaper is one `show bpa pppoe-shaper totals` - a
+# walk of every interface index, both directions - read when a request
+# reaches .1.22, at most every ten seconds. A row per session would be
+# `show bpa pppoe-shaper all` instead, and the agent's lookup over it.
 vppctl packet-generator disable-stream > /dev/null 2>&1
+sleep 1
+awk 'BEGIN { for (i = 0; i < 100; i++) print "show bpa pppoe-shaper totals" }' > /tmp/totals-100.txt
+T_TOT=$(exec_timed /tmp/totals-100.txt)
+TOT5=$(vppctl show bpa pppoe-shaper totals | tr -d '\r')
+echo "$TOT5" | sed 's/^/  /'
+# `vppctl exec` keeps a command's output to itself: this one is asked
+# directly, and its time is vppctl's own too
+_t0=$(now_us)
+ALL_LINES=$(vppctl show bpa pppoe-shaper all | wc -l)
+T_ALL=$(( $(now_us) - _t0 ))
+echo "  totals: $((T_TOT / 100)) us a read ($T_TOT us for 100, one vppctl exec)"
+echo "  all: $T_ALL us, $ALL_LINES lines - what a row per session would read"
+# the agent's own reading of that screen, and its lookup over a table of a
+# row per session: ten columns, as `show pppoe session` has counters
+AGENT_OUT=$(python3 - "$TOT5" "$SESSIONS" <<'PY'
+import sys, time, importlib.util as iu, importlib.machinery as im
+sp = iu.spec_from_loader("ag", im.SourceFileLoader(
+    "ag", "/src/appliance/prisma-routing-snmp-agent"))
+ag = iu.module_from_spec(sp); sp.loader.exec_module(ag)
+t = ag.parse_shaper_totals(sys.argv[1])
+print("parsed", "none" if t is None else t["down"]["shaped"])
+n = int(sys.argv[2])
+b = "1.3.6.1.4.1.67033.1.22.40.1"
+rows = [(f"{b}.{c}.{i}", "counter64", i) for c in range(2, 12)
+        for i in range(1, n + 1)]
+pre = ag.as_key("1.3.6.1.4.1.67033.1.22")
+key = ag.as_key(f"{b}.5.{n // 2}")
+t0 = time.time()
+for _ in range(3):
+    r = sorted(ag.in_subtree(rows, pre), key=lambda r: ag.as_key(r[0]))
+    ag.find(r, "GETNEXT", key)
+dt = (time.time() - t0) / 3
+print("getnext_ms", int(dt * 1000), "rows", len(rows),
+      "walk_h", round(dt * len(rows) / 3600, 1))
+PY
+)
+echo "  the agent: $AGENT_OUT"
+PARSED=$(echo "$AGENT_OUT" | awk '$1 == "parsed" {print $2}')
+GN_MS=$(echo "$AGENT_OUT" | awk '$1 == "getnext_ms" {print $2}')
+expect "the agent reads the totals screen: $PARSED downloads shaped" \
+  test "$PARSED" = "$((SESSIONS + BUSY))"
+expect "the totals cost the dataplane under 5 ms a read at $((SESSIONS + BUSY)) shaped ($((T_TOT / 100)) us)" \
+  test "$((T_TOT / 100))" -lt 5000
+# A row per session is NOT served (docs/snmp-mib.md, prBngShaper): this is
+# the number that decided it, held so a change to the agent's lookup that
+# made it cheap would show here.
+echo "  a row per session: one GETNEXT ${GN_MS:-?} ms over $((SESSIONS * 10)) rows - not served"
+# tw <text> <direction> <word> - one number of a totals screen
+tw() { printf '%s\n' "$1" | awk -v d="$2" -v w="$3" '$1 == d { for (i = 2; i < NF; i++) if ($i == w) v = $(i + 1) } END { print v + 0 }'; }
+
+echo
+echo "=========== 6. every session ends: nothing left behind, the totals kept ==========="
 sed 's/ down 20000$/ down 0/' /tmp/shape-all.txt > /tmp/unshape-all.txt
 exec_timed /tmp/busy-unshape.txt > /dev/null
 SD=$(exec_timed /tmp/unshape-all.txt)
 echo "  $SESSIONS + $BUSY shapers removed, the last $SESSIONS in $((SD / 1000)) ms"
 echo "  $(shaped)"
+TOT6=$(vppctl show bpa pppoe-shaper totals | tr -d '\r')
+echo "$TOT6" | sed 's/^/  /'
+expect "every shaper gone, and the totals did not go back: passed $(tw "$TOT5" down passed) -> $(tw "$TOT6" down passed), delayed $(tw "$TOT5" down delayed) -> $(tw "$TOT6" down delayed), bytes $(tw "$TOT5" down bytes) -> $(tw "$TOT6" down bytes)" \
+  sh -c "test $(tw "$TOT6" down shaped) -eq 0 && test $(tw "$TOT6" down passed) -ge $(tw "$TOT5" down passed) && test $(tw "$TOT6" down delayed) -ge $(tw "$TOT5" down delayed) && test $(tw "$TOT6" down bytes) -ge $(tw "$TOT5" down bytes) && test $(tw "$TOT5" down delayed) -gt 0"
 expect "no session is shaped" sh -c "vppctl show bpa pppoe-shaper | tr -d '\r' | head -1 | grep -q '^pppoe-shaper: 0 down 0 up shaped, 0 with a queue, buffers held 0'"
 expect "and the last interface carries no shaper" \
   sh -c "! vppctl show interface features $(tail -n 1 /tmp/names.txt) | grep -q shaper"
 expect "the dataplane is alive" sh -c "vppctl show version | grep -q vpp"
 
 echo
-echo "SUMMARY: workers $W; shape ${ON1}/${ONN} us a batch of $BATCH at 1000/$SESSIONS; $SH_B bytes a session; idle sender calls $IDLE_CALLS; busy $BUSY x $PLAN kbit/s: $MBIT_S of $PLAN_MBIT Mbit/s (policer $MBIT_P), clocks down/owner/tx $C_DOWN/$C_OWN/$C_TX (net of empty turns $C_TX_NET, an empty turn $C_EMPTY) vs policer $C_POL; pass $C_PASS vs policer $C_POL_PASS"
+echo "SUMMARY: totals $((T_TOT / 100)) us a read at $((SESSIONS + BUSY)) shaped, a row per session ${GN_MS:-?} ms a GETNEXT; workers $W; shape ${ON1}/${ONN} us a batch of $BATCH at 1000/$SESSIONS; $SH_B bytes a session; idle sender calls $IDLE_CALLS; busy $BUSY x $PLAN kbit/s: $MBIT_S of $PLAN_MBIT Mbit/s (policer $MBIT_P), clocks down/owner/tx $C_DOWN/$C_OWN/$C_TX (net of empty turns $C_TX_NET, an empty turn $C_EMPTY) vs policer $C_POL; pass $C_PASS vs policer $C_POL_PASS"
 verdict

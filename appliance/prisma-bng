@@ -8,6 +8,7 @@
 #   prisma-bng status               running | stopped | not-configured | no-containers
 #   prisma-bng sessions             the sessions, one per line, '|'-separated
 #   prisma-bng summary              accel-ppp's own counters
+#   prisma-bng limiters             what enforces each direction's plan
 #   prisma-bng terminate sid <id>   end one session
 #   prisma-bng terminate username <name>
 #   prisma-bng terminate all
@@ -103,6 +104,31 @@ terminate_ok() {
   esac
 }
 
+# limiters - what enforces each direction's plan (#610): "download <l>" and
+# "upload <l>", <l> shaper or policer, as the generated accel-ppp.conf's
+# [shaper] says - which accel-pppd reads at its start and at each reload,
+# so after a commit it is what runs. `shaper` only where the file says so,
+# `policer` otherwise: the patch's own reading (build/accel-ppp-ng.patch,
+# vpppolicer_load_config), so a file older than format 7 reads as the
+# policers it ran. Asked through the doors by the SNMP agent
+# (prBngShaperDownLimiter), which as Debian-snmp cannot read the file: it
+# holds the RADIUS secret. 1 with no file; 2 when this account cannot tell
+# - the directory is 2770 and the file 0660, so an account outside the
+# group sees no file where there is one, and must not say "none".
+limiters() {
+  if [ ! -f "$CONF_DIR/accel-ppp.conf" ]; then
+    [ -d "$CONF_DIR" ] && [ ! -x "$CONF_DIR" ] && return 2
+    return 1
+  fi
+  [ -r "$CONF_DIR/accel-ppp.conf" ] || return 2
+  for _d in down up; do
+    _l=$(sed -n "s/^vpp-$_d-limiter=//p" "$CONF_DIR/accel-ppp.conf" | tail -1)
+    [ "$_l" = shaper ] || _l=policer
+    if [ "$_d" = down ]; then echo "download $_l"; else echo "upload $_l"; fi
+  done
+  return 0
+}
+
 # not a unit: the dispatcher, each branch driven by test/test_prisma_bng.sh
 main() {
   verb=${1:-}
@@ -161,6 +187,11 @@ main() {
     summary)
       running || { echo "not running"; exit 3; }
       cli show stat ;;
+    limiters)
+      limiters; rc=$?
+      [ $rc -eq 1 ] && { echo "not-configured"; exit 3; }
+      [ $rc -eq 2 ] && { say "cannot read $CONF_DIR/accel-ppp.conf"; exit 1; }
+      exit 0 ;;
     terminate)
       terminate_ok "$@" || { say "terminate sid <16 hex> | username <name> | all"; exit 2; }
       running || { echo "not running"; exit 3; }
@@ -170,7 +201,7 @@ main() {
         cli terminate "$1" "$2" hard
       fi ;;
     *)
-      say "usage: prisma-bng apply|reload|stop|boot|status|sessions|summary|terminate"
+      say "usage: prisma-bng apply|reload|stop|boot|status|sessions|summary|limiters|terminate"
       exit 2 ;;
   esac
 }

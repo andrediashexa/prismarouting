@@ -492,4 +492,54 @@ bpa_shaper_thread_cap (u32 n_buffers, u32 n_threads)
   return cap < 512 ? 512 : cap;
 }
 
+/*
+ * THE BOX'S TOTALS, one direction's (#610, PRISMA-ROUTING-MIB's
+ * prBngShaper): what every shaper counted, the ones that ended included.
+ *
+ * WHY A RUNNING TOTAL. A session's counters are its bpa_shaper_t's, and a
+ * session's end resets it (bpa_shaper_reset), so the sum of the LIVE
+ * shapers goes BACKWARDS each time a session ends - a Counter64 that an NMS
+ * rates would read every hangup as a wrap or a discontinuity, and a box
+ * with churn would graph nothing true. So what an ending shaper counted is
+ * added to its direction's `retired` before it is reset (bpa_shaper_apply,
+ * under the barrier), and the box's total is `retired` plus the live
+ * shapers - in the DATAPLANE, not the SNMP agent: an agent that kept it
+ * would lose every session that began and ended between two of its reads,
+ * and start again at each restart of snmpd.
+ *
+ * MONOTONIC: the live counters only grow on their owner thread; `retired`
+ * only grows, by exactly what the shaper it took them from loses, on the
+ * main thread under the barrier; and the sum is read on the main thread
+ * too (`show bpa pppoe-shaper totals`), so no read falls between the two.
+ * A dataplane restart starts them at zero, as every VPP counter does:
+ * prSystemDataplaneUptime is the discontinuity. What a session still had
+ * QUEUED at its end is freed with it and counted nowhere - it was neither
+ * sent nor dropped by the plan; at most `limit` bytes a session.
+ */
+typedef struct
+{
+  u64 passed, delayed, bytes, drop_full, drop_aqm, drop_box;
+  u64 q_pkts, q_bytes; /* queued now: the live shapers' only */
+  u32 shaped;	       /* live shapers */
+} bpa_shaper_totals_t;
+
+/* `s`'s counters added into `t`; its queue now too when `live`. */
+static_always_inline void
+bpa_shaper_totals_add (bpa_shaper_totals_t *t, const bpa_shaper_t *s,
+		       int live)
+{
+  t->passed += s->passed;
+  t->delayed += s->delayed;
+  t->bytes += s->bytes;
+  t->drop_full += s->drop_full;
+  t->drop_aqm += s->drop_aqm;
+  t->drop_box += s->drop_box;
+  if (live)
+    {
+      t->q_pkts += s->q_pkts;
+      t->q_bytes += s->q_bytes;
+      t->shaped++;
+    }
+}
+
 #endif /* __included_bpa_pppoe_shaper_h__ */

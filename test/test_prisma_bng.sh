@@ -139,7 +139,34 @@ for w in "username a;b" "sid 12" "all now" "ip 1.2.3.4"; do
   $BNG terminate $w > /dev/null 2>&1 && bad "terminate $w was taken"
 done
 check "terminate refuses anything else, and asks nothing" "! grep -q exec '$T/log'"
+# limiters (#610): what the SNMP agent serves as prBngShaperDownLimiter and
+# prBngShaperUpLimiter, read off the generated file and asking no container
+# (mutation: the default `shaper` - a file before format 7 ran policers).
+: > "$T/log"
+printf '[shaper]\nvpp-down-limiter=shaper\nvpp-up-limiter=policer\n' > "$T/etc/bng/accel-ppp.conf"
+out=$($BNG limiters 2>&1); rc=$?
+check "limiters: each direction as the file says, nothing asked of docker" \
+  "[ $rc -eq 0 ] && [ \"\$(echo '$out' | tr '\n' ' ')\" = 'download shaper upload policer ' ] && [ ! -s '$T/log' ]"
+printf '[shaper]\nvpp-policer-type=1r2c\n' > "$T/etc/bng/accel-ppp.conf"
+check "limiters: a file that names none ran policers, as the patch reads it" \
+  "[ \"\$($BNG limiters | tr '\n' ' ')\" = 'download policer upload policer ' ]"
+rm "$T/etc/bng/accel-ppp.conf"
+out=$($BNG limiters 2>&1); rc=$?
+check "limiters with no file: not-configured, rc 3" "[ $rc -eq 3 ] && [ '$out' = not-configured ]"
+if [ "$(id -u)" -ne 0 ]; then
+  # an account that cannot search the directory - Debian-snmp's, when no
+  # door answers - is told it cannot tell, never "not configured"
+  # (mutation: the -x test dropped). Root searches anything: skipped there.
+  chmod 0600 "$T/etc/bng"
+  out=$($BNG limiters 2>&1); rc=$?
+  chmod 0755 "$T/etc/bng"
+  check "limiters an account cannot read: rc 1 and said, not 'not-configured'" \
+    "[ $rc -eq 1 ] && echo '$out' | grep -q 'cannot read'"
+fi
+touch "$T/etc/bng/accel-ppp.conf"
 PRISMA_BNG_SOURCE_ONLY=1 . "$REPO/appliance/prisma-bng"
+check "limiters, called: the generated file's words" \
+  "[ \"\$(limiters | head -1)\" = 'download policer' ]"
 check "terminate_ok: the same rule as the doors'" \
   "terminate_ok all && terminate_ok sid 8aa8eb1ab0657544 && ! terminate_ok username 'a b'"
 

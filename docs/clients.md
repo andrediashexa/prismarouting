@@ -27,6 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.16 - the PPPoE shapers over SNMP
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.15). No message, field or number changes. The release adds the shapers' box-wide totals to SNMP (`prBngShaper`, PRISMA-ROUTING-MIB) and the Zabbix template, which an API client does not read. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.15 - a queue per PPPoE session: the plan shaped, not only policed
 
 * **Contract:** additive (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`; 0.155.14 was `f9a8eda1...`). New: `PppoeConfig.rate_limit_download` (18) and `rate_limit_upload` (19), each `"shaper"`, `"policer"` or `""` for no statement, which means the default (download `shaper`, upload `policer`); `PppoeSummary.rate_limit_download` (31) and `rate_limit_upload` (32), what enforces each direction now; `PppoeSessionDetail.shapers` (5), one `PppoeShaper` per shaped direction - `rate_kbit`, `queue_ms` (the queue's bound), `queued_packets`/`queued_bytes`/`queued_ms` (gauges, now), `queued_bytes_max` (gauge, since the session began), `passed_packets`, `delayed_packets`, `dropped_queue_packets`, `dropped_codel_packets`, `dropped_box_packets`, `bytes` (counters from the session's start, kept across a CoA), `delay_avg_us` and `delay_max_us`. A direction a policer enforces is in `policers` as before, not in `shapers`.

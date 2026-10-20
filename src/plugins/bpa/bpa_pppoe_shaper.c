@@ -132,6 +132,9 @@ typedef struct
   u32 fq[2];		   /* frame queues to the owner, per direction */
   u32 cap;		   /* buffers one thread's queues may hold */
   u32 n_shaped[2];
+  /* what the shapers that ended counted, per direction: the box's totals
+   * are these plus the live ones' (bpa_shaper_totals_t says why) */
+  bpa_shaper_totals_t retired[2];
   u8 n_workers;
 } bpa_shaper_main_t;
 
@@ -714,6 +717,7 @@ bpa_shaper_apply (vlib_main_t *vm, u32 sw_if_index, int dir, u32 kbit,
       s = vec_elt_at_index (sm->s[dir], sw_if_index);
       bpa_shaper_flush (vm, s, (sw_if_index << 1) | dir);
       bpa_shaper_feature (sw_if_index, dir, 0);
+      bpa_shaper_totals_add (&sm->retired[dir], s, 0);
       s->gen++;
       bpa_shaper_reset (s);
       sm->n_shaped[dir]--;
@@ -898,6 +902,49 @@ bpa_shaper_show_one (vlib_main_t *vm, u32 sw_if_index, int dir)
 		   s->delay_max_us, s->codel_off ? "off" : "on");
 }
 
+/* not a unit: `show bpa pppoe-shaper totals`, read by the SNMP agent's
+ * parse_shaper_totals() by these words (prBngShaper, docs/snmp-mib.md):
+ * a line a direction - its live shapers, their queues now, and the counters
+ * of every shaper it ever had (bpa_shaper_totals_t) - and the box's
+ * buffers: held, the cap over every thread that owns sessions, the cap a
+ * thread, those threads, and the shapers holding a queue. Walks every
+ * interface index once a direction: 152-163 us a read at 18,000 shaped,
+ * one thread or three workers (lab/pppoe-shaper.sh section 5). */
+static void
+bpa_shaper_show_totals (vlib_main_t *vm)
+{
+  bpa_shaper_main_t *sm = &bpa_shaper_main;
+  u32 i, held = 0, active = 0;
+  u32 threads = sm->n_workers ? sm->n_workers : 1;
+  int dir;
+
+  for (dir = 0; dir < 2; dir++)
+    {
+      bpa_shaper_totals_t t = sm->retired[dir];
+      t.q_pkts = t.q_bytes = 0;
+      t.shaped = 0;
+      for (i = 0; i < vec_len (sm->s[dir]); i++)
+	if (sm->s[dir][i].rate > 0.)
+	  bpa_shaper_totals_add (&t, vec_elt_at_index (sm->s[dir], i), 1);
+      vlib_cli_output (vm,
+		       "%s shaped %u queued-packets %lu queued-bytes %lu "
+		       "passed %lu delayed %lu dropped-queue %lu "
+		       "dropped-codel %lu dropped-box %lu bytes %lu",
+		       dir == BPA_SHAPER_UP ? "up" : "down", t.shaped, t.q_pkts,
+		       t.q_bytes, t.passed, t.delayed, t.drop_full, t.drop_aqm,
+		       t.drop_box, t.bytes);
+    }
+  for (i = 0; i < vec_len (sm->pt); i++)
+    {
+      held += sm->pt[i].held;
+      active += sm->pt[i].n_active;
+    }
+  vlib_cli_output (vm,
+		   "buffers held %u cap %lu cap-per-thread %u threads %u "
+		   "queues %u",
+		   held, (u64) sm->cap * threads, sm->cap, threads, active);
+}
+
 /* not a unit: a VLIB_CLI_COMMAND body, driven by prismash's `show pppoe
  * session <id>` and lab/pppoe.sh */
 static clib_error_t *
@@ -915,6 +962,11 @@ bpa_show_pppoe_shaper_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	;
       else if (unformat (input, "all"))
 	all = 1;
+      else if (unformat (input, "totals"))
+	{
+	  bpa_shaper_show_totals (vm);
+	  return 0;
+	}
       else if (unformat (input, "%U", unformat_vnet_sw_interface, vnm,
 			 &sw_if_index))
 	;
@@ -941,6 +993,16 @@ bpa_show_pppoe_shaper_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
 VLIB_CLI_COMMAND (bpa_show_pppoe_shaper_command, static) = {
   .path = "show bpa pppoe-shaper",
-  .short_help = "show bpa pppoe-shaper [<interface> | sw-if-index <n> | all]",
+  .short_help = "show bpa pppoe-shaper [<interface> | sw-if-index <n> | all "
+		"| totals]",
   .function = bpa_show_pppoe_shaper_command_fn,
+  /* Off the worker barrier (#610): the SNMP agent reads `totals` every ten
+   * seconds a poller asks, and under the barrier every worker would stop
+   * for the walk - 152-163 us at 18,000 shaped (lab/pppoe-shaper.sh
+   * section 5). It only reads: the shapers' vectors and `retired` change
+   * on this same main thread, under the barrier (bpa_shaper_apply,
+   * admin-down), never during it; what a worker writes meanwhile - its
+   * counters, which only grow, its queues and buffers held - is read as it
+   * stands, aligned u64s and u32s, never torn on x86-64. */
+  .is_mp_safe = 1,
 };

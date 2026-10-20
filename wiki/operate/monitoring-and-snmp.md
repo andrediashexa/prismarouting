@@ -304,6 +304,25 @@ From version 0.155.3 on, `prBng` (`.1.22`) carries the PPPoE control plane — t
 
 The counters **restart from zero when the control plane restarts** — a commit that changes the `pppoe` block, or a crash —, and `prBngUptime` shows when that was. On a box **without PPPoE**, `prBngState` says `notConfigured`, the counters stay at zero and the server table stays empty: the box answers, it does not error. An Access-Reject is the server's answer — wrong password, unknown or suspended subscriber —, that is why the template collects it and does not alarm on it; what alarms is a server not answering.
 
+### The PPPoE shaper: each session's queue
+
+`prBngShaper` (`.1.22.30`) carries the box's totals of the per-session PPPoE queues — the shaper that, by default, enforces the download plan (`rate-limit download shaper|policer` under `pppoe`).
+
+| Object | What it carries |
+|--------|-----------------|
+| `prBngShaperDownLimiter`, `prBngShaperUpLimiter` | what enforces the plan each way: `shaper` (past the plan waits in the queue), `policer` (past the plan is dropped), or `notConfigured` without PPPoE |
+| `prBngShaperDownSessions`, `prBngShaperUpSessions` | sessions whose download, and upload, go through the shaper now |
+| `prBngShaperQueues` | queues with packets waiting now: subscribers sending more than their plan at this moment |
+| `prBngShaperQueuedPackets`, `prBngShaperQueuedOctets` | packets, and bytes, waiting in every queue now |
+| `prBngShaperPassed`, `prBngShaperDelayed` | packets within the plan, passed at once, and past it, that waited and left |
+| `prBngShaperDroppedQueueFull` | dropped with the session's queue full: the subscriber went past the plan for longer than the queue holds — what the plan is for |
+| `prBngShaperDroppedCodel` | dropped by CoDel: how a TCP connection is told to slow to the plan |
+| `prBngShaperDroppedBoxBuffers` | dropped because the queues together already held every buffer the box sets aside for them: the box, not the plan |
+| `prBngShaperOctets` | bytes sent through the shaper |
+| `prBngShaperBuffersHeld`, `prBngShaperBuffersCap` | dataplane buffers the queues hold now, and the most they may hold: a quarter of the total, split over the workers |
+
+The counters are the whole box's, both directions together, and **do not go back when a session ends**: the dataplane adds what the session counted to a total before it removes it. They restart from zero only when the dataplane restarts (`prSystemDataplaneUptime` shows when) — a restart of the PPPoE control plane does not reset them. A single session has no row in SNMP: with 16,000 sessions, a table per session would cost the agent about a second per request. For one session, use `show pppoe session <id>`.
+
 ## Zabbix: the ready-made template
 
 From version 0.146.0 on the box hands out a **template for Zabbix 7.0** that monitors everything on this page: the dataplane ports, the totals, the CGNAT pools and workers, the connection records, VRRP, LACP, BGP, OSPF, OSPFv3, IS-IS, the FIB size, CPU, memory and disks, the box's own state (tuning, self-test, commits and trail, from 0.147.1 on), the ports' optical modules (from 0.151.15 on), PPPoE and its RADIUS servers (from 0.155.3 on), and the notifications the box sends. It comes out of the box itself, with the Prisma MIB number already filled in:
@@ -319,6 +338,8 @@ The alarms come ready: port administratively up and operationally down, port abo
 The optical modules (0.151.15) have their own: RX power below the low warning or above the high warning **of the module itself**, high temperature, and any reading beyond an alarm threshold. `{$PRISMA.XCVR.RX.MIN}` and `{$PRISMA.XCVR.RX.MAX}` (dBm) and `{$PRISMA.XCVR.TEMP.MAX}` (°C) fire alongside the module's thresholds — to watch a level the module does not watch —, and `{$PRISMA.XCVR.CONTROL:"<port>"}` = 0 silences a port (a QSFP lane is `"<port> lane <n>"`).
 
 PPPoE (0.155.3) has its own: control plane configured and stopped, control plane restarted on its own, sessions up dropping below `{$PRISMA.PPPOE.DROP.PCT}` (50%) of the last hour's maximum — only above `{$PRISMA.PPPOE.MIN}` (10) sessions —, RADIUS server marked as down, RADIUS server not answering Access-Requests for five minutes, and CoA or Disconnect requests answered with nothing.
+
+The PPPoE shaper has its own: packets dropped for want of the box's buffers (`prBngShaperDroppedBoxBuffers`) above `{$PRISMA.SHAPER.BOX.DROPS.MAX}` (0) a second for five minutes, a high; and the queues holding more than `{$PRISMA.SHAPER.BUFFERS.WARN}` (80%) of the buffers they may hold for five minutes, a warning. The template also collects what enforces each direction, the shaped sessions, the queues, and the packets passed, delayed and dropped a second.
 
 Three choices made by the template:
 
@@ -404,6 +425,7 @@ The named notifications (`vrrpStateChange` and the rest) arrive as DISMAN-EVENT-
 | PPPoE sessions up (`prBngSessionsActive`) dropping all at once | an access link, the control plane, or RADIUS refusing the subscribers coming back |
 | unanswered Access-Requests (`prBngRadiusAuthTimeouts`) going up | the RADIUS server, the path to it, or a different secret |
 | `prBngRadiusState` at `failed` | the server is being skipped; with no server alive, nobody gets in |
+| `prBngShaperDroppedBoxBuffers` rising | subscribers losing packets their plan had room for: the queues hold every buffer the box sets aside for them |
 
 The same can be seen through the VTY, without an NMS:
 

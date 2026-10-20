@@ -147,6 +147,8 @@ prisma# [edit pppoe] rate-limit download policer
 
 `no rate-limit download` volta ao padrão. A troca, em qualquer sentido, reinicia o plano de controle do PPPoE: todas as sessões caem e discam de novo, já com a nova escolha. O `show pppoe summary` diz o que aplica cada sentido.
 
+Um NMS acompanha as filas pelo SNMP, em `prBngShaper`: o que aplica cada sentido, as filas agora e os pacotes que passaram, esperaram e foram descartados, somados na caixa inteira (veja [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb)).
+
 Ao atualizar uma caixa que já tem PPPoE, os arquivos do plano de controle são reescritos na próxima carga da configuração. Nessa hora as sessões discam de novo, uma vez, e o download passa para o shaper.
 
 ## IPv6

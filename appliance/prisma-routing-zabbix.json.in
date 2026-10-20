@@ -1718,6 +1718,353 @@
             ]
           },
           {
+            "uuid": "a834c2ecc7404318be1689bcfa84f2bc",
+            "name": "PPPoE shaper: download enforced by",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.1.0",
+            "key": "prisma.pppoe.shaper.down.limiter",
+            "delay": "15m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "prBngShaperDownLimiter: the dataplane's shaper (past the plan waits) or VPP's policer (past the plan is dropped), `rate-limit download`.",
+            "valuemap": {
+              "name": "PRISMA-ROUTING-MIB::prBngShaperDownLimiter"
+            },
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "65f12b9722e6413cb2b45d7028232a02",
+            "name": "PPPoE shaper: upload enforced by",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.2.0",
+            "key": "prisma.pppoe.shaper.up.limiter",
+            "delay": "15m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "prBngShaperUpLimiter, `rate-limit upload`.",
+            "valuemap": {
+              "name": "PRISMA-ROUTING-MIB::prBngShaperDownLimiter"
+            },
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "ee02cde0fc1e4c33a7a008d64b7fb599",
+            "name": "PPPoE shaper: sessions shaped, download",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.3.0",
+            "key": "prisma.pppoe.shaper.down.sessions",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "4dbaa85a5833485d9d8300184ed14195",
+            "name": "PPPoE shaper: sessions shaped, upload",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.4.0",
+            "key": "prisma.pppoe.shaper.up.sessions",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "292ae06f38a74cb0b328b554f40eb4fa",
+            "name": "PPPoE shaper: queues now",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.5.0",
+            "key": "prisma.pppoe.shaper.queues",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "prBngShaperQueues: shapers holding a queue - subscribers offering more than their plan at this moment.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "17b91a0248e243ed961215daabbed406",
+            "name": "PPPoE shaper: packets queued",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.6.0",
+            "key": "prisma.pppoe.shaper.queued.packets",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "769b5c4e3c31437585050baeba9239a7",
+            "name": "PPPoE shaper: bytes queued",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.7.0",
+            "key": "prisma.pppoe.shaper.queued.bytes",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "units": "B",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "a2b1ca29a42d432aaeb9966ae975e20a",
+            "name": "PPPoE shaper: packets passed per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.8.0",
+            "key": "prisma.pppoe.shaper.passed.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "pps",
+            "description": "prBngShaperPassed: within the plan, sent at once. Every shaper counter is the dataplane's running total, kept through a session's end; it restarts with the dataplane.",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "6d35d87bb6ad4bf68021b235f02b007b",
+            "name": "PPPoE shaper: packets delayed per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.9.0",
+            "key": "prisma.pppoe.shaper.delayed.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "pps",
+            "description": "prBngShaperDelayed: past the plan, waited in the session's queue and sent.",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "ef65afbc41f6428d81f8527c987b5392",
+            "name": "PPPoE shaper: dropped, session queue full, per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.10.0",
+            "key": "prisma.pppoe.shaper.drop.full.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "pps",
+            "description": "prBngShaperDroppedQueueFull: subscribers offering more than their plan for longer than their queue holds - what a plan is for.",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "0cfd218ff3a34fff8325f84f725cf15f",
+            "name": "PPPoE shaper: dropped by CoDel per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.11.0",
+            "key": "prisma.pppoe.shaper.drop.codel.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "pps",
+            "description": "prBngShaperDroppedCodel: TCP flows told to slow down to their plan.",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "22f64d759c124b54852051b1e7bbf3ea",
+            "name": "PPPoE shaper: dropped for the box's buffers per second",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.12.0",
+            "key": "prisma.pppoe.shaper.drop.box.rate",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "pps",
+            "description": "prBngShaperDroppedBoxBuffers: the box's shapers held every buffer they may, and a packet its plan had room for was dropped.",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "e042241eb8c84b1b84dc77890836ede5",
+                "expression": "min(/Prisma Routing by SNMP/prisma.pppoe.shaper.drop.box.rate,5m)>{$PRISMA.SHAPER.BOX.DROPS.MAX}",
+                "name": "Prisma Routing: PPPoE shapers dropping for want of the box's buffers (>{$PRISMA.SHAPER.BOX.DROPS.MAX} pps for 5m)",
+                "priority": "HIGH",
+                "description": "Subscribers are losing packets their plans had room for: the shapers' queues together hold the box's share of buffers. `show pppoe summary`; more buffers (the dataplane's pool) or fewer sessions shaped at once.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "capacity"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "uuid": "185c8e4bffd54625862a8ce6756256cd",
+            "name": "PPPoE shaper: bits sent",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.13.0",
+            "key": "prisma.pppoe.shaper.bits",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "bps",
+            "description": "prBngShaperOctets: what the shapers sent, passed and delayed together.",
+            "preprocessing": [
+              {
+                "type": "CHANGE_PER_SECOND"
+              },
+              {
+                "type": "MULTIPLIER",
+                "parameters": [
+                  "8"
+                ]
+              }
+            ],
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "c96a453e462e48bda29649de71bcdaf5",
+            "name": "PPPoE shaper: buffers held",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.14.0",
+            "key": "prisma.pppoe.shaper.buffers",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "d323c42b63a445fe966d54b867f5f1c2",
+            "name": "PPPoE shaper: buffers the shapers may hold",
+            "type": "SNMP_AGENT",
+            "snmp_oid": "1.3.6.1.4.1.{$PRISMA.PEN}.1.22.30.15.0",
+            "key": "prisma.pppoe.shaper.buffers.cap",
+            "delay": "15m",
+            "history": "7d",
+            "value_type": "UNSIGNED",
+            "description": "prBngShaperBuffersCap: a quarter of the dataplane's pool, split over the threads that own sessions.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ]
+          },
+          {
+            "uuid": "be91618803d54120953ad34b84e4184b",
+            "name": "PPPoE shaper: buffer utilisation",
+            "type": "CALCULATED",
+            "key": "prisma.pppoe.shaper.buffers.util",
+            "delay": "1m",
+            "history": "7d",
+            "value_type": "FLOAT",
+            "units": "%",
+            "params": "100*last(//prisma.pppoe.shaper.buffers)/last(//prisma.pppoe.shaper.buffers.cap)",
+            "description": "The box's shaper buffers held, of the most they may hold. A thread at its own share drops while another has room, so drops can start below 100%.",
+            "tags": [
+              {
+                "tag": "component",
+                "value": "pppoe"
+              }
+            ],
+            "triggers": [
+              {
+                "uuid": "f4ac7461e0ba480283a6e3b9abf82b4d",
+                "expression": "min(/Prisma Routing by SNMP/prisma.pppoe.shaper.buffers.util,5m)>{$PRISMA.SHAPER.BUFFERS.WARN}",
+                "name": "Prisma Routing: PPPoE shapers hold over {$PRISMA.SHAPER.BUFFERS.WARN}% of their buffers (5m)",
+                "priority": "WARNING",
+                "description": "Near the share past which shaped packets are dropped for the box, not the plan.",
+                "tags": [
+                  {
+                    "tag": "scope",
+                    "value": "capacity"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "uuid": "1a6997880384434ca8d334d252fc8a69",
             "name": "Notification: linkDown",
             "type": "SNMP_TRAP",
@@ -4629,6 +4976,16 @@
             "description": "PPPoE sessions up falling below this percent of their maximum over the last hour raises a high."
           },
           {
+            "macro": "{$PRISMA.SHAPER.BOX.DROPS.MAX}",
+            "value": "0",
+            "description": "PPPoE shaper packets dropped per second for want of the box's shaper buffers, sustained 5m, above which a high is raised: any is a subscriber losing what its plan had room for."
+          },
+          {
+            "macro": "{$PRISMA.SHAPER.BUFFERS.WARN}",
+            "value": "80",
+            "description": "The share of the box's shaper buffers held, percent, sustained 5m, above which a warning is raised: past 100% packets are dropped for the box, not the plan."
+          },
+          {
             "macro": "{$BGP4V2.INDEX.MATCHES}",
             "value": "^[0-9]+\\.2\\.",
             "description": "BGP4V2-MIB peers discovered, by index (instance.type.address): IPv6 only by default, since BGP4-MIB already has the IPv4 ones."
@@ -5080,6 +5437,24 @@
               {
                 "value": "2",
                 "newvalue": "failed"
+              }
+            ]
+          },
+          {
+            "uuid": "be50e967afeb4c68833345f9d9cd4df6",
+            "name": "PRISMA-ROUTING-MIB::prBngShaperDownLimiter",
+            "mappings": [
+              {
+                "value": "1",
+                "newvalue": "shaper"
+              },
+              {
+                "value": "2",
+                "newvalue": "policer"
+              },
+              {
+                "value": "3",
+                "newvalue": "notConfigured"
               }
             ]
           },

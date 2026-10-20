@@ -49,7 +49,8 @@ disks, the box's own state - the tuning in effect, the boot self-test, the
 configuration's commits and confirm window, the configuration trail's head
 (#524) - the ports' transceivers (#590), the modules and their sensors in
 ENTITY-MIB and ENTITY-SENSOR-MIB (#496), PPPoE's control plane and its
-RADIUS servers (#597), and the box's notifications. The box
+RADIUS servers (#597), the per-session shapers' totals (#610), and the box's
+notifications. The box
 prints it with its enterprise number filled in, the same way it prints the
 MIB:
 
@@ -81,6 +82,8 @@ exactly as it does YAML. Then give the host an SNMP interface - v2c with an
 | `{$PRISMA.XCVR.CONTROL:"<port>"}` | 1 | 0 silences a port's transceiver alarms - an empty cage, a port expected dark; a QSFP lane is `"<port> lane <n>"` (#590) |
 | `{$PRISMA.XCVR.TEMP.MAX}` | 70 | a module's temperature, degrees C, that raises "temperature is high", beside the module's own high warning |
 | `{$PRISMA.PPPOE.DROP.PCT}`, `{$PRISMA.PPPOE.MIN}` | 50, 10 | PPPoE sessions up falling below this percent of their hourly maximum raises a high, above the minimum (#597) |
+| `{$PRISMA.SHAPER.BOX.DROPS.MAX}` | 0 | shaped packets dropped a second for want of the box's shaper buffers, sustained five minutes, that raise a high (#610) |
+| `{$PRISMA.SHAPER.BUFFERS.WARN}` | 80 | percent of the box's shaper buffers held, sustained five minutes, that raises a warning (#610) |
 | `{$PRISMA.XCVR.RX.MIN}`, `{$PRISMA.XCVR.RX.MAX}` | -40, 10 | RX power in dBm that raises "RX power is low" or "high", beside the module's own warnings: -40 is no light, so by default only the module's thresholds decide |
 
 **What it alarms on** is the table in *What is worth an alarm* below, with
@@ -648,6 +651,54 @@ radclient was answered counted ACK or NAK, the first server's timeouts when
 it dies, and `no pppoe` back to notConfigured. `lab/snmp.sh` reads the group
 on a box with no PPPoE, by name with the MIB loaded.
 
+### The per-session shapers - `.1.22.30` (#610)
+
+The dataplane's queue per PPPoE session ([bng.md](bng.md) 0.9), the box's
+totals: one `vppctl show bpa pppoe-shaper totals`, read with the rest of
+`.1.22` - only when a request reaches it, cached as long - and which of
+shaper or policer enforces each direction, asked of `prisma-bng limiters`
+through the doors (the generated `accel-ppp.conf` holds the RADIUS secret
+and is not Debian-snmp's to read). The counters are both directions'
+together; `show pppoe session <id>` splits them per session and direction.
+
+| OID | Object | Type | What it is |
+|---|---|---|---|
+| `.1.22.30.1.0`, `.2.0` | `prBngShaperDownLimiter`, `prBngShaperUpLimiter` | INTEGER | shaper(1) - past the plan waits - policer(2) - past the plan is dropped - or notConfigured(3), as `rate-limit download\|upload` says |
+| `.1.22.30.3.0`, `.4.0` | `prBngShaperDownSessions`, `prBngShaperUpSessions` | Gauge32 | sessions whose download, upload, is shaped now |
+| `.1.22.30.5.0` | `prBngShaperQueues` | Gauge32 | shapers - a session's direction - holding a queue now: subscribers offering more than their plan this moment |
+| `.1.22.30.6.0` | `prBngShaperQueuedPackets` | Gauge32 | packets waiting in every queue now |
+| `.1.22.30.7.0` | `prBngShaperQueuedOctets` | Gauge32 | their bytes, the IP packets' |
+| `.1.22.30.8.0` | `prBngShaperPassed` | Counter64 | within the plan, sent at once |
+| `.1.22.30.9.0` | `prBngShaperDelayed` | Counter64 | past the plan, waited and sent |
+| `.1.22.30.10.0` | `prBngShaperDroppedQueueFull` | Counter64 | dropped, the session's own queue full: more than the plan for longer than the queue holds |
+| `.1.22.30.11.0` | `prBngShaperDroppedCodel` | Counter64 | dropped by CoDel, the queue standing above its target: a TCP flow told to slow to its plan |
+| `.1.22.30.12.0` | `prBngShaperDroppedBoxBuffers` | Counter64 | dropped because the box's shapers held every buffer they may: the box, not a plan |
+| `.1.22.30.13.0` | `prBngShaperOctets` | Counter64 | bytes sent, passed and delayed together |
+| `.1.22.30.14.0` | `prBngShaperBuffersHeld` | Gauge32 | the dataplane's buffers the queues hold now |
+| `.1.22.30.15.0` | `prBngShaperBuffersCap` | Gauge32 | the most they may hold: a quarter of the pool, split evenly over the threads that own sessions |
+
+**The counters never go back when a session ends.** A session's counters
+live in its shaper, and its end resets the shaper, so the sum of the live
+ones would fall at every hangup - a Counter64 an NMS rates would read each
+one as a wrap. The dataplane keeps a running total per direction instead:
+an ending shaper's counts are added to it, under VPP's barrier, before the
+shaper is reset, and the totals are that plus the live shapers', read on
+the same thread. Kept in the dataplane, not in the agent: an agent's sum
+would miss every session that came and went between two reads, and start
+again with snmpd. They start again at zero with the **dataplane**, as every
+VPP counter does - `prSystemDataplaneUptime` is the discontinuity - and not
+with the control plane: a PPPoE restart keeps them. What a session still
+had queued when it ended is freed with it and counted in none of them.
+
+**No row per session.** Measured with this agent's own lookup - every
+request rebuilds and sorts the rows it answers from - ten columns for
+16,000 sessions are 160,000 rows, and one GETNEXT took 1.08-1.18 s: a walk of
+such a table about 52 hours, and every poll of one session's row a second
+of the agent. `show pppoe session <id>` and the API's `GetPppoeSession` are
+the per-session reads; `lab/pppoe-shaper.sh` section 5 times what the
+totals cost the dataplane: 152-163 us a read at 18,000 shaped, one thread
+or three workers, off the worker barrier.
+
 ## Notifications (#507)
 
 The box tells the NMS when something changes, rather than waiting for the
@@ -766,6 +817,8 @@ password, and it is not an account: asked from outside, it answers
 | `prBngSessionsActive` falling sharply | subscribers dropped together: an access link, the control plane, or RADIUS refusing the redials |
 | `prBngRadiusAuthTimeouts` rising, or `prBngRadiusState` failed | a RADIUS server not answering; with none left, nobody logs in |
 | `prBngDaeDropped` rising | Disconnect or CoA requests the box will not answer: a client or a secret that differs |
+| `prBngShaperDroppedBoxBuffers` rising | shaped subscribers losing packets their plans had room for: the box's shaper buffers are all held |
+| `prBngShaperBuffersHeld` near `prBngShaperBuffersCap` | about to drop for the box rather than the plan |
 
 ## Where the values come from, and what reading them costs
 
@@ -802,5 +855,7 @@ last one seen.
 | the ports' transceivers: identity, temperature, voltage, bias, TX and RX power, thresholds | PRISMA-ROUTING-MIB `prTransceiver` | served (#590) |
 | the chassis, ports and modules as an inventory, the modules' DDM as sensors with their thresholds | ENTITY-MIB, ENTITY-SENSOR-MIB, PRISMA-ROUTING-MIB `prSensor` | served (#496) |
 | PPPoE: the control plane, sessions up, started and stopped, each RADIUS server's answers, Disconnect and CoA | PRISMA-ROUTING-MIB `prBng` | served (#597) |
+| PPPoE: the per-session shapers' totals - limiters, queues, passed, delayed, drops, buffers | PRISMA-ROUTING-MIB `prBngShaper` | served (#610) |
+| PPPoE: one session's shaper | `show pppoe session <id>`, `GetPppoeSession` | not over SNMP: a row per session costs the agent a second a request at 16,000 |
 | fans, power supplies, the board's temperatures | ENTITY-SENSOR-MIB, from IPMI or hwmon | not served: no physical box to read them on yet (the ENTITY-MIB section says why) |
 | the cards as entities: model, firmware, serial | ENTITY-MIB | not served: a card's serial is in its PCI VPD, root's alone |

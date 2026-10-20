@@ -304,6 +304,25 @@ A partir de la versión 0.155.3, `prBng` (`.1.22`) trae el plano de control del 
 
 Los contadores **se reinician desde cero cuando se reinicia el plano de control** —un commit que cambia el bloque `pppoe`, o una caída—, y `prBngUptime` muestra cuándo fue. En un equipo **sin PPPoE**, `prBngState` indica `notConfigured`, los contadores quedan en cero y la tabla de servidores queda vacía: el equipo responde, no da error. Un Access-Reject es la respuesta del servidor —contraseña incorrecta, suscriptor desconocido o suspendido—, por eso la plantilla lo recopila y no genera alarma; lo que genera alarma es un servidor que no responde.
 
+### El shaper del PPPoE: la cola de cada sesión
+
+`prBngShaper` (`.1.22.30`) trae los totales del equipo de las colas por sesión del PPPoE — el shaper que, por defecto, aplica el plan de descarga (`rate-limit download shaper|policer` bajo `pppoe`).
+
+| Objeto | Qué trae |
+|--------|----------|
+| `prBngShaperDownLimiter`, `prBngShaperUpLimiter` | qué aplica el plan en cada sentido: `shaper` (lo que pasa del plan espera en la cola), `policer` (lo que pasa del plan se descarta), o `notConfigured` sin PPPoE |
+| `prBngShaperDownSessions`, `prBngShaperUpSessions` | sesiones con la descarga, y con la subida, pasando por el shaper ahora |
+| `prBngShaperQueues` | colas con paquetes esperando ahora: suscriptores enviando más que su plan en este momento |
+| `prBngShaperQueuedPackets`, `prBngShaperQueuedOctets` | paquetes, y bytes, esperando en todas las colas ahora |
+| `prBngShaperPassed`, `prBngShaperDelayed` | paquetes dentro del plan, que pasaron directo, y por encima del plan, que esperaron y salieron |
+| `prBngShaperDroppedQueueFull` | descartados con la cola de la sesión llena: el suscriptor pasó del plan por más tiempo del que la cola guarda — para eso existe el plan |
+| `prBngShaperDroppedCodel` | descartados por CoDel: la forma de avisar a una conexión TCP que baje al plan |
+| `prBngShaperDroppedBoxBuffers` | descartados porque las colas, juntas, ya ocupaban todos los buffers que el equipo reserva para ellas: falta del equipo, no del plan |
+| `prBngShaperOctets` | bytes que salieron por el shaper |
+| `prBngShaperBuffersHeld`, `prBngShaperBuffersCap` | buffers del dataplane ocupados por las colas ahora, y el máximo que pueden ocupar: un cuarto del total, dividido entre los workers |
+
+Los contadores son de todo el equipo, los dos sentidos sumados, y **no retroceden cuando una sesión cae**: el dataplane suma lo que la sesión contó a un total antes de eliminarla. Se reinician desde cero solo cuando se reinicia el dataplane (`prSystemDataplaneUptime` muestra cuándo) — un reinicio del plano de control del PPPoE no los pone a cero. Una sesión sola no tiene fila en SNMP: con 16.000 sesiones, una tabla por sesión le costaría al agente cerca de un segundo por consulta. Para una sesión, use `show pppoe session <id>`.
+
 ## Zabbix: la plantilla lista
 
 A partir de la versión 0.146.0 el equipo entrega una **plantilla para Zabbix 7.0** que monitorea todo lo que está en esta página: los puertos del dataplane, los totales, los pools y los workers del CGNAT, los registros de conexión, el VRRP, el LACP, el BGP, el OSPF, el OSPFv3, el IS-IS, el tamaño de la FIB, la CPU, la memoria y los discos, el estado del propio equipo (tuning, self-test, commits y trail, a partir de la 0.147.1), los módulos ópticos de los puertos (a partir de la 0.151.15), el PPPoE y sus servidores RADIUS (a partir de la 0.155.3), y los avisos que envía el equipo. Sale del propio equipo, ya con el número de la MIB de Prisma completado:
@@ -319,6 +338,8 @@ Las alarmas ya vienen listas: puerto activado administrativamente y operativamen
 Los módulos ópticos (0.151.15) tienen las suyas: potencia de RX por debajo de la advertencia baja o por encima de la advertencia alta **del propio módulo**, temperatura alta, y cualquier lectura más allá de un límite de alarma. `{$PRISMA.XCVR.RX.MIN}` y `{$PRISMA.XCVR.RX.MAX}` (dBm) y `{$PRISMA.XCVR.TEMP.MAX}` (°C) se disparan junto a los límites del módulo —para vigilar un nivel que el módulo no vigila—, y `{$PRISMA.XCVR.CONTROL:"<puerto>"}` = 0 silencia un puerto (un carril de QSFP es `"<puerto> lane <n>"`).
 
 El PPPoE (0.155.3) tiene las suyas: plano de control configurado y detenido, plano de control reiniciado por sí solo, las sesiones activas cayendo por debajo de `{$PRISMA.PPPOE.DROP.PCT}` (50%) del máximo de la última hora —solo por encima de `{$PRISMA.PPPOE.MIN}` (10) sesiones—, servidor RADIUS marcado como caído, servidor RADIUS sin responder Access-Request durante cinco minutos, y solicitudes de CoA o Disconnect respondidas con nada.
+
+El shaper del PPPoE tiene las suyas: paquetes descartados por falta de buffers del equipo (`prBngShaperDroppedBoxBuffers`) por encima de `{$PRISMA.SHAPER.BOX.DROPS.MAX}` (0) por segundo durante cinco minutos, alarma alta; y las colas ocupando más de `{$PRISMA.SHAPER.BUFFERS.WARN}` (80%) de los buffers que pueden ocupar durante cinco minutos, aviso. La plantilla también recopila qué aplica cada sentido, las sesiones con shaper, las colas y los paquetes que pasaron, esperaron y fueron descartados por segundo.
 
 Tres decisiones de la plantilla:
 
@@ -404,6 +425,7 @@ Los avisos con nombre (`vrrpStateChange` y los demás) llegan como `mteTriggerFi
 | sesiones PPPoE activas (`prBngSessionsActive`) cayendo de golpe | un enlace de acceso, el plano de control, o el RADIUS rechazando a los suscriptores que vuelven |
 | Access-Request sin respuesta (`prBngRadiusAuthTimeouts`) subiendo | el servidor RADIUS, el camino hasta él, o un secreto distinto |
 | `prBngRadiusState` en `failed` | el servidor se está omitiendo; sin ningún servidor vivo, nadie entra |
+| `prBngShaperDroppedBoxBuffers` subiendo | suscriptores perdiendo paquetes que cabían en el plan: las colas ocupan todos los buffers que el equipo reserva para ellas |
 
 Lo mismo se ve por la VTY, sin NMS:
 

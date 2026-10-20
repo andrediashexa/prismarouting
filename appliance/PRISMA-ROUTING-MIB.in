@@ -32,13 +32,18 @@ IMPORTS
         FROM ENTITY-MIB;
 
 prismaRouting MODULE-IDENTITY
-    LAST-UPDATED "202610130000Z"
+    LAST-UPDATED "202610200000Z"
     ORGANIZATION "NetConfig"
     CONTACT-INFO "https://prismarouting.com.br"
     DESCRIPTION
         "Prisma Routing's CGNAT, the transports of its connection records,
         and the build the box runs. Read-only: every object is
         read-only, and the agent refuses every SET."
+    REVISION "202610200000Z"
+    DESCRIPTION
+        "The per-session shapers' totals under prBng: what enforces each
+        direction's plan, the queues now, and what passed, waited and was
+        dropped (#610)."
     REVISION "202610130000Z"
     DESCRIPTION
         "PPPoE's control plane: the sessions, the RADIUS servers' answers,
@@ -1747,6 +1752,156 @@ prBngRadiusAcctTimeouts OBJECT-TYPE
     ::= { prBngRadiusEntry 9 }
 
 --
+-- The per-session shapers (#610): the dataplane's queue per PPPoE session
+-- (bpa_pppoe_shaper.c), the box's totals. The counters are both directions'
+-- together, and they are the dataplane's RUNNING totals: a session that
+-- ends adds what its shaper counted before the shaper is reset, so they
+-- never go back when a subscriber hangs up. They start again at zero with
+-- the dataplane, as every VPP counter does: prSystemDataplaneUptime is the
+-- discontinuity. A dataplane that does not answer leaves them out, and an
+-- unreadable PPPoE configuration leaves the limiters out - never zero.
+--
+
+prBngShaper OBJECT IDENTIFIER ::= { prBng 30 }
+
+prBngShaperDownLimiter OBJECT-TYPE
+    SYNTAX      INTEGER { shaper(1), policer(2), notConfigured(3) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "What enforces a session's download plan: the dataplane's shaper -
+        past the plan waits in a queue - or VPP's policer - past the plan is
+        dropped (`rate-limit download shaper|policer`). notConfigured with
+        no PPPoE."
+    ::= { prBngShaper 1 }
+
+prBngShaperUpLimiter OBJECT-TYPE
+    SYNTAX      INTEGER { shaper(1), policer(2), notConfigured(3) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "What enforces a session's upload plan, as prBngShaperDownLimiter
+        for the download."
+    ::= { prBngShaper 2 }
+
+prBngShaperDownSessions OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Sessions whose download is shaped now: those with a plan, while
+        the download limiter is the shaper."
+    ::= { prBngShaper 3 }
+
+prBngShaperUpSessions OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Sessions whose upload is shaped now."
+    ::= { prBngShaper 4 }
+
+prBngShaperQueues OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Shapers - a session's direction - holding a queue now: the
+        subscribers offering more than their plan at this moment."
+    ::= { prBngShaper 5 }
+
+prBngShaperQueuedPackets OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Packets waiting in every shaper's queue now."
+    ::= { prBngShaper 6 }
+
+prBngShaperQueuedOctets OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "octets"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Bytes waiting in every shaper's queue now, the IP packets' (the
+        PPPoE and Ethernet headers are not metered)."
+    ::= { prBngShaper 7 }
+
+prBngShaperPassed OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Packets within the plan, passed at once without waiting."
+    ::= { prBngShaper 8 }
+
+prBngShaperDelayed OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Packets past the plan that waited in the session's queue and were
+        then sent."
+    ::= { prBngShaper 9 }
+
+prBngShaperDroppedQueueFull OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Packets dropped because the session's own queue was full: a
+        subscriber offering more than the plan for longer than the queue
+        holds - what a plan is for."
+    ::= { prBngShaper 10 }
+
+prBngShaperDroppedCodel OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Queued packets dropped by CoDel (RFC 8289) because the session's
+        queue stood above its target: how a TCP flow is told to slow down
+        to the plan."
+    ::= { prBngShaper 11 }
+
+prBngShaperDroppedBoxBuffers OBJECT-TYPE
+    SYNTAX      Counter64
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Packets dropped because the box's shapers already held every
+        buffer they may (prBngShaperBuffersCap): the box, not a plan. Rising
+        is subscribers losing packets their plan had room for."
+    ::= { prBngShaper 12 }
+
+prBngShaperOctets OBJECT-TYPE
+    SYNTAX      Counter64
+    UNITS       "octets"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Bytes the shapers sent, passed at once and delayed together."
+    ::= { prBngShaper 13 }
+
+prBngShaperBuffersHeld OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The dataplane's packet buffers the shapers' queues hold now."
+    ::= { prBngShaper 14 }
+
+prBngShaperBuffersCap OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The most buffers the shapers may hold between them: a quarter of
+        the dataplane's pool, split evenly over the threads that own
+        sessions - a thread at its share drops even while another has
+        room."
+    ::= { prBngShaper 15 }
+
+--
 -- Conformance.
 --
 
@@ -1882,6 +2037,18 @@ prBngGroup OBJECT-GROUP
     DESCRIPTION "PPPoE's control plane."
     ::= { prGroups 14 }
 
+prBngShaperGroup OBJECT-GROUP
+    OBJECTS { prBngShaperDownLimiter, prBngShaperUpLimiter,
+              prBngShaperDownSessions, prBngShaperUpSessions,
+              prBngShaperQueues, prBngShaperQueuedPackets,
+              prBngShaperQueuedOctets, prBngShaperPassed, prBngShaperDelayed,
+              prBngShaperDroppedQueueFull, prBngShaperDroppedCodel,
+              prBngShaperDroppedBoxBuffers, prBngShaperOctets,
+              prBngShaperBuffersHeld, prBngShaperBuffersCap }
+    STATUS      current
+    DESCRIPTION "The per-session shapers, the box's totals."
+    ::= { prGroups 15 }
+
 prCompliance MODULE-COMPLIANCE
     STATUS      current
     DESCRIPTION "What every Prisma Routing box serves."
@@ -1890,7 +2057,8 @@ prCompliance MODULE-COMPLIANCE
                            prSystemGroup, prHaGroup, prLacpGroup,
                            prIdentityGroup, prTuningGroup, prSelfTestGroup,
                            prConfigGroup, prAuditGroup,
-                           prTransceiverGroup, prSensorGroup, prBngGroup }
+                           prTransceiverGroup, prSensorGroup, prBngGroup,
+                           prBngShaperGroup }
     ::= { prCompliances 1 }
 
 END
