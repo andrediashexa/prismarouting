@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.16 - the PPPoE shapers over SNMP
+
+### Added
+
 * **The PPPoE shapers over SNMP: `prBngShaper` (`.1.22.30`) and the
   Zabbix items and triggers on it.** ([#610](https://github.com/andrediashexa/hexarouting/issues/610))
   docs/snmp-mib.md, docs/bng.md 0.9. The box's totals of the per-session
@@ -96,8 +102,6 @@ version has a chance of seeing it.
   GETNEXT. The totals cost the dataplane 152-163 us a read at 18,000
   shaped, one thread or three workers, off the worker barrier
   (`show bpa pppoe-shaper` is now mp-safe).
-
-### Fixed
 
 ## 0.155.15 - a queue per PPPoE session: the plan shaped, not only policed
 
