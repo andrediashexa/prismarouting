@@ -196,6 +196,8 @@ $(BUILD)/test_bpa_rate: test/test_bpa_rate.c \
 $(BUILD)/test_bpa_dyn: test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
                        src/plugins/bpa/bpa_dyn.h src/plugins/bpa/bpa_pool.c \
                        src/plugins/bpa/bpa_pool.h test/bpa_shim.h \
+                       src/plugins/bpa/bpa_demand.h \
+                       src/plugins/bpa/bpa_rebalance.c \
                        test/bpa_vec_shim.h test/bpa_dyn_vectors.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
@@ -436,6 +438,7 @@ $(BUILD)/test_bpa_lent: test/test_bpa_lent.c \
 $(BUILD)/test_bpa_rebalance: test/test_bpa_rebalance.c \
                              src/plugins/bpa/bpa_rebalance.c \
                              src/plugins/bpa/bpa_rebalance.h \
+                             src/plugins/bpa/bpa_demand.h \
                              test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \

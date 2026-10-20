@@ -13,6 +13,7 @@
 #endif
 
 #include "bpa_rebalance.h"
+#include "bpa_demand.h"
 
 u32
 bpa_rebalance_spare (u32 n_local, u32 n_alloc, u32 n_lent, u32 peak)
@@ -133,4 +134,84 @@ bpa_rebalance_plan (const bpa_rebalance_slice_t *slices, u32 n_slices,
     }
 
   return n_out;
+}
+
+u32
+bpa_demand_tick (bpa_demand_t *dm, int (*holds) (void *, u32), void *ctx)
+{
+  u32 keep_key[BPA_DEMAND_MAX];
+  u8 keep_age[BPA_DEMAND_MAX], keep_extra[BPA_DEMAND_MAX];
+  u32 n_keep = 0, s, demand;
+
+  if (!dm)
+    return 0;
+  if (dm->n == 0 && dm->n_overflow == 0)
+    return 0;
+
+  /*
+   * WHAT STILL COUNTS: refused inside the window, and - for a first block -
+   * still holding none. Measured before the second test existed (#611): a
+   * subscriber served by a loan stayed demand until somebody subtracted the
+   * loan, and the subtraction was the only thing that ever forgave anything.
+   * Asking the slice whether the subscriber holds a block now is the answer
+   * itself rather than a bookkeeping of it.
+   */
+  for (s = 0; s < BPA_DEMAND_SLOTS && n_keep < BPA_DEMAND_MAX; s++)
+    {
+      u32 key = dm->key[s];
+
+      if (key == 0)
+	continue;
+      if (dm->age[s] >= BPA_DEMAND_WINDOW)
+	continue;
+      if (!dm->extra[s] && holds && holds (ctx, key - 1))
+	continue;
+      keep_key[n_keep] = key;
+      keep_age[n_keep] = dm->age[s] + 1;
+      keep_extra[n_keep] = dm->extra[s];
+      n_keep++;
+    }
+  demand = n_keep + (dm->n_overflow ? 1 : 0);
+
+  /*
+   * REBUILT RATHER THAN DELETED FROM. Open addressing cannot simply empty a
+   * slot: a later key whose probe run passed through it would no longer be
+   * found, and the packet path would insert it a second time - one
+   * subscriber counted twice, the defect this replaces. Under the barrier,
+   * with at most BPA_DEMAND_MAX survivors, the rebuild is a few hundred
+   * stores once a second, and only on a slice that refused somebody.
+   */
+  clib_memset (dm, 0, sizeof (*dm));
+  for (s = 0; s < n_keep; s++)
+    {
+      u32 t = bpa_demand_slot (keep_key[s]), i;
+
+      /* No further from home than the packet path looks: an entry it
+	 cannot find is one it would insert again. At half load a run that
+	 long does not happen in practice, and an entry dropped here is back
+	 on its subscriber's next refused packet. */
+      for (i = 0; i < BPA_DEMAND_PROBES && dm->key[t] != 0; i++)
+	t = (t + 1) & (BPA_DEMAND_SLOTS - 1);
+      if (dm->key[t] != 0)
+	continue;
+      dm->key[t] = keep_key[s];
+      dm->age[t] = keep_age[s];
+      dm->extra[t] = keep_extra[s];
+      dm->n++;
+    }
+  return demand;
+}
+
+void
+bpa_demand_forget (bpa_demand_t *dm)
+{
+  /*
+   * THE BASELINE MOVES WHILE THE SWITCH IS OFF (#611). Before, nothing
+   * advanced it, and `bpa rebalance enable` on a box that had been up a
+   * while read every refusal since boot as this second's demand - measured
+   * at `demand 1048/242` on the first tick of #475's on-at-180-s runs.
+   * Emptied, the first tick after enabling sees the last second only.
+   */
+  if (dm && (dm->n || dm->n_overflow))
+    clib_memset (dm, 0, sizeof (*dm));
 }

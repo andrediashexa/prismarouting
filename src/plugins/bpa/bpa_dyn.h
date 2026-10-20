@@ -36,6 +36,7 @@
 #endif
 
 #include "bpa_pool.h"
+#include "bpa_demand.h"
 
 /*
  * How long a block stays reserved after its last session ends.
@@ -266,17 +267,6 @@ typedef struct
   u64 n_releases;   /* lifetime; becomes natEvent 17 count */
   u64 n_exhausted;  /* allocation refused; becomes natEvent 12 */
   /*
-   * What n_exhausted was at the last rebalance tick (#210).
-   *
-   * The demand the rebalance acts on is the DELTA: a worker short an hour
-   * ago and served since would otherwise pull blocks towards itself for
-   * ever, with the pull growing as the box ages. Kept beside the counter it
-   * is read against rather than in a table of its own, because a second
-   * structure indexed by (thread, pool) is a second thing to keep in step
-   * with pools being created and deleted.
-   */
-  u64 n_exhausted_seen;
-  /*
    * What this slice had free at the last rebalance tick (#210).
    *
    * THE LOAN NEEDS HYSTERESIS, and this is the measurement that says so. The
@@ -378,6 +368,21 @@ typedef struct
   u32 *addr_next, *addr_prev;
   u32 *addr_head, *addr_tail, *addr_free;
   u64 *tree;
+  /*
+   * The subscribers this slice refused lately, which is the demand the
+   * rebalance acts on (#611). It replaced `n_exhausted - n_exhausted_seen`,
+   * which counted packets, was forgiven only by a loan and did not move
+   * while the switch was off - bpa_demand.h has the four things that went
+   * wrong and what each measured. n_exhausted stays what it always
+   * was, the lifetime count natEvent 12 and `show bpa blocks` report.
+   *
+   * LAST IN THE STRUCTURE, and on purpose: it is 776 bytes, and placed
+   * beside n_exhausted it would push every field after it onto other cache
+   * lines than the ones the served packet has always found them on. Here
+   * nothing the fast path reads has moved by more than the eight bytes
+   * n_exhausted_seen used to take.
+   */
+  bpa_demand_t demand;
 } bpa_dyn_t;
 
 /*
@@ -568,6 +573,23 @@ int bpa_dyn_borrow (bpa_dyn_t *d, u32 block_idx);
  * or -1 when this slice does not hold it free.
  */
 int bpa_dyn_give_back (bpa_dyn_t *d, u32 block_idx);
+
+/*
+ * Borrowed blocks this slice holds FREE right now (#611).
+ *
+ * The rebalance's borrower side: a refused subscriber that has not retried
+ * yet is still demand, and a loan already sitting free for it answers that
+ * demand. Not subtracting it was half of the lend/return loop #475's bench
+ * measured - the borrower asked again for what it was already holding.
+ */
+u32 bpa_dyn_foreign_free (const bpa_dyn_t *d);
+
+/*
+ * Does this subscriber hold a block in this slice? `ctx` is the bpa_dyn_t,
+ * so it can be handed to bpa_demand_tick() as the test that a refusal has
+ * since been served.
+ */
+int bpa_dyn_holds (void *ctx, u32 sub_idx);
 
 /* Is this block held by configuration rather than by traffic? */
 static_always_inline int
