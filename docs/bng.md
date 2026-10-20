@@ -1360,10 +1360,11 @@ total per direction (`retired`, added to in `bpa_shaper_apply` under the
 barrier before the reset), and the totals are that plus the live ones -
 Counter64s that only grow until the dataplane restarts. What a session
 still had queued at its end is freed and counted nowhere. Measured
-(`lab/pppoe-shaper.sh` section 5, one thread): the totals 153 us a read at
-18,000 shaped, off the worker barrier; a row per session not served - the
-agent's lookup over 160,000 rows (ten columns, 16,000 sessions) took
-1.18 s a GETNEXT. `lab/pppoe.sh` section 24 walks it through snmpd: the
+(`lab/pppoe-shaper.sh` section 5, one thread and three workers): the
+totals 152-163 us a read at 18,000 shaped, off the worker barrier; a row
+per session not served - `show bpa pppoe-shaper all` alone is 72,001
+lines in 207-212 ms, and the agent's lookup over 160,000 rows (ten
+columns, 16,000 sessions) took 1.08-1.18 s a GETNEXT. `lab/pppoe.sh` section 24 walks it through snmpd: the
 counts of sessions killed with accel-pppd still in the totals after the
 redial, and after `no pppoe`.
 

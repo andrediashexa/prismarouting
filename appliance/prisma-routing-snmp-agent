@@ -2117,7 +2117,7 @@ def bng_rows(base, st):
 # NO ROW PER SESSION. Measured with this agent's own lookup (find() over
 # oid_table()'s rows, the LAZY merge sorted at each request): ten columns
 # for 16,000 sessions are 160,000 rows, and one GETNEXT took 1.16 s on the
-# development host, 1.18 s in lab/pppoe-shaper.sh section 5 - a walk of
+# development host, 1.08-1.18 s in lab/pppoe-shaper.sh section 5 - a walk of
 # the table 52 hours, every Zabbix poll of one
 # session's row a second of the agent's time. `show pppoe session <id>` and
 # the API's GetPppoeSession are the per-session reads.

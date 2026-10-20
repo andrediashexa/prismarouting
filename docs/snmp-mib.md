@@ -692,11 +692,12 @@ had queued when it ended is freed with it and counted in none of them.
 
 **No row per session.** Measured with this agent's own lookup - every
 request rebuilds and sorts the rows it answers from - ten columns for
-16,000 sessions are 160,000 rows, and one GETNEXT took 1.16-1.18 s: a walk of
+16,000 sessions are 160,000 rows, and one GETNEXT took 1.08-1.18 s: a walk of
 such a table about 52 hours, and every poll of one session's row a second
 of the agent. `show pppoe session <id>` and the API's `GetPppoeSession` are
 the per-session reads; `lab/pppoe-shaper.sh` section 5 times what the
-totals cost the dataplane at 16,000 shaped.
+totals cost the dataplane: 152-163 us a read at 18,000 shaped, one thread
+or three workers, off the worker barrier.
 
 ## Notifications (#507)
 

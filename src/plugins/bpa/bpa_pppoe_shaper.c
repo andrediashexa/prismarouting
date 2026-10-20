@@ -908,8 +908,8 @@ bpa_shaper_show_one (vlib_main_t *vm, u32 sw_if_index, int dir)
  * of every shaper it ever had (bpa_shaper_totals_t) - and the box's
  * buffers: held, the cap over every thread that owns sessions, the cap a
  * thread, those threads, and the shapers holding a queue. Walks every
- * interface index once a direction: 153 us a read at 18,000 shaped, one
- * thread (lab/pppoe-shaper.sh section 5). */
+ * interface index once a direction: 152-163 us a read at 18,000 shaped,
+ * one thread or three workers (lab/pppoe-shaper.sh section 5). */
 static void
 bpa_shaper_show_totals (vlib_main_t *vm)
 {
@@ -998,7 +998,7 @@ VLIB_CLI_COMMAND (bpa_show_pppoe_shaper_command, static) = {
   .function = bpa_show_pppoe_shaper_command_fn,
   /* Off the worker barrier (#610): the SNMP agent reads `totals` every ten
    * seconds a poller asks, and under the barrier every worker would stop
-   * for the walk - 153 us at 18,000 shaped (lab/pppoe-shaper.sh
+   * for the walk - 152-163 us at 18,000 shaped (lab/pppoe-shaper.sh
    * section 5). It only reads: the shapers' vectors and `retired` change
    * on this same main thread, under the barrier (bpa_shaper_apply,
    * admin-down), never during it; what a worker writes meanwhile - its

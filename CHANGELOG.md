@@ -92,9 +92,10 @@ version has a chance of seeing it.
   template raises a high on box-buffer drops sustained five minutes
   (`{$PRISMA.SHAPER.BOX.DROPS.MAX}`, 0 pps) and a warning on the buffers
   over `{$PRISMA.SHAPER.BUFFERS.WARN}` (80%). No row per session: measured,
-  the agent's lookup over 16,000 sessions' rows took 1.18 s a GETNEXT.
-  The totals cost the dataplane 153 us a read at 18,000 shaped, off the
-  worker barrier (`show bpa pppoe-shaper` is now mp-safe).
+  the agent's lookup over 16,000 sessions' rows took 1.08-1.18 s a
+  GETNEXT. The totals cost the dataplane 152-163 us a read at 18,000
+  shaped, one thread or three workers, off the worker barrier
+  (`show bpa pppoe-shaper` is now mp-safe).
 
 ### Fixed
 
