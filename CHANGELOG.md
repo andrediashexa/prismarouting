@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`bpa rebalance` off and on, under subscribers that retry on their own
+  schedule.** ([#475](https://github.com/andrediashexa/hexarouting/issues/475),
+  [#210](https://github.com/andrediashexa/hexarouting/issues/210))
+  `sh tools/lab.sh bench3vm uneven off|on` puts 160 subscribers on the
+  bench's three slices 80/56/24, with sessions on a seeded schedule and
+  refused attempts retried with a jittered backoff, and
+  `lab/bench3vm_rebalance.py` reads both witnesses into one table. Measured
+  on 0.155.0 upgraded to 0.155.15, eight runs: on, the crowded slice went
+  unserved in 12-36 windows instead of 70-82, with 3-7% more allocations,
+  and the lender paid 4-5 of its ~157 windows refused at first, all served.
+  Also measured: the demand the rebalance reads is per refused packet and
+  never forgiven unless a loan answers it, so a lender refused once never
+  lends again, and turning it on later starts from every refusal since boot.
+  Numbers in `docs/architecture.md`. The bench also finds the newest ISO
+  under up to forty patch releases now (ten found none on 2026-10-20). Ships
+  in no medium.
+
 ### Fixed
 
 ## 0.155.16 - the PPPoE shapers over SNMP

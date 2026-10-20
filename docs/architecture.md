@@ -279,6 +279,49 @@ thing waits behind `bpa rebalance enable`. Which side of that trade an
 operator wants is a decision about their traffic, and the numbers above are
 what it should be taken on.
 
+**Under subscribers that retry on their own schedule** (#475's bench,
+`sh tools/lab.sh bench3vm uneven off|on`, measured 2026-10-20). The 0.155.0
+ISO upgraded to the published 0.155.15, 3 workers, the bench's pool (120
+blocks, 40 a slice). 160 subscribers, deliberately uneven: 80 on worker 0's
+slice, 56 on worker 1's, 24 on worker 2's. Each has sessions on a schedule
+fixed by a seed alone (online 30-90 s, offline 15-60 s, 600 s in all, so the
+three slices are asked for about 54, 37 and 16 blocks at once); a refused
+attempt is a 4 s connect (three SYNs) and then a 1 s backoff doubling to 32 s,
+jittered, until the session's window closes. A window is *never served* if
+no attempt in it got through:
+
+| Seed, rebalance | windows served | never served: worker 0 / 1 / 2 | worker 2's windows refused first | `show bpa blocks` allocations / refusals | blocks lent |
+|---|---|---|---|---|---|
+| 210, off | 961, 964 of 1044 | 82 / 1 / 0, 80 / 0 / 0 | 0, 0 | 970 / 3810, 967 / 3848 | - |
+| 210, on | 1027, 1032 | 16 / 1 / 0, 12 / 0 / 0 | 5, 5 (served after a median 18-19 s) | 1031 / 2200, 1039 / 2235 | 21, 21, all in the first 10 s |
+| 210, on 180 s in | 1022, 1022 | 21 / 1 / 0, 21 / 1 / 0 | 1, 0 | 1028 / 1727, 1029 / 1568 | 106, 211, through to the end |
+| 475, off | 951 of 1022 | 70 / 1 / 0 | 0 | 958 / 3713 | - |
+| 475, on | 986 | 36 / 0 / 0 | 4 | 989 / 2696 | 20, all in the first 10 s |
+
+With real retries the lab's result turns round: on, worker 0's slice went
+unserved in 12-36 windows instead of 70-82, the box made 3-7% more
+allocations and refused 27-59% fewer packets, and the lender paid four or
+five of its 155-158 windows refused at first and served after a median of
+18-20 s, none unserved. (The host was shared with other agents' labs, load 2.3-7.1;
+the off and on runs alternated, and each pair agrees to within five
+windows.)
+
+**And the demand the tick reads is not the delta its comment promises.**
+`n_exhausted - n_exhausted_seen` is advanced only by what was lent, so a
+refusal no loan answers stays demand for ever, and it is counted per refused
+**packet** (a SYN and its retransmits are three). Three things follow, each
+in the runs above: a lender refused once - here because it had just lent 21
+of its 40 blocks while its own subscribers were still arriving - reads
+`demand > free` from then on and never lends again (every loan of the on
+runs was in their first ten seconds; the log reads `demand 1835/300` nine
+minutes later); `n_exhausted_seen` does not move while the switch is off, so
+`bpa rebalance enable` on a running box starts from every refusal since boot
+(`demand 1048/242` on the first tick); and a borrower with standing demand
+gives a loan back only after five idle ticks and borrows it again at once,
+192 of the 211 loans of one run going home unused. So the gain above is
+real, but it is the arrival's one-off grab, or a lend-and-return loop, rather
+than a steady rebalance.
+
 ### Dynamic mode under real traffic (#475)
 
 Every lab above drives BPA with VPP's packet generator. `lab/bench3vm.sh`

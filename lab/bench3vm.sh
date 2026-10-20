@@ -5,6 +5,12 @@
 #   sh tools/lab.sh bench3vm off      the same bench with the pool deterministic:
 #                                     BPA switched off, and the checks that are
 #                                     about BPA go red
+#   sh tools/lab.sh bench3vm uneven off|on
+#                                     #210's question instead of the three
+#                                     steps below: a deliberately uneven set
+#                                     of subscribers retrying on their own
+#                                     schedule, with `bpa rebalance` off or on
+#                                     (see THE UNEVEN MODE)
 #   ISO=/cache/prisma-routing-X.Y.Z.iso sh tools/lab.sh bench3vm
 #                                     a given medium instead of the newest one
 #   BENCH_UPGRADE=prisma-routing-<stamp>-upgrade.tar.gz sh tools/lab.sh bench3vm
@@ -82,13 +88,33 @@
 # fill on demand, no block came back, no record arrived, no connection could
 # be traced to a subscriber, and no allocation was there to be used.
 #
+# THE UNEVEN MODE (#210, #475). A dynamic pool's subscriber goes to worker
+# (address - prefix-inside) mod workers, and each worker owns its own slice of
+# the blocks; `bpa rebalance enable` lends a block from a slice with spare to
+# one that is refusing. The scripted lab measured it costing a lender more
+# than it recovered (3 allocations / 1 refusal off, 2 / 2 on), and the
+# maintainer asked for the same comparison under subscribers that retry on
+# their own schedule. So: BENCH_GROUPS (default 80,56,24) subscribers of each
+# residue mod 3 - with 3 workers, of each slice of 40 blocks - each with
+# sessions on a schedule fixed by BENCH_SEED (default 210) alone, over
+# BENCH_SCHED_SECONDS (default 600; BENCH_REBALANCE_AFTER turns it on that
+# many seconds in instead of before), and a refused attempt retried with a
+# jittered backoff (bench3vm_vm.py sched). The off and on runs ask for the
+# same blocks at the same moments; `show bpa blocks` is sampled every 10 s,
+# and lab/bench3vm_rebalance.py reads both witnesses. It asserts only what
+# makes a run worth reading - the set was uneven, the schedule ran to its
+# end, and with rebalance on a block did move - and never which of off and
+# on is better: that is the measurement.
+#
 # Not run by tools/run-all-labs.sh: it installs an ISO and boots three
 # machines, which is a quarter of an hour the first time and about ten
 # minutes after, and it is a measurement as much as a test (NOT_LABS says so).
 set -u
 . /src/lab/verdict.sh
 MODE=${1:-on}
-case "$MODE" in on|off) ;; *) echo "usage: bench3vm [on|off]"; exit 2 ;; esac
+REB=${2:-off}
+case "$MODE" in on|off|uneven) ;; *) echo "usage: bench3vm [on|off|uneven off|uneven on]"; exit 2 ;; esac
+case "$REB" in on|off) ;; *) echo "usage: bench3vm uneven off|on"; exit 2 ;; esac
 LAB_START=$(date +%s)
 
 C=/cache
@@ -97,6 +123,7 @@ C=/cache
 T=/tmp/bench
 rm -rf "$T"; mkdir -p "$T"
 RUN=$C/runs/$(date -u +%Y%m%dT%H%M%SZ)-$MODE
+[ "$MODE" = uneven ] && RUN=$RUN-$REB
 mkdir -p "$RUN"
 echo "$MODE" > "$RUN/mode"
 KEY=$T/key
@@ -141,11 +168,13 @@ echo "=========== the medium ==========="
 if [ -z "${ISO:-}" ]; then
   # The newest version directory that HAS a medium. `latest/` is not it: a
   # patch release is published with its upgrade artifact and no ISO, and
-  # `latest` moves to it (0.153.1 did, the day this was written).
+  # `latest` moves to it (0.153.1 did, the day this was written). Forty
+  # directories and not ten: on 2026-10-20 the newest medium, 0.155.0, sat
+  # under fifteen patch releases (0.155.1-0.155.15) and ten found none.
   PUB=https://prismarouting.com.br/releases
   NAME=""
   for v in $(curl -4 -sSf --max-time 30 "$PUB/" | grep -o 'href="[0-9][0-9.]*/"' \
-               | sed 's/href="//; s/\/"//' | sort -t. -k1,1nr -k2,2nr -k3,3nr | head -10); do
+               | sed 's/href="//; s/\/"//' | sort -t. -k1,1nr -k2,2nr -k3,3nr | head -40); do
     NAME=$(curl -4 -sSf --max-time 30 "$PUB/$v/" | grep -o 'prisma-routing-[0-9.]*\.iso"' | tr -d '"' | head -1)
     [ -n "$NAME" ] && { REL=$PUB/$v/; break; }
   done
@@ -372,6 +401,75 @@ subscribers() {
 }
 in_use() { on $BOX 'vppctl show bpa blocks' 2>/dev/null | sed -n 's/.*total: \([0-9]*\)\/.*/\1/p'; }
 held() { ctl state | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["held"]))'; }
+
+if [ "$MODE" = uneven ]; then
+  GROUPS_=${BENCH_GROUPS:-80,56,24}
+  SEED=${BENCH_SEED:-210}
+  SSECS=${BENCH_SCHED_SECONDS:-600}
+  echo
+  echo "=========== #210: bpa rebalance $REB, subscribers $GROUPS_ by residue, seed $SEED, ${SSECS}s ==========="
+  # BENCH_REBALANCE_AFTER=<s>: on, but only that long after the schedule
+  # starts. Measured on the first on runs: every loan was made in the first
+  # ten seconds, while the 160 subscribers were still arriving, and none in
+  # the nine minutes after - so this is how the steady state is asked apart
+  # from the arrival.
+  REB_AFTER=${BENCH_REBALANCE_AFTER:-0}
+  _w=enable; [ "$REB" = off ] && _w=disable
+  _first=$_w; [ "$REB" = on ] && [ "$REB_AFTER" -gt 0 ] && _first=disable
+  on $BOX "vppctl bpa rebalance $_first" > "$RUN/rebalance.txt" 2>&1
+  expect "the box says rebalance is ${_first}d" grep -q "rebalance ${_first}d" "$RUN/rebalance.txt"
+  # The rebalance writes one notice per block it moves; VPP's log ring keeps
+  # 512 by default, which one busy run could overrun.
+  on $BOX 'vppctl set logging size 20000; vppctl clear logging' >/dev/null 2>&1
+  _label=$REB; [ "$_first" != "$_w" ] && _label=on@$REB_AFTER
+  echo "rebalance=$_label groups=$GROUPS_ seed=$SEED sched_seconds=$SSECS" >> "$RUN/meta.txt"
+  on $BOX 'vppctl show bpa pool' > "$RUN/pool-start.txt" 2>&1
+  : > "$RUN/blocks-samples.txt"
+  (
+    while :; do
+      { echo "@@ $(date +%s)"; on $BOX 'vppctl show bpa blocks'; } >> "$RUN/blocks-samples.txt" 2>&1
+      sleep 10
+    done
+  ) &
+  SAMPLER=$!
+  PIDS="$PIDS $SAMPLER"
+  on $SUBP "rm -f /root/sched.done; setsid sh -c 'python3 /root/bench3vm_vm.py sched 100.64.0.1 $GROUPS_ $SEED $SSECS /root/sched.jsonl > /root/sched.out 2>&1; touch /root/sched.done' </dev/null >/dev/null 2>&1 &"
+  _n=0
+  if [ "$_first" != "$_w" ]; then
+    sleep "$REB_AFTER"; _n=$REB_AFTER
+    on $BOX "vppctl bpa rebalance $_w" >> "$RUN/rebalance.txt" 2>&1
+    expect "and ${_w}d ${REB_AFTER}s into the schedule" grep -q "rebalance ${_w}d" "$RUN/rebalance.txt"
+  fi
+  until on $SUBP 'test -f /root/sched.done' 2>/dev/null || [ "$_n" -ge $((SSECS + 600)) ]; do
+    sleep 10; _n=$((_n + 10))
+  done
+  kill "$SAMPLER" 2>/dev/null
+  blocks end
+  on $BOX 'vppctl show bpa pool' > "$RUN/pool-end.txt" 2>&1
+  on $BOX 'vppctl show logging' > "$RUN/vpp-log.txt" 2>&1
+  on $SUBP 'cat /root/sched.jsonl' > "$RUN/sched.jsonl"
+  on $SUBP 'cat /root/sched.out' > "$RUN/sched.out" 2>&1
+  echo "host_load_after=$(cut -d' ' -f1-3 /proc/loadavg)" >> "$RUN/meta.txt"
+  sed 's/^/  /' "$RUN/blocks-end.txt"
+  echo
+  python3 /src/lab/bench3vm_rebalance.py "$RUN" > "$RUN/rebalance-summary.txt" 2>&1
+  sed -n '/^| run/,$p' "$RUN/rebalance-summary.txt"
+  echo
+  expect "the schedule ran to its end (sched.done) with nothing on its stderr" \
+    sh -c "[ $_n -lt $((SSECS + 600)) ] && [ ! -s '$RUN/sched.out' ] && [ -s '$RUN/sched.jsonl' ]"
+  if [ "$REB" = off ]; then
+    # The control: with nothing moving blocks, the set has to have produced
+    # #210's state, or the on run has nothing to recover.
+    expect "the set was uneven: a slice sat full beside one with 5 or more blocks free" \
+      python3 -c "import json,sys; sys.exit(0 if json.load(open('$RUN/rebalance.json'))['box']['full_beside_free'] > 0 else 1)"
+  else
+    expect "with rebalance on, the box lent at least one block" \
+      python3 -c "import json,sys; sys.exit(0 if json.load(open('$RUN/rebalance.json'))['box']['lent'] > 0 else 1)"
+  fi
+  echo
+  echo "  took $(( $(date +%s) - LAB_START )) s; everything above is in $RUN"
+  verdict
+fi
 
 echo
 echo "=========== 1. the pool fills ==========="

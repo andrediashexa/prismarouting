@@ -9,6 +9,10 @@ subscribers. Copied into each guest by lab/bench3vm.sh and run there.
                                         driven on 127.0.0.1:9000
   bench3vm_vm.py ctl <command...>       one command to that daemon, its
                                         answer (JSON) on stdout
+  bench3vm_vm.py sched <first> <groups> <seed> <seconds> <out>
+                                        the uneven set of the rebalance
+                                        comparison (#210): sessions on a
+                                        fixed schedule, refused ones retried
 
 THE WHO-SERVER is the internet side's half of the evidence. A subscriber
 connects from its private address and says which one it is ("SUB
@@ -221,6 +225,92 @@ def subd(first, count):
             c.sendall((json.dumps(do(line)) + "\n").encode())
 
 
+def windows(seed, i, seconds):
+    """Subscriber i's sessions, as (start, end) seconds from the run's start.
+
+    A function of (seed, i) alone and of nothing the box does: a subscriber
+    refused for a whole window still has the next one where it always had
+    it, so the off and the on runs ask for exactly the same blocks at
+    exactly the same moments and only the answers differ (#210).
+
+    Online 30-90 s, offline 15-60 s, the first start spread over 45 s: with
+    the bench's 20 s UDP timeout and 5 s hold-down a subscriber holds a block
+    about 62% of the time, so a residue with 80 subscribers asks its 40-block
+    slice for about 50 at once and one with 24 for about 15.
+    """
+    rnd = random.Random(f"{seed}-{i}")
+    out, t = [], rnd.uniform(0, 45)
+    while t < seconds:
+        on = rnd.uniform(30, 90)
+        out.append((round(t, 3), round(min(t + on, seconds), 3)))
+        t += on + rnd.uniform(15, 60)
+    return out
+
+
+def sched(first, groups, seed, seconds, out):
+    """The deliberately uneven subscriber set of #210's question, retrying
+    on its own schedule, one thread per subscriber.
+
+    <groups> is "80,56,24": the first 80 subscribers whose number is 0
+    modulo 3, the first 56 that are 1 modulo 3, the first 24 that are 2. A
+    dynamic pool's subscriber goes to worker (address - prefix-inside) mod
+    workers (bpa_owner_worker), and 100.64.0.i is index i, so with three
+    workers each residue IS one worker's slice - one asks for more than its
+    slice holds while the others have blocks to spare.
+
+    A refused attempt is retried the way a client does it: the kernel's SYN
+    retransmits inside a 4 s connect (0, 1 and 3 s), then the application's
+    backoff, 1 s doubling to a 32 s cap, each times 0.5-1.5 for jitter (from
+    a generator seeded by subscriber too), until the window closes. One JSON
+    line per window, written as it ends.
+    """
+    sizes = [int(n) for n in groups.split(",")]
+    nw = len(sizes)
+    seconds = float(seconds)
+    picked, taken = [], [0] * nw
+    for i in range(1, 241):
+        r = i % nw
+        if taken[r] < sizes[r]:
+            taken[r] += 1
+            picked.append(i)
+    fh = open(out, "w", buffering=1)
+    lock = threading.Lock()
+    t0 = time.time() + 2
+
+    def run(i):
+        addr = sub_addr(first, i)
+        rnd = random.Random(f"{seed}-{i}-retry")
+        for ws, we in windows(seed, i, seconds):
+            time.sleep(max(0.0, t0 + ws - time.time()))
+            rec = {"sub": addr, "residue": i % nw, "start": ws, "end": we,
+                   "tries": 0, "ok": None}
+            k, s = 0, None
+            while time.time() < t0 + we:
+                rec["tries"] += 1
+                got, s = join_one(addr, 4)
+                if s is not None:
+                    rec.update(ok=round(time.time() - t0, 3),
+                               pub=got.get("pub"), port=got.get("port"))
+                    break
+                pause = min(32, 2 ** k) * rnd.uniform(0.5, 1.5)
+                k += 1
+                time.sleep(max(0.0, min(pause, t0 + we - time.time())))
+            if s is not None:
+                time.sleep(max(0.0, t0 + we - time.time()))
+                s.close()
+            with lock:
+                fh.write(json.dumps(rec) + "\n")
+
+    th = [threading.Thread(target=run, args=(i,), daemon=True)
+          for i in picked]
+    for t in th:
+        t.start()
+    for t in th:
+        t.join()
+    fh.close()
+    return 0
+
+
 def ctl(words):
     c = socket.create_connection(CTL)
     c.sendall((" ".join(words) + "\n").encode())
@@ -245,6 +335,8 @@ def main():
         subd(sys.argv[2], sys.argv[3])
     elif verb == "ctl":
         return ctl(sys.argv[2:])
+    elif verb == "sched":
+        return sched(*sys.argv[2:7])
     else:
         print(__doc__)
         return 2

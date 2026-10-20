@@ -434,10 +434,19 @@ churn round from the sixth within one subscriber of the most even), so a
 released medium from before #603 goes red there; `BENCH_UPGRADE` names an
 upgrade artifact in the cache that the box is upgraded to before it is
 configured, which is how a change to the plugin is measured on this bench.
+`uneven off|on` replaces the three steps with
+[#210](https://github.com/andrediashexa/hexarouting/issues/210)'s question:
+160 subscribers spread 80/56/24 over the three workers' slices, sessions on a
+schedule fixed by `BENCH_SEED`, refused attempts retried with a jittered
+backoff, and `bpa rebalance` off or on (`BENCH_REBALANCE_AFTER=<s>` turns it
+on that far into the schedule); `lab/bench3vm_rebalance.py` reads the runs
+into one table.
 
 ```sh
-sh tools/lab.sh bench3vm        # about ten minutes with its disks cached
-sh tools/lab.sh bench3vm off    # BPA off: the checks about it go red
+sh tools/lab.sh bench3vm            # about ten minutes with its disks cached
+sh tools/lab.sh bench3vm off        # BPA off: the checks about it go red
+sh tools/lab.sh bench3vm uneven off # #210: about fifteen minutes each
+sh tools/lab.sh bench3vm uneven on
 ```
 
 **Every cycle fills the session table and every cycle empties it.** Fifteen
