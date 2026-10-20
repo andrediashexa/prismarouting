@@ -392,6 +392,51 @@ test_codel (void)
 	 "a count of 0 is taken as 1");
 }
 
+/* The box's totals (#610, prBngShaper): a session's end must not take its
+ * counts back - the sum of the live shapers alone would (mutation: retire
+ * with `live` set, or not at all). */
+static void
+test_totals (void)
+{
+  bpa_shaper_totals_t retired, box;
+  bpa_shaper_t a = shaped (20000, 100), b = shaped (20000, 100);
+
+  memset (&retired, 0, sizeof (retired));
+  a.passed = 10, a.delayed = 4, a.bytes = 14000, a.drop_full = 1;
+  a.drop_aqm = 2, a.drop_box = 3, a.q_pkts = 2, a.q_bytes = 3000;
+  b.passed = 5, b.delayed = 1, b.bytes = 6000;
+
+  memset (&box, 0, sizeof (box));
+  bpa_shaper_totals_add (&box, &a, 1);
+  bpa_shaper_totals_add (&box, &b, 1);
+  CHECK (box.passed == 15 && box.delayed == 5 && box.bytes == 20000 &&
+	   box.drop_full == 1 && box.drop_aqm == 2 && box.drop_box == 3,
+	 "two live shapers' counters, summed");
+  CHECK (box.q_pkts == 2 && box.q_bytes == 3000 && box.shaped == 2,
+	 "their queues now, and how many (%lu %lu %u)", box.q_pkts,
+	 box.q_bytes, box.shaped);
+
+  /* a ends: retired takes its counts, then it is reset */
+  bpa_shaper_totals_add (&retired, &a, 0);
+  CHECK (retired.q_pkts == 0 && retired.q_bytes == 0 && retired.shaped == 0,
+	 "an ended shaper's queue is not counted as queued");
+  bpa_shaper_reset (&a);
+  {
+    bpa_shaper_totals_t after = retired;
+    after.q_pkts = after.q_bytes = 0;
+    after.shaped = 0;
+    bpa_shaper_totals_add (&after, &b, 1);
+    CHECK (after.passed == box.passed && after.delayed == box.delayed &&
+	     after.bytes == box.bytes && after.drop_full == box.drop_full &&
+	     after.drop_aqm == box.drop_aqm && after.drop_box == box.drop_box,
+	   "after the end the totals are what they were: monotonic "
+	   "(passed %lu, was %lu)",
+	   after.passed, box.passed);
+    CHECK (after.shaped == 1 && after.q_pkts == 0,
+	   "one shaper left, nothing queued");
+  }
+}
+
 int
 main (void)
 {
@@ -404,5 +449,6 @@ main (void)
   test_calendar ();
   test_cap ();
   test_codel ();
+  test_totals ();
   return bpa_test_verdict (checks, failures);
 }

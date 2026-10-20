@@ -516,6 +516,9 @@ PEN=1.3.6.1.4.1.67033.1.22
 snmp_bng() {
   pkill -x snmpd 2>/dev/null
   rm -f /run/prisma-routing/doors.sock
+  # the CLI socket as the box has it, root:vpp (lab/snmp.sh says why), for
+  # prBngShaper's `show bpa pppoe-shaper totals` (#610)
+  chgrp vpp /run/vpp/cli.sock 2>/dev/null
   python3 /src/src/prismash/doors.py --serve > /tmp/doors.log 2>&1 &
   _dp=$!
   for _i in 1 2 3 4 5 6 7 8 9 10; do
@@ -1901,6 +1904,10 @@ echo "  sub3, Cisco-AVPair's 30M by the shaper: ${DOWN3S} down"
 # A CONTROL PLANE KILLED WITH -9 LEAVES NO SHAPER: the next one deletes the
 # dead one's sessions, VPP's pppoe plugin sets each interface down before it
 # hands it to the next session, and the shaper goes with it.
+# The box's totals first, before every session ends (#610, prBngShaper).
+TOT_PRE=$(vppctl show bpa pppoe-shaper totals | tr -d '\r')
+echo "  the shapers' totals before the kill:"
+echo "$TOT_PRE" | sed 's/^/    /'
 APID=$(cat /run/prisma-routing/bng/accel-pppd.pid 2>/dev/null)
 [ -n "$APID" ] && kill -9 "$APID" 2>/dev/null
 echo "  accel-pppd ${APID:-?} killed"
@@ -1910,6 +1917,12 @@ sleep 3
 SHAPED_N=$(vppctl show bpa pppoe-shaper | tr -d '\r' | head -1 | awk '{print $2}')
 LIMITED_N=$($HX -c "show pppoe sessions" 2>&1 | awk 'length($1) == 16 && $NF ~ /:/ && $4 ~ /\// && $4 !~ /^none\// {n++} END {print n + 0}')
 echo "  after the restart: $SHAPED_N session(s) shaped, $LIMITED_N with a download limit"
+# SNMP (#610): prBngShaper through snmpd as Debian-snmp, the limiters asked
+# through the doors. Every session of before the kill has ended, and its
+# counts must still be in the totals.
+echo "  SNMP, prBngShaper ($PEN.30), every session redialled:"
+snmp_bng g
+TOT_G=$(vppctl show bpa pppoe-shaper totals | tr -d '\r')
 # The API: the queue's counters as the screen's, what enforces each way, and
 # the policer back by a SetConfig (lab/api_pppoe_check.py `shaper`).
 python3 /src/src/prismash/doors.py --serve > /tmp/doors24.log 2>&1 &
@@ -1938,6 +1951,8 @@ printf 'configure\nno pppoe\ncommit\n' | $HX > /dev/null 2>&1
 sleep 5
 SHAPE_END=$(vppctl show bpa pppoe-shaper | tr -d '\r' | head -1)
 echo "  no pppoe: $SHAPE_END"
+echo "  SNMP, prBngShaper with no pppoe:"
+snmp_bng h
 
 echo
 cat /tmp/radius1.log /tmp/radius2.log > /tmp/radius.log
@@ -2365,6 +2380,28 @@ expect_not_in "    and no shaper" "bpa-pppoe-shaper" "$FEAT7P"
 expect "    within 10% of 20M (${DOWN7P})" within "${DOWN7P:-0}" 20
 expect_in "  no pppoe: no shaper left in the dataplane" \
   "pppoe-shaper: 0 down 0 up shaped, 0 with a queue, buffers held 0" "$SHAPE_END"
+# prBngShaper (#610): the totals, against the dataplane's own, and kept
+# through every session's end.
+# tw <text> <direction> <word> - one number of a totals screen, 0 if none
+tw() { printf '%s\n' "$1" | awk -v d="$2" -v w="$3" '$1 == d { for (i = 2; i < NF; i++) if ($i == w) v = $(i + 1) } END { print v + 0 }'; }
+DLY_PRE=$(( $(tw "$TOT_PRE" down delayed) + $(tw "$TOT_PRE" up delayed) ))
+PAS_PRE=$(( $(tw "$TOT_PRE" down passed) + $(tw "$TOT_PRE" up passed) ))
+C64_G=$(grep -cE "\.22\.30\.(8|9|10|11|12|13)\.0 [0-9]+$" /tmp/bng-g.walk)
+expect "SNMP: prBngShaperDownLimiter shaper(1), UpLimiter policer(2), through the doors ($(bv g 30.1.0)/$(bv g 30.2.0))" \
+  test "$(bv g 30.1.0)/$(bv g 30.2.0)" = 1/2
+expect "  prBngShaperDownSessions is the dataplane's count of shaped downloads ($(bv g 30.3.0) walked, $(tw "$TOT_G" down shaped) in vppctl, $SHAPED_N shaped)" \
+  sh -c "test '$(bv g 30.3.0)' = '$(tw "$TOT_G" down shaped)' && test '$(bv g 30.3.0)' = '$SHAPED_N' && test '$SHAPED_N' -ge 2"
+expect "  the six counters walked ($C64_G)" test "$C64_G" -eq 6
+expect "  every session before the kill ended, and its counts stayed: delayed ${DLY_PRE} before, $(bv g 30.9.0) after" \
+  sh -c "test '$(bv g 30.9.0)' -ge '$DLY_PRE' && test '$DLY_PRE' -gt 0"
+expect "  passed too (${PAS_PRE} -> $(bv g 30.8.0))" \
+  sh -c "test '$(bv g 30.8.0)' -ge '$PAS_PRE' && test '$PAS_PRE' -gt 0"
+expect "  the box's shaper buffers: $(bv g 30.14.0) held of $(bv g 30.15.0)" \
+  sh -c "test '$(bv g 30.15.0)' -ge 512 && test '$(bv g 30.14.0)' -le '$(bv g 30.15.0)'"
+expect "no pppoe: the limiters notConfigured(3) ($(bv h 30.1.0)/$(bv h 30.2.0)), nothing shaped ($(bv h 30.3.0)), nothing queued ($(bv h 30.6.0))" \
+  test "$(bv h 30.1.0)/$(bv h 30.2.0)/$(bv h 30.3.0)/$(bv h 30.6.0)" = 3/3/0/0
+expect "  and every count kept: delayed $(bv g 30.9.0) -> $(bv h 30.9.0), passed $(bv g 30.8.0) -> $(bv h 30.8.0), bytes $(bv g 30.13.0) -> $(bv h 30.13.0)" \
+  sh -c "test '$(bv h 30.9.0)' -ge '$(bv g 30.9.0)' && test '$(bv h 30.8.0)' -ge '$(bv g 30.8.0)' && test '$(bv h 30.13.0)' -ge '$(bv g 30.13.0)' && test '$(bv h 30.13.0)' -gt 0"
 expect_not_in "  and the API server raised nothing" "Traceback" "$(cat /tmp/apiserver24.log 2>/dev/null)"
 
 verdict

@@ -1954,7 +1954,8 @@ BNG_CACHE_SECONDS = float(os.environ.get("PRISMA_SNMP_BNG_CACHE", "10"))
 BNG_CTL_HOST = "/usr/lib/prisma-routing/prisma-bng"
 BNG_CTL = os.environ.get("PRISMA_BNG_CTL", BNG_CTL_HOST)
 BNG_READS = {"status": (BNG_CTL_HOST, "status"),
-             "summary": (BNG_CTL_HOST, "summary")}
+             "summary": (BNG_CTL_HOST, "summary"),
+             "limiters": (BNG_CTL_HOST, "limiters")}
 BNG_STATES = {"running": 1, "stopped": 2, "not-configured": 3,
               "no-containers": 4}
 #: `show stat`'s per-server lines, as the counters they become; `lost` is
@@ -2099,6 +2100,120 @@ def bng_rows(base, st):
     return out
 
 
+# --- the per-session shapers, prBngShaper (.22.30, #610) --------------------
+#
+# What the dataplane's shapers (src/plugins/bpa/bpa_pppoe_shaper.c) did, the
+# box's totals: `show bpa pppoe-shaper totals`, one vppctl, read with the
+# rest of prBng - only when a request reaches .22 - and cached as long.
+#
+# THE COUNTERS ARE THE DATAPLANE'S RUNNING TOTALS, not a sum taken here: a
+# session's end resets its shaper, and the sum of the live ones would go
+# back at every hangup - a Counter64 an NMS rates must not. The plugin adds
+# an ending shaper's counts to its direction's total before it resets it
+# (bpa_shaper_totals_t); a sum kept here would miss every session that came
+# and went between two reads, and restart with snmpd. They restart with the
+# dataplane, as every VPP counter does: prSystemDataplaneUptime.
+#
+# NO ROW PER SESSION. Measured with this agent's own lookup (find() over
+# oid_table()'s rows, the LAZY merge sorted at each request): ten columns
+# for 16,000 sessions are 160,000 rows, and one GETNEXT took 1.16 s on the
+# development host, 1.18 s in lab/pppoe-shaper.sh section 5 - a walk of
+# the table 52 hours, every Zabbix poll of one
+# session's row a second of the agent's time. `show pppoe session <id>` and
+# the API's GetPppoeSession are the per-session reads.
+SHAPER = "30"
+SHAPER_LIMITERS = {"shaper": 1, "policer": 2}
+SHAPER_NOT_CONFIGURED = 3
+#: totals' words per direction, as the counters they become
+_SHAPER_WORDS = {"shaped": "shaped", "queued-packets": "q_pkts",
+                 "queued-bytes": "q_bytes", "passed": "passed",
+                 "delayed": "delayed", "dropped-queue": "drop_full",
+                 "dropped-codel": "drop_aqm", "dropped-box": "drop_box",
+                 "bytes": "bytes"}
+
+
+def parse_shaper_totals(text):
+    """
+    `show bpa pppoe-shaper totals` as {"down": {...}, "up": {...},
+    "buffers": {"held", "cap", "cap-per-thread", "threads", "queues"}},
+    every value an int; None when it is not that screen - a dataplane
+    older than the command, or none at all.
+    """
+    d = {}
+    for line in (text or "").splitlines():
+        w = line.split()
+        if not w or w[0] not in ("down", "up", "buffers"):
+            continue
+        pairs = dict(zip(w[1::2], w[2::2]))
+        if w[0] == "buffers":
+            d["buffers"] = {k: int(v) for k, v in pairs.items()
+                            if v.isdigit()}
+        else:
+            d[w[0]] = {_SHAPER_WORDS[k]: int(v) for k, v in pairs.items()
+                       if k in _SHAPER_WORDS and v.isdigit()}
+    if set(d) != {"down", "up", "buffers"} or "held" not in d["buffers"] \
+            or "cap" not in d["buffers"] \
+            or any(len(d[x]) != len(_SHAPER_WORDS) for x in ("down", "up")):
+        return None
+    return d
+
+
+def parse_limiters(got):
+    """
+    `prisma-bng limiters` (rc, text) as {"download": n, "upload": n}, n a
+    SHAPER_LIMITERS value or SHAPER_NOT_CONFIGURED for both; None when it
+    could not be asked or could not tell.
+    """
+    if got is None:
+        return None
+    rc, text = got
+    if rc == 3 and text.strip() == "not-configured":
+        return {"download": SHAPER_NOT_CONFIGURED,
+                "upload": SHAPER_NOT_CONFIGURED}
+    if rc != 0:
+        return None
+    out = {}
+    for line in text.splitlines():
+        w = line.split()
+        if len(w) == 2 and w[0] in ("download", "upload") \
+                and w[1] in SHAPER_LIMITERS:
+            out[w[0]] = SHAPER_LIMITERS[w[1]]
+    return out if len(out) == 2 else None
+
+
+def shaper_rows(base, totals, limiters):
+    """
+    prBngShaper's rows under `base` (the enterprise's .1): the limiters
+    when `limiters` (parse_limiters()) could be read, the dataplane's
+    totals when `totals` (parse_shaper_totals()) could - each left out
+    alone otherwise, never served as zero. The counters are both
+    directions' together; the gauges are clamped to Gauge32.
+    """
+    b = f"{base}.{BNG}.{SHAPER}"
+    out = []
+    if limiters:
+        out += [(f"{b}.1.0", "integer", limiters["download"]),
+                (f"{b}.2.0", "integer", limiters["upload"])]
+    if totals:
+        dn, up, buf = totals["down"], totals["up"], totals["buffers"]
+        g = lambda v: min(v, 2 ** 32 - 1)
+        c64 = lambda k: (dn[k] + up[k]) % 2 ** 64
+        out += [(f"{b}.3.0", "gauge", g(dn["shaped"])),
+                (f"{b}.4.0", "gauge", g(up["shaped"])),
+                (f"{b}.5.0", "gauge", g(buf.get("queues", 0))),
+                (f"{b}.6.0", "gauge", g(dn["q_pkts"] + up["q_pkts"])),
+                (f"{b}.7.0", "gauge", g(dn["q_bytes"] + up["q_bytes"])),
+                (f"{b}.8.0", "counter64", c64("passed")),
+                (f"{b}.9.0", "counter64", c64("delayed")),
+                (f"{b}.10.0", "counter64", c64("drop_full")),
+                (f"{b}.11.0", "counter64", c64("drop_aqm")),
+                (f"{b}.12.0", "counter64", c64("drop_box")),
+                (f"{b}.13.0", "counter64", c64("bytes")),
+                (f"{b}.14.0", "gauge", g(buf["held"])),
+                (f"{b}.15.0", "gauge", g(buf["cap"]))]
+    return out
+
+
 def subtree_wanted(cmd, key, hit, prefix):
     """
     Whether a `cmd` ("GET" or "GETNEXT") for `key` needs the rows of the
@@ -2133,6 +2248,13 @@ class Bng:
         if st and st["state"] == "running":
             st = bng_state(status, bng_ask("summary"))
         self.rows = bng_rows(base, st) if base else []
+        if base:
+            # #610: the dataplane's shapers, whatever the control plane's
+            # state - their counters outlive it - and what enforces a plan
+            self.rows += shaper_rows(
+                base,
+                parse_shaper_totals(vppctl("show bpa pppoe-shaper totals")),
+                parse_limiters(bng_ask("limiters")))
         self.at = time.time()
         return self.rows
 

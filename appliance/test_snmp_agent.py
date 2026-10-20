@@ -514,6 +514,15 @@ for _o, _t, _v in agent.entity_rows(
 for _o, _t, _v in agent.bng_rows("1.3.6.1.4.1.99999.1", agent.bng_state(
         (0, "running\n"), (0, BNG_STAT))):
     _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
+# prBngShaper (#610) is read with it: the dataplane's totals and the limiters.
+for _o, _t, _v in agent.shaper_rows("1.3.6.1.4.1.99999.1", agent.parse_shaper_totals(
+        "down shaped 1 queued-packets 0 queued-bytes 0 passed 1 delayed 0 "
+        "dropped-queue 0 dropped-codel 0 dropped-box 0 bytes 1\n"
+        "up shaped 0 queued-packets 0 queued-bytes 0 passed 0 delayed 0 "
+        "dropped-queue 0 dropped-codel 0 dropped-box 0 bytes 0\n"
+        "buffers held 0 cap 512 cap-per-thread 512 threads 1 queues 0\n"),
+        {"download": 1, "upload": 2}):
+    _served[_o[len("1.3.6.1.4.1.99999."):]] = _t
 _SYN["Integer32"] = "integer"
 _objs = {}
 for _o, _t in _served.items():
@@ -1788,6 +1797,66 @@ finally:
     agent.BNG_CTL = _saved_ctl
 check(agent.Bng().rows == [] and agent.Bng().at == 0.0,
       "#597: a fresh reader holds nothing until it has asked")
+# prBngShaper (#610): the dataplane's shapers, box-wide.
+print("\n=== prBngShaper: the per-session shapers' totals (#610) ===")
+SHAPER_TOTALS = (
+    "down shaped 3 queued-packets 7 queued-bytes 10500 passed 100 delayed 40 "
+    "dropped-queue 5 dropped-codel 6 dropped-box 2 bytes 140000\n"
+    "up shaped 1 queued-packets 1 queued-bytes 1500 passed 10 delayed 4 "
+    "dropped-queue 1 dropped-codel 0 dropped-box 1 bytes 14000\n"
+    "buffers held 8 cap 8192 cap-per-thread 4096 threads 2 queues 2\n")
+_st = agent.parse_shaper_totals(SHAPER_TOTALS)
+check(_st["down"]["shaped"] == 3 and _st["up"]["drop_box"] == 1
+      and _st["down"]["drop_aqm"] == 6 and _st["buffers"]["cap"] == 8192
+      and _st["buffers"]["queues"] == 2,
+      f"#610: the totals screen, word by word: {_st}")
+check(agent.parse_shaper_totals("") is None
+      and agent.parse_shaper_totals(
+          "show bpa pppoe-shaper: unknown input `totals'") is None
+      and agent.parse_shaper_totals(SHAPER_TOTALS.replace(
+          " dropped-box 2", "")) is None
+      and agent.parse_shaper_totals("\n".join(
+          SHAPER_TOTALS.splitlines()[:2])) is None,
+      "#610: a dataplane older than the command, or half a screen, is "
+      "nothing - never zeros")
+check(agent.parse_limiters((0, "download shaper\nupload policer\n"))
+      == {"download": 1, "upload": 2}
+      and agent.parse_limiters((3, "not-configured\n"))
+      == {"download": 3, "upload": 3}
+      and agent.parse_limiters((1, "")) is None
+      and agent.parse_limiters(None) is None
+      and agent.parse_limiters((0, "download shaper\n")) is None,
+      "#610: the limiters: shaper(1), policer(2), notConfigured(3); a read "
+      "that failed or was half is None")
+_sr = {o: (t, v) for o, t, v in agent.shaper_rows(
+    "1.3.6.1.4.1.99999.1", _st, {"download": 1, "upload": 2})}
+S = "1.3.6.1.4.1.99999.1.22.30"
+check([_sr.get(f"{S}.{n}.0") for n in range(1, 16)]
+      == [("integer", 1), ("integer", 2), ("gauge", 3), ("gauge", 1),
+          ("gauge", 2), ("gauge", 8), ("gauge", 12000),
+          ("counter64", 110), ("counter64", 44), ("counter64", 6),
+          ("counter64", 6), ("counter64", 3), ("counter64", 154000),
+          ("gauge", 8), ("gauge", 8192)],
+      f"#610: the limiters, the sessions shaped each way, the queues, both "
+      f"directions' counters summed, the buffers held of the cap: {_sr}")
+check(set(agent.shaper_rows("1.3.6.1.4.1.99999.1", None,
+                            {"download": 3, "upload": 3}))
+      == {(f"{S}.1.0", "integer", 3), (f"{S}.2.0", "integer", 3)}
+      and len(agent.shaper_rows("1.3.6.1.4.1.99999.1", _st, None)) == 13
+      and agent.shaper_rows("1.3.6.1.4.1.99999.1", None, None) == [],
+      "#610: each half served alone when the other could not be read, "
+      "neither as zero")
+_big = agent.parse_shaper_totals(SHAPER_TOTALS.replace(
+    "passed 100", f"passed {2 ** 64 - 1}").replace(
+    "queued-bytes 10500", f"queued-bytes {2 ** 33}"))
+_br2 = {o: v for o, t, v in agent.shaper_rows("1.3.6.1.4.1.99999.1", _big,
+                                              None)}
+check(_br2[f"{S}.8.0"] == 9 and _br2[f"{S}.7.0"] == 2 ** 32 - 1,
+      f"#610: a Counter64 wraps as one, a Gauge32 sticks at its top: "
+      f"{_br2[f'{S}.8.0']}, {_br2[f'{S}.7.0']}")
+check(agent.BNG_READS["limiters"] == ("/usr/lib/prisma-routing/prisma-bng",
+                                      "limiters"),
+      "#610: the limiters are asked of prisma-bng, as its door's argv")
 # SERVED BY THE ENTERPRISE PROCESS, read only when a request reaches .22:
 # net-snmp 5.9.3 hands a GET under a nested pass_persist registration to the
 # broader one (measured), so .22 cannot be a registration of its own, and a
