@@ -179,6 +179,73 @@ bench (u32 n_out, u16 bsz)
   free (tr);
 }
 
+/*
+ * WHAT A REFUSED PACKET COSTS (#611): bpa_dyn_acquire() on a full slice,
+ * which since #611 also notes WHO was refused for the rebalance. The whole
+ * call is timed, before and after alike, so the difference is the note - the
+ * shim's by_sub lookup that precedes it is the same in both. Three shapes: one
+ * subscriber retrying (a hit on its own slot), 48 cycling (the set at its
+ * working load), and 4096 cycling (the set full, every packet probing to its
+ * limit and counted as overflow - the worst a refusal can pay).
+ */
+static void
+bench_refused (void)
+{
+  bpa_pool_t p;
+  bpa_dyn_t d;
+  u32 in_base = 0x64400000, in_count = 1u << 22, out_base = 0xc8000000;
+  u32 n_out = 8, i, r, shape;
+  u32 spans[3] = { 1, 48, 4096 };
+  const char *names[3] = { "one subscriber", "48 subscribers",
+			   "4096 subscribers" };
+  bpa_block_t b;
+  int is_new;
+
+  memset (&p, 0, sizeof (p));
+  p.name = (u8 *) "refused";
+  p.port_min = 1024;
+  p.port_max = 65535;
+  p.block_size = 4096;
+  p.policy = BPA_POLICY_INTERLEAVED;
+  p.mode = BPA_MODE_DYNAMIC;
+  p.max_blocks = 4;
+  if (bpa_addr_set_build (&p.inside, &in_base, &in_count, 1)
+      || bpa_addr_set_build (&p.outside, &out_base, &n_out, 1)
+      || bpa_pool_init (&p))
+    exit (1);
+#ifdef BPA_DYN_TAKE
+  bpa_dyn_share_init (&p, 3);
+#endif
+  if (bpa_dyn_init (&d, &p, 0, 3, 0))
+    exit (1);
+  for (i = 0; i < d.n_local; i++)
+    if (bpa_dyn_acquire (&d, &p, i * 3, 0, 3, &b, &is_new))
+      exit (1);
+  for (shape = 0; shape < 3; shape++)
+    {
+      double t[51];
+      u32 per = 1u << 16;
+
+      for (r = 0; r < 51; r++)
+	{
+	  double t0 = now_ns ();
+	  for (i = 0; i < per; i++)
+	    (void) bpa_dyn_acquire (&d, &p, 1000000 + 3 * (i % spans[shape]),
+				    0, 3, &b, &is_new);
+	  t[r] = (now_ns () - t0) / per;
+#ifdef BPA_DEMAND_SLOTS
+	  memset (&d.demand, 0, sizeof (d.demand)); /* the tick, a "second" */
+#endif
+	}
+      qsort (t, 51, sizeof (double), cmp_d);
+      printf ("  refused, %-16s %6.1f ns a packet\n", names[shape], t[25]);
+    }
+  bpa_dyn_free (&d);
+#ifdef BPA_DYN_TAKE
+  bpa_dyn_share_free (&p);
+#endif
+}
+
 /* not a unit: the benchmark's entry point, run by hand (make bench-dyn) */
 int
 main (void)
@@ -191,5 +258,6 @@ main (void)
   bench (1024, 4096); /* a /22 */
   bench (4096, 4096); /* a /20 */
   bench (65536, 16384); /* a /16, 3 blocks an address */
+  bench_refused ();
   return 0;
 }

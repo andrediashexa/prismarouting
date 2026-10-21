@@ -132,18 +132,32 @@ bpa_slice_free (const bpa_dyn_t *d)
 void
 bpa_rebalance_tick (bpa_main_t *bm)
 {
-  u32 pool_index;
+  u32 pool_index, i;
 
   /* OFF UNTIL ASKED. See bpa_main_t.rebalance_on for the two measurements
-     that put it behind a switch rather than on by default. */
-  if (!bm->rebalance_on)
-    return;
+     that put it behind a switch rather than on by default.
 
-  /* Nothing to balance on a box with one worker: there is no second slice
-     for a block to come from, and the whole mechanism is the difference
-     between slices. */
-  if (bm->n_workers < 2)
-    return;
+     Nothing to balance on a box with one worker either: there is no second
+     slice for a block to come from, and the whole mechanism is the
+     difference between slices.
+
+     BUT THE DEMAND IS STILL EMPTIED, every tick (#611). The packet path
+     notes a refusal whether the switch is on or not - testing it there would
+     put a load of bpa_main on the refusal branch for nothing - so the set is
+     forgotten here instead, and `bpa rebalance enable` on a box that has been
+     refusing for an hour starts from the last second. */
+  if (!bm->rebalance_on || bm->n_workers < 2)
+    {
+      for (i = 0; i < vec_len (bm->per_thread); i++)
+	{
+	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+	  bpa_dyn_t *d;
+
+	  vec_foreach (d, pt->dyn)
+	    bpa_demand_forget (&d->demand);
+	}
+      return;
+    }
 
   /* *INDENT-OFF* */
   pool_foreach_index (pool_index, bm->pools)
@@ -153,11 +167,11 @@ bpa_rebalance_tick (bpa_main_t *bm)
       bpa_rebalance_slice_t slices[BPA_REBALANCE_MAX_SLICES];
       bpa_rebalance_move_t plan[BPA_REBALANCE_MAX_MOVES];
       bpa_dyn_t *dyn[BPA_REBALANCE_MAX_SLICES];
-      u32 n_slices = 0, n_moves, m, i;
-      /* What each slice actually received, which is what its refusals are
-         forgiven by. A move that was planned and then refused by the
-         borrower forgives nothing. */
-      u32 served[BPA_REBALANCE_MAX_SLICES];
+      u32 n_slices = 0, n_moves, m;
+      /* The window's demand before a free loan is set against it: whether a
+	 slice still wants anything at all, which is what decides if its idle
+	 loans may go home. */
+      u32 wanted[BPA_REBALANCE_MAX_SLICES];
 
       /* Deterministic pools shard their RESERVE the same way, and the same
          defect applies to it - but a reserve index is not a block index and
@@ -168,7 +182,7 @@ bpa_rebalance_tick (bpa_main_t *bm)
 	continue;
 
       clib_memset (slices, 0, sizeof (slices));
-      clib_memset (served, 0, sizeof (served));
+      clib_memset (wanted, 0, sizeof (wanted));
       clib_memset (dyn, 0, sizeof (dyn));
 
       for (i = 0; i < vec_len (bm->per_thread); i++)
@@ -187,26 +201,30 @@ bpa_rebalance_tick (bpa_main_t *bm)
 	    continue;
 
 	  /*
-	   * REFUSALS SINCE THE LAST TICK, not the lifetime count: a worker
-	   * that was short an hour ago and has been served since would
-	   * otherwise pull blocks towards itself for ever, and the pull
-	   * would grow with the age of the box.
-	   */
-	  demand = (u32) (d->n_exhausted - d->n_exhausted_seen);
-	  /*
-	   * NOT CONSUMED HERE. A refusal this tick cannot act on has to
-	   * survive to the next one, and the first tick after a refusal is
-	   * exactly the tick that cannot act: the lender's spare is what was
-	   * free at the PREVIOUS tick, and a box that has just started
-	   * refusing has no previous reading. Advanced below by what was
-	   * actually served, so an unserved refusal is still demand a second
-	   * later.
+	   * THE SUBSCRIBERS REFUSED IN THE LAST FIVE TICKS THAT STILL HOLD
+	   * NOTHING (#611), not refused packets since a baseline only a loan
+	   * moved. bpa_demand.h has what the old count did on #475's bench:
+	   * a SYN and its retransmits were three, a refusal nobody answered
+	   * counted for ever, and a lender refused once never lent again.
 	   *
-	   * Measured before it was: the tick consumed the demand, the next
-	   * tick saw none, and the subscriber stayed refused with a block
-	   * standing free next door - #210 exactly, produced by the
-	   * mechanism built to end it.
+	   * Still carried across ticks, which is what the old comment here
+	   * was for: the first tick after a refusal may be unable to act (the
+	   * lender's spare is what was free at the PREVIOUS tick too), and
+	   * the window keeps the subscriber wanting for the next one.
 	   */
+	  demand = bpa_demand_tick (&d->demand, bpa_dyn_holds, d);
+	  wanted[w] = demand;
+	  /*
+	   * AND A LOAN ALREADY SITTING FREE ANSWERS IT. A refused subscriber
+	   * that has not retried yet is still in the window, and without this
+	   * the borrower asked for another block on its behalf every tick -
+	   * half of the loop where 192 of 211 loans went home unused.
+	   */
+	  {
+	    u32 spare_loans = bpa_dyn_foreign_free (d);
+
+	    demand = demand > spare_loans ? demand - spare_loans : 0;
+	  }
 
 	  /*
 	   * FREE NOW *AND* AT THE LAST TICK. Measured: lending on the same
@@ -241,12 +259,27 @@ bpa_rebalance_tick (bpa_main_t *bm)
 
       n_moves = bpa_rebalance_plan (slices, n_slices, plan,
 				    BPA_REBALANCE_MAX_MOVES);
-      if (n_moves || slices[0].demand || slices[1].demand)
-	vlib_log_notice (bm->log_class,
-			 "pool %u rebalance: free %u/%u demand %u/%u -> "
-			 "%u move(s)",
-			 pool_index, slices[0].free, slices[1].free,
-			 slices[0].demand, slices[1].demand, n_moves);
+      {
+	u8 *fr = 0, *dm = 0;
+	u32 any = n_moves;
+
+	/* EVERY worker's slice, not the first two: the line printed workers
+	   0 and 1 only, and #475's bench has three - its lender was the one
+	   the log could not show (#611). */
+	for (i = 0; i < n_slices; i++)
+	  {
+	    any |= slices[i].demand;
+	    fr = format (fr, "%s%u", i ? "/" : "", slices[i].free);
+	    dm = format (dm, "%s%u", i ? "/" : "", slices[i].demand);
+	  }
+	if (any)
+	  vlib_log_notice (bm->log_class,
+			   "pool %u rebalance: free %v demand %v -> "
+			   "%u move(s)",
+			   pool_index, fr, dm, n_moves);
+	vec_free (fr);
+	vec_free (dm);
+      }
 
       for (m = 0; m < n_moves; m++)
 	{
@@ -273,30 +306,11 @@ bpa_rebalance_tick (bpa_main_t *bm)
 		  continue;
 		}
 	      bpa_lent_set (bm, pool_index, blocks[k], plan[m].to);
-	      served[plan[m].to]++;
 	      vlib_log_notice (bm->log_class,
 			      "pool %u: block %u lent from worker %u to %u",
 			      pool_index, blocks[k], plan[m].from,
 			      plan[m].to);
 	    }
-	}
-
-      /*
-       * AND THE DEMAND EACH SLICE WAS ACTUALLY SERVED IS FORGIVEN, the rest
-       * carried forward: a refusal nobody could act on is still a refusal
-       * next tick, which is what lets the loan happen on the tick after the
-       * one that first saw it.
-       */
-      for (i = 0; i < n_slices; i++)
-	{
-	  u32 unserved;
-
-	  if (!dyn[i])
-	    continue;
-	  unserved = slices[i].demand > served[i]
-		       ? slices[i].demand - served[i]
-		       : 0;
-	  dyn[i]->n_exhausted_seen = dyn[i]->n_exhausted - unserved;
 	}
 
       /*
@@ -358,6 +372,16 @@ bpa_rebalance_tick (bpa_main_t *bm)
 		  d->foreign_idle[k]++;
 		  continue;
 		}
+	      /*
+	       * NOR WHILE THE SLICE STILL WANTS ONE (#611). A borrower whose
+	       * window holds a refused subscriber gave the free loan back after
+	       * five ticks and was lent it again on the next: 192 of 211 loans
+	       * of one of #475's runs went home unused. The window empties
+	       * five ticks after the last refusal, so this holds a loan five
+	       * ticks longer at most, never for ever.
+	       */
+	      if (wanted[i] != 0)
+		continue;
 	      if (bpa_dyn_give_back (d, blk) != 0)
 		continue;
 	      owner = blk % bm->n_workers;
@@ -370,7 +394,7 @@ bpa_rebalance_tick (bpa_main_t *bm)
 			      pool_index, blk, i);
 	    }
 
-	  if (slices[i].demand != 0 || bpa_slice_free (d) == 0)
+	  if (wanted[i] != 0 || bpa_slice_free (d) == 0)
 	    continue;
 	  for (k = 0; k < vec_len (d->foreign); k++)
 	    {

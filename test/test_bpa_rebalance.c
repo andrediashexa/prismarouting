@@ -56,6 +56,15 @@ total (const bpa_rebalance_move_t *m, u32 n)
   return t;
 }
 
+/* holds_odd: the stand-in for bpa_dyn_holds - an odd subscriber holds a
+   block, an even one does not. */
+static int
+holds_odd (void *ctx, u32 sub_idx)
+{
+  (void) ctx;
+  return (sub_idx & 1) != 0;
+}
+
 int
 main (void)
 {
@@ -296,6 +305,149 @@ main (void)
     CHECK (bpa_rebalance_plan (s, 2, plan, 0) == 0, "room for no moves");
     CHECK (bpa_rebalance_plan (s, 0, plan, BPA_REBALANCE_MAX_MOVES) == 0,
 	   "a box with no workers");
+  }
+
+
+  printf ("\n=== the demand is subscribers, not packets (#611) ===\n");
+  {
+    /*
+     * One refused connect is three SYNs. The count this replaced read them
+     * as three subscribers, and on #475's bench the crowded slice's demand
+     * stood at 1835 nine minutes in with forty blocks in the slice.
+     */
+    bpa_demand_t dm;
+    u32 i, d;
+
+    memset (&dm, 0, sizeof (dm));
+    for (i = 0; i < 3; i++)
+      bpa_demand_note (&dm, 42, 0);
+    CHECK (dm.n == 1, "three refused packets of one subscriber are %u "
+	   "entries, not 1", dm.n);
+    for (i = 0; i < 10; i++)
+      bpa_demand_note (&dm, 1000 + 2 * i, 0);
+    d = bpa_demand_tick (&dm, 0, 0);
+    CHECK (d == 11, "eleven subscribers refused read as demand %u", d);
+    CHECK (bpa_demand_tick (0, 0, 0) == 0, "no set at all answers 0");
+  }
+
+  printf ("\n=== and it ages: a refusal stops counting when the subscriber "
+	  "stops asking ===\n");
+  {
+    /*
+     * The old count was forgiven only by a loan, so a lender that refused
+     * its own subscribers once read demand above its free blocks from then
+     * on and never lent again: every loan of #475's on-from-start runs was
+     * in their first ten seconds.
+     */
+    bpa_demand_t dm;
+    u32 t, d = 0, last = 0;
+
+    memset (&dm, 0, sizeof (dm));
+    bpa_demand_note (&dm, 7, 0);
+    for (t = 1; t <= BPA_DEMAND_WINDOW + 2; t++)
+      {
+	d = bpa_demand_tick (&dm, 0, 0);
+	if (d)
+	  last = t;
+      }
+    CHECK (last == BPA_DEMAND_WINDOW,
+	   "a single refusal counted for %u ticks, not the window's %u",
+	   last, (u32) BPA_DEMAND_WINDOW);
+    CHECK (d == 0 && dm.n == 0, "and after the window it is gone: demand %u, "
+	   "%u entries", d, dm.n);
+
+    /* A subscriber still retrying stays: a refusal every other tick keeps
+       it in the window as long as it lasts. */
+    for (t = 0; t < 4 * BPA_DEMAND_WINDOW; t++)
+      {
+	if (t % 2 == 0)
+	  bpa_demand_note (&dm, 7, 0);
+	d = bpa_demand_tick (&dm, 0, 0);
+	if (d != 1)
+	  break;
+      }
+    CHECK (t == 4 * BPA_DEMAND_WINDOW, "a subscriber retrying every two "
+	   "ticks dropped out of the window at tick %u", t);
+
+    /* And the rebuild keeps it findable: the next refused packet of a
+       survivor refreshes it rather than adding it twice. */
+    bpa_demand_note (&dm, 7, 0);
+    CHECK (dm.n == 1, "a survivor of the rebuild was inserted again: %u "
+	   "entries", dm.n);
+  }
+
+  printf ("\n=== a first block that has since been served stops counting "
+	  "===\n");
+  {
+    bpa_demand_t dm;
+    u32 d;
+
+    memset (&dm, 0, sizeof (dm));
+    bpa_demand_note (&dm, 2, 0); /* even: still holds nothing */
+    bpa_demand_note (&dm, 3, 0); /* odd: holds a block now */
+    bpa_demand_note (&dm, 5, 1); /* odd, but refused an EXTENSION */
+    d = bpa_demand_tick (&dm, holds_odd, 0);
+    CHECK (d == 2, "served first block dropped, the unserved one and the "
+	   "extension kept: demand %u, not 2", d);
+    CHECK (dm.n == 2, "%u entries survive, not 2", dm.n);
+  }
+
+  printf ("\n=== the switch off empties it, so enabling starts from now "
+	  "===\n");
+  {
+    /*
+     * `bpa rebalance enable` on a running box used to read every refusal
+     * since boot as this second's demand - `demand 1048/242` on the first
+     * tick of #475's on-at-180-s runs.
+     */
+    bpa_demand_t dm;
+    u32 i;
+
+    memset (&dm, 0, sizeof (dm));
+    for (i = 0; i < 30; i++)
+      bpa_demand_note (&dm, i, 0);
+    bpa_demand_forget (&dm);
+    CHECK (dm.n == 0 && bpa_demand_tick (&dm, 0, 0) == 0,
+	   "forgotten, the set still holds %u entries", dm.n);
+    bpa_demand_forget (0);
+    CHECK (1, "forgetting no set at all does not crash");
+  }
+
+  printf ("\n=== and it is bounded: memory, and the probes a refused packet "
+	  "pays ===\n");
+  {
+    bpa_demand_t dm;
+    u32 i, d, k, home, found;
+    u32 same[BPA_DEMAND_PROBES + 2];
+
+    memset (&dm, 0, sizeof (dm));
+    for (i = 0; i < BPA_DEMAND_MAX + 10; i++)
+      bpa_demand_note (&dm, 5000 + i, 0);
+    CHECK (dm.n == BPA_DEMAND_MAX, "the set holds %u, past its cap of %u",
+	   dm.n, (u32) BPA_DEMAND_MAX);
+    CHECK (dm.n_overflow == 10, "%u refusals counted as overflow, not 10",
+	   dm.n_overflow);
+    d = bpa_demand_tick (&dm, 0, 0);
+    CHECK (d == BPA_DEMAND_MAX + 1, "a full set reads %u, not its cap plus "
+	   "the one more it proves", d);
+    CHECK (dm.n_overflow == 0, "the overflow survived the tick");
+
+    /* Keys that all hash home to one slot fill one run of
+       BPA_DEMAND_PROBES, and the next is overflow rather than a walk of
+       the whole table on the packet path. */
+    memset (&dm, 0, sizeof (dm));
+    home = bpa_demand_slot (1);
+    for (k = 0, found = 0; found < BPA_DEMAND_PROBES + 2; k++)
+      if (bpa_demand_slot (k + 1) == home)
+	same[found++] = k;
+    for (i = 0; i < BPA_DEMAND_PROBES + 2; i++)
+      bpa_demand_note (&dm, same[i], 0);
+    CHECK (dm.n == BPA_DEMAND_PROBES && dm.n_overflow == 2,
+	   "%u colliding keys: %u placed, %u overflow; want %u and 2",
+	   (u32) BPA_DEMAND_PROBES + 2, dm.n, dm.n_overflow,
+	   (u32) BPA_DEMAND_PROBES);
+    CHECK (bpa_demand_slot (0xffffffffu) < BPA_DEMAND_SLOTS,
+	   "a slot past the table");
   }
 
   printf (fail ? "\n%d FAILURES\n" : "\nALL TESTS PASSED\n", fail);

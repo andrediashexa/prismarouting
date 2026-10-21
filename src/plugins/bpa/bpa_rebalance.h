@@ -32,15 +32,16 @@
 /*
  * What one worker's slice looks like to the rebalance.
  *
- * `demand` is the REFUSALS SINCE THE LAST TICK and not the total: a worker
- * that was short an hour ago and has been served since would otherwise pull
- * blocks towards itself for ever, and the pull would grow with the age of
- * the box.
+ * `demand` is the SUBSCRIBERS this slice refused in the last few ticks that
+ * still hold nothing, less the borrowed blocks it already holds free for
+ * them - bpa_demand.h. Not the refused packets since a baseline (#611): a
+ * SYN and its retransmits were three, and a refusal no loan answered
+ * counted for ever.
  */
 typedef struct
 {
   u32 free;   /**< blocks free in this worker's slice right now */
-  u32 demand; /**< subscribers this worker refused since the last tick */
+  u32 demand; /**< subscribers this worker wants a block for */
 } bpa_rebalance_slice_t;
 
 /** One block's worth of movement: `n` blocks from `from` to `to`. */

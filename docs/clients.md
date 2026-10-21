@@ -27,6 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.17 - bpa rebalance lends on refused subscribers, not refused packets
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.16). No message, field or number changes. `bpa rebalance` (off by default, and still off) measures demand as distinct subscribers refused in the last five seconds instead of refused packets since boot (#611); `show bpa blocks`' refusal count, and natEvent 12, are unchanged. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.16 - the PPPoE shapers over SNMP
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.15). No message, field or number changes. The release adds the shapers' box-wide totals to SNMP (`prBngShaper`, PRISMA-ROUTING-MIB) and the Zabbix template, which an API client does not read. A patch release: the API is down only for the usual upgrade window.

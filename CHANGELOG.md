@@ -77,7 +77,43 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`bpa rebalance` off and on, under subscribers that retry on their own
+  schedule.** ([#475](https://github.com/andrediashexa/hexarouting/issues/475),
+  [#210](https://github.com/andrediashexa/hexarouting/issues/210))
+  `sh tools/lab.sh bench3vm uneven off|on` puts 160 subscribers on the
+  bench's three slices 80/56/24, with sessions on a seeded schedule and
+  refused attempts retried with a jittered backoff, and
+  `lab/bench3vm_rebalance.py` reads both witnesses into one table. Measured
+  on 0.155.0 upgraded to 0.155.15, eight runs: on, the crowded slice went
+  unserved in 12-36 windows instead of 70-82, with 3-7% more allocations,
+  and the lender paid 4-5 of its ~157 windows refused at first, all served.
+  Also measured: the demand the rebalance reads is per refused packet and
+  never forgiven unless a loan answers it, so a lender refused once never
+  lends again, and turning it on later starts from every refusal since boot.
+  Numbers in `docs/architecture.md`. The bench also finds the newest ISO
+  under up to forty patch releases now (ten found none on 2026-10-20). Ships
+  in no medium.
+
 ### Fixed
+
+* **`bpa rebalance` lent on refused packets, never forgot one, and started
+  from boot.** ([#611](https://github.com/andrediashexa/hexarouting/issues/611))
+  The demand it acted on was the refused packets since a baseline that only
+  a loan moved: a connect was three, a refusal nobody answered counted for
+  ever, so a lender refused once never lent again, and enabling it on a
+  running box read every refusal since boot (`demand 1048/242`). A borrower
+  also gave idle loans back and borrowed them straight back (192 of 211).
+  The demand is now the distinct subscribers a worker refused in the last
+  five seconds that still hold no block, less the loans already waiting for
+  them, emptied while the switch is off; an idle loan stays while its slice
+  still wants one; the log line names every worker. A served packet runs no
+  new instruction; a refused one costs 0.2 ns more (2.6 ns with 64
+  subscribers already refused). On #475's bench, on from the start, the
+  crowded slice went unserved in 2 windows of ~520 instead of 12-36 (66-79
+  off), the box refused 80% fewer packets than off, and loans ran through
+  the whole run (100-104) instead of stopping after ten seconds; the
+  lenders paid 7-9% of their windows refused at first and 1-2 unserved.
+  Still off by default. Numbers in `docs/architecture.md`.
 
 ## 0.155.16 - the PPPoE shapers over SNMP
 

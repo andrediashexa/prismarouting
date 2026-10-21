@@ -122,6 +122,10 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BENCH_ROUNDS="${BENCH_ROUNDS:-}" \
   -e BENCH_SECONDS="${BENCH_SECONDS:-}" \
   -e BENCH_UPGRADE="${BENCH_UPGRADE:-}" \
+  -e BENCH_GROUPS="${BENCH_GROUPS:-}" \
+  -e BENCH_SEED="${BENCH_SEED:-}" \
+  -e BENCH_SCHED_SECONDS="${BENCH_SCHED_SECONDS:-}" \
+  -e BENCH_REBALANCE_AFTER="${BENCH_REBALANCE_AFTER:-}" \
   $LAB_CACHE \
   -e PRISMA_VERSION_STAMP="$PRISMA_VERSION_STAMP" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \

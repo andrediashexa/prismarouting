@@ -171,6 +171,8 @@ bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
   if (PREDICT_FALSE (vec_len (d->free_list) == 0))
     {
       d->n_exhausted++;
+      /* Who, not how many packets: the rebalance's demand (#611). */
+      bpa_demand_note (&d->demand, sub_idx, 0);
       return -1;
     }
 
@@ -209,6 +211,7 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
   if (PREDICT_FALSE (vec_len (d->free_list) == 0))
     {
       d->n_exhausted++;
+      bpa_demand_note (&d->demand, sub_idx, 1);
       return -1;
     }
 
@@ -1009,6 +1012,28 @@ bpa_dyn_give_back (bpa_dyn_t *d, u32 block_idx)
       return 0;
     }
   return -1;
+}
+
+u32
+bpa_dyn_foreign_free (const bpa_dyn_t *d)
+{
+  u32 k, n = 0;
+
+  /* Over the borrowed slots only - bounded by the most this worker ever
+     borrowed at one time, and walked once a tick under the barrier. */
+  for (k = 0; k < vec_len (d->foreign); k++)
+    if (d->foreign[k] != BPA_NO_BLOCK
+	&& d->owner[d->n_local + k] == BPA_NO_BLOCK)
+      n++;
+  return n;
+}
+
+int
+bpa_dyn_holds (void *ctx, u32 sub_idx)
+{
+  bpa_dyn_t *d = ctx;
+
+  return d && d->by_sub && hash_get (d->by_sub, sub_idx) != 0;
 }
 
 int

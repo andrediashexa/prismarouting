@@ -273,11 +273,126 @@ available for one second, and a DNS client retries in about a second while a
 TCP SYN is retransmitted at 1 s and 3 s. Measured - the box lent a block at
 09:48:51 and took it home at 09:48:52, with the retry still coming.
 
-So the block is kept for five ticks once lent (`BPA_LOAN_GRACE_TICKS`), the
-demand a tick could not act on is carried to the next one, and the whole
-thing waits behind `bpa rebalance enable`. Which side of that trade an
+So the block is kept for five ticks once lent (`BPA_LOAN_GRACE_TICKS`), a
+refused subscriber stays demand for five ticks after its last refused packet
+(`BPA_DEMAND_WINDOW`, below), and the whole thing waits behind
+`bpa rebalance enable`. Which side of that trade an
 operator wants is a decision about their traffic, and the numbers above are
 what it should be taken on.
+
+**Under subscribers that retry on their own schedule** (#475's bench,
+`sh tools/lab.sh bench3vm uneven off|on`, measured 2026-10-20). The 0.155.0
+ISO upgraded to the published 0.155.15, 3 workers, the bench's pool (120
+blocks, 40 a slice). 160 subscribers, deliberately uneven: 80 on worker 0's
+slice, 56 on worker 1's, 24 on worker 2's. Each has sessions on a schedule
+fixed by a seed alone (online 30-90 s, offline 15-60 s, 600 s in all, so the
+three slices are asked for about 54, 37 and 16 blocks at once); a refused
+attempt is a 4 s connect (three SYNs) and then a 1 s backoff doubling to 32 s,
+jittered, until the session's window closes. A window is *never served* if
+no attempt in it got through:
+
+| Seed, rebalance | windows served | never served: worker 0 / 1 / 2 | worker 2's windows refused first | `show bpa blocks` allocations / refusals | blocks lent |
+|---|---|---|---|---|---|
+| 210, off | 961, 964 of 1044 | 82 / 1 / 0, 80 / 0 / 0 | 0, 0 | 970 / 3810, 967 / 3848 | - |
+| 210, on | 1027, 1032 | 16 / 1 / 0, 12 / 0 / 0 | 5, 5 (served after a median 18-19 s) | 1031 / 2200, 1039 / 2235 | 21, 21, all in the first 10 s |
+| 210, on 180 s in | 1022, 1022 | 21 / 1 / 0, 21 / 1 / 0 | 1, 0 | 1028 / 1727, 1029 / 1568 | 106, 211, through to the end |
+| 475, off | 951 of 1022 | 70 / 1 / 0 | 0 | 958 / 3713 | - |
+| 475, on | 986 | 36 / 0 / 0 | 4 | 989 / 2696 | 20, all in the first 10 s |
+
+That table is the rebalance **before #611**. With real retries the lab's result turns round: on, worker 0's slice went
+unserved in 12-36 windows instead of 70-82, the box made 3-7% more
+allocations and refused 27-59% fewer packets, and the lender paid four or
+five of its 155-158 windows refused at first and served after a median of
+18-20 s, none unserved. (The host was shared with other agents' labs, load 2.3-7.1;
+the off and on runs alternated, and each pair agrees to within five
+windows.)
+
+**And the demand the tick read was not the delta its comment promised**
+([#611](https://github.com/andrediashexa/hexarouting/issues/611)).
+`n_exhausted - n_exhausted_seen` was advanced only by what was lent, so a
+refusal no loan answered stayed demand for ever, and it was counted per
+refused **packet** (a SYN and its retransmits are three). Three things
+followed, each in the runs above: a lender refused once - here because it
+had just lent 21 of its 40 blocks while its own subscribers were still
+arriving - read `demand > free` from then on and never lent again (every
+loan of the on runs was in their first ten seconds; the log read
+`demand 1835/300` nine minutes later); `n_exhausted_seen` did not move while
+the switch was off, so `bpa rebalance enable` on a running box started from
+every refusal since boot (`demand 1048/242` on the first tick); and a
+borrower with standing demand gave a loan back after five idle ticks and
+borrowed it again at once - 192 of the 211 loans of one run went home
+unused, 127 of them lent again within ten seconds. So the gain above was
+real, but it was the arrival's one-off grab, or a lend-and-return loop,
+rather than a steady rebalance. The log line also printed workers 0 and 1
+only, and on this bench the lender is worker 2.
+
+**What the demand is now** (`bpa_demand.h`): the **distinct subscribers** a
+slice refused in the last five ticks that still hold no block. The worker
+notes the subscriber on the refusal branch of `bpa_dyn_acquire()` - a
+128-slot open-addressed table inside the slice, at most 64 entries (a tick
+cannot lend more than 8 moves of 8 blocks anyway), 16 probes at most, 776
+bytes per worker per dynamic pool - and the tick, under the barrier it
+already holds, drops every entry that now holds a block or is older than
+the window and rebuilds the table. An extension refusal ages out instead,
+since that subscriber held a block all along. While the switch is off the
+tick empties the table every second, so enabling it starts from the last
+second rather than from boot. The borrower's demand is less the loans it
+already holds free (a refused subscriber that has not retried yet is
+answered by the block waiting for it), and an idle loan does not go home
+while its slice still wants one - which ends five ticks after the last
+refusal at most. The log line prints every worker.
+
+**What it costs on the packet path.** A served packet runs no new
+instruction: the note is inside the `PREDICT_FALSE` branch that already
+counted `n_exhausted`, and the table sits at the end of `bpa_dyn_t` so no
+field the fast path reads moved (beyond the eight bytes `n_exhausted_seen`
+took). A refused packet, measured with `make bench-dyn BENCH_BEFORE=origin/master`
+(the whole `bpa_dyn_acquire()` on a full slice, median of 51 batches of
+65536, eight alternated runs on the shared build host): 15.1 ns before and
+15.3 ns after for one subscriber retrying or 48 cycling, and 15.1 against
+17.7 ns with the table full, every packet probing its 16 slots and
+counted as overflow - the worst a refusal can pay.
+
+**Measured again on the same bench** (2026-10-20/21, the 0.155.0 ISO
+upgraded to an artifact built from the fix, plugin `e7589f1d`, same
+schedule, seeds and retries; off and on alternated, host load 2.2-3.9):
+
+| Seed, rebalance | windows served | never served: worker 0 / 1 / 2 | worker 2's windows refused first | `show bpa blocks` allocations / refusals | blocks lent |
+|---|---|---|---|---|---|
+| 210, off | 964, 967 of 1044 | 79 / 1 / 0, 75 / 2 / 0 | 0, 0 | 972 / 3826, 974 / 3791 | - |
+| 210, on | 1036, 1039 | 2 / 4 / 2, 2 / 1 / 2 | 13, 11 (served after a median 6 s) | 1044 / 758, 1046 / 724 | 100, 101, every minute of the run |
+| 210, on 180 s in | 1021 | 21 / 1 / 1 | 3 | 1031 / 1515 | 78, every minute from the third |
+| 475, off | 955 of 1022 | 66 / 1 / 0 | 0 | 957 / 3761 | - |
+| 475, on | 1015 | 2 / 3 / 2 | 14 (median 9 s) | 1027 / 754 | 104, every minute |
+
+Against the table above: on from the start, the crowded slice went unserved
+in **2 windows of 506-525** instead of 12-36 (and 66-79 off); all three
+slices together in 5-8 windows instead of 12-36 (67-80 off); the box made
+7% more allocations than off and refused 80% fewer packets (27-59% fewer
+before). The loans no longer stop after ten seconds: 100-104 in a run, in
+every minute, the demand peaking at 21-23 subscribers on worker 0 instead of
+growing to 1835. Turned on 180 s in, the first tick read `demand 6/0/0`
+rather than `1048/242`, and the 21 unserved windows on worker 0 are the
+three minutes it was off (21 in the old runs too, which then got no better).
+Of the loans that went home, 4-10 a run were lent again within ten seconds
+(127 of 192 before), each on a refusal that arrived after the slice's window
+had emptied.
+
+**What the lenders pay**, and it is more than before because they now lend
+all the way through: worker 2's subscribers were refused at first in 11-14
+of 155-158 windows (5 before, 0 off), served after a median of 6-9 s, and
+1-2 of those windows went unserved; worker 1, which both lends and borrows,
+1-4 unserved of 361 against 1-2 off. Five to eight windows unserved in all
+against 67-80 off.
+
+**Whether it becomes the default** is the maintainer's decision, not this
+bench's. What the bench says: on this uneven load the fixed rebalance turns
+a slice that leaves 13-15% of its subscribers' sessions unserved into one
+that leaves 0.4%, for 7-9% of the lender's sessions refused at first
+(served after a median 6-9 s) and about 1% unserved.
+What it does not say: how it behaves on an even load, where nothing should
+move and a lender's own arrivals are the only cost - that run has not been
+made.
 
 ### Dynamic mode under real traffic (#475)
 
