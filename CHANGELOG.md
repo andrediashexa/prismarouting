@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.155.17 - bpa rebalance lends on refused subscribers, not refused packets
+
+### Added
+
 * **`bpa rebalance` off and on, under subscribers that retry on their own
   schedule.** ([#475](https://github.com/andrediashexa/hexarouting/issues/475),
   [#210](https://github.com/andrediashexa/hexarouting/issues/210))
