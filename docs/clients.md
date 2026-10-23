@@ -27,6 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.156.0 - the medium installs qemu-guest-agent
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.19). No message, field or number changes. The medium installs `qemu-guest-agent` (#614), a host package an API client does not see. A Y release with a new medium; a box upgraded to it keeps the API down only for the usual upgrade window.
+
 ## 0.155.19 - management in a VRF takes a card only Linux has
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.18). No message, field or number changes. A management card the dataplane does not own (a virtio NIC Linux keeps on a VM) can now be put in the management VRF with `interface <name> / vrf <id>` (#613): GetSystem's management interfaces and the running configuration that GetConfig returns can name such a card, and a SetConfig that gives it anything besides `vrf` is refused with "Linux's, so 'vrf' alone applies". A Linux interface put into a tenant VRF by hand is now read back as configuration, so a rollback to a revision without it takes it out. A patch release: the API is down only for the usual upgrade window.
