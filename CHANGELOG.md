@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.156.0 - the medium installs qemu-guest-agent
+
+### Added
+
 * **The medium installs `qemu-guest-agent`.**
   ([#614](https://github.com/andrediashexa/hexarouting/issues/614))
   Asked for by the maintainer: most boxes are Proxmox guests, and a VM with
