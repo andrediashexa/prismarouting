@@ -1330,6 +1330,44 @@ enslaving the pair flushes every route through it, that one included. Into
 main at metric 0 it would have beaten FRR's default (metric 20) and taken the
 subscribers to the management gateway.
 
+**A management card the dataplane does not own (#613).** On a virtual
+machine the management card is usually a virtio NIC Linux keeps beside the
+cards DPDK claims (`ens18`, addressed by the installer's
+`/etc/network/interfaces.d/prisma-routing`). It goes into the VRF the same
+way, with `interface ens18` / `vrf 100`, and the box moves its Linux device
+alone - the dataplane has no table to move for it:
+
+1. its default routes in the table it leaves - ifupdown's `gateway` (proto
+   boot) or dhclient's (proto dhcp), never a routing daemon's or a router
+   advertisement's - and its permanent global addresses, both families, are
+   taken off;
+2. zebra is seen to have dropped them, the device is enslaved to the VRF
+   device, zebra is seen to hold it in the VRF (the #595 waits above);
+3. the addresses go back, and the defaults go into the VRF's table: the way
+   back, as `--load` puts a paired card's there.
+
+Taking it out (`vrf 0`, or a `commit confirmed` that expires) is the same in
+reverse: the defaults go back into the main table and the box answers SSH
+there again. The VRF membership is read back off the VRF device the card is
+in, so `show running-config` has the `vrf 100` and the next commit does not
+move it. That makes any Linux interface put into a tenant VRF by hand part of
+the configuration, as a hand-made VRF device is: a `rollback` to a revision
+without it takes it out (`lab/api-grpc.sh`'s dummy in `red` was one, and is
+now put there through the VTY). Without this the commit passed `commit check` and failed at apply
+("interface ens18: the dataplane does not have it"), and with management left
+in the main table ifupdown's default - a kernel route, distance 0 in zebra -
+beat every `router static` default: measured on 0.155.17, zebra kept `S
+0.0.0.0/0` unselected and the dataplane's FIB 0 default was `dpo-drop`.
+
+Such an interface takes `vrf` and nothing else: an address, an MTU, a
+description or a routing block on it are the dataplane's to apply, and
+`commit check` refuses them ("Linux's, so 'vrf' alone applies"); its
+addresses stay in `/etc/network/interfaces.d`. The check also refuses a `vrf`
+on a name neither the dataplane nor Linux has, and a Linux-only interface's
+`vrf` on a table no `vrf <name> table <id>` makes. At boot a Linux-only
+interface with only `vrf` is not a missing card (#575): it is applied, not
+left out pending.
+
 **Seeing it.** `show system management` (and GetSystem's `management`):
 
 ```
@@ -1365,7 +1403,16 @@ back, its routes of both families in its table again. `lab/mgmt-vrf.sh
 loaded` runs it all with zebra's RIB queue held a second (`zebra
 work-queue 1000`) and every core busy, the shape of the runs that lost the
 IPv6 default (#595); `unsettled` is the same with the box not waiting for
-zebra, and is red. Not proven there: a reboot of a real box, systemd's own ordering of the
+zebra, and is red. `lab/mgmt-vrf.sh linux` has the management card a plain
+Linux interface the dataplane never gets (#613): the trap before as a
+control (zebra's kernel default, FIB 0's default `dpo-drop`); the commit
+refusing a name neither side has and an MTU on the Linux card; a `commit
+confirmed` that expires - the card out, ifupdown's defaults back in main,
+SSH, the API and SNMP on the main table - and one confirmed with a session
+open across it; another commit, which does not move it; and a boot with
+ifupdown's state and `--load`. In each the main table's default is the
+upstream's, selected by zebra and forwarded by FIB 0, and the way back is in
+table 100. Not proven there: a reboot of a real box, systemd's own ordering of the
 units, and a card whose MAC changes, which a real one does not.
 
 ### What the lab asserts, and why the second one is the point
