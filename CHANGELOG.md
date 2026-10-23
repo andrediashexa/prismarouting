@@ -80,7 +80,7 @@ version has a chance of seeing it.
 ### Fixed
 
 * **A sub-interface the dataplane had already paired was reported as having
-  no Linux end.** (ISSUE_PAIRNOTE)
+  no Linux end.** ([#612](https://github.com/andrediashexa/hexarouting/issues/612))
   With `lcp lcp-auto-subint on`, which this box ships, VPP pairs a new
   sub-interface of a paired card the moment it is created, before the commit
   reaches the pair it would make itself. That add was refused as a duplicate,
