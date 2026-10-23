@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.19 - management in a VRF takes a card only Linux has
+
+### Fixed
+
 * **Management in a VRF works on a management card the dataplane does not
   own.** ([#613](https://github.com/andrediashexa/hexarouting/issues/613))
   On a virtual machine the management card is usually a virtio NIC Linux
