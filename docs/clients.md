@@ -27,6 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.155.18 - a sub-interface the dataplane already paired is not reported missing
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.17). No message, field or number changes. A commit that creates a sub-interface of a paired card no longer prints `note: <name> has no Linux end` when the dataplane paired it on its own (#612); a client reading a commit's printed lines through Edit sees one note fewer. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.155.17 - bpa rebalance lends on refused subscribers, not refused packets
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.155.16). No message, field or number changes. `bpa rebalance` (off by default, and still off) measures demand as distinct subscribers refused in the last five seconds instead of refused packets since boot (#611); `show bpa blocks`' refusal count, and natEvent 12, are unchanged. A patch release: the API is down only for the usual upgrade window.

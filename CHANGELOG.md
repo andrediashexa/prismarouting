@@ -79,6 +79,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A sub-interface the dataplane had already paired was reported as having
+  no Linux end.** ([#612](https://github.com/andrediashexa/hexarouting/issues/612))
+  With `lcp lcp-auto-subint on`, which this box ships, VPP pairs a new
+  sub-interface of a paired card the moment it is created, before the commit
+  reaches the pair it would make itself. That add was refused as a duplicate,
+  and `commit` printed `note: ens16.3001 has no Linux end: ... routing does not
+  see it` while `ip` and FRR listed the interface up with its address. Seen
+  on a customer box committing two VLANs on a freshly passed-through X520, and
+  reproduced on the bench with `interface ens20.3999`. The pair table is now
+  read before the note: a pair that is there is not a failure, and a card the
+  dataplane will not pair (the packet generator's `pg0`, #461) still says so.
+
 ## 0.155.17 - bpa rebalance lends on refused subscribers, not refused packets
 
 ### Added
