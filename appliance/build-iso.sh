@@ -181,6 +181,12 @@ chroot "$ROOT" /bin/sh -c "
 # self-test reads the same table back, so a tool dropped here is a tool the
 # box says is missing rather than a statement that fails in the tool's own
 # words.
+# qemu-guest-agent because most of these boxes are Proxmox/KVM guests (#614):
+# with `agent: 1` and no agent inside, Proxmox cannot shut the VM down through
+# it, freeze its disk for a backup, or show its addresses. udev starts it only
+# when /dev/virtio-ports/org.qemu.guest_agent.0 exists, so on bare metal it
+# stays down. Measured on a customer VM by hand: three packages, and
+# `qm agent <id> ping` answered.
 say "VPP $VPP_VERSION and FRR $FRR_VERSION"
 chroot "$ROOT" /bin/sh -c "
   export DEBIAN_FRONTEND=noninteractive VPP_INSTALL_SKIP_SYSCTL=1
@@ -188,6 +194,7 @@ chroot "$ROOT" /bin/sh -c "
   apt-get install -y --no-install-recommends \
     squashfs-tools dosfstools parted fdisk mdadm \
     iputils-ping traceroute mtr-tiny \
+    qemu-guest-agent \
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION python3-vpp-api=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \

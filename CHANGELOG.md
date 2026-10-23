@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The medium installs `qemu-guest-agent`.**
+  ([#614](https://github.com/andrediashexa/hexarouting/issues/614))
+  Asked for by the maintainer: most boxes are Proxmox guests, and a VM with
+  `agent: 1` and no agent inside cannot be shut down through it, frozen for a
+  backup, or asked for its addresses. Measured on a customer VM on 0.155.18,
+  installed by hand: three Debian packages, `qm agent <id> ping` answered and
+  `network-get-interfaces` listed the box's addresses. udev starts it only
+  when the channel exists, so bare metal is unchanged. `lab/install-iso.sh`
+  now boots the installed disk with the channel and asks `guest-ping` through
+  it. **A box upgraded with `system upgrade` does not get it** - the artifact
+  carries no host packages - and gets it with `apt-get install
+  qemu-guest-agent` from a shell.
+
 ### Fixed
 
 ## 0.155.19 - management in a VRF takes a card only Linux has
