@@ -382,6 +382,56 @@ def host_addresses(addr_text) -> dict:
     return held
 
 
+def linux_addresses(addr_text, dev) -> list:
+    """
+    The addresses `dev` holds for good in the host's `ip -o addr show`
+    `addr_text`, as "<address>/<length>" in the order Linux lists them
+    (#613): global scope, and not `dynamic` - a DHCP lease or a SLAAC
+    address is its daemon's to put back, and one written back by hand
+    would outlive it. What a Linux-only interface carries across a move
+    between VRFs, taken off and put back.
+    """
+    out = []
+    for line in (addr_text or "").splitlines():
+        w = line.replace("\\", " ").split()
+        if len(w) > 3 and w[1].split("@")[0] == dev \
+                and w[2] in ("inet", "inet6") and "global" in w \
+                and "dynamic" not in w and "temporary" not in w:
+            try:
+                ipaddress.ip_interface(w[3])
+            except ValueError:
+                continue
+            out.append(w[3])
+    return out
+
+
+def linux_defaults(route_text) -> list:
+    """
+    The gateways of the default routes in `ip -o route show default dev
+    <dev> table <t>` `route_text` that are the host's own (#613): put in by
+    ifupdown - proto boot, which ip does not print - or by dhclient (proto
+    dhcp). Never a routing daemon's: FRR's static is `proto static` under
+    FRR's own rt_protos names, and zebra puts back what it owns. Never a
+    router advertisement's either, which the next one re-learns in the
+    table the interface is in and which a copy would outlive. A multipath
+    default names no single gateway and is left alone.
+    """
+    out = []
+    for line in (route_text or "").splitlines():
+        w = line.split()
+        if w[:2] != ["default", "via"] or len(w) < 3:
+            continue
+        proto = w[w.index("proto") + 1] if "proto" in w[:-1] else "boot"
+        if proto not in ("boot", "dhcp"):
+            continue
+        try:
+            ipaddress.ip_address(w[2])
+        except ValueError:
+            continue
+        out.append(w[2])
+    return out
+
+
 def listen_absent(value, addr_text) -> list:
     """
     The words of the listen-address `value` that no interface of the host

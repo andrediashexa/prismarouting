@@ -102,7 +102,8 @@ from system import (System, SnmpDaemon, SnmpUser, User, dns_error, DNS_MAX,
                     validate_operator,
                     SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT, GROUP_OPERATOR,
                     ROLE_ADMIN, ROLE_CGNAT, SSH_DEFAULTS, listen_addresses,
-                    ssh_listen_legacy, ssh_listen_unbound, listen_absent)
+                    ssh_listen_legacy, ssh_listen_unbound, listen_absent,
+                    linux_addresses, linux_defaults)
 import routes
 import typedcfg
 import logmon
@@ -1152,6 +1153,20 @@ def zebra_vrf_unsettled(shown):
     return [prefix for prefix, entries in sorted((shown or {}).items())
             if any(e.get("protocol") in ZEBRA_OWN_PROTOCOLS
                    or e.get("installed") for e in entries or [])]
+
+
+def linux_only_vrfs(links, dataplane):
+    """
+    {interface: table} for every Linux interface in a tenant VRF that is
+    none of `dataplane`'s names - the dataplane's interfaces and both ends
+    of its pairs - from doors.ip_links() `links` (#613). What a Linux-only
+    interface's `vrf <id>` is read back from: the dataplane has no table to
+    ask about it, and the VRF device it is enslaved to is the statement.
+    A member of the box's own VRF (prisma-bp) is not a statement of anyone's.
+    """
+    return {name: link["vrf_slave"] for name, link in sorted(links.items())
+            if link["vrf_slave"] is not None and name not in dataplane
+            and not (link["master"] or "").startswith(VRF_RESERVED_PREFIX)}
 
 
 def compare_redact(diff):
@@ -10194,6 +10209,9 @@ class Shell:
         cfg.addresses = self.device_addresses()
         cfg.vlans = self.device_vlans()
         cfg.vrfs = self.device_vrfs()
+        # And a Linux-only interface's (#613), off the VRF device it is in:
+        # without it the next commit would take management back out.
+        cfg.vrfs.update(self.linux_vrfs())
         cfg.macs = self.device_macs()
         cfg.linux_names = self.device_linux_names()
         cfg.loopbacks = self.device_loopbacks()
@@ -11835,6 +11853,229 @@ class Shell:
                 return False
         return True
 
+    def dataplane_and_pairs(self):
+        """
+        Every name the dataplane answers to - its interfaces and both ends
+        of each linux_cp pair - or None when it cannot be asked (#613): a
+        dataplane that says nothing is not one with no interfaces, and every
+        Linux interface would read as Linux-only beside it.
+        """
+        names = self.dataplane_names()
+        if not names:
+            return None
+        rc, out = self.dp.run("show lcp")
+        for members in (routes.lcp_pairs(out).values() if rc == 0 else ()):
+            names.update(members)
+        return names
+
+    def host_links(self):
+        """doors.ip_links() of the host, {} when it cannot be asked."""
+        rc, out = self.sys._run(list(doors.LINKS_ARGV))
+        return doors.ip_links(out) if rc == 0 else {}
+
+    def linux_vrfs(self):
+        """
+        The Linux-only interfaces in a tenant VRF, {name: table}, read off
+        the host (#613) - linux_only_vrfs() over its links. {} when the
+        dataplane cannot be asked: which Linux interfaces are its pairs'
+        ends is then unknown, and a TAP is not a statement.
+        """
+        dataplane = self.dataplane_and_pairs()
+        if dataplane is None:
+            return {}
+        return linux_only_vrfs(self.host_links(), dataplane)
+
+    def linux_only(self, names, dataplane=None):
+        """
+        Which of `names` are Linux-only (#613): Linux has the interface and
+        the dataplane does not - a virtio card the kernel kept beside the
+        ones DPDK claimed is the usual one, management's. Not a VRF device
+        and not the box's own. Empty when the dataplane cannot be asked.
+        `dataplane` is that reading, when the caller has it.
+        """
+        if not names:
+            return set()
+        if dataplane is None:
+            dataplane = self.dataplane_and_pairs()
+        if not dataplane:
+            return set()
+        links = self.host_links()
+        return {n for n in names
+                if n not in dataplane and n in links
+                and links[n]["vrf"] is None
+                and not n.startswith(VRF_RESERVED_PREFIX)}
+
+    def linux_connected(self, target):
+        """
+        {table: [address]} - the IPv4 addresses each Linux-only interface of
+        `target`'s `vrf` statements holds, under the table that puts it in
+        (#613): the connected_prefixes() half the dataplane cannot give,
+        for the next-hop check. IPv4 only, like that check.
+        """
+        names = self.linux_only(set(target.vrfs))
+        if not names:
+            return {}
+        rc, out = self.sys._run(list(doors.ADDRS_ARGV))
+        found = {}
+        for name in sorted(names):
+            for a in linux_addresses(out if rc == 0 else "", name):
+                if ":" not in a:
+                    found.setdefault(target.vrfs[name], []).append(a)
+        return found
+
+    def linux_way_back(self, ifname, table):
+        """
+        The gateways of the host's own default routes through `ifname` in
+        `table` (0: main), both families (#613): ifupdown's `gateway` - the
+        way back an installed box is reached by - that the kernel drops when
+        the interface changes VRF, and that goes with it into its new table.
+        """
+        out = []
+        for v6 in (False, True):
+            rc, text = self.sys._run(list(doors.linux_defaults_argv(
+                ifname, table, v6)))
+            out += linux_defaults(text) if rc == 0 else []
+        return out
+
+    def zebra_defaults_held(self, host, gws):
+        """The defaults zebra still holds through `host` as its own, in the
+        VRF it holds `host` in, for each family `gws` has (#613); [] when it
+        cannot be asked or holds none."""
+        vrf = zebra_if_vrf(self.zebra_ask(f"show interface {host} json"),
+                           host)
+        if vrf is None:
+            return []
+        held = []
+        for fam, default in (("ip", "0.0.0.0/0"), ("ipv6", "::/0")):
+            if any((":" in g) == (fam == "ipv6") for g in gws):
+                held += zebra_held_routes(self.zebra_ask(
+                    f"show {fam} route vrf {vrf} {default} json"), host)
+        return held
+
+    def linux_addrs_back(self, ifname, addrs):
+        """`addrs` put back on the Linux-only `ifname` (#613); True when
+        each is there, the refusals said."""
+        ok = True
+        for a in addrs:
+            rc, out = self.sys._run(list(doors.linux_addr_argv("add", a,
+                                                               ifname)))
+            if rc != 0 and "exists" not in out:
+                # The address in the prose: an IPv6 prefix has 43 columns.
+                self.err_prose(f"interface {ifname}: an address was not "
+                               "put back", f"{a}: {out.strip()}")
+                ok = False
+        return ok
+
+    def move_linux_only(self, ifname, want, table):
+        """
+        A Linux-only interface (#613) into VRF device `want`, on `table`, or
+        out of the one it is in (None, table 0), the way move_linux_end()
+        moves a pair's Linux end (#595): bare - its default routes and its
+        addresses off, zebra seen to have dropped them, the link moved,
+        zebra seen to hold it in its new VRF - then its addresses back, and
+        its defaults in the table it joined.
+
+        THE DEFAULTS GO WITH IT, and that is the issue. ifupdown's `gateway`
+        is how an installed box is reached, and it sits in the main table at
+        distance 0 for zebra, above every `router static` default: measured
+        on 0.155.17, a box whose management card is a virtio NIC kept by
+        Linux had `S 0.0.0.0/0` unselected and the dataplane's default
+        dpo-drop. In the VRF it is the way back, as apply_management_path()
+        puts the paired card's there; taken out, it is the main table's
+        again - what a `commit confirmed` that expires restores.
+
+        The dataplane is not asked anything: it has no such interface, so
+        no table of its own moves (set_vrf() is for the ones it has).
+        """
+        link = self.host_links().get(ifname)
+        if not link:
+            self.err_prose(f"interface {ifname}: not on this box",
+                           "neither the dataplane nor Linux has it")
+            return False
+        have = link["master"] if link["vrf_slave"] is not None else None
+        if link["master"] and have is None \
+                or (have or "").startswith(VRF_RESERVED_PREFIX):
+            # The device in the prose: beside the interface's name on the
+            # headline it measured 81 columns at the widest.
+            self.err_prose(f"interface {ifname}: not in a tenant VRF",
+                           f"it is in {link['master']}, and is left there")
+            return False
+        if table and not want:
+            self.err_prose(f"interface {ifname}: vrf {table} has no VRF "
+                           "device", f"'vrf <name> table {table}' makes "
+                           "one, and a Linux interface goes in through it")
+            return False
+        if want == have:
+            return True
+        gws = self.linux_way_back(ifname, link["vrf_slave"] or 0)
+        rc, out = self.sys._run(list(doors.ADDRS_ARGV))
+        addrs = linux_addresses(out if rc == 0 else "", ifname)
+        for gw in gws:
+            self.sys._run(list(doors.linux_default_argv(
+                "del", gw, ifname, link["vrf_slave"] or 0)))
+        # Secondaries first: with promote_secondaries off, the kernel takes
+        # an interface's other IPv4 addresses with its primary, and a delete
+        # of one already gone would read as a refusal.
+        for a in reversed(addrs):
+            rc, out = self.sys._run(list(doors.linux_addr_argv("del", a,
+                                                               ifname)))
+            if rc != 0:
+                self.err_prose(f"interface {ifname}: an address was not "
+                               "taken off", f"{a}: {out.strip()}")
+                self.linux_addrs_back(ifname, addrs)
+                return False
+        self.zebra_settle(f"interface {ifname}",
+                          lambda: self.zebra_if_held(ifname, addrs)
+                          + self.zebra_defaults_held(ifname, gws))
+        if not self.set_linux_master(ifname, ifname, want, have):
+            self.linux_addrs_back(ifname, addrs)
+            return False
+        self.zebra_settle(f"interface {ifname}",
+                          lambda: self.zebra_if_elsewhere(ifname, want))
+        if not self.linux_addrs_back(ifname, addrs):
+            return False
+        for gw in gws:
+            rc, out = self.sys._run(list(doors.linux_default_argv(
+                "replace", gw, ifname, table)))
+            if rc != 0:
+                # Said and not fatal, as management_way_home() says it: the
+                # interface and its addresses are where the commit put them.
+                print("warning: a default route was not put back")
+                print_prose(f"interface {ifname}, via {gw}: {out.strip()}")
+        return True
+
+    def apply_vrf_moves(self, vrf_set, target, vrfdev):
+        """
+        Each interface of the delta's `vrf_set` - {name: (table, addresses
+        it had, addresses it gets)} - into its table: remove, move, add, its
+        Linux end moved in the gap when `vrfdev` (_apply has why). False,
+        said, at the first that fails.
+
+        A LINUX-ONLY INTERFACE (#613) - management's virtio card beside the
+        dataplane's ports - has no dataplane table to move: its Linux device
+        goes into the VRF device, with its way back (move_linux_only()).
+        """
+        by_table = {t: n for n, t in target.vrf_devices.items()}
+        linux_only = self.linux_only(set(vrf_set))
+        for ifname, (table, had, want) in vrf_set.items():
+            if ifname in linux_only:
+                if not self.move_linux_only(ifname, by_table.get(table),
+                                            table):
+                    return False
+                continue
+            for a in had:
+                if not self.set_address(ifname, a, False):
+                    return False
+            if vrfdev and not self.move_linux_end(ifname, by_table.get(table),
+                                                  had):
+                return False
+            if not self.set_vrf(ifname, table):
+                return False
+            for a in want:
+                if not self.set_address(ifname, a, True):
+                    return False
+        return True
+
     def set_vrf(self, ifname, table):
         """
         Put an interface in a routing table, creating the table if needed.
@@ -13070,6 +13311,39 @@ class Shell:
                             print_prose("the session would be sourced from "
                                         "nothing and never come up")
                             ok = False
+                # A LINUX-ONLY INTERFACE IN A VRF (#613): one Linux has and
+                # the dataplane does not, management's virtio card on a VM.
+                # Its `vrf <id>` is applied to its Linux device alone, so it
+                # takes that and nothing else, and the table must be a VRF
+                # device's. A `vrf` on a name NEITHER has is refused below
+                # with the rest - it was the one statement that check did
+                # not read, so `commit check` passed what the apply refused
+                # ("the dataplane does not have it", measured on 0.155.17).
+                vrf_named = set(target.vrfs) - have
+                linux_only = self.linux_only(vrf_named, dataplane=have)
+                for name in sorted(linux_only):
+                    table = target.vrfs[name]
+                    if table not in target.vrf_devices.values():
+                        self.err_prose(
+                            f"interface {name}: vrf {table} has no VRF "
+                            "device",
+                            "Linux has this interface and the dataplane "
+                            "does not, so it goes in a VRF through its "
+                            f"Linux device: 'vrf <name> table {table}' "
+                            "makes one")
+                        ok = False
+                    extra = target.beyond_vrf(name)
+                    if extra:
+                        self.err_prose(
+                            f"interface {name}: Linux's, so 'vrf' alone "
+                            "applies",
+                            "the dataplane does not have it, and everything "
+                            "else in its block is applied there: "
+                            + "; ".join(extra),
+                            "its addresses stay Linux's, in "
+                            "/etc/network/interfaces.d")
+                        ok = False
+                named = (named - linux_only) | (vrf_named - linux_only)
                 # The cards Linux still holds, so a name that is one of
                 # them is refused for the reason it is actually refused for
                 # (#405). Read once, outside the loop: the answer is the same
@@ -13567,6 +13841,14 @@ class Shell:
                     # loudly.
                     connected = routes.connected_from_fib(fibs)
                     for table, prefixes in target.connected_prefixes().items():
+                        connected.setdefault(table, []).extend(prefixes)
+                    # And what a Linux-only interface connects in the table
+                    # its `vrf` puts it in (#613): its addresses are Linux's,
+                    # in no FIB of the dataplane's and in no statement here,
+                    # and `vrf mgmt / ip route 0.0.0.0/0 <gateway>` - the
+                    # management VRF's way out - is next to them.
+                    for table, prefixes in self.linux_connected(
+                            target).items():
                         connected.setdefault(table, []).extend(prefixes)
                     bad, unplaced = routes.unreachable_next_hops(
                         target.routing, connected,
@@ -14447,19 +14729,8 @@ class Shell:
         vrfdev = bool(target.vrf_devices or running.vrf_devices)
         if vrfdev and not self.make_vrf_devices(d, target, running):
             return False
-        by_table = {t: n for n, t in target.vrf_devices.items()}
-        for ifname, (table, had, want) in d["vrf_set"].items():
-            for a in had:
-                if not self.set_address(ifname, a, False):
-                    return False
-            if vrfdev and not self.move_linux_end(ifname, by_table.get(table),
-                                                  had):
-                return False
-            if not self.set_vrf(ifname, table):
-                return False
-            for a in want:
-                if not self.set_address(ifname, a, True):
-                    return False
+        if not self.apply_vrf_moves(d["vrf_set"], target, vrfdev):
+            return False
 
         # The Linux VRF devices removed and the members left over (#540),
         # after the pairs and the tables they join and before FRR is
@@ -28040,9 +28311,18 @@ class Shell:
             named |= set(spec["members"])
         # A name of no card's shape is a typo, which the existence check
         # still refuses the file over; only a port can be missing.
-        return sorted(n for n in named
-                      if n not in have and n not in created
-                      and not _is_lcp_tap(n) and is_card_name(n))
+        gone = {n for n in named
+                if n not in have and n not in created
+                and not _is_lcp_tap(n) and is_card_name(n)}
+        # A LINUX-ONLY INTERFACE IS NOT MISSING (#613): management's virtio
+        # card, in its VRF by `vrf <id>` alone, is Linux's and never the
+        # dataplane's. Left out as missing, the boot put management back in
+        # the main table and waited for a card that was already there. One
+        # with anything else in its block is still a card the dataplane
+        # lacks, and its statements wait as before.
+        here = self.linux_only({n for n in gone
+                                if not target.beyond_vrf(n)}, dataplane=have)
+        return sorted(gone - here)
 
     def read_pending(self):
         """What `--load` left out on this boot (#575), or None."""

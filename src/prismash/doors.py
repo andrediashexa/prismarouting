@@ -281,6 +281,79 @@ LINKS_ARGV = ("ip", "-d", "-o", "link", "show")
 #: asked before sshd is told, since `sshd -t` binds nothing.
 ADDRS_ARGV = ("ip", "-o", "addr", "show")
 
+def linux_defaults_argv(dev, table, v6):
+    """
+    What reads the default routes through the Linux-only interface `dev` in
+    `table` (0: the main one), one family (#613): the way back it carries
+    from the table it leaves to the one it joins.
+    """
+    return (("ip",) + (("-6",) if v6 else ()) +
+            ("-o", "route", "show", "default", "dev", dev, "table",
+             str(table) if table else "main"))
+
+
+def linux_addr_argv(op, prefix, dev):
+    """
+    What takes an address of the Linux-only interface `dev` off ("del") or
+    puts it back ("add") around a move between VRFs (#613). IPv4's comes
+    back with its broadcast computed, as ifupdown puts it there.
+    """
+    v4 = ":" not in prefix
+    return (("ip", "addr", op, prefix)
+            + (("brd", "+") if op == "add" and v4 else ())
+            + ("dev", dev))
+
+
+def linux_default_argv(op, gw, dev, table):
+    """
+    What takes the default through `gw` on the Linux-only interface `dev`
+    out of `table` ("del") or puts it in ("replace"), 0 being the main one
+    (#613). The replace is the management way back's own shape, which
+    verb_of() already opens; the delete goes BEFORE the interface moves,
+    so zebra has dropped it before the link changes VRF (remove_vrf_device()
+    in prismash has what a route crossing with the link did).
+    """
+    return (("ip", "route", op, "default", "via", gw, "dev", dev)
+            + (("table", str(table)) if table else ()))
+
+
+def _linux_door(argv):
+    """The door name of a linux_default_argv("del"), linux_defaults_argv()
+    or linux_addr_argv() shape, or None: a netdev that is not the box's
+    own, a table the management rules could name or the main one, an
+    address or a prefix that is one."""
+    argv = tuple(argv)
+    if argv[:4] == ("ip", "route", "del", "default") and len(argv) in (8, 10):
+        dev = argv[7]
+        table = argv[9] if len(argv) == 10 else 0
+        if _address(argv[5]) and NETDEV.match(dev) \
+                and not dev.startswith(VRF_RESERVED_PREFIX) \
+                and (not table or mgmt_table_ok(table)) \
+                and argv == linux_default_argv("del", argv[5], dev, table):
+            return "take a Linux interface's default route out"
+        return None
+    if argv[-2:-1] == ("table",) and len(argv) >= 9:
+        dev, table = argv[-3], argv[-1]
+        if NETDEV.match(dev) and not dev.startswith(VRF_RESERVED_PREFIX) \
+                and (table == "main" or mgmt_table_ok(table)):
+            for v6 in (False, True):
+                if argv == linux_defaults_argv(dev, 0 if table == "main"
+                                               else table, v6):
+                    return "read a Linux interface's default routes"
+        return None
+    if argv[:2] == ("ip", "addr") and len(argv) in (6, 8) \
+            and argv[2] in ("add", "del"):
+        dev = argv[-1]
+        try:
+            ipaddress.ip_interface(argv[3])
+        except ValueError:
+            return None
+        if NETDEV.match(dev) and not dev.startswith(VRF_RESERVED_PREFIX) \
+                and argv == linux_addr_argv(argv[2], argv[3], dev):
+            return "move a Linux interface's address between VRFs"
+    return None
+
+
 #: The doors that take no argument: the argv is the whole shape.
 FIXED = {
     ("sshd", "-T"): "read sshd's effective configuration",
@@ -501,6 +574,11 @@ def verb_of(argv, stdin=None):
     # exact argvs management_argvs() builds.
     if management_door(argv):
         return "put management in its own VRF"
+    # A Linux-only interface moved between VRFs (#613): its default routes
+    # read, its addresses taken off and put back.
+    linux = _linux_door(argv)
+    if linux:
+        return linux
     # A tenant VRF's device and its members (#540). Every name a VRF's is
     # the statement's own predicate, which refuses prisma-*: the backplane's
     # VRF is not reachable through these by its name. What a name cannot
