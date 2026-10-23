@@ -1332,6 +1332,21 @@ rv, text = driven(lambda: sh.try_default_pair("pg0", "pg0"))
 check(rv is False and "note: pg0 has no Linux end" in text
       and "error" not in text,
       f"one it will not make is a note, not an error: {rv} {text!r}")
+# Mutation shown red: drop the `show lcp` read, and ens16.3001 - paired by
+# lcp-auto-subint the moment ens16 was - prints the note, as on a customer box.
+_auto = ("itf-pair: [1] ens16 tap4097 ens16 11 type tap\n"
+         "itf-pair: [2] ens16.3001 tap4097.3001 ens16.3001 12 type tap\n")
+sh = shell(api=_PairApi(vppapi.REFUSED),
+           dp=RecDp({"show lcp": (0, _auto)}))
+rv, text = driven(lambda: sh.try_default_pair("ens16.3001", "ens16.3001"))
+check(rv is True and "note" not in text,
+      f"a refusal because the dataplane already paired it is no note: "
+      f"{rv} {text!r}")
+sh = shell(api=_PairApi(vppapi.REFUSED),
+           dp=RecDp({"show lcp": (0, _auto)}))
+rv, text = driven(lambda: sh.try_default_pair("pg0", "pg0"))
+check(rv is False and "note: pg0 has no Linux end" in text,
+      f"and one missing from the pair table still is: {rv} {text!r}")
 ok("written into the configuration, at apply, for cards with a block")
 
 # ------------------------------------------------- the CGNAT globals

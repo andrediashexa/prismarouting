@@ -12092,6 +12092,16 @@ class Shell:
                                "netns": ""})
         if r is not None and r.state == vppapi.OK:
             return True
+        # Refused because the pair is already there is not "would not pair
+        # it". With `lcp lcp-auto-subint on`, pairing ens16 in a commit made
+        # the dataplane pair ens16.3001 and ens16.3002 itself, before this
+        # loop reached them: their add was refused, the note said routing
+        # could not see them, and FRR listed both up with their addresses
+        # (a customer box on 0.155.17; reproduced on the bench with
+        # ens20.3999). So the pair table is asked before the note.
+        rc, out = self.dp.run("show lcp")
+        if rc == 0 and ifname in routes.lcp_pairs(out):
+            return True
         print_prose(f"note: {ifname} has no Linux end: the dataplane would "
                     f"not pair it, so routing does not see it; the rest of "
                     f"the commit is applied")
