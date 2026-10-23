@@ -15,6 +15,9 @@
 #   sh tools/lab.sh mgmt-vrf unsettled
 #                                   loaded, with the box not waiting for
 #                                   zebra (PRISMA_VRF_SETTLE_S=0): red
+#   sh tools/lab.sh mgmt-vrf linux  the management card a plain Linux
+#                                   interface the dataplane does not own,
+#                                   as on a VM (#613); see "LINUX" below
 #
 # LOADED IS WHAT 5-10 LABS AT ONCE DID TO ZEBRA, ON PURPOSE (#595). 2 runs in
 # about 51 lost table 100's IPv6 default after the move, and the cause was
@@ -136,8 +139,8 @@ set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api, wait_vpp
 . /src/lab/verdict.sh
 MODE=${1:-on}
-case "$MODE" in on|off|unrepaired|loaded|unsettled) ;;
-  *) echo "mode: on, off, unrepaired, loaded or unsettled"; exit 2 ;; esac
+case "$MODE" in on|off|unrepaired|loaded|unsettled|linux) ;;
+  *) echo "mode: on, off, unrepaired, loaded, unsettled or linux"; exit 2 ;; esac
 apt-get install -y -qq snmptrapd >/dev/null 2>&1
 mkdir -p /run/vpp /vpp_plugins /etc/prisma-routing /var/log/prisma-routing \
          /etc/snmp /var/lib/snmp /run/prisma-routing/state /run/sshd \
@@ -329,12 +332,18 @@ start_box() {   # the dataplane and FRR, and the two cards claimed
   # `mac-address` then set the dataplane's side to the old one while the
   # Linux pair kept the new - the gateway learnt the pair's MAC from its ARP
   # and the dataplane dropped it ("l3 mac mismatch"). Nothing of the box's.
-  vppctl create host-interface name veth-mg hw-addr 02:58:00:00:00:01 >/dev/null
+  # In linux mode the management card stays Linux's: the dataplane is
+  # never given veth-mg (#613).
+  [ "$MODE" = linux ] || \
+    vppctl create host-interface name veth-mg hw-addr 02:58:00:00:00:01 >/dev/null
   vppctl create host-interface name veth-up hw-addr 02:58:00:00:00:02 >/dev/null
   # Up by hand the first time only, as the cards a box's startup.conf claims
   # come up down: after that it is the load's own business.
   if [ -z "${BOX_STARTED:-}" ]; then
-    for n in mg up; do vppctl set interface state host-veth-$n up; done
+    for n in mg up; do
+      [ "$MODE" = linux ] && [ $n = mg ] && continue
+      vppctl set interface state host-veth-$n up
+    done
     BOX_STARTED=1
   fi
   mkdir -p /var/run/frr /etc/frr
@@ -526,6 +535,301 @@ reach() {   # <when>
   expect_in "$W: the rules are there, both families" "lookup 100" \
       "$(ip rule show 2>&1; ip -6 rule show 2>&1 | grep 'lookup 100')"
 }
+
+# --------------------------------------------------------------------- LINUX
+# THE MANAGEMENT CARD A PLAIN LINUX INTERFACE (#613): the VM layout, a virtio
+# card the kernel keeps beside the ones DPDK claims. Here veth-mg is never
+# given to the dataplane; its addresses and defaults are put on it the way
+# ifupdown puts the installer's `/etc/network/interfaces.d/prisma-routing`
+# (proto boot, both families), and the upstream is the dataplane's as above.
+# On 0.155.17 the commit below failed at apply with "interface ens18: the
+# dataplane does not have it", and with management left in the main table
+# zebra kept ifupdown's default (kernel, distance 0) over `router static`'s,
+# so the dataplane's FIB 0 default was dpo-drop. The phases:
+#   L0. the box before, the trap measured as a control; `commit check`
+#       refusing a name neither side has, and an MTU on the Linux card;
+#   L1. a `commit confirmed` that moves it into vrf mgmt, and the box taking
+#       it back out when nobody confirms - the way back in main again;
+#   L2. the same commit, confirmed, a session open across it;
+#   L3. another commit that does not touch it: read back, not moved;
+#   L4. a boot: no VRF device, ifupdown's addresses and defaults in main, no
+#       rules, the tuner, then `prismash --load`.
+# In each the main table's default is the upstream's, selected by zebra and
+# in the dataplane's FIB 0, and management's - ifupdown's, carried by the box
+# (no proto), ahead of FRR's `vrf mgmt` static - is in table 100.
+if [ "$MODE" = linux ]; then
+  ifup_mg() {   # what ifupdown does with the installer's stanza
+    ip link set veth-mg up
+    ip addr replace 10.200.0.1/24 brd + dev veth-mg
+    ip -6 addr replace 2001:db8:200::1/64 dev veth-mg nodad
+    ip route replace default via 10.200.0.2 dev veth-mg
+    ip -6 route replace default via 2001:db8:200::2 dev veth-mg
+  }
+  settle_l() {
+    t0=$(date +%s); t=0
+    while [ "$t" -lt 20 ]; do
+      ip netns exec mg ping -c1 -W1 -I 198.51.100.7 10.200.0.1 >/dev/null 2>&1 \
+        && ip netns exec mg ping -6 -c1 -W1 -I 2001:db8:7::7 2001:db8:200::1 \
+           >/dev/null 2>&1 && break
+      sleep 1; t=$(( $(date +%s) - t0 ))
+    done
+    echo "  settled: the management addresses answer the gateway after ${t} s"
+  }
+  zdefault() { vtysh -c "show ip route" 2>&1 | grep " 0.0.0.0/0 "; }
+  zdefault6() { vtysh -c "show ipv6 route" 2>&1 | grep " ::/0 "; }
+  # What FIB 0 forwards its default by: the entry's `forwarding:` part.
+  # Above it the default-route source lists its own dpo-drop whatever wins.
+  fib0() { vppctl show ip fib table 0 0.0.0.0/0 2>&1 | sed -n '/forwarding:/,$p'; }
+  reach_l() {   # <when>
+    W=$1
+    settle_l
+    echo "  -- $W: what the host holds"
+    echo "    veth-mg: $(ip -o link show veth-mg | grep -o 'master [^ ]*') $(ip -o addr show dev veth-mg | awk '{print $4}' | tr '\n' ' ')"
+    ip route show table 100 2>&1 | sed 's/^/    table 100: /'
+    ip route show default 2>&1 | sed 's/^/    main: /'
+    zdefault | sed 's/^/    zebra: /'
+    fib0 | sed 's/^/    fib 0: /'
+    expect_in "$W: the card is in vrf mgmt" "master mgmt" \
+        "$(ip -o link show veth-mg 2>&1)"
+    expect_in "$W: it keeps its IPv4 address there" "10.200.0.1/24" \
+        "$(ip -o -4 addr show dev veth-mg 2>&1)"
+    expect_in "$W: and its IPv6 one" "2001:db8:200::1/64" \
+        "$(ip -o -6 addr show dev veth-mg 2>&1)"
+    expect_in "$W: zebra selects the upstream's static default" \
+        "S>* 0.0.0.0/0" "$(zdefault)"
+    expect_not_in "$W: and holds no kernel default in the main table" \
+        "K>* 0.0.0.0/0" "$(zdefault)"
+    expect_in "$W: and the IPv6 one" "S>* ::/0" "$(zdefault6)"
+    expect_in "$W: the main table's IPv4 default is the upstream's" \
+        "via 10.0.0.2" "$(ip route show default 2>&1)"
+    expect_in "$W: and its IPv6 default" "via 2001:db8:10::2" \
+        "$(ip -6 route show default 2>&1)"
+    expect_in "$W: the dataplane's FIB 0 default goes to the upstream" \
+        "10.0.0.2" "$(fib0)"
+    expect_not_in "$W: and is not dpo-drop" "dpo-drop" "$(fib0)"
+    expect_in "$W: the box's way back (ifupdown's, no proto) is in table 100" \
+        "via 10.200.0.2 dev veth-mg" \
+        "$(ip route show table 100 default 2>&1 | grep -v proto)"
+    expect_in "$W: and its IPv6 one" "via 2001:db8:200::2 dev veth-mg" \
+        "$(ip -6 route show table 100 default 2>&1 | grep -v proto)"
+    # FRR's `vrf mgmt` default is behind it, at distance 1 to the kernel's 0.
+    expect_in "$W: zebra holds the way back as vrf mgmt's default" \
+        "K>* 0.0.0.0/0" "$(vtysh -c 'show ip route vrf mgmt' 2>&1)"
+    expect_in "$W: the second management network is in table 100" \
+        "via 10.200.0.2" "$(ip route show table 100 203.0.113.0/24 2>&1)"
+    expect_in "$W: SSH answers on the IPv4 management address" \
+        "SSH-2.0-OpenSSH" "$(tcp_in 10.200.0.1 22 198.51.100.7)"
+    expect_in "$W: SSH answers on the IPv6 one" "SSH-2.0-OpenSSH" \
+        "$(tcp_in 2001:db8:200::1 22 2001:db8:7::7)"
+    expect_in "$W: SSH answers from the second management network" \
+        "SSH-2.0-OpenSSH" "$(tcp_in 10.200.0.1 22 203.0.113.9)"
+    expect_in "$W: the API's socket answers on IPv4" "PRISMA-API" \
+        "$(tcp_in 10.200.0.1 50051 198.51.100.7)"
+    expect_in "$W: and on IPv6" "PRISMA-API" \
+        "$(tcp_in 2001:db8:200::1 50051 2001:db8:7::7)"
+    expect_in "$W: SNMP answers on IPv4" "STRING:" \
+        "$(snmp_in 10.200.0.1 198.51.100.7)"
+    expect_in "$W: and on IPv6" "STRING:" \
+        "$(snmp_in 2001:db8:200::1 2001:db8:7::7)"
+    expect_in "$W: what the box sends to 198.51.100.7 leaves by veth-mg" \
+        "dev veth-mg" "$(ip route get 198.51.100.7 2>&1)"
+    expect_in "$W: what the main table has a route for still goes by it" \
+        "dev vppup0" "$(ip route get 10.0.0.2 2>&1)"
+    expect_in "$W: system upgrade's download, over IPv4" \
+        "downloaded 15 bytes" "$(fetch http://198.51.100.7:8080/pkg)"
+    expect_in "$W: and over IPv6" "downloaded 15 bytes" \
+        "$(fetch 'http://[2001:db8:7::7]:8080/pkg')"
+    expect_in "$W: DNS: 'dns server 198.51.100.7' answers the box" \
+        "192.0.2.80" "$(timeout $T getent ahostsv4 releases.prisma.test 2>&1)"
+    c0=$(coldstarts); systemctl restart snmpd; sleep 2
+    expect "$W: a trap reaches the trap-host through management ($c0 -> $(coldstarts))" \
+        [ "$(coldstarts)" -gt "$c0" ]
+    expect_in "$W: the rules are there, both families" "lookup 100" \
+        "$(ip rule show 2>&1; ip -6 rule show 2>&1 | grep 'lookup 100')"
+  }
+  move_l() {   # <commit words>
+    $HX -c configure -c "vrf mgmt table 100" \
+        -c "interface veth-mg" -c "vrf 100" -c "exit" \
+        -c "vrf mgmt" -c "ip route 0.0.0.0/0 10.200.0.2" \
+        -c "ip route 203.0.113.0/24 10.200.0.2" \
+        -c "ipv6 route ::/0 2001:db8:200::2" -c "exit" \
+        -c system -c management -c "vrf mgmt" -c exit -c exit \
+        -c "$1" > /tmp/move.log 2>&1
+    grep -v "^entering" /tmp/move.log | sed 's/^/    move: /' | tail -8
+  }
+  expire() {
+    python3 - <<'PY'
+import sys
+sys.path.insert(0, "/src/src/prismash")
+import prismash
+c = prismash.ConfirmPending(prismash.CONFIRM_PATH)
+p = c.read()
+c.arm(p["deadline"] - 301, p["config"], p["minutes"], p["attempts"])
+PY
+    $HX --confirm-expired > /tmp/expired.log 2>&1
+    sed 's/^/  expired: /' /tmp/expired.log | head -6
+  }
+
+  echo "=== L0. the box before: management a Linux card in the main table ==="
+  ifup_mg
+  $HX -c "configure" \
+      -c "interface host-veth-up" -c "linux-name vppup0" \
+      -c "ipv4 address 10.0.0.1/24" -c "ipv6 address 2001:db8:10::1/64" -c "exit" \
+      -c "router static" -c "0.0.0.0/0 next-hop 10.0.0.2" \
+      -c "::/0 next-hop 2001:db8:10::2" -c "exit" \
+      -c "commit" > /tmp/c0.log 2>&1
+  sed 's/^/  c0: /' /tmp/c0.log | tail -4
+  $HX -c "configure" -c "ssh listen-address 10.200.0.1 2001:db8:200::1" \
+      -c "commit" > /tmp/c0ssh.log 2>&1
+  $HX -c "configure" -c "commit" >> /tmp/c0ssh.log 2>&1
+  grep -E "error|commit complete|confirmed:" /tmp/c0ssh.log | sed 's/^/  c0ssh: /'
+  $HX -c "configure" -c "snmp enabled yes" \
+      -c "snmp listen-address 10.200.0.1 2001:db8:200::1" \
+      -c "snmp community hexro" -c "snmp trap-host 198.51.100.7 community tr4pc" \
+      -c "api enabled yes" -c "api listen-address 10.200.0.1 2001:db8:200::1" \
+      -c "dns server 198.51.100.7" \
+      -c "commit" > /tmp/c0s.log 2>&1
+  sed 's/^/  c0s: /' /tmp/c0s.log | tail -4
+  start_sshd
+  sleep 3
+  zdefault | sed 's/^/  zebra: /'
+  fib0 | sed 's/^/  fib 0: /'
+  # The trap the issue measured, reproduced: the lab is about that box.
+  expect_in "control: before, zebra selects ifupdown's kernel default" \
+      "K>* 0.0.0.0/0" "$(zdefault)"
+  expect_in "control: and the dataplane's FIB 0 default is dpo-drop" \
+      "dpo-drop" "$(fib0)"
+  expect_in "control: before, SSH answers on the main table" \
+      "SSH-2.0-OpenSSH" "$(tcp_in 10.200.0.1 22 198.51.100.7)"
+  $HX -c configure -c "vrf mgmt table 100" -c "interface veth-zz" -c "vrf 100" \
+      -c "exit" -c "commit check" > /tmp/l0a.log 2>&1
+  sed 's/^/  check: /' /tmp/l0a.log | grep -v "^  check: entering" | tail -4
+  expect_in "commit check refuses a name neither side has" \
+      "interface veth-zz: this box has no such interface" "$(cat /tmp/l0a.log)"
+  $HX -c configure -c "vrf mgmt table 100" -c "interface veth-mg" -c "vrf 100" \
+      -c "mtu 1400" -c "exit" -c "commit check" > /tmp/l0b.log 2>&1
+  sed 's/^/  check: /' /tmp/l0b.log | grep -v "^  check: entering" | tail -4
+  expect_in "commit check refuses an MTU on the Linux card" \
+      "interface veth-mg: Linux's, so 'vrf' alone applies" "$(cat /tmp/l0b.log)"
+  $HX -c configure -c "vrf mgmt table 100" -c "interface veth-mg" -c "vrf 100" \
+      -c "exit" -c "vrf mgmt" -c "ip route 0.0.0.0/0 10.200.0.2" -c "exit" \
+      -c system -c management -c "vrf mgmt" -c exit -c exit \
+      -c "commit check" > /tmp/l0c.log 2>&1
+  sed 's/^/  check: /' /tmp/l0c.log | grep -v "^  check: entering" | tail -3
+  expect_in "commit check accepts the Linux card in vrf mgmt" \
+      "configuration check succeeds" "$(cat /tmp/l0c.log)"
+
+  echo; echo "=== L1. commit confirmed, and nobody confirms it ==="
+  move_l "commit confirmed 5"
+  expect_not_in "L1: the commit is not refused" "error" "$(cat /tmp/move.log)"
+  sleep 3
+  reach_l confirmed
+  expire
+  sleep 3
+  echo "  -- taken back: what the host holds"
+  echo "    veth-mg: $(ip -o link show veth-mg | grep -o 'master [^ ]*')"
+  ip route show default | sed 's/^/    main: /'
+  expect_not_in "taken back: the card is out of the VRF" "master mgmt" \
+      "$(ip -o link show veth-mg 2>&1)"
+  expect_not_in "taken back: no rule sends the box's traffic to table 100" \
+      "lookup 100" "$(ip rule show 2>&1; ip -6 rule show 2>&1)"
+  expect_in "taken back: the main default is management's again" \
+      "via 10.200.0.2 dev veth-mg" "$(ip route show default 2>&1)"
+  expect_in "taken back: and the IPv6 one" "via 2001:db8:200::2 dev veth-mg" \
+      "$(ip -6 route show default 2>&1)"
+  expect_in "taken back: the card kept its IPv4 address" "10.200.0.1/24" \
+      "$(ip -o -4 addr show dev veth-mg 2>&1)"
+  expect_in "taken back: and its IPv6 one" "2001:db8:200::1/64" \
+      "$(ip -o -6 addr show dev veth-mg 2>&1)"
+  settle_l
+  expect_in "taken back: SSH answers on IPv4, by the main table" \
+      "SSH-2.0-OpenSSH" "$(tcp_in 10.200.0.1 22 198.51.100.7)"
+  expect_in "taken back: SSH answers on IPv6" "SSH-2.0-OpenSSH" \
+      "$(tcp_in 2001:db8:200::1 22 2001:db8:7::7)"
+  expect_in "taken back: the API answers on IPv4" "PRISMA-API" \
+      "$(tcp_in 10.200.0.1 50051 198.51.100.7)"
+  expect_in "taken back: SNMP answers on IPv4" "STRING:" \
+      "$(snmp_in 10.200.0.1 198.51.100.7)"
+
+  echo; echo "=== L2. the same commit, confirmed, with a session open across it ==="
+  rm -f /tmp/sess-go /tmp/sess.out
+  ip netns exec mg python3 - > /tmp/sess.out 2>&1 <<'PY' &
+import os, socket, time
+s = socket.create_connection(("10.200.0.1", 7007), 5, ("198.51.100.7", 0))
+s.sendall(b"before\n"); print("1", s.recv(64).decode().strip(), flush=True)
+while not os.path.exists("/tmp/sess-go"):
+    time.sleep(0.2)
+s.settimeout(5)
+try:
+    s.sendall(b"after\n"); print("2", s.recv(64).decode().strip(), flush=True)
+except OSError as e:
+    print("2 lost:", e, flush=True)
+PY
+  SESS=$!
+  sleep 1
+  move_l "commit confirmed 5"
+  $HX -c "configure" -c "commit" > /tmp/confirm.log 2>&1
+  sed 's/^/  confirm: /' /tmp/confirm.log | tail -2
+  sleep 3
+  touch /tmp/sess-go; wait "$SESS"
+  sed 's/^/  session: /' /tmp/sess.out
+  expect_in "commit: the session opened before it still answers" "2 after" \
+      "$(cat /tmp/sess.out)"
+  expect "commit: no commit confirmed is pending" test ! -s "$PRISMA_CONFIRM"
+  reach_l commit
+  SHOWMG=$($HX -c "show system management" 2>&1)
+  echo "$SHOWMG" | sed 's/^/  /'
+  expect_in "show system management says where it is configured" \
+      "mgmt, table 100" "$SHOWMG"
+  expect_in "and the box's own traffic in effect" "by table 100" "$SHOWMG"
+  expect_in "and the Linux card in it" "veth-mg" "$SHOWMG"
+  expect_not_in "and nothing differs" "the two differ" "$SHOWMG"
+  expect_in "show running-config reads the card's vrf back" \
+      "interface veth-mg vrf 100" \
+      "$($HX -c 'show running-config' 2>&1 | grep -A1 '^interface veth-mg' | tr -s ' \n' ' ')"
+
+  echo; echo "=== L3. another commit that does not touch management ==="
+  # A move cycles the link (the kernel's VRF enslave), which the carrier
+  # counter keeps: the commit reading the card's VRF back moves nothing.
+  CC0=$(cat /sys/class/net/veth-mg/carrier_changes)
+  $HX -c "configure" -c "router static" -c "192.0.2.0/24 next-hop 10.0.0.2" \
+      -c "exit" -c "commit" > /tmp/c3.log 2>&1
+  sed 's/^/  c3: /' /tmp/c3.log | tail -3
+  CC1=$(cat /sys/class/net/veth-mg/carrier_changes)
+  expect "recommit: the card is not moved again (carrier changes $CC0 -> $CC1)" \
+      [ "$CC1" = "$CC0" ]
+  reach_l recommit
+  $HX -c "save" 2>&1 | tail -1 | sed 's/^/  /'
+
+  echo; echo "=== L4. a boot: ifupdown, the tuner, then --load ==="
+  stop_box
+  kill "$SSHD_PID" 2>/dev/null; SSHD_PID=
+  systemctl disable --now snmpd
+  kill "$(cat /run/api-lab.pid 2>/dev/null)" 2>/dev/null
+  ip link del mgmt 2>/dev/null
+  for f in "" -6; do
+    ip $f rule del pref 31000 2>/dev/null; ip $f rule del pref 31001 2>/dev/null
+  done
+  sysctl -q -w net.ipv4.tcp_l3mdev_accept=0 net.ipv4.udp_l3mdev_accept=0 \
+      net.ipv4.ip_nonlocal_bind=0 net.ipv6.ip_nonlocal_bind=0 \
+      net.ipv6.conf.all.keep_addr_on_down=0
+  ifup_mg
+  echo "  before the load: $(ip route show default | tr '\n' ' ')"
+  tuner
+  systemctl restart snmpd
+  start_sshd
+  systemctl restart prisma-routing-api-config.service > /dev/null 2>&1
+  start_box
+  $HX --load "$PRISMA_CONFIG" > /tmp/load4.log 2>&1
+  sed 's/^/  load: /' /tmp/load4.log | tail -4
+  expect_not_in "boot: the load leaves nothing out as missing" \
+      "does not have" "$(cat /tmp/load4.log)"
+  sleep 4
+  reach_l boot
+
+  verdict
+  exit $?
+fi
 
 # --------------------------------------------------------------- 0. baseline
 echo "=== 0. the box before: management in the main table ==="

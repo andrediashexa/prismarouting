@@ -79,6 +79,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Management in a VRF works on a management card the dataplane does not
+  own.** ([#613](https://github.com/andrediashexa/hexarouting/issues/613))
+  On a virtual machine the management card is usually a virtio NIC Linux
+  keeps beside the cards DPDK claims. `interface ens18` / `vrf 100` with
+  `system` > `management` > `vrf mgmt` passed `commit check` and failed at
+  apply with `interface ens18: the dataplane does not have it`, rolled back;
+  with management left in the main table, ifupdown's `gateway` - a kernel
+  route, distance 0 in zebra - beat every `router static` default, and the
+  dataplane's FIB 0 default stayed `dpo-drop` (measured on a customer box on
+  0.155.17). Such an interface now goes into the VRF by its Linux device
+  alone: its ifupdown or DHCP defaults and its permanent addresses are taken
+  off, zebra is waited for (#595), the device is enslaved, the addresses come
+  back and the defaults go into the VRF's table as the way back; a `commit
+  confirmed` that expires takes it out with the defaults back in main. Its
+  `vrf` is read back off the VRF device, so the next commit leaves it alone,
+  and a boot does not hold it back as a missing card (#575) - which makes
+  any Linux interface put into a tenant VRF by hand configuration too: a
+  `rollback` to a revision without it takes it out, as it removes a
+  hand-made VRF device (`lab/api-grpc.sh` now puts its dummy in `red`
+  through the VTY). It takes `vrf`
+  and nothing else - an address, an MTU or a description on it are refused
+  by `commit check` - and the check now refuses a `vrf` on a name neither the
+  dataplane nor Linux has, and reads the card's address when it checks the
+  VRF's static routes. `lab/mgmt-vrf.sh linux` (a plain Linux veth as the
+  management card) passes 138 checks: SSH, the API and SNMP on both families
+  through the VRF, an expired `commit confirmed` back on the main table, a
+  confirmed one with a session open across it, and a boot through `--load`,
+  with the main default the upstream's in zebra and in FIB 0 each time. The
+  same lab against 0.155.18's VTY is red on 59, starting with the apply error
+  above.
+
 ## 0.155.18 - a sub-interface the dataplane already paired is not reported missing
 
 ### Fixed

@@ -4414,6 +4414,20 @@ class Config:
                 | set(self.ra_enabled) | set(self.pref64)
                 | set(self.vrrp) | set(self.interfaces) | self.declared)
 
+    def beyond_vrf(self, ifname: str) -> list:
+        """
+        What this configuration holds for `ifname` besides its `vrf`, as the
+        statements read (#613): every row of its block but that one, and the
+        routing daemons' `interface` block when there is one. A Linux-only
+        interface - one Linux has and the dataplane does not - takes `vrf`
+        alone, since everything else here is applied to the dataplane.
+        """
+        out = [r.strip() for r in self.interface_lines(ifname)
+               if not r.startswith(" vrf ")]
+        if ifname in self.frr_interface_names():
+            out.append(f"interface {ifname} (routing)")
+        return out
+
     def linux_mirrors(self) -> int:
         """
         How many interfaces the dataplane holds for this file's Linux ends.

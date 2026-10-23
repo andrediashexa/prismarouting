@@ -127,9 +127,14 @@ ip link add d0 type dummy 2>/dev/null; ip link set d0 up
 ip addr add 192.0.2.1/24 dev d0 2>/dev/null
 # The VRF through the VTY (#540), not by hand: the rollback below commits a
 # revision, and a commit removes a VRF device its configuration does not
-# have - the first run of this lab lost a hand-made `red` that way.
-$HX -c configure -c "vrf red table 10" -c commit 2>&1 | tail -1 | sed 's/^/  /'
-ip link add d1 type dummy 2>/dev/null; ip link set d1 master red; ip link set d1 up
+# have - the first run of this lab lost a hand-made `red` that way. And d1
+# in it through the VTY too, in the same commit: a Linux interface's VRF is
+# configuration since #613, read back off the device it is in, so one put
+# in by hand was taken out by that rollback - the revision before it had no
+# `interface d1 / vrf 10` - and red's routes went with it.
+ip link add d1 type dummy 2>/dev/null; ip link set d1 up
+$HX -c configure -c "vrf red table 10" -c "interface d1" -c "vrf 10" \
+    -c "exit" -c commit 2>&1 | tail -1 | sed 's/^/  /'
 ip addr add 198.51.100.1/24 dev d1 2>/dev/null
 ip route add 172.16.0.0/16 via 198.51.100.2 vrf red
 vtysh -c "show vrf" | sed 's/^/  zebra: /'
