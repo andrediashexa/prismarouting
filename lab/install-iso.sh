@@ -2727,9 +2727,17 @@ fi
 # out with no session on the box, and shortening it would test something else.
 # A minute of that is the product's own deadline and the rest is two more
 # logins around it.
+# The guest agent's channel, as Proxmox gives a VM with `agent: 1` (#614): a
+# virtio-serial port named org.qemu.guest_agent.0, here on a unix socket the
+# lab asks through once the box is up.
+QGA_SOCK=/tmp/qga.sock
+rm -f "$QGA_SOCK"
 timeout "${BOOT_SECS:-1200}" qemu-system-x86_64 \
   $ACCEL $IOMMU_DEV -m "${DISK_BOOT_MEM:-8192}" -smp "$BOOT_SMP" -nographic -no-reboot \
   -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
+  -device virtio-serial-pci \
+  -chardev socket,id=qga0,path="$QGA_SOCK",server=on,wait=off \
+  -device virtserialport,chardev=qga0,name=org.qemu.guest_agent.0 \
   < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
 QEMU_PID=$!
 # Held open for the whole session. A writer that opens the pipe for each line
@@ -2763,6 +2771,30 @@ fi
 # not a race.
 BOOT_BANNER=$(reachable_over_the_network 90)
 BOOT_REACHED=$?
+
+# THE GUEST AGENT, ASKED THE WAY PROXMOX ASKS IT (#614). `guest-ping` down the
+# channel above, answered `{"return": {}}` by qemu-guest-agent in the box. Up
+# to 60 s: udev starts the agent when the port appears, which is early, but a
+# measurement is not a race.
+QGA_REPLY=$(python3 - "$QGA_SOCK" <<'PY'
+import socket, sys, time
+end = time.time() + 60
+while time.time() < end:
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect(sys.argv[1])
+        s.sendall(b'{"execute":"guest-ping"}\n')
+        r = s.recv(256).decode(errors="replace").strip()
+        s.close()
+        if r:
+            print(r)
+            break
+    except OSError:
+        pass
+    time.sleep(3)
+PY
+)
 
 # The box has answered everything it is going to be asked. Killing it is not a
 # shutdown test - nothing here asserts anything about how it goes down - and
@@ -3019,6 +3051,16 @@ if [ "$up" = 1 ]; then
     echo "         not keep"
     fail=1
   fi
+  case "$QGA_REPLY" in
+    *'"return"'*)
+      echo "  [ ok ] the installed box's qemu-guest-agent answered guest-ping on"
+      echo "         the channel a Proxmox VM with 'agent: 1' has (#614)" ;;
+    *)
+      echo "  [FAIL] nothing answered guest-ping on org.qemu.guest_agent.0"
+      echo "         ('${QGA_REPLY:-no reply in 60 s}'): Proxmox cannot shut the"
+      echo "         VM down through its agent nor read its addresses (#614)"
+      fail=1 ;;
+  esac
   case "$PROBE_PING" in
     ""|0)
       echo "  [FAIL] 'ping $PROBE_GW count 2' typed at this box's VTY brought"

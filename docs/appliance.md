@@ -1139,6 +1139,16 @@ the configuration surface is refused, including on the drop-in that is allowed
 to have one. It also fails when the drain goes missing, because a box that stops
 without it reopens the open-allocation defect above.
 
+**`qemu-guest-agent` is in the medium (#614)**, because most of these boxes
+are Proxmox/KVM guests and a VM configured with `agent: 1` and no agent inside
+cannot be shut down through it, frozen for a backup, or asked for its
+addresses. It is Debian's package and Debian's unit: udev starts it when
+`/dev/virtio-ports/org.qemu.guest_agent.0` appears, so on bare metal, or a VM
+without the channel, it never runs. `lab/install-iso.sh` boots the installed
+disk with that channel and asks `guest-ping` through it from outside, the way
+Proxmox does. `system upgrade` carries no host packages, so a box installed
+before it gets the agent with `apt-get install qemu-guest-agent` from a shell.
+
 `prisma-routing.service` waits for VPP to accept commands before applying
 configuration: systemd considers `vpp.service` started once the process is up,
 but the CLI socket and plugins take a moment longer, and applying before that
@@ -2999,7 +3009,7 @@ rewrite the menu until the next kernel package.
 and checks each row above, and that a second run changes nothing.
 
 **`uname` says Prisma Routing** since #449: the release is `<upstream>-prisma`
-(`6.1.187-prisma`), because the kernel is built here. The next section says
+(`6.1.190-prisma`), because the kernel is built here. The next section says
 what that cost and how the cost is carried. The hostname in `uname -n` is the
 box's own.
 
@@ -3104,8 +3114,9 @@ The only exception is the cut classes' own.
 |---|---|---|
 | modules, 6.1.176-1 (the first build) | 4022 | 2722 |
 | size of the modules, 6.1.176-1 | 390 MB | 209 MB |
-| modules, 6.1.187-1 (what the medium ships) | 4023 | 2722 |
-| build time, 16 CPUs, cached afterwards | — | 901 s and 906 s |
+| modules, 6.1.187-1 | 4023 | 2722 |
+| modules, 6.1.190-1 (what the medium ships) | 4023 | 2722 |
+| build time, 16 CPUs, cached afterwards | — | 901 s and 906 s; 962 s for 6.1.190-1 |
 
 **How the security updates arrive now.** Not by apt: `linux-image-amd64` is not
 installed, so apt never brings Debian's kernel back beside this one. A Debian

@@ -148,7 +148,7 @@ El kernel del equipo es **el de Debian, recompilado por Prisma Routing**: el mis
 
 |     |     |
 |-----|-----|
-| Base | el paquete fuente `linux` de Debian 12 (6.1.187 en la versión actual) |
+| Base | el paquete fuente `linux` de Debian 12 (6.1.190 en la versión actual) |
 | Cómo aparece | `uname -r` termina en `-prisma` |
 | Qué queda fuera | sonido, Wi-Fi, Bluetooth, NFC, captura de video y TV, joysticks, tabletas digitalizadoras, pantallas táctiles, radioaficionados, CAN, 802.15.4, módems celulares, FireWire, sensores industriales, tarjetas de video dedicadas AMD y NVIDIA, y los drivers en etapa experimental |
 | Qué queda **siempre** | todo driver de placa de red, de almacenamiento, virtio, vfio, uio, InfiniBand/RDMA y de hipervisor. La compilación se niega a terminar si falta cualquiera de esos módulos que trae Debian |
@@ -159,7 +159,7 @@ Para leer la versión, en un shell del sistema:
 uname -r
 ```
 
-La respuesta es la versión del kernel seguida de `-prisma`, por ejemplo `6.1.187-prisma`.
+La respuesta es la versión del kernel seguida de `-prisma`, por ejemplo `6.1.190-prisma`.
 
 
 :::info
