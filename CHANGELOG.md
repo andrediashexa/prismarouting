@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.155.18 - a sub-interface the dataplane already paired is not reported missing
+
+### Fixed
+
 * **A sub-interface the dataplane had already paired was reported as having
   no Linux end.** ([#612](https://github.com/andrediashexa/hexarouting/issues/612))
   With `lcp lcp-auto-subint on`, which this box ships, VPP pairs a new
