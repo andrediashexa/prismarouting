@@ -148,7 +148,7 @@ The box's kernel is **Debian's, rebuilt by Prisma Routing**: the same source cod
 
 |     |     |
 |-----|-----|
-| Base | the Debian 12 `linux` source package (6.1.187 in the current version) |
+| Base | the Debian 12 `linux` source package (6.1.190 in the current version) |
 | How it shows up | `uname -r` ends in `-prisma` |
 | What is left out | sound, Wi-Fi, Bluetooth, NFC, video and TV capture, joysticks, graphics tablets, touchscreens, amateur radio, CAN, 802.15.4, cellular modems, FireWire, industrial sensors, AMD and NVIDIA dedicated graphics cards, and staging drivers |
 | What **always** stays | every network card, storage, virtio, vfio, uio, InfiniBand/RDMA and hypervisor driver. The build refuses to finish if any of these modules that Debian ships is missing |
@@ -159,7 +159,7 @@ To read the version, in a system shell:
 uname -r
 ```
 
-The answer is the kernel version followed by `-prisma`, for example `6.1.187-prisma`.
+The answer is the kernel version followed by `-prisma`, for example `6.1.190-prisma`.
 
 
 :::info

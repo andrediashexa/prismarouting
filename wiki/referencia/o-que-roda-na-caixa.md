@@ -148,7 +148,7 @@ O kernel da caixa é **o do Debian, recompilado pelo Prisma Routing**: o mesmo c
 
 |     |     |
 |-----|-----|
-| Base | o pacote-fonte `linux` do Debian 12 (6.1.187 na versão atual) |
+| Base | o pacote-fonte `linux` do Debian 12 (6.1.190 na versão atual) |
 | Como aparece | `uname -r` termina em `-prisma` |
 | O que fica de fora | som, Wi-Fi, Bluetooth, NFC, captura de vídeo e TV, joysticks, mesas digitalizadoras, telas de toque, radioamador, CAN, 802.15.4, modems celulares, FireWire, sensores industriais, placas de vídeo dedicadas AMD e NVIDIA, e os drivers em estágio experimental |
 | O que **sempre** fica | todo driver de placa de rede, de armazenamento, virtio, vfio, uio, InfiniBand/RDMA e de hipervisor. A compilação se recusa a terminar se faltar qualquer módulo desses que o Debian traz |
@@ -159,7 +159,7 @@ Para ler a versão, num shell do sistema:
 uname -r
 ```
 
-A resposta é a versão do kernel seguida de `-prisma`, por exemplo `6.1.187-prisma`.
+A resposta é a versão do kernel seguida de `-prisma`, por exemplo `6.1.190-prisma`.
 
 
 :::info

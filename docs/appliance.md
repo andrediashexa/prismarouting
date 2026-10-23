@@ -3009,7 +3009,7 @@ rewrite the menu until the next kernel package.
 and checks each row above, and that a second run changes nothing.
 
 **`uname` says Prisma Routing** since #449: the release is `<upstream>-prisma`
-(`6.1.187-prisma`), because the kernel is built here. The next section says
+(`6.1.190-prisma`), because the kernel is built here. The next section says
 what that cost and how the cost is carried. The hostname in `uname -n` is the
 box's own.
 
@@ -3114,8 +3114,9 @@ The only exception is the cut classes' own.
 |---|---|---|
 | modules, 6.1.176-1 (the first build) | 4022 | 2722 |
 | size of the modules, 6.1.176-1 | 390 MB | 209 MB |
-| modules, 6.1.187-1 (what the medium ships) | 4023 | 2722 |
-| build time, 16 CPUs, cached afterwards | — | 901 s and 906 s |
+| modules, 6.1.187-1 | 4023 | 2722 |
+| modules, 6.1.190-1 (what the medium ships) | 4023 | 2722 |
+| build time, 16 CPUs, cached afterwards | — | 901 s and 906 s; 962 s for 6.1.190-1 |
 
 **How the security updates arrive now.** Not by apt: `linux-image-amd64` is not
 installed, so apt never brings Debian's kernel back beside this one. A Debian

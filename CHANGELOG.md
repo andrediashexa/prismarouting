@@ -92,6 +92,13 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The medium's kernel moves to Debian's 6.1.190-1** (ABI 6.1.0-54), from
+  6.1.187-1. The release gate refused 0.156.0's first cut because Debian's
+  archive had already replaced 6.1.187-1 (`tools/kernel-current.sh`); a
+  Debian kernel security update reaches a box only through a new medium.
+  Rebuilt by `make kernel` with the same module cut (#449). A box upgraded
+  with `system upgrade` keeps its kernel.
+
 ## 0.155.19 - management in a VRF takes a card only Linux has
 
 ### Fixed
