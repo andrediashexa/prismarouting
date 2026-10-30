@@ -5,11 +5,11 @@ Qué existe y qué hace cada cosa. Es para consulta, no para lectura corrida: ve
 | Página | Cubre |
 |--------|-------|
 | [VTY prismash — guía de uso](/s/wiki-es/doc/vty-prismash-guia-de-uso-gPIR8ZKwdC) | Modos, prompts y el árbol de comandos completo |
-| [Qué se ejecuta en el equipo](/s/wiki-es/doc/que-se-ejecuta-en-el-equipo-CKrjZRwjfW) | Los tres contenedores, el backplane, el servicio del sistema que ejecuta lo que la VTY pide, el `start shell` y el kernel |
+| [Qué se ejecuta en el equipo](/s/wiki-es/doc/que-se-ejecuta-en-el-equipo-CKrjZRwjfW) | Los contenedores, el backplane, el servicio del sistema que ejecuta lo que la VTY pide, el `start shell` y el kernel |
 | [Multi-tenant con VRF](/s/wiki-es/doc/multi-tenant-con-vrf-VtS5k4vFue) | Dos clientes que usan el mismo rango privado en el mismo equipo, cada uno en su VRF |
 | [Timeouts y los pisos de las RFC](/s/wiki-es/doc/timeouts-y-los-pisos-de-las-rfc-IgDiScQthb) | Cuánto vive cada sesión, los valores predeterminados, qué se rompe por debajo del mínimo y cuánto tiempo queda retenido un bloque BPA |
 
-La referencia de la VTY está subdividida por tema: comandos `show`, configuración de CGNAT, configuración de pool, configuración de interfaz, configuración de BGP, el ciclo de `commit`, y la parte de enrutamiento y sistema.
+La referencia de la VTY está subdividida por tema: comandos `show`, configuración de CGNAT, configuración de pool, configuración de interfaz, configuración de BGP, configuración de PPPoE, política de enrutamiento, el ciclo de `commit`, y la parte de enrutamiento y sistema.
 
 
 :::info

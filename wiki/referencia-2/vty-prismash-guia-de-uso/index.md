@@ -8,15 +8,19 @@ flowchart LR
     G -->|nat| N["nat<br/><code>[edit nat]</code>"]
     N -->|cgnat| C["cgnat<br/><code>[edit nat / cgnat]</code>"]
     C -->|"pool NOMBRE"| P["pool<br/><code>[edit nat / cgnat / pool]</code>"]
+    N -->|nat64| N6["nat64<br/><code>[edit nat / nat64]</code>"]
     G -->|"interface NOMBRE"| I["interface<br/><code>[edit interface]</code>"]
     G -->|"router ..."| R["enrutamiento<br/><code>[edit router ...]</code>"]
     G -->|system| S["sistema<br/><code>[edit system]</code>"]
-    S -->|"dataplane · cpu · memory"| SD["<code>[edit system / dataplane]</code>"]
+    S -->|"dataplane · cpu · memory · hardware · logging · management"| SD["<code>[edit system / dataplane]</code>"]
     G -->|policy-options| PO["política<br/><code>[edit policy-options]</code>"]
     G -->|"user NOMBRE"| U["usuario<br/><code>[edit user]</code>"]
     G -->|"snmp-user NOMBRE"| SU["usuario SNMP<br/><code>[edit snmp user]</code>"]
+    G -->|pppoe| PP["PPPoE<br/><code>[edit pppoe]</code>"]
+    G -->|aaa| AA["AAA<br/><code>[edit aaa]</code>"]
     P -->|exit| C
     C -->|exit| N
+    N6 -->|exit| N
     N -->|exit| G
     SD -->|exit| S
     S -->|exit| G
@@ -25,6 +29,8 @@ flowchart LR
     PO -->|exit| G
     U -->|exit| G
     SU -->|exit| G
+    PP -->|exit| G
+    AA -->|exit| G
     G -->|exit| O
 ```
 
@@ -36,18 +42,21 @@ flowchart LR
 | Configuración | `prisma# [edit] ` | `configure` | `exit`     |
 | NAT  | `prisma# [edit nat] ` | `nat`       | `exit`, `up` o `top` |
 | CGNAT | `prisma# [edit nat / cgnat] ` | `cgnat`, dentro de `nat` | `exit`, `up` o `top` |
-| Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <nombre>`, dentro de `cgnat` | `exit` vuelve a `cgnat`; `top` va a la raíz |
+| NAT64 | `prisma# [edit nat / nat64] ` | `nat64`, dentro de `nat` | `exit`, `up` o `top` |
+| Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <nombre>`, dentro de `cgnat` — o de `nat64`, con `[edit nat / nat64 / pool <nombre>]` | `exit` vuelve a `cgnat` (o `nat64`); `top` va a la raíz |
 | Interface | `prisma# [edit interface ens18] ` | `interface <nombre>` | `exit`, `up` o `top` |
 | Usuario | `prisma# [edit user joao] ` | `user <nombre>` | `exit`, `up` o `top` |
 | Usuario SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nombre>` | `exit`, `up` o `top` |
 | Rutas estáticas | `prisma# [edit router static] ` | `router static` | `exit`, `up` o `top` |
-| Bloque de FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>`, `router ospf`, `router ospf6`, `router isis <nombre>`, `route-map ...`, `rpki` | `exit`, `up` o `top` |
+| Bloque de FRR | `prisma# [edit router bgp 65000] ` | `router bgp <AS>`, `router ospf`, `router ospf6`, `router isis <nombre>`, `route-map ...`, `rpki`, `bfd`, `vrf <nombre>` | `exit`, `up` o `top` |
 | Sistema | `prisma# [edit system] ` | `system`    | `exit`, `up` o `top` |
-| Placa, núcleos y memoria | `prisma# [edit system / dataplane] ` | `dataplane`, `cpu` o `memory`, dentro de `system` | `exit` vuelve a `system` |
+| Placa, núcleos, memoria, drivers, log y gestión | `prisma# [edit system / dataplane] ` (el prompt nombra el nivel) | `dataplane`, `cpu`, `memory`, `hardware`, `logging` o `management`, dentro de `system` | `exit` vuelve a `system` |
 | Política de enrutamiento | `prisma# [edit policy-options] ` | `policy-options` | `exit`, `up` o `top` |
 | PPPoE | `prisma# [edit pppoe] ` | `pppoe`     | `exit`, `up` o `top` |
 | AAA  | `prisma# [edit aaa] ` | `aaa`       | `exit`, `up` o `top` |
 | RADIUS | `prisma# [edit aaa / radius] ` | `radius`, dentro de `aaa` | `exit` vuelve a `aaa`; `top` va a la raíz |
+
+**El prompt empieza por el nombre del equipo.** En un equipo con el nombre que le da el instalador, o cuyo nombre no se pudo leer, es `prisma`, como en todas las pantallas de esta wiki; después de `hostname borda-01`, la próxima sesión — y la propia sesión que hizo el `commit` — muestra `borda-01> ` y `borda-01# [edit] `. Un nombre de más de 20 caracteres aparece con los 19 primeros y un `~`.
 
 **El prompt nombra el objeto, no solo el tipo de bloque.** `[edit nat / cgnat / pool]` sería el mismo prompt en un equipo con veinte pools: diría que usted está *en* un pool sin decir en cuál, que es justamente la pregunta que usted tiene.
 
@@ -213,16 +222,22 @@ Y `commit` **no** graba en disco — eso lo hace `save`. Una configuración con 
 | `ping <host>` | envía echo requests y muestra lo que volvió. Acepta `count <n>` y `source <dirección>` |
 | `traceroute <host>` | el camino hasta un host, una línea por salto. Acepta `count <n>` (tope de saltos) y `source <dirección>` |
 | `mtr <host>` | hace ping a todos los saltos del camino e imprime un reporte. Acepta `count <n>` (ciclos) y `source <dirección>` |
-| `test policy <política> <prefijo>` | pasa una ruta para ese prefijo por los términos de una política de `policy-options` e indica qué término la decide, antes de que la política se aplique en algún lugar |
+| `monitor interface [<nombre>] [interval <segundos>]` | el tráfico de cada interfaz como gráfico en vivo, hasta `q` (vea la página de comandos `show`) |
+| `monitor log [...]` | el registro de eventos del equipo a medida que se escribe, hasta Ctrl-C, con los filtros de `show log` |
+| `monitor cgnat logging [...]` | cada evento de bloque que exporta el CGNAT, en palabras, a medida que sale; filtra por `subscriber`, `public`, `event`, `pool`, y `raw` muestra también la forma que va en el cable |
+| `test policy <política> [route\|rib] <prefijo>` | pasa una ruta para ese prefijo por los términos de una política de `policy-options` e indica qué término la decide, antes de que la política se aplique en algún lugar; con `route`, una ruta descrita con sus atributos; con `rib`, una ruta que el equipo tiene |
 | `clear bgp <vecino> [soft [in\|out]]` | reinicia una sesión BGP; `soft` reaplica la política sin tirar la sesión. Solo administradores |
 | `clear ospf process` / `clear ospf neighbor <A.B.C.D>` | rehace el proceso OSPF completo (todas las adyacencias caen juntas) o una adyacencia |
 | `clear isis adjacency [<system-id>]` | rehace las adyacencias IS-IS, todas o una |
 | `clear interface counters [<interface>]` | pone en cero los contadores de una interfaz, o de todas, en el dataplane. Solo administradores |
 | `clear cgnat subscriber <A.B.C.D>` | cierra todas las sesiones de un suscriptor. Su bloque de puertos no vuelve de inmediato: queda reservado por el hold-down y se libera después, con el registro de liberación en el log, como en una expiración. Los operadores de CGNAT también pueden |
+| `clear nat64 subscriber <dirección-IPv6>` | lo mismo, para un suscriptor NAT64, por cualquier dirección de su prefijo |
+| `clear pppoe session <id>` / `user <nombre>` / `address <A.B.C.D>` / `all` | cierra una sesión PPPoE, las de un usuario, la de una dirección, o todas; los suscriptores vuelven a marcar |
+| `clear configuration pending` | renuncia a lo que el arranque dejó esperando una placa que el equipo no tiene, para que `save` vuelva a grabar (vea *commit, rollback y save*) |
 | `rollback <0-19>` | carga una revisión con commit en la candidata |
 | `save`  | graba en disco la configuración vigente |
 | `system upgrade [<versión>]` | sin versión, indica qué versión ejecuta el equipo y cuál es la más nueva publicada, sin cambiar nada; con versión, descarga el paquete, lo rechaza si el `sha256` no coincide y ejecuta la actualización mostrando lo que ella dice. La versión en uso y las anteriores se rechazan. Solo `root` o una cuenta con `operator`, como `system reboot` |
-| `system dataplane restart` | detiene y vuelve a levantar el dataplane: **deja de reenviar y descarta el bloque de puertos de todos los suscriptores**. Es lo que lleva a DPDK una placa agregada con el equipo en funcionamiento. Indica lo que cuesta antes de actuar |
+| `system dataplane restart` | detiene y vuelve a levantar el dataplane: **deja de reenviar y descarta el bloque de puertos de todos los suscriptores**. Es lo que lleva a DPDK una placa agregada con el equipo en funcionamiento. Indica lo que cuesta antes de actuar. Solo `root` o una cuenta con `operator`, como `system reboot` |
 | `system reboot` | reinicia el equipo. **Solo** `**root**` **o una cuenta con** `**operator**` (el grupo `prisma-operator`, desde la 0.149.26). Ser `administrator` no basta: quien no tiene `operator` es rechazado antes de que ocurra cualquier cosa. Antes de actuar, advierte lo que cuesta: todas las sesiones en este equipo terminan; el dataplane se detiene; **si hay algo vigente que el arranque no repone y no se guardó, eso se pierde en el arranque** (`save` lo conserva; las cuentas, SSH y SNMP quedan en el equipo y no cuentan, así que un appliance recién instalado, sin nada guardado, no recibe la advertencia); **si hay un** `**commit confirmed**` **sin confirmar, el equipo vuelve revertido** (`commit` lo confirma). Los dos últimos se miden en el momento y solo aparecen cuando son verdaderos. Después, el equipo vuelve solo tomando su placa — no hace falta escribir nada en su consola |
 | `system shutdown` | apaga el equipo. **Solo** `**root**` **o una cuenta con** `**operator**`, como `system reboot`, y con las mismas advertencias — sesiones, dataplane, lo que no se guardó, lo que no se confirmó. Una diferencia: queda apagado hasta que alguien lo vuelva a encender, y solo entonces vuelve tomando la placa por sí solo |
 | `install` | instala Prisma Routing en un disco de esta máquina — **solo existe al ejecutarse desde la ISO** |
@@ -265,21 +280,26 @@ Nada de lo que usted escribe llega a un shell: el equipo arma la lista de argume
 
 | Comando | Qué hace |
 |---------|----------|
-| `nat`   | entra en la jerarquía de NAT; dentro de ella, `cgnat` contiene pools, logging, timeouts y la memoria del CGNAT |
+| `nat`   | entra en la jerarquía de NAT; dentro de ella, `cgnat` contiene pools, logging, timeouts y la memoria del CGNAT, y `nat64` contiene los pools NAT64 |
 | `interface <nombre>` | entra en la configuración de una interfaz, o crea una subinterfaz, un loopback o un bundle LACP |
 | `router static` | entra en el bloque de rutas estáticas |
 | `router bgp <AS>` / `router ospf [vrf <nombre>]` / `router ospf6` / `router isis <nombre>` | protocolos de enrutamiento (FRR) |
 | `rpki`  | validación de origen: las cachés que consulta este equipo |
+| `bfd`   | detección de fallas en fracciones de segundo: sesiones y perfiles; quien lo usa dice `bfd` en su propia declaración (un vecino BGP, una ruta estática) |
+| `fib-policy bgp\|ospf\|isis\|static <política>` | qué rutas de un protocolo van a la tabla de reenvío, por una `policy-statement` |
 | `policy-options` | política de enrutamiento en el formato de Junos: listas de prefijos, comunidades, AS-path y `policy-statement` |
 | `ip prefix-list <nombre> ...` / `ipv6 prefix-list <nombre> ...` | una lista de prefijos, en la sintaxis de FRR, para hacer match en route-map |
 | `bgp as-path access-list` / `bgp community-list` / `bgp large-community-list` | las listas que consulta una route-map |
-| `system` | la máquina: `dataplane` (la placa entregada al dataplane), `cpu` (núcleos por rol) y `memory` (memoria por rol) |
-| `hostname <nombre>` / `no hostname` | el nombre del equipo: el de Linux y el `sysName` de SNMP |
+| `system` | la máquina: `dataplane` (la placa entregada al dataplane), `cpu` (núcleos por rol), `memory` (memoria por rol), `hardware` (ajustes de los drivers de las placas), `logging` (adónde va el registro de eventos) y `management` (la VRF de gestión) |
+| `pppoe` | suscriptores PPPoE: interfaces de acceso, direcciones, límites |
+| `aaa`   | autenticación y contabilización: los servidores RADIUS, en `radius` |
+| `hostname <nombre>` / `no hostname` | el nombre del equipo: el de Linux, el de FRR y el `sysName` de SNMP — y lo que muestra el prompt |
 | `dns server <dirección>` / `no dns server <dirección>` | los resolvedores que consulta el equipo, hasta tres |
 | `ssh ...` | daemon SSH |
 | `user <nombre>` | una cuenta que puede iniciar sesión |
 | `snmp ...` | agente SNMP, de solo lectura por construcción |
 | `snmp-user <nombre>` | un usuario SNMPv3 |
+| `api ...` | la API de gestión (gRPC, TLS mutuo), desactivada por defecto |
 | `commit ...` | aplica la candidata; vale en cualquier nivel |
 | `rollback <0-19>` | carga una revisión con commit en la candidata |
 | `show ...` | muestra información |
@@ -294,6 +314,8 @@ Nada de lo que usted escribe llega a un shell: el equipo arma la lista de argume
 **Algunas declaraciones cambiaron de lugar.** El CGNAT pasó a los niveles `nat` > `cgnat`, en los que se entra (`nat`, `cgnat`, `pool residencial`); las rutas estáticas pasaron a un bloque debajo de `router` (`router static`, con `<prefijo> next-hop <siguiente-salto>` adentro); la placa del dataplane pasó a `system` > `dataplane`; y el lado del CGNAT de una interfaz se escribe en su bloque (`cgnat inside` o `cgnat outside`). Es donde el operador las busca.
 
 La forma de una sola línea del CGNAT (`nat cgnat pool ...`, `cgnat ...`) se rechaza, ya sea escrita o leída de un archivo guardado: después de actualizar, ejecute `save` antes de reiniciar. `dataplane interface` en la raíz se rechaza en el prompt, indicando a dónde se movió; un archivo guardado con él todavía se lee, y el próximo `save` lo reescribe. `interface <nombre> inside` dentro de `cgnat` todavía se acepta, con una nota que indica que aparecerá en el bloque de la interfaz. `ip route ...` en la raíz sigue yendo al enrutamiento. Dentro de `router static`, la única forma es `<prefijo> next-hop ...`: la forma `route ...` dentro del bloque fue retirada, y un archivo guardado que todavía la tenga se rechaza completo.
+
+Un pool NAT64 se escribe en `nat` > `nat64`, al lado de `cgnat`; dentro de `cgnat` se rechaza, ya sea escrito o leído de un archivo guardado, sin cambio automático. `mode dynamic` pasó a ser `mode bpa`: escrito se rechaza con la palabra nueva, y un archivo guardado con la antigua se lee y se vuelve a grabar con la nueva. `radius` dentro de `pppoe` pasó a `aaa` > `radius`: escrito se rechaza indicando a dónde se movió, y un archivo guardado en la forma antigua se lee y se vuelve a grabar.
 
 :::
 
@@ -437,7 +459,7 @@ Una interfaz de `linux_cp` responde a **más de un nombre** cuando el `linux-nam
 
 
 :::warning
-Un archivo de configuración cargado completo — el que el equipo vuelve a leer en cada arranque — se rechaza **completo**, y no declaración por declaración: aplicar la mitad de un archivo deja al equipo sosteniendo la mitad de él.
+En el arranque es diferente: una placa que el archivo guardado nombra y que el dataplane no tiene **no** tira el archivo. El equipo aplica todo lo que no depende de ella y deja esperando solo lo que depende — el bloque de la placa, las subinterfaces, las líneas de enrutamiento que la nombran —, avisa en la consola y lista lo que quedó afuera en `show configuration pending`. Una línea que la VTY no logra leer, esa sí, hace que el archivo se rechace **completo**: aplicar la mitad de un archivo deja al equipo sosteniendo la mitad de él.
 
 Con el dataplane inalcanzable, la verificación de nombres se **omite, no se reprueba**: una VTY que no puede hacer commit mientras el dataplane está caído es una VTY que no sirve para repararlo.
 
