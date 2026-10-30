@@ -55,12 +55,12 @@ En un pool NAT64 el suscriptor solo tiene IPv6 y el servidor solo tiene IPv4, y 
 
 Después de un `AUTH` que el servidor acepta, el equipo ya no traduce nada en esa conexión: el canal de control pasó a ser TLS.
 
-**Viene desactivado**, al contrario de los ALG de un pool IPv4: la propia RFC 6384 recomienda activarlo solo donde se necesita, porque con él el `EPSV` de un servidor que entendería `EPSV` se convierte en `PASV` sin necesidad. Actívelo en el pool NAT64 que atiende a suscriptores con ese problema:
+**Viene desactivado**, al contrario de los ALG de un pool IPv4: la propia RFC 6384 recomienda activarlo solo donde se necesita, porque con él el `EPSV` de un servidor que entendería `EPSV` se convierte en `PASV` sin necesidad. Actívelo en el pool NAT64 que atiende a suscriptores con ese problema — un pool NAT64 está en `nat` > `nat64`, al lado de `cgnat`, y no dentro de él:
 
 ```
 configure
  nat
-  cgnat
+  nat64
    pool v6
     alg ftp on
     exit

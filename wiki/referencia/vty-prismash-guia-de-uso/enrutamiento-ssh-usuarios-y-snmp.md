@@ -37,7 +37,7 @@ Si usted escribe solo `router ospf6` y espera que encuentre las interfaces por s
 | `network` | `<A.B.C.D/M> area <área>` | corre OSPF en las interfaces que cubre ese prefijo |
 | `area`  | `<área> ...` | ajustes de un área, en la sintaxis de FRR |
 | `passive-interface` | `<interfaz>` | corre OSPF en la interfaz sin enviar hello — lo que debe ser todo puerto orientado a suscriptores. FRR lo guarda como `ip ospf passive` en el bloque de la interfaz |
-| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nombre>]` | anuncia `0.0.0.0/0` |
+| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nombre>\|policy <política>]` | anuncia `0.0.0.0/0`; con `policy`, mientras haya una ruta que la política acepta ([Política de enrutamiento](/s/wiki-es/doc/politica-de-enrutamiento-policy-options-QBSNhzhSCN)) |
 | `export` | `<política>` | exporta a OSPF lo que acepte una política de `policy-options`; lo que ningún término acepta **no** se exporta |
 | `redistribute connected\|static\|bgp\|isis` | `[metric <n>] [metric-type 1\|2] [route-map <nombre>]` | inyecta rutas de otro origen. `bgp` en un equipo de borde es una tabla completa dentro del IGP: asígnele una route-map |
 | `auto-cost reference-bandwidth` | `<1-4294967>` | en Mbit/s. Sin esto, todo enlace de 100 Mbit/s en adelante cuesta 1, y en un equipo de 10G no hay elección de camino |
@@ -74,9 +74,9 @@ No hay `network` ni `export` en OSPFv3: la interfaz entra por la línea `ipv6 os
 | `set-overload-bit` | `[on-startup <0-86400>]` | les dice a todos que no transiten por este equipo; vea el drenaje más abajo |
 | `export` | `<política>` | exporta a IS-IS lo que acepte una política; lo que ningún término acepta no se exporta |
 | `redistribute ipv4\|ipv6` | `<origen> level-1\|level-2 [metric <n>] [route-map <nombre>]` | inyecta rutas de otro origen |
-| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [route-map <nombre>]` | anuncia una ruta default |
-| `domain-password` | `clear\|md5 <contraseña>` | autenticación de nivel 2; nunca se muestra de vuelta |
-| `area-password` | `clear\|md5 <contraseña>` | autenticación de nivel 1; nunca se muestra de vuelta |
+| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] [route-map <nombre>\|policy <política>]` | anuncia una ruta default |
+| `domain-password` | `[clear\|md5] <contraseña>` | autenticación de nivel 2; nunca se muestra de vuelta |
+| `area-password` | `[clear\|md5] <contraseña>` | autenticación de nivel 1; nunca se muestra de vuelta |
 | `log-adjacency-changes` |           | registra cada cambio de adyacencia |
 | `lsp-mtu` | `<128-4352>` | el mayor LSP que genera el equipo; si es mayor que la menor MTU de las interfaces, no salen |
 | `lsp-gen-interval` | `<1-120>` | segundos entre regeneraciones de LSP |
@@ -85,7 +85,7 @@ No hay `network` ni `export` en OSPFv3: la interfaz entra por la línea `ipv6 os
 
 Las declaraciones de OSPF e IS-IS que van **en la interfaz** (`ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`) están en [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg).
 
-`export <política>` rechaza una política que dependa de lo que solo lleva una ruta BGP — comunidad, AS-path, local-preference, prepend, próximo salto —, en lugar de ignorarlo en silencio. Las políticas se escriben en `policy-options`, descrito en [Configuración de BGP](/s/wiki-es/doc/configuracion-de-bgp-s4fDtTXgPx); `test policy <política> <prefijo>` dice qué hace con una ruta antes de aplicarla.
+`export <política>` rechaza una política que dependa de lo que solo lleva una ruta BGP — comunidad, AS-path, local-preference, prepend, próximo salto —, en lugar de ignorarlo en silencio. Las políticas se escriben en `policy-options`, descrito en [Política de enrutamiento](/s/wiki-es/doc/politica-de-enrutamiento-policy-options-QBSNhzhSCN); `test policy <política> <prefijo>` dice qué hace con una ruta antes de aplicarla.
 
 ## Rutas estáticas: el bloque `router static`
 
@@ -136,6 +136,18 @@ error: this next hop is on no connected network: 172.31.99.1
 Si se aceptara, esa ruta quedaría en FRR y nunca llegaría a la tabla de reenvío.
 
 Observe que el rechazo nombra la ruta **en el bloque en que está** - `router static / 10.55.0.0/16 next-hop ...` - y no como una línea suelta. Es así incluso cuando la ruta se escribió en el nivel superior, en la grafía del enrutamiento, `ip route ...`: el equipo muestra dónde vive la ruta en la configuración, que es donde usted la va a editar. Una estática dentro de una VRF no tiene ninguna grafía de nivel superior que buscar, y por eso aparece el bloque.
+
+**`router static` es la tabla principal.** Las rutas estáticas de una VRF van en el bloque `vrf <nombre>` del enrutamiento, en su propia grafía - `ip route <prefijo> <próximo-salto>` o `ipv6 route ...` -, y el bloque se cierra con `exit` o `exit-vrf`:
+
+```
+configure
+ vrf red
+  ip route 10.55.0.0/16 172.31.99.1
+  exit-vrf
+ commit
+```
+
+`commit check` verifica el próximo salto en la tabla **de esa VRF**, no en la principal: un próximo salto que solo existe en la principal se rechaza allí, y uno que solo existe en la VRF se acepta. Una VRF que el enrutamiento todavía no tiene activa - sin el `vrf <nombre> table <n>` que crea su dispositivo en Linux - no tiene tabla contra la cual verificar; el equipo dice que esas rutas no se verificaron, y no rechaza.
 
 ## BFD: la caída del vecino en milisegundos
 
@@ -354,8 +366,9 @@ configure
 | `control-plane`, `buffers` | `system` > `memory` | la memoria por rol |
 | `unsupported-sfp allow` | `system` > `hardware` | la placa ixgbe (X520 y familia) acepta un módulo SFP+ que Intel no homologó; `no unsupported-sfp` vuelve al valor por defecto, que rechaza |
 | `host <dirección> [...]` | `system` > `logging` | envía el registro de eventos del equipo a un syslog; vale **en el commit** (vea más abajo) |
+| `vrf <nombre>` | `system` > `management` | los servicios del propio equipo pasan a vivir en la VRF de gestión; vale **en el commit** (vea más abajo) |
 
-Todas, menos `logging`, valen a partir del próximo arranque o del próximo inicio del dataplane: `commit` graba la elección y **no reinicia nada**. `cpu` y `memory` se explican en [Dimensionamiento y requisitos](/s/wiki-es/doc/dimensionamiento-y-requisitos-FuEOaBC4vd), y la elección de la placa en [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg).
+Todas, menos `logging` y `management`, valen a partir del próximo arranque o del próximo inicio del dataplane: `commit` graba la elección y **no reinicia nada**. `cpu` y `memory` se explican en [Dimensionamiento y requisitos](/s/wiki-es/doc/dimensionamiento-y-requisitos-FuEOaBC4vd), y la elección de la placa en [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg).
 
 ## Módulo SFP+ no homologado en una placa ixgbe
 
@@ -425,6 +438,17 @@ memif1/0: link down, administratively up: the wire or the far end
 
 **No lo confunda con la exportación del CGNAT.** `nat` > `cgnat` > `logging syslog` envía los registros de quién usó qué puerto público, para orden judicial, y sigue igual. Son dos configuraciones y dos flujos separados — uno no lleva las líneas del otro — y deben ir a colectores distintos.
 
+## La gestión en una VRF propia: `system` > `management`
+
+Desde la 0.152.4, la gestión puede vivir en una VRF propia, para que la tabla principal quede libre para la default de los suscriptores mientras SSH, la API y SNMP siguen alcanzables por el gateway de gestión. La placa de gestión entra en una VRF como cualquier interfaz, con sus rutas en el bloque `vrf <nombre>`, y `system` > `management` > `vrf <nombre>` hace que los servicios del propio equipo la sigan: sin él, la placa queda en la VRF y el equipo **no** responde por ella. Con él, SSH, la API y SNMP responden en las direcciones de la VRF, y lo que el propio equipo origina - DNS, NTP, las descargas de `system upgrade`, las notificaciones SNMP, `system` > `logging` - sale por las rutas de gestión, salvo que la tabla principal tenga una ruta específica al destino. IPFIX por UDP, que envía el dataplane, sigue saliendo por la tabla principal.
+
+Vale en el `commit` y de nuevo en cada arranque. `commit check` rechaza una VRF que la configuración no crea con `vrf <nombre> table <n>` y, en el commit que la activa, una VRF sin ninguna interfaz. `show system management` muestra la VRF configurada y lo que el sistema tiene en vigor. El ejemplo completo, y el caso de la placa de gestión que solo tiene Linux (la virtio de una máquina virtual), están en [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg).
+
+:::warning
+**Use** `**commit confirmed**`**.** Si la sesión que hizo el commit pierde el acceso, nadie confirma, y el rollback saca la placa de la VRF y devuelve la gestión a la tabla principal. Sacar la gestión de la VRF termina las sesiones SSH abiertas por ella; el equipo atiende las nuevas por la tabla principal.
+
+:::
+
 # SSH
 
 ```
@@ -456,11 +480,11 @@ configure
 
 ```
 configure
- ssh listen-address 10.40.200.166 2804:4ed4:1000:6::166
+ ssh listen-address 192.0.2.166 2001:db8:1000:6::166
  commit
 ```
 
-SSH pasa a responder en cada dirección de la lista, y solo en ellas. `show running-config` muestra la IPv6 entre corchetes, como la escribe el propio sshd: `ssh listen-address 10.40.200.166 [2804:4ed4:1000:6::166]`.
+SSH pasa a responder en cada dirección de la lista, y solo en ellas. `show running-config` muestra la IPv6 entre corchetes, como la escribe el propio sshd: `ssh listen-address 192.0.2.166 [2001:db8:1000:6::166]`.
 
 * **Sin** `**listen-address**` — o después de `no ssh listen-address` — SSH responde en todas las direcciones del equipo, **IPv4 e IPv6** (`0.0.0.0 [::]`), que es el valor por defecto del propio sshd. Hasta la 0.152.4, cualquier `commit` que tocara `ssh` grababa `ListenAddress 0.0.0.0` y SSH por IPv6 dejaba de responder.
 * **Una dirección que el equipo no tiene se rechaza en el** `**commit**`, antes de avisar al sshd: `error: ssh listen-address 192.0.2.99: not an address of this box`. Una dirección de una interfaz que está en una VRF solo se acepta cuando la gestión está en esa VRF (`system` > `management` > `vrf`), que es lo que le permite al sshd escuchar en ella.
@@ -510,9 +534,11 @@ Los servidores DNS que consulta el equipo, sin editar `/etc/resolv.conf` a mano.
 configure
  user <nombre>
   role administrator|cgnat-operator
+  operator
   ssh-key <tipo> <clave> [comentario]
   password <hash>
   no role
+  no operator
   no ssh-key <clave>
   no password
   exit
@@ -522,6 +548,7 @@ configure
 | Comando | Qué hace |
 |---------|----------|
 | `role administrator\|cgnat-operator` | lo que la cuenta puede cambiar; sin rol, solo lectura |
+| `operator` | la cuenta puede actualizar, reiniciar y apagar el equipo y reiniciar el dataplane; `no operator` lo quita |
 | `ssh-key <tipo> <clave> [comentario]` | una clave pública autorizada, como aparece en `authorized_keys`; se puede repetir |
 | `password <hash>` | un hash crypt; el texto plano se rechaza |
 | `no ssh-key <clave>` | quita una clave; basta con su comienzo |
@@ -546,6 +573,8 @@ openssl passwd -6
 **La configuración es la que decide.** El rol se escribe en el bloque del usuario, sale en `show running-config` y sobrevive al `save` — y el `commit` lo materializa en los grupos del sistema, agregando los que el rol exige y **quitando** los que ya no exige. Una promoción hecha por fuera, directamente en el grupo, se deshace en el commit siguiente: es aquí donde se escribe.
 
 Además del grupo del rol, toda cuenta creada aquí entra en los grupos que dan **alcance** — los sockets del dataplane y los del enrutamiento. Sin ellos la cuenta tiene el cargo y no puede ejercerlo: todo comando falla por permisos, incluidos los de lectura. Por eso, volver a aplicar el rol por la VTY arregla una cuenta cuyas membresías se desacomodaron.
+
+**Actualizar, reiniciar, apagar el equipo y reiniciar el dataplane no vienen de ningún rol.** Desde la 0.149.26 es `operator`, junto al rol: da exactamente `system upgrade <versión>`, `system reboot`, `system shutdown` y `system dataplane restart`, en la VTY y por la API, y nada más de lo que es de root. Vale con cualquier rol, o sin rol: una cuenta del NOC que solo lee la configuración puede ser la que reinicia el equipo. Y un administrador sin `operator` es rechazado en esos cuatro comandos, por nombre. `root` ya puede todo eso y no recibe `operator`.
 
 `no role` devuelve la cuenta a solo lectura. Un rol que no existe se rechaza con la lista de los que existen:
 
@@ -575,6 +604,10 @@ configure
  snmp port <1-65535>
  snmp enterprise-number <1-4294967295>
  snmp community <string>
+ snmp trap-host <dirección> community <string> [inform]
+ no snmp enabled|listen-address|port|enterprise-number
+ no snmp community <string>
+ no snmp trap-host <dirección>
 ```
 
 | Comando | Qué define | Por defecto |
@@ -583,11 +616,16 @@ configure
 | `snmp listen-address` | una o más direcciones de escucha, IPv4 e IPv6 | `127.0.0.1` |
 | `snmp port` | puerto UDP | `161`       |
 | `snmp enterprise-number` | el número bajo el cual se sirve la MIB de Prisma; `no snmp enterprise-number` vuelve al del producto | `67033`, el número de Prisma en la IANA |
-| `snmp community` | una comunidad SNMPv2c, de solo lectura | ninguna     |
+| `snmp community` | una comunidad SNMPv2c, de solo lectura; puede haber más de una | ninguna     |
+| `snmp trap-host` | adónde enviar las notificaciones: la dirección, la comunidad y, con `inform`, una notificación confirmada en lugar de un trap; una por dirección, y escribir la misma dirección de nuevo la reemplaza | ninguno |
 
 Con el valor por defecto `127.0.0.1`, el agente solo responde desde dentro del equipo: para que el NMS lo alcance, `listen-address` debe ser una dirección que el NMS alcance.
 
-Para responder en IPv4 e IPv6 al mismo tiempo, liste las dos direcciones en la misma línea, separadas por un espacio — `snmp listen-address 10.40.200.166 2804:4ed4:1000:6::166`. `api listen-address` acepta la lista de la misma forma. Escuchar en `0.0.0.0` o `::` no es el camino: abriría el servicio también en las interfaces del dataplane, incluidas las públicas.
+Para responder en IPv4 e IPv6 al mismo tiempo, liste las dos direcciones en la misma línea, separadas por un espacio — `snmp listen-address 192.0.2.166 2001:db8:1000:6::166`. `api listen-address` acepta la lista de la misma forma. Escuchar en `0.0.0.0` o `::` no es el camino: abriría el servicio también en las interfaces del dataplane, incluidas las públicas.
+
+`no snmp <ajuste>` devuelve el ajuste al valor por defecto de la tabla.
+
+El agente responde **SNMPv2c y SNMPv3**, nunca v1: una comunidad solo vale en v2c, que es la versión con los contadores de 64 bits que usan las interfaces y la MIB del producto.
 
 **Activar el agente sin comunidad y sin usuario v3 se rechaza**: sería un agente que nadie puede consultar. La comunidad y las contraseñas de los usuarios v3 aparecen como `<set, not shown>` en `show configuration`.
 
@@ -596,6 +634,8 @@ Para responder en IPv4 e IPv6 al mismo tiempo, liste las dos direcciones en la m
 La MIB de Prisma se sirve bajo el número del producto en la IANA, **67033**, sin nada que configurar (desde la 0.149.13). `snmp enterprise-number <número>` la sirve bajo el número de su organización; vea [Monitoreo y SNMP](/s/wiki-es/doc/monitoreo-y-snmp-zQ9bTfrh8z).
 
 :::
+
+Para el NMS, el equipo entrega sus propios archivos: `show snmp mib` imprime la PRISMA-ROUTING-MIB ya bajo el número de empresa del equipo, para cargar en el NMS, y `show snmp zabbix-template` imprime una plantilla de Zabbix 7.0 con el mismo número, para importar - los ítems, los disparadores y un ítem por cada notificación que el equipo envía.
 
 ## Usuarios SNMPv3
 
@@ -621,6 +661,8 @@ prisma# [edit] ip prefix-list <TAB>
 ```
 
 El autocompletado sale de la misma fuente que responde `show running-config`, así que no ofrece un nombre que el equipo no tiene.
+
+Tres cosas de una prefix-list son del equipo, por encima de la sintaxis del enrutamiento: una entrada acepta `description <texto>` al final, guardada por el equipo porque el enrutamiento no tiene descripción por entrada; `ip prefix-list <lista> insert seq <n> before|after seq <m>` cambia una entrada de lugar, al estilo Junos; e `ip prefix-list <lista> resequence` renumera la lista de 10 en 10. Las descripciones acompañan a las entradas en los dos casos. Para cambiar el nombre de una prefix-list, una route-map o un peer group BGP en todos los lugares que lo citan, use `rename` en el modo de configuración.
 
 
 :::warning
@@ -668,6 +710,8 @@ Esto existe porque la herramienta que aplica la configuración puede terminar co
 El equipo conoce estas formas y no se queja de ellas. Usted no necesita cambiar cómo escribe.
 
 :::
+
+Una línea de route-map o de prefix-list se trata con más rigor. Si el enrutamiento aceptó la sintaxis y el daemon que aplica la política rechazó la línea, `commit` dice `FRR refused <n> line(s) of your route-maps and lists`, lista las líneas y **vuelve al estado anterior**. Una cláusula que perdió un `set` o un `match` sigue corriendo, haciendo lo que nadie escribió, por eso el equipo deshace el commit en lugar de solo avisar.
 
 Si aparece un rechazo aquí, la lectura es: **lo que guarda este equipo y lo que FRR está corriendo no son lo mismo.** `show configuration` muestra la de este equipo; `start shell` y luego `vtysh -c "show running-config"` muestra la de FRR.
 
@@ -863,7 +907,7 @@ Viene **desactivada**. Para activarla, usted necesita tres cosas:
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=prisma clients" -keyout ca.key -out ca.crt
 # el certificado del equipo, con la dirección que usa el cliente
 openssl req -newkey rsa:3072 -nodes -subj "/CN=prisma-api" -keyout server.key -out server.csr
-printf 'subjectAltName=IP:10.40.200.166\n' > server.ext
+printf 'subjectAltName=IP:192.0.2.166\n' > server.ext
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile server.ext -out server.crt
 # el certificado del cliente: el CN es la cuenta del equipo que usa
 openssl req -newkey rsa:3072 -nodes -subj "/CN=webui" -keyout webui.key -out webui.csr
@@ -874,13 +918,13 @@ openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 8
 En el equipo van `server.key`, `server.crt` y el `ca.crt` con el nombre `clients-ca.crt`; el cliente usa `ca.crt`, `webui.crt` y `webui.key`.
 
 
-2. **La cuenta.** El certificado del cliente dice, en el campo CN, **qué cuenta del equipo** es. La llamada tiene exactamente los permisos que esa cuenta tiene en la VTY: `prisma-admin` configura todo, `prisma-cgnat` solo el CGNAT, y cualquier otra solo lee. Todo lo que cambia queda registrado en el historial a su nombre.
+2. **La cuenta.** El certificado del cliente dice, en el campo CN, **qué cuenta del equipo** es. La llamada tiene exactamente los permisos que esa cuenta tiene en la VTY: `prisma-admin` configura todo, `prisma-cgnat` solo el CGNAT, y cualquier otra solo lee; una cuenta con `operator` también actualiza, reinicia y apaga el equipo y reinicia el dataplane. Todo lo que cambia queda registrado en el historial a su nombre.
 3. **La dirección.** La API escucha **solo en la red de gestión**:
 
 ```
 configure
 api enabled yes
-api listen-address 10.40.200.166
+api listen-address 192.0.2.166
 api port 50051
 commit
 ```

@@ -42,6 +42,8 @@ Console ou SSH caem direto na VTY:
 prisma>
 ```
 
+O prompt traz o nome da caixa: `prisma>` é o de uma caixa que ficou com o nome padrão da instalação, `prisma-routing`. Uma caixa instalada com outro hostname, ou renomeada com `hostname <nome>`, mostra `<nome>>` e, no modo de configuração, `<nome># [edit ...]`. As telas desta wiki usam `prisma>`.
+
 Três coisas que valem desde o primeiro comando:
 
 | O quê | Como funciona |
@@ -84,20 +86,22 @@ Uma placa cujo endereço, MAC e gateway a caixa **não consiga ler inteiros** n�
 show hardware
 ```
 
-Além de listar as placas, a tela explica a decisão. Numa caixa de uma placa só:
+Além de listar as placas, a tela explica a decisão. Numa caixa de uma placa só, instalada com essa placa como rede de gerência:
 
 ```
 The dataplane claims it. It is the only card this box has, and a reserve
 never takes the last card.
 ```
 
-Numa caixa com várias e uma reservada na instalação:
+Numa caixa instalada sem rede de gerência (`none`, o padrão), a frase diz que o dataplane fica com todas e que nenhuma placa está reservada para o Linux, então a caixa é alcançada pelo console.
+
+Numa caixa com várias e uma reservada na instalação, a tela conta as placas (`The dataplane claims 2 of this box's 3 cards`), lista as que o dataplane reivindicou sob `Claimed by the dataplane:` e a reservada sob
 
 ```
 Reserved for Linux:
 ```
 
-seguido do nome da placa e da frase que diz que ela é a rede de gerência com que a caixa foi instalada. O nome é sempre o que o Linux deu à placa (`ens19`, `enp2s0`): a caixa mantém esse nome para as placas que o dataplane reivindica, e é com ele que elas aparecem em `show interface` e no prompt `[edit interface ens19]`. O autoteste de boot diz a mesma coisa no console, para quem está olhando a tela e não digitou nada ainda.
+seguida do nome da placa e da frase que diz que ela é a rede de gerência com que a caixa foi instalada. O nome é sempre o que o Linux deu à placa (`ens19`, `enp2s0`): a caixa mantém esse nome para as placas que o dataplane reivindica, e é com ele que elas aparecem em `show interface` e no prompt `[edit interface ens19]`. O autoteste de boot diz a mesma coisa no console, para quem está olhando a tela e não digitou nada ainda.
 
 Uma caixa que comesse uma placa em silêncio seria pior do que uma que pergunta; e uma que poupasse uma em silêncio deixaria o operador sem explicação para uma placa ausente. Por isso as duas metades são ditas.
 
@@ -192,10 +196,14 @@ Se a caixa subir com a placa entregue e **nada** do outro lado tiver ficado com 
 
 ```
 error: the card this box is reached on was handed over and nothing took it
+    Linux no longer has ens18 and no interface the dataplane holds has
+    52:54:00:12:34:56, so there is no pair for 192.0.2.10/24 to go on
     this box has no address and cannot be reached over the network until that
     is repaired from here
     'show hardware' says what the dataplane holds; 'no interface' under
     'system' > 'dataplane' gives the card back at the next start
+    the card is named in this file:
+    /etc/prisma-routing/tune.env
 ```
 
 :::
@@ -236,8 +244,8 @@ O que cada linha decide:
 
 | Linha | Decisão |
 |-------|---------|
-| `inside` | de quem é o tráfego a traduzir |
-| `outside` | com quais endereços públicos ele sai |
+| `prefix-inside` | de quem é o tráfego a traduzir |
+| `prefix-outside` | com quais endereços públicos ele sai |
 | `block-size` | quantas portas cada assinante ganha (potência de dois) |
 | `ports` | faixa de portas usável do endereço público |
 | `policy interleaved` | vizinhos em IPs públicos diferentes, o que dilui bloqueio de reputação |

@@ -182,7 +182,7 @@ Numa caixa de 4 ou 8 núcleos isso é equilibrado. Num processador de 32 núcleo
 
 ## Devolvendo núcleos
 
-`workers <n>`, em `system` > `cpu` na VTY (a partir da 0.144.4; antes, só editando `PRISMA_MAX_WORKERS` em `/etc/prisma-routing/tune.env`), limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
+`workers <n>`, em `system` > `cpu` na VTY (a partir da 0.146.1; antes, só editando `PRISMA_MAX_WORKERS` em `/etc/prisma-routing/tune.env`), limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
 
 Cada núcleo devolvido é aquela fatia da capacidade de encaminhamento. Não existe um valor padrão porque a troca depende de quanto trabalho de controle a caixa carrega: uma caixa que só recebe rota padrão quase não tem plano de controle; uma que recebe duas tabelas cheias, refaz política BGP e ainda serve consultas tem bastante.
 
@@ -245,6 +245,7 @@ prisma> show system cpu
 configured, in effect from the next reboot:
   control-plane cores   2
   VPP main thread       dedicated
+  VPP workers at most   every core left
   CGNAT workers         all, each also receiving
 this boot:
   VPP main thread       core 0
@@ -409,23 +410,23 @@ Quando o heap enche, a caixa **recusa a sessão nova e conta**, e o dataplane co
 
 # O segmento de contadores, que derruba o dataplane quando enche
 
-O dataplane publica todos os contadores dele num segmento de memória de tamanho **fixo**. Cada interface que ele carrega ocupa cerca de **2,9 kB** desse segmento, e o segmento não cresce.
+O dataplane publica todos os contadores dele num segmento de memória de tamanho **fixo**. Cada interface que ele carrega ocupa uma parte desse segmento — cerca de 2,4 kB, mais 200 bytes por thread do dataplane —, e o segmento não cresce.
 
 Quando ele enche, o dataplane **não recusa a interface seguinte: ele aborta**. A caixa perde o encaminhamento inteiro, de uma vez, e não escreve nenhuma explicação antes de cair.
 
-O tamanho de fábrica é o do próprio dataplane: **32 MB**. Medido, duas vezes e no mesmo ponto: uma caixa nesse tamanho chegou a **7.000 interfaces** e abortou antes de 8.000. Com o segmento em 1 GB, a mesma caixa chegou a 40.000 interfaces, que foi onde a medição parou e não onde ela encontrou um limite.
+O tamanho de fábrica é o do próprio dataplane: **32 MB**. Quanto cabe nele depende do número de threads, porque cada thread soma contadores a cada interface. Medido com subinterfaces VLAN: uma caixa de uma thread abortou depois de **7.800**, uma de três threads depois de **5.100**, e uma de oito threads — o que uma máquina de oito núcleos dá — depois de **3.300**. Com o segmento em 1 GB, uma caixa chegou a 40.000 interfaces, que foi onde a medição parou e não onde ela encontrou um limite.
 
-**Uma caixa de CGNAT comum não chega perto disso.** Assinante não é interface: 200 mil assinantes atrás de um pool dividem um punhado de portas. Quem chega perto é quem cria **uma interface por cliente** - uma subinterface QinQ por assinante, por exemplo.
+**Uma caixa de CGNAT comum não chega perto disso.** Assinante não é interface: 200 mil assinantes atrás de um pool dividem um punhado de portas. Quem chega perto é quem cria **uma interface por cliente** - uma subinterface QinQ por assinante, por exemplo, ou uma sessão PPPoE, que também é uma interface.
 
 
 :::info
-**A caixa dimensiona esse segmento sozinha, a partir das interfaces que a configuração dela tem.** No boot ela conta as interfaces do arquivo de configuração e reserva **4,8 kB para cada uma** - que é o limite medido acima dividido pelas 7.000 interfaces que a caixa suportou, e não os 2,9 kB de conteúdo: a tabela de contadores é um bloco só de memória e precisa caber duas vezes enquanto cresce.
+**A caixa dimensiona esse segmento sozinha, a partir do que a configuração dela faz o dataplane carregar.** No boot ela conta as interfaces que o arquivo de configuração nomeia, o lado Linux de cada par que o dataplane mantém com o Linux, e o máximo de sessões PPPoE que a configuração permite, e reserva para cada uma **três vezes o que os contadores dela pesam** nas threads que a caixa vai rodar: uns 7,9 kB numa thread, 12,1 kB em oito. Três vezes porque crescer a tabela de contadores exige a cópia velha e a nova ao mesmo tempo, e o aborto medido chegou a 2,5 vezes o peso.
 
-Se essas interfaces couberem nos 32 MB de fábrica, ela **não escreve nada** - reservar menos do que o dataplane já dá de graça só tiraria contadores da sua caixa.
+Se essas interfaces couberem nos 32 MB de fábrica, ela **não escreve nada** - reservar menos do que o dataplane já dá de graça só tiraria contadores da sua caixa. E ela nunca dá ao segmento mais de um quarto da memória que o plano de controle mantém: uma configuração que pediria mais recebe esse teto, e o ajuste de boot diz quantas interfaces ele comporta.
 
 :::
 
-O que nenhum arquivo de configuração tem é a interface criada **enquanto a caixa roda**. Se a sua topologia cria interface em tempo de execução, o número é seu e está na seção seguinte.
+Fora as sessões PPPoE, cujo máximo a configuração declara, o que nenhum arquivo de configuração tem é a interface criada **enquanto a caixa roda**. Se a sua topologia cria interface em tempo de execução, o número é seu e está na seção seguinte.
 
 **O tamanho novo só vale no próximo start do dataplane.** O segmento é lido quando ele sobe e nunca cresce depois: se você criar milhares de subinterfaces numa caixa que já está ligada, elas gastam o segmento com que aquela caixa subiu. O cálculo entra no arquivo de configuração do dataplane no boot seguinte, e vale a partir dali.
 

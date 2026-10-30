@@ -8,15 +8,19 @@ flowchart LR
     G -->|nat| N["nat<br/><code>[edit nat]</code>"]
     N -->|cgnat| C["cgnat<br/><code>[edit nat / cgnat]</code>"]
     C -->|"pool NAME"| P["pool<br/><code>[edit nat / cgnat / pool]</code>"]
+    N -->|nat64| N6["nat64<br/><code>[edit nat / nat64]</code>"]
     G -->|"interface NAME"| I["interface<br/><code>[edit interface]</code>"]
     G -->|"router ..."| R["routing<br/><code>[edit router ...]</code>"]
     G -->|system| S["system<br/><code>[edit system]</code>"]
-    S -->|"dataplane · cpu · memory"| SD["<code>[edit system / dataplane]</code>"]
+    S -->|"dataplane · cpu · memory · hardware · logging · management"| SD["<code>[edit system / dataplane]</code>"]
     G -->|policy-options| PO["policy<br/><code>[edit policy-options]</code>"]
     G -->|"user NAME"| U["user<br/><code>[edit user]</code>"]
     G -->|"snmp-user NAME"| SU["SNMP user<br/><code>[edit snmp user]</code>"]
+    G -->|pppoe| PP["PPPoE<br/><code>[edit pppoe]</code>"]
+    G -->|aaa| AA["AAA<br/><code>[edit aaa]</code>"]
     P -->|exit| C
     C -->|exit| N
+    N6 -->|exit| N
     N -->|exit| G
     SD -->|exit| S
     S -->|exit| G
@@ -25,6 +29,8 @@ flowchart LR
     PO -->|exit| G
     U -->|exit| G
     SU -->|exit| G
+    PP -->|exit| G
+    AA -->|exit| G
     G -->|exit| O
 ```
 
@@ -36,18 +42,21 @@ flowchart LR
 | Configuration | `prisma# [edit] ` | `configure`  | `exit`       |
 | NAT  | `prisma# [edit nat] ` | `nat`        | `exit`, `up` or `top` |
 | CGNAT | `prisma# [edit nat / cgnat] ` | `cgnat`, inside `nat` | `exit`, `up` or `top` |
-| Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <name>`, inside `cgnat` | `exit` goes back to `cgnat`; `top` goes to the top |
+| NAT64 | `prisma# [edit nat / nat64] ` | `nat64`, inside `nat` | `exit`, `up` or `top` |
+| Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <name>`, inside `cgnat` — or inside `nat64`, with `[edit nat / nat64 / pool <name>]` | `exit` goes back to `cgnat` (or `nat64`); `top` goes to the top |
 | Interface | `prisma# [edit interface ens18] ` | `interface <name>` | `exit`, `up` or `top` |
 | User | `prisma# [edit user joao] ` | `user <name>` | `exit`, `up` or `top` |
 | SNMP user | `prisma# [edit snmp user nms] ` | `snmp-user <name>` | `exit`, `up` or `top` |
 | Static routes | `prisma# [edit router static] ` | `router static` | `exit`, `up` or `top` |
-| FRR block | `prisma# [edit router bgp 65000] ` | `router bgp <AS>`, `router ospf`, `router ospf6`, `router isis <name>`, `route-map ...`, `rpki` | `exit`, `up` or `top` |
+| FRR block | `prisma# [edit router bgp 65000] ` | `router bgp <AS>`, `router ospf`, `router ospf6`, `router isis <name>`, `route-map ...`, `rpki`, `bfd`, `vrf <name>` | `exit`, `up` or `top` |
 | System | `prisma# [edit system] ` | `system`     | `exit`, `up` or `top` |
-| Card, cores and memory | `prisma# [edit system / dataplane] ` | `dataplane`, `cpu` or `memory`, inside `system` | `exit` goes back to `system` |
+| Card, cores, memory, drivers, logging and management | `prisma# [edit system / dataplane] ` (the prompt names the level) | `dataplane`, `cpu`, `memory`, `hardware`, `logging` or `management`, inside `system` | `exit` goes back to `system` |
 | Routing policy | `prisma# [edit policy-options] ` | `policy-options` | `exit`, `up` or `top` |
 | PPPoE | `prisma# [edit pppoe] ` | `pppoe`      | `exit`, `up` or `top` |
 | AAA  | `prisma# [edit aaa] ` | `aaa`        | `exit`, `up` or `top` |
 | RADIUS | `prisma# [edit aaa / radius] ` | `radius`, inside `aaa` | `exit` goes back to `aaa`; `top` goes to the top |
+
+**The prompt starts with the box's name.** On a box with the name the installer gives, or whose name could not be read, it is `prisma`, as on every screen of this wiki; after `hostname edge-01`, the next session — and the very session that ran the `commit` — shows `edge-01> ` and `edge-01# [edit] `. A name longer than 20 characters shows its first 19 and a `~`.
 
 **The prompt names the subject, not just the block type.** `[edit nat / cgnat / pool]` would be the same prompt on a box with twenty pools: it would say you are *in a* pool without saying which, which is exactly the question you have.
 
@@ -213,16 +222,22 @@ And `commit` does **not** write to disk — `save` does that. A configuration co
 | `ping <host>` | sends echo requests and shows what came back. Accepts `count <n>` and `source <address>` |
 | `traceroute <host>` | the path to a host, one line per hop. Accepts `count <n>` (hop ceiling) and `source <address>` |
 | `mtr <host>` | pings every hop of the path and prints a report. Accepts `count <n>` (cycles) and `source <address>` |
-| `test policy <policy> <prefix>` | passes a route for that prefix through the terms of a `policy-options` policy and says which term decides it, before the policy is applied anywhere |
+| `monitor interface [<name>] [interval <seconds>]` | each interface's traffic as a live chart, until `q` (see the `show` commands page) |
+| `monitor log [...]` | the box's record of events as it is written, until Ctrl-C, with the filters of `show log` |
+| `monitor cgnat logging [...]` | each block event the CGNAT exports, in words, as it goes out; filters by `subscriber`, `public`, `event`, `pool`, and `raw` also shows the form on the wire |
+| `test policy <policy> [route\|rib] <prefix>` | passes a route for that prefix through the terms of a `policy-options` policy and says which term decides it, before the policy is applied anywhere; with `route`, a route described with its attributes; with `rib`, a route the box holds |
 | `clear bgp <neighbor> [soft [in\|out]]` | restarts a BGP session; `soft` reapplies the policy without dropping the session. Administrators only |
 | `clear ospf process` / `clear ospf neighbor <A.B.C.D>` | redoes the whole OSPF process (every adjacency drops with it) or one adjacency |
 | `clear isis adjacency [<system-id>]` | redoes the IS-IS adjacencies, all or one |
 | `clear interface counters [<interface>]` | zeroes the counters of one interface, or all, in the dataplane. Administrators only |
 | `clear cgnat subscriber <A.B.C.D>` | ends all sessions of a subscriber. Their port block does not come back immediately: it is held by the hold-down and released afterwards, with the release record in the log, as on an expiry. CGNAT operators can also do it |
+| `clear nat64 subscriber <IPv6-address>` | the same, for a NAT64 subscriber, by any address in its prefix |
+| `clear pppoe session <id>` / `user <name>` / `address <A.B.C.D>` / `all` | ends one PPPoE session, a user's sessions, the one at an address, or all of them; the subscribers dial again |
+| `clear configuration pending` | gives up what the boot left waiting for a card the box does not have, so that `save` writes again (see *Commit, rollback and save*) |
 | `rollback <0-19>` | loads a committed revision into the candidate |
 | `save`  | writes the running configuration to disk |
 | `system upgrade [<version>]` | without a version, says which version the box runs and which is the newest published, without changing anything; with a version, downloads the package, refuses if the `sha256` does not match and runs the upgrade showing what it says. The version in use and earlier ones are refused. Only `root` or an account with `operator`, like `system reboot` |
-| `system dataplane restart` | stops and starts the dataplane again: **stops forwarding and discards every subscriber's port block**. It is what brings to DPDK a card added while the box was running. Says what it costs before acting |
+| `system dataplane restart` | stops and starts the dataplane again: **stops forwarding and discards every subscriber's port block**. It is what brings to DPDK a card added while the box was running. Says what it costs before acting. Only `root` or an account with `operator`, like `system reboot` |
 | `system reboot` | restarts the box. **Only** `**root**` **or an account with** `**operator**` (the `prisma-operator` group, since 0.149.26). Being `administrator` is not enough: whoever lacks `operator` is refused before anything happens. Before acting, it warns what it costs: every session on this box ends; the dataplane stops; **if something is in effect that the boot does not restore and was not saved, it is lost on boot** (`save` keeps it; accounts, SSH and SNMP stay on the box and do not count, so a freshly installed appliance, with nothing saved, is not warned); **if there is an unconfirmed** `**commit confirmed**`**, the box comes back reverted** (`commit` confirms). The last two are measured on the spot and only appear when they are true. Afterwards, the box comes back on its own taking its card — nothing needs to be typed on its console |
 | `system shutdown` | powers the box off. **Only** `**root**` **or an account with** `**operator**`, like `system reboot`, and with the same warnings — sessions, dataplane, what was not saved, what was not confirmed. One difference: it stays off until someone powers it on again, and only then comes back taking its card on its own |
 | `install` | installs Prisma Routing on a disk of this machine — **only exists when running from the ISO** |
@@ -265,21 +280,26 @@ Nothing you type reaches a shell: the box builds the argument list and executes 
 
 | Command | What it does |
 |---------|--------------|
-| `nat`   | enters the NAT hierarchy; inside it, `cgnat` holds the pools, logging, timeouts and CGNAT memory |
+| `nat`   | enters the NAT hierarchy; inside it, `cgnat` holds the pools, logging, timeouts and CGNAT memory, and `nat64` holds the NAT64 pools |
 | `interface <name>` | enters the configuration of an interface, or creates a sub-interface, a loopback or a LACP bundle |
 | `router static` | enters the static routes block |
 | `router bgp <AS>` / `router ospf [vrf <name>]` / `router ospf6` / `router isis <name>` | routing protocols (FRR) |
 | `rpki`  | origin validation: the caches this box queries |
+| `bfd`   | sub-second failure detection: sessions and profiles; whatever uses it says `bfd` in its own statement (a BGP neighbour, a static route) |
+| `fib-policy bgp\|ospf\|isis\|static <policy>` | which of a protocol's routes go into the forwarding table, through a `policy-statement` |
 | `policy-options` | routing policy in Junos format: prefix lists, communities, AS-path and `policy-statement` |
 | `ip prefix-list <name> ...` / `ipv6 prefix-list <name> ...` | a prefix list, in FRR syntax, to match in a route-map |
 | `bgp as-path access-list` / `bgp community-list` / `bgp large-community-list` | the lists a route-map consults |
-| `system` | the machine: `dataplane` (the card handed to the dataplane), `cpu` (cores per role) and `memory` (memory per role) |
-| `hostname <name>` / `no hostname` | the box's name: the Linux one and the SNMP `sysName` |
+| `system` | the machine: `dataplane` (the card handed to the dataplane), `cpu` (cores per role), `memory` (memory per role), `hardware` (the card drivers' settings), `logging` (where the record of events goes) and `management` (the management VRF) |
+| `pppoe` | PPPoE subscribers: access interfaces, addresses, limits |
+| `aaa`   | authentication and accounting: the RADIUS servers, under `radius` |
+| `hostname <name>` / `no hostname` | the box's name: the Linux one, FRR's and the SNMP `sysName` — and the one the prompt shows |
 | `dns server <address>` / `no dns server <address>` | the resolvers the box queries, up to three |
 | `ssh ...` | SSH daemon   |
 | `user <name>` | an account that can log in |
 | `snmp ...` | SNMP agent, read-only by construction |
 | `snmp-user <name>` | an SNMPv3 user |
+| `api ...` | the management API (gRPC, mutual TLS), off by default |
 | `commit ...` | applies the candidate; works at any level |
 | `rollback <0-19>` | loads a committed revision into the candidate |
 | `show ...` | displays information |
@@ -294,6 +314,8 @@ Nothing you type reaches a shell: the box builds the argument list and executes 
 **Some statements moved.** CGNAT became the `nat` > `cgnat` levels, which you enter (`nat`, `cgnat`, `pool residencial`); static routes became a block under `router` (`router static`, with `<prefix> next-hop <next-hop>` inside); the dataplane card went to `system` > `dataplane`; and an interface's CGNAT side is written in its block (`cgnat inside` or `cgnat outside`). That is where the operator looks for them.
 
 The single-line CGNAT form (`nat cgnat pool ...`, `cgnat ...`) is refused, whether typed or read from a saved file: after upgrading, run `save` before restarting. `dataplane interface` at the top is refused at the prompt, saying where it went; a saved file with it is still read, and the next `save` rewrites it. `interface <name> inside` inside `cgnat` is still accepted, with a note saying it will appear in the interface block. `ip route ...` at the top still goes to routing. Inside `router static`, the only form is `<prefix> next-hop ...`: the `route ...` form inside the block was removed, and a saved file that still has it is refused in full.
+
+A NAT64 pool is written under `nat` > `nat64`, beside `cgnat`; inside `cgnat` it is refused, typed or read from a saved file, with no automatic move. `mode dynamic` became `mode bpa`: typed, it is refused with the new word, and a saved file with the old one is read and written back with the new. `radius` inside `pppoe` moved to `aaa` > `radius`: typed, it is refused saying where it went, and a saved file in the old form is read and written back.
 
 :::
 
@@ -437,7 +459,7 @@ A `linux_cp` interface answers to **more than one name** when the `linux-name` i
 
 
 :::warning
-A configuration file loaded whole — the one the box rereads at every boot — is refused **whole**, not statement by statement: applying half a file leaves the box holding half of it.
+At boot it is different: a card the saved file names and the dataplane does not have does **not** bring the file down. The box applies everything that does not depend on it and leaves waiting only what does — the card's block, its sub-interfaces, the routing lines that name it —, warns on the console and lists what was left out in `show configuration pending`. A line the VTY cannot read, on the other hand, gets the file refused **whole**: applying half a file leaves the box holding half of it.
 
 With the dataplane unreachable the name check is **skipped, not failed**: a VTY that cannot commit while the dataplane is down is a VTY that cannot be used to fix it.
 

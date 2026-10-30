@@ -42,6 +42,8 @@ La consola o SSH entran directo en la VTY:
 prisma>
 ```
 
+El prompt lleva el nombre del equipo: `prisma>` es el de un equipo que quedó con el nombre por defecto de la instalación, `prisma-routing`. Un equipo instalado con otro hostname, o renombrado con `hostname <nombre>`, muestra `<nombre>>` y, en modo de configuración, `<nombre># [edit ...]`. Las pantallas de esta wiki usan `prisma>`.
+
 Tres cosas que valen desde el primer comando:
 
 | Qué | Cómo funciona |
@@ -84,20 +86,22 @@ Una placa cuya dirección, MAC y gateway el equipo **no logre leer completos** n
 show hardware
 ```
 
-Además de listar las placas, la pantalla explica la decisión. En un equipo de una sola placa:
+Además de listar las placas, la pantalla explica la decisión. En un equipo de una sola placa, instalado con esa placa como red de gestión:
 
 ```
 The dataplane claims it. It is the only card this box has, and a reserve
 never takes the last card.
 ```
 
-En un equipo con varias y una reservada en la instalación:
+En un equipo instalado sin red de gestión (`none`, el valor por defecto), la frase dice que el dataplane se queda con todas y que ninguna placa está reservada para Linux, así que al equipo se lo alcanza por la consola.
+
+En un equipo con varias y una reservada en la instalación, la pantalla cuenta las placas (`The dataplane claims 2 of this box's 3 cards`), lista las que reclamó el dataplane bajo `Claimed by the dataplane:` y la reservada bajo
 
 ```
 Reserved for Linux:
 ```
 
-seguido del nombre de la placa y de la frase que dice que es la red de gestión con la que se instaló el equipo. El nombre es siempre el que Linux le dio a la placa (`ens19`, `enp2s0`): el equipo mantiene ese nombre para las placas que reclama el dataplane, y es con él que aparecen en `show interface` y en el prompt `[edit interface ens19]`. El autotest de arranque dice lo mismo en la consola, para quien está mirando la pantalla y todavía no escribió nada.
+seguida del nombre de la placa y de la frase que dice que es la red de gestión con la que se instaló el equipo. El nombre es siempre el que Linux le dio a la placa (`ens19`, `enp2s0`): el equipo mantiene ese nombre para las placas que reclama el dataplane, y es con él que aparecen en `show interface` y en el prompt `[edit interface ens19]`. El autotest de arranque dice lo mismo en la consola, para quien está mirando la pantalla y todavía no escribió nada.
 
 Un equipo que se tragara una placa en silencio sería peor que uno que pregunta; y uno que reservara una en silencio dejaría al operador sin explicación para una placa ausente. Por eso se dicen las dos mitades.
 
@@ -192,10 +196,14 @@ Si el equipo arranca con la placa entregada y **nada** del otro lado se quedó c
 
 ```
 error: the card this box is reached on was handed over and nothing took it
+    Linux no longer has ens18 and no interface the dataplane holds has
+    52:54:00:12:34:56, so there is no pair for 192.0.2.10/24 to go on
     this box has no address and cannot be reached over the network until that
     is repaired from here
     'show hardware' says what the dataplane holds; 'no interface' under
     'system' > 'dataplane' gives the card back at the next start
+    the card is named in this file:
+    /etc/prisma-routing/tune.env
 ```
 
 :::
@@ -236,8 +244,8 @@ Lo que decide cada línea:
 
 | Línea | Decisión |
 |-------|----------|
-| `inside` | de quién es el tráfico a traducir |
-| `outside` | con qué direcciones públicas sale |
+| `prefix-inside` | de quién es el tráfico a traducir |
+| `prefix-outside` | con qué direcciones públicas sale |
 | `block-size` | cuántos puertos obtiene cada suscriptor (potencia de dos) |
 | `ports` | rango de puertos utilizable de la dirección pública |
 | `policy interleaved` | vecinos en IP públicas diferentes, lo que diluye el bloqueo por reputación |

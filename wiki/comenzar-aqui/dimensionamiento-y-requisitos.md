@@ -182,7 +182,7 @@ En un equipo de 4 u 8 núcleos eso está equilibrado. En un procesador de 32 nú
 
 ## Devolver núcleos
 
-`workers <n>`, en `system` > `cpu` en la VTY (a partir de la 0.144.4; antes, solo editando `PRISMA_MAX_WORKERS` en `/etc/prisma-routing/tune.env`), limita cuántos núcleos físicos se convierten en hilos de reenvío. **Viene vacío**, y vacío significa sin límite: exactamente el comportamiento descrito arriba. Al completarlo, los núcleos liberados dejan de estar aislados y vuelven al planificador, donde el enrutamiento y la VTY pueden usarlos de verdad.
+`workers <n>`, en `system` > `cpu` en la VTY (a partir de la 0.146.1; antes, solo editando `PRISMA_MAX_WORKERS` en `/etc/prisma-routing/tune.env`), limita cuántos núcleos físicos se convierten en hilos de reenvío. **Viene vacío**, y vacío significa sin límite: exactamente el comportamiento descrito arriba. Al completarlo, los núcleos liberados dejan de estar aislados y vuelven al planificador, donde el enrutamiento y la VTY pueden usarlos de verdad.
 
 Cada núcleo devuelto es esa porción de la capacidad de reenvío. No existe un valor predeterminado porque el intercambio depende de cuánto trabajo de control carga el equipo: un equipo que solo recibe la ruta predeterminada casi no tiene plano de control; uno que recibe dos tablas completas, rehace la política BGP y además atiende consultas tiene bastante.
 
@@ -245,6 +245,7 @@ prisma> show system cpu
 configured, in effect from the next reboot:
   control-plane cores   2
   VPP main thread       dedicated
+  VPP workers at most   every core left
   CGNAT workers         all, each also receiving
 this boot:
   VPP main thread       core 0
@@ -409,23 +410,23 @@ Cuando el heap se llena, el equipo **rechaza la sesión nueva y la cuenta**, y e
 
 # El segmento de contadores, que tira el dataplane cuando se llena
 
-El dataplane publica todos sus contadores en un segmento de memoria de tamaño **fijo**. Cada interfaz que carga ocupa cerca de **2,9 kB** de ese segmento, y el segmento no crece.
+El dataplane publica todos sus contadores en un segmento de memoria de tamaño **fijo**. Cada interfaz que carga ocupa una parte de ese segmento (cerca de 2,4 kB, más 200 bytes por hilo del dataplane), y el segmento no crece.
 
 Cuando se llena, el dataplane **no rechaza la interfaz siguiente: aborta**. El equipo pierde todo el reenvío, de una vez, y no escribe ninguna explicación antes de caerse.
 
-El tamaño de fábrica es el del propio dataplane: **32 MB**. Medido, dos veces y en el mismo punto: un equipo con ese tamaño llegó a **7.000 interfaces** y abortó antes de 8.000. Con el segmento en 1 GB, el mismo equipo llegó a 40.000 interfaces, que fue donde se detuvo la medición y no donde encontró un límite.
+El tamaño de fábrica es el del propio dataplane: **32 MB**. Cuánto cabe en él depende del número de hilos, porque cada hilo suma contadores a cada interfaz. Medido con subinterfaces VLAN: un equipo de un hilo abortó después de **7.800**, uno de tres hilos después de **5.100**, y uno de ocho hilos (lo que recibe una máquina de ocho núcleos) después de **3.300**. Con el segmento en 1 GB, un equipo llegó a 40.000 interfaces, que fue donde se detuvo la medición y no donde encontró un límite.
 
-**Un equipo de CGNAT común no se acerca a eso.** Un suscriptor no es una interfaz: 200 mil suscriptores detrás de un pool comparten un puñado de puertos. Quien se acerca es quien crea **una interfaz por cliente**, una subinterfaz QinQ por suscriptor, por ejemplo.
+**Un equipo de CGNAT común no se acerca a eso.** Un suscriptor no es una interfaz: 200 mil suscriptores detrás de un pool comparten un puñado de puertos. Quien se acerca es quien crea **una interfaz por cliente**, una subinterfaz QinQ por suscriptor, por ejemplo, o una sesión PPPoE, que también es una interfaz.
 
 
 :::info
-**El equipo dimensiona ese segmento por sí solo, a partir de las interfaces que tiene su configuración.** En el arranque cuenta las interfaces del archivo de configuración y reserva **4,8 kB para cada una**, que es el límite medido arriba dividido por las 7.000 interfaces que soportó el equipo, y no los 2,9 kB de contenido: la tabla de contadores es un solo bloque de memoria y necesita caber dos veces mientras crece.
+**El equipo dimensiona ese segmento por sí solo, a partir de lo que su configuración hace cargar al dataplane.** En el arranque cuenta las interfaces que nombra el archivo de configuración, el lado Linux de cada par que el dataplane mantiene con Linux y el máximo de sesiones PPPoE que permite la configuración, y reserva para cada una **tres veces lo que pesan sus contadores** en los hilos que va a ejecutar el equipo: unos 7,9 kB en un hilo, 12,1 kB en ocho. Tres veces porque hacer crecer la tabla de contadores exige la copia vieja y la nueva al mismo tiempo, y el aborto medido llegó a 2,5 veces el peso.
 
-Si esas interfaces caben en los 32 MB de fábrica, **no escribe nada**: reservar menos de lo que el dataplane ya da gratis solo le quitaría contadores a su equipo.
+Si esas interfaces caben en los 32 MB de fábrica, **no escribe nada**: reservar menos de lo que el dataplane ya da gratis solo le quitaría contadores a su equipo. Y nunca le da al segmento más de un cuarto de la memoria que mantiene el plano de control: una configuración que pediría más recibe ese techo, y el ajuste de arranque dice cuántas interfaces admite.
 
 :::
 
-Lo que ningún archivo de configuración tiene es la interfaz creada **mientras el equipo está en ejecución**. Si su topología crea interfaces en tiempo de ejecución, el número es suyo y está en la sección siguiente.
+Fuera de las sesiones PPPoE, cuyo máximo declara la configuración, lo que ningún archivo de configuración tiene es la interfaz creada **mientras el equipo está en ejecución**. Si su topología crea interfaces en tiempo de ejecución, el número es suyo y está en la sección siguiente.
 
 **El tamaño nuevo solo vale en el próximo inicio del dataplane.** El segmento se lee cuando arranca y nunca crece después: si usted crea miles de subinterfaces en un equipo que ya está encendido, gastan el segmento con el que arrancó ese equipo. El cálculo entra en el archivo de configuración del dataplane en el arranque siguiente, y vale a partir de ahí.
 

@@ -54,12 +54,13 @@ Apontar o shell de login para uma aplicação cria risco de travamento total: um
 
 ### A VTY roda no plano de gerência
 
-A caixa instalada roda três containers: o dataplane, o roteamento e o **plano de gerência**, onde a VTY roda. Um login cai ali **como ele mesmo** — com o mesmo usuário e os mesmos grupos que tem no sistema —, então o papel que a VTY lê é o da conta, e uma conta somente leitura dentro do container pode exatamente o que poderia fora dele. O que a VTY faz no sistema — criar contas, mexer no SSH, no SNMP e nos resolvedores DNS, ajustar o lado Linux de uma interface, reiniciar a caixa — ela pede ao sistema, que confere quem está pedindo pelo próprio kernel e só executa para `root`. É a mesma regra de quando a VTY executava esses comandos ela mesma: mudou onde o comando roda, não quem pode.
+A caixa instalada roda em containers o dataplane, o roteamento, o exportador de registros do CGNAT e o **plano de gerência**, onde a VTY roda; uma caixa com PPPoE configurado roda mais um, o do PPPoE. Um login cai ali **como ele mesmo** — com o mesmo usuário e os mesmos grupos que tem no sistema —, então o papel que a VTY lê é o da conta, e uma conta somente leitura dentro do container pode exatamente o que poderia fora dele. O que a VTY faz no sistema — criar contas, mexer no SSH, no SNMP e nos resolvedores DNS, ajustar o lado Linux de uma interface, reiniciar a caixa — ela pede ao sistema, que confere quem está pedindo pelo próprio kernel e só executa para `root`. É a mesma regra de quando a VTY executava esses comandos ela mesma: mudou onde o comando roda, não quem pode.
 
 Para o operador nada muda no que se digita. Duas consequências práticas:
 
 * **Se o container de gerência não estiver rodando, a VTY roda direto no sistema**, como antes. Uma caixa com esse container parado continua alcançável.
 * `install`, `system upgrade` e `system dataplane restart` são executados pelo sistema, com a VTY dele, no mesmo terminal. Você não precisa fazer nada diferente.
+* Um `system upgrade` recria o container de gerência no fim, e um login que chega nesses segundos **espera** até 20 segundos, dizendo uma vez que a VTY está reiniciando por causa de uma atualização. Se o tempo acabar, vale a tabela do início desta página: `root` e `prisma-admin` caem num shell com o motivo impresso, e as demais contas veem o motivo e a sessão termina.
 
 
 :::info
@@ -171,7 +172,7 @@ Mídias anteriores à **0.37.0** não instalavam o componente que atende essa ch
 | Tipo de mudança | Capacidade exigida |
 |-----------------|--------------------|
 | Pools, `cgnat inside`/`cgnat outside` nas interfaces, timeouts, limites, bypass, forwards, logging | `prisma-cgnat`     |
-| Todo o resto: roteamento, endereços e demais ajustes de interface, SSH, contas, SNMP, DNS, `system` (placas, núcleos, memória) e a memória do CGNAT (`nat` > `cgnat` > `memory`), que é um ajuste da máquina | `prisma-admin`     |
+| Todo o resto: roteamento, endereços e demais ajustes de interface, SSH, contas, SNMP, DNS, PPPoE e RADIUS, `system` (placas, núcleos, memória) e a memória do CGNAT (`nat` > `cgnat` > `memory`), que é um ajuste da máquina | `prisma-admin`     |
 | `start shell`, `install` | `prisma-admin`     |
 | `system reboot`, `system shutdown`, `system upgrade <versão>`, `system dataplane restart` | `root` ou `operator` (`prisma-operator`), qualquer que seja o papel |
 | `system upgrade` sem versão (a consulta) | qualquer conta, inclusive somente leitura |

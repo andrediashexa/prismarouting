@@ -42,6 +42,8 @@ Console or SSH land directly in the VTY:
 prisma>
 ```
 
+The prompt carries the box's name: `prisma>` is that of a box left with the installer's default name, `prisma-routing`. A box installed with another hostname, or renamed with `hostname <name>`, shows `<name>>` and, in configuration mode, `<name># [edit ...]`. The screens on this wiki use `prisma>`.
+
 Three things that apply from the very first command:
 
 | What | How it works |
@@ -84,14 +86,16 @@ A card whose address, MAC and gateway the box **cannot read in full** is not cla
 show hardware
 ```
 
-Besides listing the cards, the screen explains the decision. On a single-card box:
+Besides listing the cards, the screen explains the decision. On a single-card box installed with that card as its management network:
 
 ```
 The dataplane claims it. It is the only card this box has, and a reserve
 never takes the last card.
 ```
 
-On a box with several and one reserved at installation:
+On a box installed with no management network (`none`, the default), the sentence says the dataplane takes them all and that no card is reserved for Linux, so the box is reached at its console.
+
+On a box with several and one reserved at installation, the screen counts the cards (`The dataplane claims 2 of this box's 3 cards`), lists the ones the dataplane claimed under `Claimed by the dataplane:` and the reserved one under
 
 ```
 Reserved for Linux:
@@ -192,10 +196,14 @@ If the box comes up with the card handed over and **nothing** on the other side 
 
 ```
 error: the card this box is reached on was handed over and nothing took it
+    Linux no longer has ens18 and no interface the dataplane holds has
+    52:54:00:12:34:56, so there is no pair for 192.0.2.10/24 to go on
     this box has no address and cannot be reached over the network until that
     is repaired from here
     'show hardware' says what the dataplane holds; 'no interface' under
     'system' > 'dataplane' gives the card back at the next start
+    the card is named in this file:
+    /etc/prisma-routing/tune.env
 ```
 
 :::
@@ -236,8 +244,8 @@ What each line decides:
 
 | Line | Decision |
 |------|----------|
-| `inside` | whose traffic gets translated |
-| `outside` | which public addresses it leaves with |
+| `prefix-inside` | whose traffic gets translated |
+| `prefix-outside` | which public addresses it leaves with |
 | `block-size` | how many ports each subscriber gets (power of two) |
 | `ports` | usable port range of the public address |
 | `policy interleaved` | neighbors on different public IPs, which dilutes reputation blocking |

@@ -14,7 +14,7 @@ prisma# [edit] interface ens18
 prisma# [edit interface ens18] cgnat inside
 ```
 
-O prompt diz sempre em que nível você está. `?` e TAB oferecem só o que vale naquele nível: em `nat` aparece `cgnat`; em `cgnat` aparecem `pool`, `interface`, `logging`, `timeout` e o resto desta página.
+O prompt diz sempre em que nível você está. `?` e TAB oferecem só o que vale naquele nível: em `nat` aparecem `cgnat` e `nat64`; em `cgnat` aparecem `pool`, `interface`, `logging`, `timeout` e o resto desta página.
 
 ## Andando entre os níveis
 
@@ -121,7 +121,7 @@ A caixa **não** é um servidor RADIUS: ela só ouve o accounting, confere cada 
 
 O caminho é configuração; o conteúdo do arquivo não é, e **nenhuma tela mostra uma identidade**. `show cgnat identity` diz quantas a caixa tem e quando as leu, e o segredo do RADIUS sai como `<set, not shown>` no `show running-config`.
 
-Um pool dinâmico, ou determinístico com `reserve`, numa caixa que não exporta nada recebe um aviso no `commit check`: sem o registro, não há como dizer quem usava uma porta.
+Um pool BPA, ou determinístico com `reserve`, numa caixa que não exporta nada **não** recebe aviso no `commit`: quem diz se a caixa exporta é o `show cgnat logging` (e o `prisma-routing-selftest`). Confira ali, porque sem o registro não há como dizer quem usava uma porta.
 
 ## Como a caixa grava
 

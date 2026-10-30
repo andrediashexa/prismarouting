@@ -6,12 +6,12 @@ Two different things with the same goal — being able to answer *"who was using
 flowchart TD
     P["Question: who was using<br/>this IP:port on that date?"] --> M{"Pool mode"}
     M -->|deterministic| A["arithmetic answers<br/>+<br/>show cgnat history proves<br/>which config was in effect"]
-    M -->|dynamic| B["the IPFIX or syslog records<br/>on the collector answer"]
+    M -->|bpa| B["the IPFIX or syslog records<br/>on the collector answer"]
 ```
 
 
 :::info
-**The box does not keep connection records: it exports them, and whoever keeps the year of retention is your collector.** The box's log volume holds only two things: the configuration trail and the exporter spill, the records that a collector that is down has not yet received. Its size says how long the box can keep exporting to an unreachable collector, not how much history it has.
+**The box does not keep connection records: it exports them, and whoever keeps the year of retention is your collector.** The box's log volume holds only two things: the configuration trail and the exporter spill, the records that a collector that is down has not yet received. Each transport's spill stops at 256 MB whatever the size of the volume: that ceiling is what says how long the box can keep exporting to an unreachable collector, and nothing there is history.
 
 :::
 
@@ -23,7 +23,7 @@ There are no per-subscriber allocation events, so there is nothing to export. Th
 
 That only holds as long as it is known **which** configuration was in effect. That is what the **configuration trail** exists for.
 
-**One exception: the** `**reserve**`**.** A deterministic pool with `reserve` keeps blocks outside the formula to hand to whoever fills their own block. These are precisely the blocks the formula does **not** produce, so each one goes out as `natEvent 16` when handed out and `natEvent 17` when it comes back, just like a dynamic block — and such a pool needs export turned on like a dynamic pool.
+**One exception: the** `**reserve**`**.** A deterministic pool with `reserve` keeps blocks outside the formula to hand to whoever fills their own block. These are precisely the blocks the formula does **not** produce, so each one goes out as `natEvent 16` when handed out and `natEvent 17` when it comes back, just like a block of a BPA pool — and such a pool needs export turned on like a BPA pool.
 
 ## The configuration trail
 
@@ -58,7 +58,9 @@ An entry that cannot be attributed to someone **says so**, with the word `unattr
 show cgnat history
 ```
 
-# Dynamic mode: per-block IPFIX
+In the trail, a BPA pool appears as `mode dynamic`, the word from before 0.151.0: an entry is never reworded, and new ones use the same word as the old ones.
+
+# BPA mode: per-block IPFIX
 
 One record per **block allocation** (RFC 8158) — not per flow. It is the difference between a few records per subscriber per day and one per connection.
 
@@ -66,13 +68,13 @@ Three transports, which can be on at the same time:
 
 | Transport | Where it goes out | When to use |
 |-----------|-------------------|-------------|
-| IPFIX over UDP | through the dataplane itself: the collector has to be reachable via the forwarding routes | telemetry. Loses records under congestion, without warning |
-| IPFIX over TCP | through the box's Linux, with spill to disk if the collector goes down | **legal retention**. Carries the subscriber identity, like syslog; UDP does not |
+| IPFIX over UDP | through the box's log container, from a socket on the `src` address; through the dataplane itself when the exporter is in a VRF, when the container cannot use that address or when it is not running | telemetry. Loses records under congestion, without warning |
+| IPFIX over TCP | through the box's Linux (the log container; the dataplane itself if the container is not running), with spill to disk if the collector goes down | **legal retention**. Carries the subscriber identity, like syslog; UDP does not |
 | syslog (RFC 5424 over TCP) | through Linux, with the same spill | the collector that only reads syslog, which is most of them |
 
 
 :::warning
-**A dynamic pool with no export at all is a pool that cannot answer a court order.** In dynamic mode the exported record is the only evidence of who held a public port. `commit check` and `commit` warn, naming the pool, when a dynamic pool — or deterministic with `reserve` — is going to sit on a box where nothing exports: neither UDP on with a collector, nor a TCP collector, nor syslog. It is a warning and not a refusal, because a pool set up before the collector exists is a correct configuration; but do not leave it carrying subscribers like that.
+**A BPA pool with no export at all is a pool that cannot answer a court order.** In BPA mode the exported record is the only evidence of who held a public port. `commit check` and `commit` warn, naming the pool, when a BPA pool — or deterministic with `reserve` — is going to sit on a box where nothing exports: neither UDP on with a collector, nor a TCP collector, nor syslog. It is a warning and not a refusal, because a pool set up before the collector exists is a correct configuration; but do not leave it carrying subscribers like that.
 
 :::
 
@@ -127,7 +129,7 @@ The refusal applies when it is **this change** that creates the problem. On a bo
 :::warning
 **In versions up to 0.63.0, UDP export did not work on any installed appliance.** There was no VTY command to say which collector to send to, so the dataplane refused `logging enable` — and, up to 0.63.0, `commit` answered `commit complete` over that refusal. An operation that believed it was keeping legal retention records was keeping nothing.
 
-If you run dynamic mode and turned on UDP export on an earlier version, treat it as a retention gap for that period: the records from that interval do not exist. TCP export was never affected.
+If you run BPA mode (called `dynamic` until 0.151.0) and turned on UDP export on an earlier version, treat it as a retention gap for that period: the records from that interval do not exist. TCP export was never affected.
 
 :::
 
@@ -140,6 +142,8 @@ show cgnat logging       export state and where it goes
 An `exporter` line with an address is proof that a destination exists; `exporter none` means nothing goes out over UDP, **even with the state** `**enabled**` — clearing the destination does not turn off export, it just leaves it with nowhere to go.
 
 The same screen has one part for the TCP transport and another for syslog. Each says the collector and whether it is `connected`, `connecting` or `disconnected`, how much has been sent and how much is pending, and the `spill` line: bytes on disk, how many have already gone back to the collector and how many were discarded. A transport that is off shows as `disabled`.
+
+Above the two, a line says who carries the TCP streams: `TCP streams carried by the log container`, the box's log container, or `TCP streams carried by the dataplane` when it is not running. In the UDP part, the `sender` line says the same for IPFIX over UDP and, when it is the dataplane, why. And each transport's `file` line says how many bytes the spill file holds now, its ceiling (256 MB) and how much the ceiling has already refused.
 
 The boot self-test also checks this, and compares two different things: what the box was told to do and what the dataplane actually has. If the configuration asks for export and the dataplane does not have it, the boot fails and says which of the two halves did not take — because a refused configuration is indistinguishable from one that is working when you only look at the file.
 
@@ -171,7 +175,7 @@ monitor cgnat logging   Ctrl-C to stop
 21:26:15 -- +30 exhaustion repeats held back
 ```
 
-Each line is a block event: `ALLOC` (the subscriber received the block), `RELEASE` (returned it), `EXHAUSTED` (asked and there was no free block), with the subscriber IP, the public IP, the port range and the pool by name. The time is the same one that goes in the record. When the box knows the subscriber's identity (PPPoE or DHCP login), it appears right below.
+Each line is a block event: `ALLOC` (the subscriber received the block), `RELEASE` (returned it), `EXHAUSTED` (asked and there was no free block; one per subscriber every 10 seconds, not one per refused packet), with the subscriber IP, the public IP, the port range and the pool by name. The time is the same one that goes in the record. When the box knows the subscriber's identity (PPPoE or DHCP login), it appears right below.
 
 The `--` lines come out every 10 seconds, only when something changed, and say per transport how much was sent, how much is waiting and how much was lost. The screen does not know whether **one** specific record reached the collector — export counts per transport, not per record — and says so in the header.
 
@@ -192,7 +196,7 @@ The monitor only reads: it does not stop, delay or take anything from the export
 
 ## A block pinned by a port forward is also an event
 
-A [Port forwarding](/s/wiki-en/doc/port-forwarding-uB5xjjtTNS) in a dynamic pool pins the subscriber's block for as long as the forward exists. Pinning generates an **allocation** and unpinning generates a **release**, like any other block: in dynamic mode the log is the only record of who held a block, and a block held without a record is a mapping no one can attribute afterwards.
+A [Port forwarding](/s/wiki-en/doc/port-forwarding-uB5xjjtTNS) in a BPA pool pins the subscriber's block for as long as the forward exists. Pinning generates an **allocation** and unpinning generates a **release**, like any other block: in BPA mode the log is the only record of who held a block, and a block held without a record is a mapping no one can attribute afterwards.
 
 A second forward inside a block that is already pinned does **not** generate another record — the event belongs to the block, not to the forward. Two allocations of the same block without a release between them is exactly the gap that makes a future query answer wrong.
 
@@ -254,7 +258,7 @@ nat
 
 Without `port`, the box listens on 1813, the RADIUS accounting port. `identity radius disable` closes the listener.
 
-This box is not a RADIUS server: it authenticates no one and does not answer Access-Request. It is a second destination for accounting, reading only one thing from it — which subscriber is at which address. A `Start` or an `Interim` that carries an address and a name says who is there, a `Stop` removes the name, and an `Interim` without an address changes nothing, because guessing which address it was about is exactly how a subscriber ends up named in someone else's record.
+Here the box is not the RADIUS server: it authenticates no one and does not answer Access-Request. It is a second destination for accounting, reading only one thing from it — which subscriber is at which address. A `Start` or an `Interim` that carries an address and a name says who is there, a `Stop` removes the name, and an `Interim` without an address changes nothing, because guessing which address it was about is exactly how a subscriber ends up named in someone else's record.
 
 **The secret is mandatory and checked on every packet**, and a packet that does not match is discarded without reply. Without this check, anyone who reaches the port could name any subscriber at any address, and the compliance log would start taking dictation. The two refusals are counted separately — a bad authenticator is someone else's box (or this one's secret is wrong), a malformed packet is someone's broken client:
 
@@ -288,6 +292,8 @@ No other screen on this box carries identity. Its presence in the log is the rea
 The **UDP** exporter did not change: it keeps the seven RFC 8158 fields and no identity.
 
 **IPv6-only subscriber, from a NAT64 pool:** what names it is the `Delegated-IPv6-Prefix` (RFC 4818 attribute 123), the prefix the BNG delegated. The record carries the name of the delegation that **covers** the subscriber's prefix: a /56 delegated to each customer of a pool cut into /56s, or a /48 that covers all of a company's /56s. A delegation longer than the subscriber — a /60 inside a /56 — covers only part of it, and the record says `unknown`. A new delegation replaces any other it overlaps: the delegated prefix now belongs to that customer, and the old entry is a `Stop` that did not arrive.
+
+**When the box itself is the BNG** (PPPoE), it records who held each inside address itself: the session history, `show pppoe history`, written at the start and the end of each session, whether or not RADIUS answers, hash-chained like the configuration trail and kept on the same log volume. The inside address and the instant of a block record lead to the subscriber with `show pppoe history address <address> at <time>`; see [PPPoE configuration](/s/wiki-en/doc/pppoe-configuration-XpY0C0K81I).
 
 **Accounting is read every second, with or without export on.** Before, it was only read after the first IPFIX template went out — up to one template interval after `logging enable` —, and every block allocated in the meantime went out `unknown` even though the BNG had already said who it was.
 
@@ -371,7 +377,7 @@ Three consequences, and the third is the one that matters for legal retention:
 * the two transports could not corroborate each other, which is the only reason to run both;
 * **a request that names a time of day — which is every request this log exists to answer — could not be resolved.**
 
-Fixed in **0.35.0**. A log already collected over TCP can be repaired if the box's boot time is known; **nothing recovers the ordering across restarts**. If you run dynamic mode and collected over TCP on an earlier version, treat it as a retention problem, not a cosmetic one.
+Fixed in **0.35.0**. A log already collected over TCP can be repaired if the box's boot time is known; **nothing recovers the ordering across restarts**. If you run BPA mode and collected over TCP on an earlier version, treat it as a retention problem, not a cosmetic one.
 
 :::
 
@@ -390,7 +396,7 @@ The three `natEvent` values used:
 |------:|-------|
 | **16** | block allocated (includes extension) |
 | **17** | block released |
-| **12** | ports exhausted |
+| **12** | ports exhausted (one per subscriber every 10 seconds) |
 
 # Why the release is mandatory
 
@@ -437,13 +443,13 @@ The releases are written at the instant of the shutdown, but the collector may n
 * a slow collector, or one that stopped reading without closing the connection;
 * a box with **many blocks held**. The shutdown writes one release per block, all at once, and that is more than fits in the socket in one pass.
 
-In both cases the leftover bytes **are not lost**: they go to a file on the box's own disk, `/var/log/prisma-routing/ipfix-spill.bin` for IPFIX over TCP and `/var/log/prisma-routing/syslog-spill.bin` for syslog, and come back on the next connection to the collector, in the order they were written. They are the same files that cover a collector that is down.
+In both cases the leftover bytes **are not lost** while there is somewhere to write: they go to a file on the box's own disk, `/var/log/prisma-routing/ipfix-spill.bin` for IPFIX over TCP and `/var/log/prisma-routing/syslog-spill.bin` for syslog, and come back on the next connection to the collector, in the order they were written. They are the same files that cover a collector that is down, and each one stops at 256 MB.
 
 What this changes for the operator:
 
 * after a reboot, some of the releases may reach the collector **a few seconds after the box comes back**, and not at the instant of the shutdown. The stamp of each record is still the instant of the shutdown, which is what answers a court order;
 * until TCP export reconnects, the file stays on disk. A box shut down for good leaves these records there - copy the file before decommissioning;
-* the export state shows, per transport, how many bytes went to the file, how many have already gone back and how many were discarded. Discarding only happens when there is nowhere to write, and it is counted - never silent. A discard during the shutdown itself, when the counter dies with the process, is stated in the system log with how many bytes could not be written.
+* the export state shows, per transport, how many bytes went to the file, how many have already gone back and how many were discarded. Discarding only happens when there is nowhere to write or when the file has reached its 256 MB ceiling, and it is counted - never silent. A discard during the shutdown itself, when the counter dies with the process, is stated in the system log with how many bytes could not be written.
 
 ```
 show cgnat logging
@@ -463,7 +469,7 @@ That is why the orderly shutdown alone does **not** solve the problem. It closes
 
 ## The restart marker
 
-To separate the two cases, the box periodically announces **when this incarnation of the dataplane started**, in a second template, in the `systemInitTimeMilliseconds` field (IE 160) - which IANA registers exactly as *"the absolute timestamp of the last (re-)initialization of the IPFIX Device"*.
+To separate the two cases, the box announces **when this incarnation of the dataplane started**, in a second template, in the `systemInitTimeMilliseconds` field (IE 160) - which IANA registers exactly as *"the absolute timestamp of the last (re-)initialization of the IPFIX Device"*. The announcement goes out every 30 seconds over UDP, and once per boot, at the start of the stream, over TCP and syslog.
 
 With that, an allocation without a release has three readings, not two:
 

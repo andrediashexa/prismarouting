@@ -52,7 +52,7 @@ Equivocarse en esta clasificación es malo en los dos sentidos: un campo de mape
 
 | Comando | Argumento | Qué define |
 |---------|-----------|------------|
-| `prefix-inside <prefijo>` | `<A.B.C.D/M\|X:X::X:X/M>` | prefijo interno (los suscriptores); se puede repetir. Obligatorio: el `commit` rechaza un pool sin `prefix-inside` o sin `prefix-outside`. IPv6 convierte el pool en un pool NAT64 (vea más abajo) |
+| `prefix-inside <prefijo>` | `<A.B.C.D/M\|X:X::X:X/M>` | prefijo interno (los suscriptores); se puede repetir. Obligatorio: el `commit` rechaza un pool sin `prefix-inside` o sin `prefix-outside` (o la `prefix-list-inside`/`prefix-list-outside` de ese lado, más abajo). IPv6 convierte el pool en un pool NAT64 (vea más abajo) |
 | `prefix-outside <prefijo>` | `<A.B.C.D/M>` | prefijo público; se puede repetir |
 | `subscriber-length <n>` | `<32-128>` | solo NAT64: la longitud del prefijo IPv6 de **un** suscriptor, el prefijo delegado, por ejemplo `56` |
 | `nat64-prefix <prefijo>` | `<X:X::X:X/M>` | solo NAT64: dónde están los destinos IPv4 (RFC 6052); si no está, vale `64:ff9b::/96` |
@@ -61,7 +61,7 @@ Equivocarse en esta clasificación es malo en los dos sentidos: un campo de mape
 | `policy interleaved` |           | vecinos en direcciones públicas distintas; es el valor predeterminado |
 | `policy blocked` |           | vecinos en la misma dirección pública |
 | `mode deterministic` |           | por fórmula, sin log de asignación: al suscriptor se lo encuentra mediante la configuración vigente. Es el valor predeterminado. Solo se registra el bloque entregado de la reserva |
-| `mode bpa` |           | BPA: bloques asignados bajo demanda, cada asignación registrada. Sin exportación de logging configurada, `commit check` y `commit` advierten: en este modo el registro es la única prueba de quién usó un puerto |
+| `mode bpa` |           | BPA: bloques asignados bajo demanda, cada asignación registrada. En este modo el registro es la única prueba de quién usó un puerto: configure la exportación (`logging` en `cgnat`). El `commit` no advierte cuando falta; quien dice si el equipo exporta es el `show cgnat logging` |
 | `vrf <n>` | `<0-4294967295>` | la VRF cuyos suscriptores atiende este pool; si no está = todas |
 | `outside-vrf <n>` | `<0-4294967295>` | la VRF por donde sale el tráfico traducido; si no está = lo deja donde estaba |
 | `reserve <n>` | `<0-65535>` | bloques de **cada** dirección pública guardados fuera de la fórmula, para dárselos a quien llene el suyo; `0` = ninguno |
@@ -390,24 +390,28 @@ Dentro del bloque, `no <ajuste>` quita el ajuste. `no ?` lista lo que se puede q
 
 ```
 prisma# [edit nat / cgnat / pool residencial] no ?
-  alg                stop choosing for one ALG; the pool takes the device default again
-  block-stride       let the pool place a subscriber's extra blocks wherever it has one free
-  bypass             stop excluding a prefix from translation
-  filter             go back to endpoint-independent filtering
-  forward            remove one inbound port forward
-  initial-allocation a new subscriber starts with one block again
-  inside             remove one inside prefix
-  max-blocks         go back to one block per subscriber
-  max-session-rate   no per-subscriber session rate cap
-  max-sessions       no per-subscriber session cap
-  outside            remove one public prefix
-  outside-vrf        leave translated traffic where it was
-  ports              go back to the device's own port range
-  reserve            give the reserved blocks back to the formula; this too re-maps subscribers
-  tcp-mss            stop clamping the MSS
-  timeout            stop overriding one timeout; the pool inherits the global again
-  utilisation-alarm  stop alarming on block utilisation
-  vrf                serve every VRF again
+  alg                  stop choosing for one ALG; the pool takes the device default again
+  block-stride         let the pool place a subscriber's extra blocks wherever it has one free
+  bypass               stop excluding a prefix from translation
+  filter               go back to endpoint-independent filtering
+  forward              remove one inbound port forward
+  initial-allocation   a new subscriber starts with one block again
+  max-blocks           go back to one block per subscriber
+  max-session-rate     no per-subscriber session rate cap
+  max-sessions         no per-subscriber session cap
+  nat64-prefix         go back to the well-known 64:ff9b::/96
+  outside-vrf          leave translated traffic where it was
+  ports                go back to the device's own port range
+  prefix-inside        remove one subscriber prefix
+  prefix-list-inside   stop taking the subscribers from a prefix-list
+  prefix-list-outside  stop taking the public addresses from a prefix-list
+  prefix-outside       remove one public prefix
+  reserve              give the reserved blocks back to the formula; this too re-maps subscribers
+  subscriber-length    no subscriber length; an IPv6 inside needs one
+  tcp-mss              stop clamping the MSS
+  timeout              stop overriding one timeout; the pool inherits the global again
+  utilisation-alarm    stop alarming on block utilisation
+  vrf                  serve every VRF again
 ```
 
 Quitar un timeout, un ALG o un límite **no es lo mismo que ajustarlo al valor predeterminado**: el pool vuelve a **heredar** el global, y la línea desaparece de la configuración en lugar de aparecer en ella con un número. Un `timeout udp 300` global cambiado después pasa a valer de nuevo para el pool.
@@ -468,7 +472,7 @@ error: block-size cannot be removed
     set the value you want instead: block-size <64-32768>
 ```
 
-`policy` y `mode` responden de la misma forma, cambiando el nombre del campo y lo que hay que escribir en su lugar: `policy interleaved|blocked` y `mode deterministic|dynamic`.
+`policy` y `mode` responden de la misma forma, cambiando el nombre del campo y lo que hay que escribir en su lugar: `policy interleaved|blocked` y `mode deterministic|bpa`.
 
 Para cambiar cualquiera de los tres, escriba el valor que quiere. Son campos de mapeo: el cambio reconstruye el pool y exige `commit remap`.
 

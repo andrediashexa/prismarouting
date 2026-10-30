@@ -66,14 +66,14 @@ Es aquí donde se verifica si la placa existe para Linux. Una placa que no apare
 
 El dataplane corre en un contenedor. Si no logra arrancar, el contenedor se reinicia algunas veces y luego deja de intentarlo. En ese punto la placa ya había sido quitada de Linux para entregársela al dataplane, y el equipo quedaría sin ninguna interfaz.
 
-**Un vigilante de placas se encarga de eso.** Cada 30 segundos verifica si el contenedor del dataplane se detuvo definitivamente; si se detuvo:
+**Un vigilante de placas se encarga de eso.** Cada 5 segundos, a partir de dos minutos después del arranque, verifica si el contenedor del dataplane se detuvo definitivamente; si se detuvo:
 
 
 1. graba el motivo en `/var/log/prisma-routing/why-the-dataplane-stopped` — el estado del contenedor, el código de salida y las últimas 80 líneas que escribió el dataplane;
 2. devuelve **todas** las placas tomadas al driver del kernel;
 3. vuelve a levantar las interfaces de Linux, para que el equipo vuelva a ser alcanzable.
 
-Lo hace una vez por arranque y no reinicia nada. En la práctica, el equipo vuelve a tener la placa en Linux unos dos minutos después del arranque, sin dataplane.
+Devuelve las placas una vez por arranque. Antes de llegar a eso, se ocupa de dos casos: un dataplane que se cayó y que Docker levantó de nuevo recibe del vigilante la configuración vigente, algunos segundos después; y un dataplane que salió solo con status 0, sin que nadie lo mandara, se inicia de nuevo, hasta cinco veces por arranque. En la práctica, un equipo cuyo dataplane no arranca vuelve a tener la placa en Linux unos dos minutos después del arranque, sin dataplane.
 
 **El archivo queda en** `**/var/log**`**, y no en** `**/run**`**, porque el siguiente paso de todo el mundo es reiniciar**, y el reinicio borra el log del contenedor. Léalo antes de tocar cualquier cosa. Con el dataplane detenido, `show version` apunta a él:
 
@@ -118,6 +118,8 @@ En un equipo que toma varias placas, una placa que no se pudo entregar queda afu
 **Una placa ixgbe que el kernel rechazó por el módulo SFP+.** La placa no aparece en `show hardware`, y el journal del arranque (`journalctl -b | grep ixgbe`) dice `unsupported SFP+ or QSFP module type was detected`. El driver rechazó el módulo, no la placa. Active `unsupported-sfp allow` en `system` > `hardware` y reinicie el equipo; vea [Enrutamiento, SSH, usuarios y SNMP](/s/wiki-es/doc/enrutamiento-ssh-usuarios-y-snmp-aAKbYtvEg3).
 
 **La placa nombrada no existe.** Si `show interface` dice que el nombre configurado no recibió placa, verifique el nombre en `show hardware` y nómbrela de nuevo (paso 6).
+
+**Una placa que usa la configuración guardada no estaba en el arranque.** El equipo no rechaza la configuración entera por eso: aplica todo lo demás, deja afuera lo que depende de esa placa (su bloque, sus sub-interfaces, lo que la nombra en el enrutamiento) y lo dice en la consola. `show configuration pending` muestra lo que está esperando. Mientras haya algo pendiente, `save` se rechaza, para que el archivo no pierda esas líneas; cuando la placa aparece, el equipo aplica solo lo que faltaba, y `clear configuration pending` es usted renunciando a ella.
 
 # 6. Corrija, y reinicie el dataplane
 

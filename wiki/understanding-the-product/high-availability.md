@@ -84,7 +84,9 @@ On the other box, its own addresses and a lower priority (100, for example). Sub
 
 **The virtual MAC is what lets the CPE not need to know anything.** Whoever takes over the address takes over the MAC `00:00:5e:00:01:<vrid>` with it and sends a gratuitous ARP; the CPE keeps sending to the same MAC and the frame starts arriving at the other box.
 
-`**track**` **is the failure the rest does not cover.** A box with its uplink pulled stays alive and keeps advertising: it holds the gateway address and reaches nothing. With `track`, the priority drops by the decrement and the peer takes over. Choose the decrement so that the drop takes the priority **below** the other one's.
+**IPv6, and a NAT64 pool in the pair.** An IPv6 address under the same `vrrp <vrid>` — a link-local first, then the global one — builds that id's IPv6 virtual router beside the IPv4 one, with the same priority, the same `track` and the same preempt. That is what makes a NAT64 pool fail over: the IPv6 subscribers' gateway follows the box that holds the public addresses. The IPv6 virtual MAC is `00:00:5e:00:02:<vrid>`. `commit check` refuses an IPv6 router with no link-local, and warns when a pair has a NAT64 pool and no IPv6 router.
+
+`**track**` **is the failure the rest does not cover.** A box with its uplink pulled stays alive and keeps advertising: it holds the gateway address and reaches nothing. With `track`, the priority drops by the decrement and the peer takes over. Choose the decrement so that the drop takes the priority **below** the other one's. A router sees a tracked interface as up only when it has an address of the router's family: for the IPv6 router the box enables IPv6 on the tracked interface by itself; for IPv4, the tracked interface needs an IPv4 address, and `commit check` warns when it has none.
 
 **The virtual address does not answer ping.** Whoever does not own the address does not answer ICMP for it — that is the RFC 5798 default (section 6.4.3). Monitoring should ping each box's **own** address, which is what tells you whether that box is alive; the virtual address only tells you which of the two holds it. Forwarding **through** it works normally.
 
@@ -108,7 +110,9 @@ The acceptance check was written **before** the implementation, so that the impl
 | **Dataplane killed** with SIGKILL | Survives, in around three seconds |
 | A TCP connection in progress during the failover | **Drops**, and a new one from the same subscriber gets the same address and the same block |
 
-The last line is this page's promise stated in reverse: nobody should read a green run as "the connections survived".
+With a NAT64 pool and an IPv6-only subscriber, the same three failures were measured: the service comes back in about 3 to 4 seconds, on the same public address and the same block, and connections in progress drop the same way.
+
+The table's last line is this page's promise stated in reverse: nobody should read a green run as "the connections survived".
 
 What was **not** measured here: whether the real network card reports that the cable came out. The lab interface does not, so the lab brings the port down in the dataplane too — which is the state a card with the cable out reports in hardware.
 
@@ -194,11 +198,12 @@ The ones that change the **mapping**. In deterministic mode the subscriber's pub
 
 | Must be equal on both boxes | May differ |
 |-----------------------------|------------|
-| `inside`, `outside`         | `timeout ...` |
+| `prefix-inside`, `prefix-outside`, or what `prefix-list-inside` and `prefix-list-outside` resolve to | `timeout ...` |
 | `block-size`, `ports`       | `alg` for each protocol, `tcp-mss` |
 | `policy`, `mode`            | `bypass source`, `bypass destination` |
 | `reserve`                   | `max-sessions`, `max-session-rate` |
 | `vrf`, `outside-vrf`        | `forward ...`, `block-stride`, `max-blocks`, `utilisation-alarm` |
+| `subscriber-length`, `nat64-prefix` (NAT64 pool) | `initial-allocation`, `filter` |
 
 The dataplane changes the right-hand column on a pool that is passing traffic, and none of these settings moves any subscriber. Two boxes that differ only there are correct, and warning about them would teach the operator to ignore the warning that matters.
 

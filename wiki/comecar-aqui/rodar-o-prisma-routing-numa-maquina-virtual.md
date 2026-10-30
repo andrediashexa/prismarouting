@@ -56,6 +56,12 @@ A maioria das VMs não tem IOMMU virtual. A caixa percebe isso no boot e liga a 
 | o que você ganha ou perde | a placa só alcança a memória que recebeu, então um defeito no dataplane não escreve fora dela | encaminha igual, sem essa proteção |
 | onde conferir | `show hardware` diz, por placa ainda não entregue, para qual driver a caixa vai movê-la | o mesmo   |
 
+## Placa física passada para a VM
+
+Uma placa física entregue à VM pelo hipervisor (*PCI passthrough*) é tratada como qualquer placa PCI da caixa: o dataplane a reivindica pela mesma regra e com o nome que o Linux deu a ela. Numa VM sem IOMMU virtual ela vai para o `uio_pci_generic`, como uma placa virtio; até a 0.141.0 uma placa física nesse driver não chegava ao dataplane, que subia sem ela, e desde a 0.141.1 ela encaminha.
+
+O `uio_pci_generic` precisa de uma interrupção INTx legada, e uma placa que só tem MSI-X é recusada por ele; a caixa diz isso no boot, e o que torna o `vfio-pci` disponível é ligar uma IOMMU para a VM. Nessa placa vale tudo o que [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) diz sobre placas físicas, e é nela que uma medição de vazão significa alguma coisa.
+
 ## Placa acrescentada com a VM ligada
 
 Uma placa posta na VM pelo hipervisor com a caixa rodando encaminha **na hora**, sem reiniciar nada:
@@ -78,16 +84,15 @@ O AF_XDP custa velocidade, não correção: a placa é lida pelo driver do kerne
 
 ## A MTU que a placa virtual carrega
 
-Toda placa virtual que o hipervisor configura anuncia um máximo — em geral 1500. O dataplane, por conta própria, começa toda interface em 9000, e uma placa que não aceita esse valor recusa a porta: ela fica em erro e não encaminha nada.
+Toda placa virtual que o hipervisor configura anuncia um máximo — em geral 1500. Desde a 0.152.1 a caixa começa toda interface sem `mtu` em **1500**, o padrão dela, então uma placa virtual comum já aceita a porta. Uma placa que não aceita nem esse valor recusa a porta: ela fica em erro e não encaminha nada.
 
 | O que a caixa faz | Consequência |
 |-------------------|--------------|
 | lê no boot o máximo de cada placa que vai pegar | o número vem do hipervisor, não de uma suposição |
-| faz **todas** as interfaces começarem no **menor** máximo entre as placas pegas | numa VM com uma placa de 1500 ao lado de uma de 9000, a de 9000 também começa em 1500 |
+| quando alguma placa pega tem máximo **abaixo de 1500**, faz **todas** as interfaces começarem no **menor** máximo entre as placas pegas | numa VM com uma placa de 1400 ao lado de uma de 9000, a de 9000 também começa em 1400 |
 | aceita `mtu <n>` no bloco da interface depois | é assim que se sobe a porta que carrega mais |
-| não escreve nada quando todas as placas carregam 9000 ou mais | fica igual a uma caixa física |
 
-Para carregar quadros maiores que 1500 numa VM, a MTU tem de ser aumentada primeiro na placa virtual, no hipervisor; a caixa lê o novo máximo no boot seguinte.
+Para carregar quadros maiores que 1500 numa VM, a MTU tem de ser aumentada primeiro na placa virtual, no hipervisor, e depois com `mtu <n>` na interface; a caixa lê o novo máximo da placa no boot seguinte. Uma caixa instalada antes da 0.152.1 continua em 9000: a atualização escreveu `mtu 9000` nas interfaces dela.
 
 ## Várias filas na placa virtual (multiqueue)
 
@@ -109,6 +114,8 @@ O *Shutdown* do hipervisor envia o botão de energia (ACPI), e a caixa desliga l
 **Até a versão 0.139.0 a caixa ignorava esse botão.** Numa caixa nessa versão ou anterior, o *Shutdown* do hipervisor não faz nada e o desligamento forçado que vem depois é o mesmo que tirar o cabo de força: os blocos que o dataplane está segurando não são fechados no log de retenção. Atualize a caixa, ou desligue pela VTY.
 
 :::
+
+**O agente do QEMU vem na mídia.** Desde a 0.156.0 a instalação traz o `qemu-guest-agent`. Com o canal do agente ligado na VM (`agent: 1` no Proxmox), o hipervisor desliga a caixa pelo agente, congela o disco antes de um backup e mostra os endereços da caixa no painel. O agente só roda quando esse canal existe. Uma caixa instalada por mídia anterior e atualizada com `system upgrade` não o recebe, porque o pacote de atualização não traz pacotes do sistema: instale num shell de administrador com `apt-get install qemu-guest-agent`.
 
 Desligue ou reinicie pela VTY, que diz o custo antes de agir e fecha os blocos no caminho:
 

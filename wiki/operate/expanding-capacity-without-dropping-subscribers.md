@@ -12,8 +12,9 @@ The mapping is `subscriber index → (public address, port block)`, **computed**
 | changing `block-size` | blocks per address change: almost everyone — only those whose block starts on the same port stay put |
 | changing `ports` | same as block size |
 | changing `policy` | `interleaved` and `blocked` divide the index in different ways: **everyone** |
-| changing `mode` | deterministic and dynamic are not the same mapping — and this is the only mapping change that `commit` does **not** refuse: the count is only made when the pool in effect and the new one are both deterministic, so changing the mode is applied without the warning below |
+| changing `mode` | `deterministic` and `bpa` are not the same mapping — and this is the only mapping change that `commit` does **not** refuse: the count is only made when the pool in effect and the new one are both deterministic, so changing the mode is applied without the warning below |
 | adding or removing an **inside** prefix | changes the index of every address after it |
+| changing the pool's `prefix-list-inside` or `prefix-list-outside`, or an entry of the list it uses | the same as typing the prefixes: what counts is the set of addresses the list resolves to. If it changes, the pool is rebuilt, and on a deterministic pool `commit` makes the count and asks for `commit remap` as above. `show configuration compare` shows the new sets under each pool affected |
 | changing `reserve` | the capacity the formula can use changes. With `interleaved` **nobody moves**: only subscribers above the new capacity lose their block. With `blocked` the divisor is the block count, and almost everyone moves. In both cases it is a capacity change and calls for `commit remap` |
 | changing `vrf` or `outside-vrf` | **no subscriber moves**, and even so every session in the pool ends: the arithmetic does not change, so `commit` does not ask for `commit remap`, but the pool is rebuilt |
 | timeouts, ALGs, `filter`, `max-blocks`, `initial-allocation`, `block-stride`, `tcp-mss`, per-subscriber limits, `utilisation-alarm`, forwards, bypass | **nothing** — these are settings applied in place, on a pool carrying traffic |
@@ -76,7 +77,7 @@ On a dynamic pool the blocks are split among the dataplane workers, and each sub
 
 `show cgnat pool` gives that number when it is smaller than the total: a line with how many subscribers the pool serves **whatever their address**, and the reason — the blocks split among the workers. Size by it, not by the total. The loss is zero when your DHCP hands out inside addresses in sequence from the start of the range, and it weighs on a small pool with many workers.
 
-The dataplane knows how to lend a block from one slice to another, but in this version that ships **turned off** and has no command in the VTY: as measured, every setting that lends early enough to serve the refused subscriber also lends the block the next subscriber of its own worker was going to want. If your dynamic pool refuses with free blocks, the answer today is capacity — more public addresses or a second pool, through the paths below.
+The dataplane knows how to lend a block from one slice to another, but that ships **turned off** and has no command in the VTY. The demand the lending reads is the number of **distinct** subscribers the slice refused in the last five seconds that still hold no block — not a count of refused packets. Measured on a bench with an uneven load across three workers, turned on it took the crowded slice from 13-15% of its sessions unserved to 0.4%; in exchange, 7-9% of the sessions of the slices that lend were refused at first (served after 6-9 seconds, median) and about 1% went unserved. On an even load it has not been measured yet, which is why it stays off by default. If your dynamic pool refuses with free blocks, the answer today is capacity — more public addresses or a second pool, through the paths below.
 
 # The procedure that costs an outage
 

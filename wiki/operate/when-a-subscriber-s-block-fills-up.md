@@ -36,6 +36,8 @@ A single counter for all three would answer none of them. It is the difference b
 
 :::
 
+On a BPA pool there is a case none of the three counters shows: the subscriber that does **not hold a block yet** and is refused because its worker's slice ran out, even with free blocks in another worker's slice. For it, `show cgnat subscriber` names its worker on the first line and, below, says it has no live state — no block, no sessions — instead of the refusals line. `show cgnat blocks` shows how many blocks of each slice are in use. What the pool guarantees whatever the address, and what to do when this is it, is in [Expanding capacity without dropping subscribers](/s/wiki-en/doc/expanding-capacity-without-dropping-subscribers-R1zYvsfLCT).
+
 To find who is closest to the limit before anyone calls:
 
 ```
@@ -287,7 +289,7 @@ A mapping opened by an **ALG** on behalf of a control connection — FTP data, a
 
 They still **count** toward the concurrent total, because they take up a port like anything else: exempt from being refused, not from being counted.
 
-A limit also **never closes a session that already exists**. It limits what can be created; dropping mappings that predate it would make configuring a limit an outage of its own.
+A limit also **never closes a session that already exists**. It limits what can be created; dropping mappings that predate it would make configuring a limit an outage of its own. To end one subscriber's sessions, `clear cgnat subscriber <ip>` does it without touching the configuration.
 
 # How to verify
 

@@ -38,8 +38,10 @@ Todo cambio en el bloque `pppoe` reinicia el plano de control PPPoE: **todas las
 | `authentication pap chap mschap-v2` | los métodos ofrecidos; los tres si se omite |
 | `session-limit <n>` | como máximo esa cantidad de sesiones; 16.000 si se omite. Cada sesión es una interfaz en el dataplane, y el segmento de estadísticas se dimensiona para ese número en el arranque, a partir de la configuración guardada. El `commit` rechaza más de 100.000 (el máximo medido) y más de lo que la RAM del equipo permite que el segmento soporte; hasta el próximo reinicio, el equipo acepta solo lo que soporta el segmento en uso, y el `show pppoe summary` lo indica |
 | `mtu <576-1500>` | MTU y MRU del PPP; 1492 si se omite |
-| `tcp-mss <536-1460>` | limita el MSS del TCP en cada sesión |
+| `tcp-mss <536-1460>` | limita el MSS del TCP en cada sesión; en el IPv6 de la sesión, 20 bytes por debajo |
 | `rate-limit default <download>/<upload>` | el límite de ancho de banda de una sesión para la cual el RADIUS no envió ninguno, en kbit/s o con K, M o G (`20M/10M`); sin él, esa sesión no tiene límite |
+| `rate-limit download shaper` o `policer` | cómo se aplica el límite de download: por una cola (shaper, el predeterminado) o por descarte (policer). Vea [Cola o descarte](#cola-o-descarte-shaper-y-policer) |
+| `rate-limit upload shaper` o `policer` | lo mismo para el upload; policer si se omite |
 | `ac-name <nombre>` | el nombre del concentrador en el PADO; `prisma-routing` si se omite |
 | `local-user <nombre> password <contraseña>` | un usuario local, para laboratorio sin RADIUS |
 | `ipv6 prefix-pool <prefijo>` | habilita IPv6 en las sesiones; cada sesión recibe un /64 de este prefijo como WAN, anunciado por RA (SLAAC). De /16 a /64. Hasta 16 |
@@ -119,7 +121,35 @@ prisma> show aaa radius dictionary
 
 En FreeRADIUS, guarde lo que imprime ese comando como `/usr/share/freeradius/dictionary.prisma` y agregue `$INCLUDE /usr/share/freeradius/dictionary.prisma` al archivo `/etc/freeradius/3.0/dictionary`. En IXC o en otro sistema, registre el proveedor 67033 y los dos atributos de la tabla.
 
-El límite es un policer en el dataplane, en la interfaz de la propia sesión: lo que excede el límite se descarta. La ráfaga aceptada (el balde del policer) es medio segundo de la tasa, nunca menos de 15.000 bytes, venga la tasa de los atributos de Prisma o del `Cisco-AVPair`: los números de ráfaga del `Cisco-AVPair` se verifican y no se usan. Medio segundo es lo que permite que **una** conexión TCP, como la de una prueba de velocidad, llegue al plan: con una décima de segundo (0.155.1) llegaba a la mitad (25 Mbit/s en un plan de 50), aunque el UDP pasaba exacto. Hasta la 0.155.0 el balde era ocho veces mayor, y una prueba corta medía entre 7% y 90% por encima del plan. Una sesión sin límite del RADIUS recibe el `rate-limit default` del bloque `pppoe`, si existe.
+El upload se aplica con un policer en el dataplane, en la interfaz de la propia sesión: lo que excede el límite se descarta. El download, de forma predeterminada, con una cola (la sección siguiente); con `rate-limit download policer`, también con un policer. La ráfaga aceptada (el balde del policer) es medio segundo de la tasa, nunca menos de 15.000 bytes, venga la tasa de los atributos de Prisma o del `Cisco-AVPair`: los números de ráfaga del `Cisco-AVPair` se verifican y no se usan. Medio segundo es lo que permite que **una** conexión TCP, como la de una prueba de velocidad, llegue al plan: con una décima de segundo (0.155.1) llegaba a la mitad (25 Mbit/s en un plan de 50), aunque el UDP pasaba exacto. Hasta la 0.155.0 el balde era ocho veces mayor, y una prueba corta medía entre 7% y 90% por encima del plan. Una sesión sin límite del RADIUS recibe el `rate-limit default` del bloque `pppoe`, si existe.
+
+### Cola o descarte: shaper y policer
+
+De forma predeterminada, el **download** de cada sesión pasa por una cola propia en el dataplane (el shaper): lo que llega por encima del plan espera en la cola y sale al ritmo del plan, en lugar de descartarse. La cola guarda hasta 100 ms del plan (25.000 bytes en un plan de 2 Mbit/s, 250.000 en uno de 20 Mbit/s). Para que un download TCP no la mantenga llena, el equipo descarta un paquete de vez en cuando mientras la espera supera los 15 ms (CoDel). El **upload** sigue con policer: lo que excede el plan se descarta.
+
+Medido en un plan de 20 Mbit/s, el shaper contra el policer:
+
+|     | shaper | policer |
+|-----|--------|---------|
+| una conexión TCP | 19,3 Mbit/s, 17 retransmisiones | 19,7 Mbit/s, 823 retransmisiones |
+| ping durante esa conexión | 25 ms  | 12 ms   |
+| cuatro conexiones repartiendo el plan | por igual (Jain 0,994) | desigual (Jain 0,832) |
+| UDP a 40 Mbit/s | llega el plan, 19,6 | llega el plan, 20,3 |
+| ping durante ese UDP | hasta 104 ms: la cola llena | 12 ms   |
+
+El shaper mide el plan en bytes IP, sin los encabezados PPPoE y Ethernet, por eso una prueba de velocidad TCP lee un poco por debajo de 20 (el máximo es 19,47). Un suscriptor que envía UDP por encima del plan sin parar espera, en su propio tráfico, hasta el tamaño de la cola; el de los demás suscriptores no se ve afectado.
+
+Para volver al policer en el download:
+
+```
+prisma# [edit pppoe] rate-limit download policer
+```
+
+`no rate-limit download` vuelve al predeterminado. El cambio, en cualquier sentido, reinicia el plano de control PPPoE: todas las sesiones caen y vuelven a marcar, ya con la nueva elección. El `show pppoe summary` indica qué aplica cada sentido.
+
+Un NMS sigue las colas por SNMP, en `prBngShaper`: qué aplica cada sentido, las colas ahora y los paquetes que pasaron, esperaron y fueron descartados, sumados en todo el equipo (vea [Monitoreo y SNMP](/s/wiki-es/doc/monitoreo-y-snmp-zQ9bTfrh8z)).
+
+Al actualizar un equipo que ya tiene PPPoE, los archivos del plano de control se reescriben en la próxima carga de la configuración. En ese momento las sesiones vuelven a marcar, una vez, y el download pasa al shaper.
 
 ## IPv6
 
@@ -163,8 +193,10 @@ La dirección de cada sesión viene del RADIUS (`Framed-IP-Address`) cuando este
 | `dynamic-authorization listen` sin `client`, o `client` sin `listen` | nadie podría firmar una solicitud, o no habría dónde recibirla |
 | interfaces de acceso en dos placas | el PPPoE del dataplane responde desde una sola MAC |
 | una subinterfaz con dos etiquetas (QinQ) | el PPPoE del dataplane lee una sola etiqueta |
+| una subinterfaz sin `vlan <id>` en su bloque | no habría etiqueta en la que atender |
+| dos interfaces de acceso con la misma VLAN | las dos serían el mismo puerto |
 | una interfaz que el dataplane no tiene | nada que atender en ella |
-| un secreto con espacio, coma, comillas o `#` | rompería la configuración generada |
+| un secreto con espacio, coma, comillas o `#` (rechazado ya al escribirlo) | rompería la configuración generada |
 
 ## Los secretos del RADIUS
 
@@ -175,7 +207,7 @@ El secreto de cada servidor y de cada `client` queda en la configuración guarda
 | Comando | Qué muestra o hace |
 |---------|--------------------|
 | `show pppoe sessions` | una línea por sesión: el id, el usuario, la dirección, el límite (download/upload, `-` sin límite) y cuánto tiempo lleva activa; una sesión que todavía se está autenticando dice `start` en lugar del tiempo. Una sesión con IPv6 tiene debajo una línea `ipv6` con el prefijo de la WAN y una `delegated` con el prefijo delegado |
-| `show pppoe session <id>` | una sesión completa: los prefijos IPv6, la MAC del CPE, el tráfico, el límite y, para cada sentido limitado, cuántos paquetes dejó pasar el policer y cuántos descartó |
+| `show pppoe session <id>` | una sesión completa: los prefijos IPv6, la MAC del CPE, el tráfico y el límite. Para cada sentido limitado por policer, cuántos paquetes dejó pasar y cuántos descartó. Para cada sentido con shaper, lo que está en la cola ahora, cuántos paquetes pasaron directo y cuántos esperaron, cuánto esperaron (promedio y máximo) y lo que se descartó: cola llena, CoDel, o buffers del equipo |
 | `show pppoe summary` | si el plano de control PPPoE está en ejecución, cuántas sesiones están activas, iniciando y terminando, cada servidor RADIUS (con `failed` si el plano de control lo dio por caído) y el resumen de la configuración |
 | `clear pppoe session <id>` | cierra una sesión; el id es el de la primera columna de `show pppoe sessions`, el mismo `Acct-Session-Id` que recibió el RADIUS |
 | `clear pppoe session user <nombre>` | cierra las sesiones de un usuario |
@@ -195,7 +227,9 @@ Con PPPoE, la dirección interna del suscriptor se entrega en el momento de la m
 | `show pppoe history address <A.B.C.D> at <hora>` | la sesión que tenía esa dirección interna en ese instante: el usuario, desde cuándo hasta cuándo, el id de la sesión, la MAC y la interfaz de acceso |
 | `show pppoe history address <dirección IPv6> at <hora>` | la sesión cuyo prefijo de WAN contiene esa dirección, o cuyo prefijo delegado la contenía en ese instante: el delegado cuenta a partir del momento en que se delegó, no del inicio de la sesión |
 | `show pppoe history user <nombre>` | las sesiones de un usuario |
+| `show pppoe history session <id>` | una sesión, por su id |
 | `show pppoe history since <hora>` | las sesiones que estuvieron activas desde esa hora en adelante |
+| `show pppoe history last <n>` | solo las últimas `n` sesiones; también después de un filtro (`user`, `address`, `since`) |
 | `show pppoe history verify` | verifica la cadena de hashes e indica la primera línea que no coincide |
 | `show cgnat translation <público> <puerto> at <hora>` | en un pool determinístico, las dos etapas a la vez: la dirección interna por la fórmula y la sesión que la tenía en ese instante |
 
@@ -252,7 +286,7 @@ prisma> show log kind radius
 | salida por falla, con el código o la señal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
 | el arranque que vino después de ella, sin que nadie lo pidiera | `the PPPoE control plane (prisma-bng) started again, by its restart policy, after it exited: ...` |
 | parada solicitada (commit, actualización, `no pppoe`) | `the PPPoE control plane (prisma-bng) stopped: stopped (SIGTERM): ...` |
-| reinicio en una actualización que regraba los archivos | `... started again: PPPoE's files from an older release (format 4) written again in format 5` |
+| reinicio en una actualización que regraba los archivos | `... started again: PPPoE's files from an older release (format 6) written again in format 7` |
 | servidor RADIUS caído, y de vuelta | `RADIUS server 192.0.2.10 failed: it did not answer, ...` / `RADIUS server 192.0.2.10 is active again: ...` |
 
 Un arranque en nivel `warning` es uno que nadie pidió: es el que vale la pena investigar.
@@ -268,7 +302,7 @@ El resumen debe decir `running` y contar las sesiones activas; cada suscriptor q
 
 
 :::info
-QinQ y la alta disponibilidad de las sesiones todavía no existen. Una sesión es siempre IPv4 con IPv6 opcional: solo IPv6 no existe. El límite de ancho de banda es por descarte (policer), no por cola (shaper).
+QinQ y la alta disponibilidad de las sesiones todavía no existen. Una sesión es siempre IPv4 con IPv6 opcional: solo IPv6 no existe. El shaper tiene una cola por sesión, no una por conexión: un UDP por encima del plan hace esperar el resto del tráfico del propio suscriptor.
 
 :::
 

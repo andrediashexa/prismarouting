@@ -84,7 +84,9 @@ En el otro equipo, sus propias direcciones y una prioridad menor (100, por ejemp
 
 **La MAC virtual es lo que hace que el CPE no necesite saber nada.** Quien asume la dirección asume también la MAC `00:00:5e:00:01:<vrid>` y envía un ARP gratuito; el CPE sigue enviando a la misma MAC y la trama pasa a llegar al otro equipo.
 
-`**track**` **es la falla que el resto no cubre.** Un equipo con el uplink desconectado sigue vivo y sigue anunciando: retiene la dirección del gateway y no alcanza nada. Con `track`, la prioridad baja según el decremento y el peer asume. Elija el decremento de forma que la caída lleve la prioridad **por debajo** de la del otro.
+**IPv6, y un pool NAT64 en el par.** Una dirección IPv6 bajo el mismo `vrrp <vrid>` — primero una link-local, después la global — crea el router virtual IPv6 de ese id junto al IPv4, con la misma prioridad, el mismo `track` y la misma preempción. Eso es lo que hace que un pool NAT64 cambie de equipo: el gateway de los suscriptores IPv6 sigue al equipo que retiene las direcciones públicas. La MAC virtual del IPv6 es `00:00:5e:00:02:<vrid>`. `commit check` rechaza un router IPv6 sin link-local, y advierte cuando un par tiene un pool NAT64 y ningún router IPv6.
+
+`**track**` **es la falla que el resto no cubre.** Un equipo con el uplink desconectado sigue vivo y sigue anunciando: retiene la dirección del gateway y no alcanza nada. Con `track`, la prioridad baja según el decremento y el peer asume. Elija el decremento de forma que la caída lleve la prioridad **por debajo** de la del otro. Un router solo ve como activa una interfaz rastreada que tenga dirección de su familia: para el router IPv6 el equipo habilita IPv6 por sí solo en la interfaz rastreada; para el IPv4, la interfaz rastreada necesita dirección IPv4, y `commit check` advierte cuando falta.
 
 **La dirección virtual no responde ping.** Quien no es dueño de la dirección no responde ICMP por ella: es el comportamiento estándar de la RFC 5798 (sección 6.4.3). El monitoreo debe hacer ping a la dirección **propia** de cada equipo, que es lo que indica si ese equipo está vivo; la dirección virtual solo indica cuál de los dos la tiene. Reenviar **a través** de ella funciona normalmente.
 
@@ -108,7 +110,9 @@ La verificación de aceptación se escribió **antes** de la implementación, pa
 | **Dataplane muerto** con SIGKILL | Sobrevive, en torno a tres segundos |
 | Una conexión TCP en curso durante la conmutación | **Se cae**, y una nueva del mismo suscriptor toma la misma dirección y el mismo bloque |
 
-La última fila es la promesa de esta página dicha al revés: nadie debe leer una ejecución en verde como "las conexiones sobrevivieron".
+Con un pool NAT64 y un suscriptor solo IPv6, se midieron las mismas tres fallas: el servicio vuelve en unos 3 a 4 segundos, en la misma dirección pública y el mismo bloque, y las conexiones en curso se caen igual.
+
+La última fila de la tabla es la promesa de esta página dicha al revés: nadie debe leer una ejecución en verde como "las conexiones sobrevivieron".
 
 Lo que **no** se midió aquí: si la placa de red real avisa que se desconectó el cable. La interfaz de laboratorio no avisa, así que el laboratorio baja el puerto también en el dataplane, que es el estado que reporta en hardware una placa con el cable desconectado.
 
@@ -194,11 +198,12 @@ Los que cambian el **mapeo**. En el modo determinístico la dirección pública 
 
 | Deben ser iguales en los dos equipos | Pueden diferir |
 |--------------------------------------|----------------|
-| `inside`, `outside`                  | `timeout ...`  |
+| `prefix-inside`, `prefix-outside`, o lo que resuelven `prefix-list-inside` y `prefix-list-outside` | `timeout ...`  |
 | `block-size`, `ports`                | `alg` de cada protocolo, `tcp-mss` |
 | `policy`, `mode`                     | `bypass source`, `bypass destination` |
 | `reserve`                            | `max-sessions`, `max-session-rate` |
 | `vrf`, `outside-vrf`                 | `forward ...`, `block-stride`, `max-blocks`, `utilisation-alarm` |
+| `subscriber-length`, `nat64-prefix` (pool NAT64) | `initial-allocation`, `filter` |
 
 La columna de la derecha la modifica el dataplane en un pool que está pasando tráfico, y ninguno de esos ajustes mueve a ningún suscriptor. Dos equipos que difieren solo allí están correctos, y advertir sobre ellos sería enseñarle al operador a ignorar la advertencia que importa.
 

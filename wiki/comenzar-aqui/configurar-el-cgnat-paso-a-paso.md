@@ -139,8 +139,8 @@ El `exit` del pool vuelve a `cgnat`, que es donde continúa el siguiente paso. E
 
 | Línea | Qué decide |
 |-------|------------|
-| `inside` | quién se traduce: las direcciones de los suscriptores |
-| `outside` | con qué direcciones públicas salen |
+| `prefix-inside` | quién se traduce: las direcciones de los suscriptores |
+| `prefix-outside` | con qué direcciones públicas salen |
 | `block-size 512` | cuántos puertos recibe cada suscriptor |
 | `ports 1024 65535` | el rango utilizable de cada dirección pública; por debajo de 1024 quedan los puertos de servicio |
 | `policy interleaved` | los suscriptores vecinos salen por direcciones públicas **diferentes**, lo que diluye un bloqueo por reputación en una sola IP |
@@ -201,7 +201,11 @@ prisma# [edit] commit check
 
 ```
 configuration check succeeds for CGNAT and the box's own configuration
+  routing statements are checked for structure only; FRR validates them at
+  commit, and can still refuse one
 ```
+
+La segunda línea aparece porque la ruta por defecto del paso 2 es configuración de enrutamiento: la VTY verifica su forma, y quien la valida de hecho es el enrutamiento, en el `commit`.
 
 El `commit check` rechaza aquí lo que no funcionaría, y dice por qué. El rechazo que más aparece en un pool nuevo es el de una dirección pública que también está en una interfaz del equipo:
 
@@ -209,9 +213,14 @@ El `commit check` rechaza aquí lo que no funcionaría, y dice por qué. El rech
 error: pool 'errado': public address 198.51.100.2 is configured on ens19
     interface ens19 / ipv4 address 198.51.100.2/30
     nat / cgnat / pool errado / prefix-outside 198.51.100.0/30
+    cgnat would translate the box's own control-plane traffic on that address:
+    bpa-out2in runs before the box decides a packet is for itself, so the BGP
+    session or OSPF adjacency on it drops for no apparent reason
+    take the address off the interface, or narrow the pool's public range so
+    that it does not contain it
 ```
 
-Existe porque el CGNAT mira el paquete antes de que el equipo decida si es para sí mismo: una dirección de enlace dentro del pool hace que la sesión BGP de ese enlace se caiga sin motivo aparente. Corrija el `outside` a un prefijo que no esté en ninguna interfaz.
+Existe porque el CGNAT mira el paquete antes de que el equipo decida si es para sí mismo: una dirección de enlace dentro del pool hace que la sesión BGP de ese enlace se caiga sin motivo aparente. Corrija el `prefix-outside` a un prefijo que no esté en ninguna interfaz.
 
 # 6. Aplique
 
@@ -279,6 +288,7 @@ Sin el `maximum-prefix`, el `commit` también lo advierte, y con razón: un veci
 warning: this eBGP session has no 'maximum-prefix': a peer that leaks a full
     table fills this box and nothing here stops it. 'neighbor 198.51.100.1
     maximum-prefix 10000' tears the session down instead of the box
+    neighbor 198.51.100.1 remote-as 64500
 ```
 
 # 8. Guarde
@@ -309,7 +319,7 @@ prisma# [edit nat / cgnat] commit
 
 `src` es obligatorio, y `enable` sin destino se rechaza. Para no perder registros cuando el colector se cae, también existe el transporte TCP (`logging tcp <ip-del-colector>`, también dentro de `cgnat`), y para un colector que solo entiende syslog, `logging syslog <ip-del-colector> enterprise <n>`. [Logging IPFIX y trail de auditoría](/s/wiki-es/doc/logging-ipfix-y-trail-de-auditoria-LHGHuvEHJy) explica la diferencia entre los tres.
 
-Si lo olvida, el `commit check` y el `commit` lo advierten, con el nombre del pool y las dos formas de exportar. Es una advertencia, no un rechazo, porque un pool armado antes de que exista el colector es una configuración válida.
+Si lo olvida, el `commit` **no** lo advierte: un pool `bpa` sin exportación se acepta en silencio, porque un pool armado antes de que exista el colector es una configuración válida. Quien dice si el equipo está exportando es `show cgnat logging` y el autotest de arranque, que advierte cuando un pool corre en modo `bpa` y no se está exportando nada.
 
 En el modo determinístico este paso es opcional: la fórmula responde por sí sola, como muestra el último paso. La excepción es un pool determinístico con `reserve`, porque los bloques de la reserva quedan fuera de la fórmula y también necesitan el colector.
 
@@ -332,7 +342,7 @@ pool residencial [deterministic / interleaved]
   capacity     2016 subscribers (usable 1024)
 ```
 
-`capacity` es cuántos suscriptores admiten las direcciones públicas, y `usable` es cuántos tiene el `inside`. Si `usable` es mayor que `capacity`, faltan direcciones públicas.
+`capacity` es cuántos suscriptores admiten las direcciones públicas, y `usable` es cuántos tiene el `prefix-inside`. Si `usable` es mayor que `capacity`, faltan direcciones públicas.
 
 **Un suscriptor, antes de que navegue.** En el determinístico el equipo ya conoce su dirección y sus puertos:
 
@@ -392,13 +402,14 @@ prisma> show cgnat translation 203.0.113.5 1029
 ```
 203.0.113.5:1029  ->  100.64.0.5
   pool residencial, block 5, DETERMINISTIC
+  from the FORMULA. It holds for any instant, past or present, as long as this pool's addresses and block size have not changed since. No allocation record is involved.
 ```
 
 En el determinístico esa respuesta vale para cualquier momento, pasado o presente, mientras las direcciones y el `block-size` del pool no cambien. Por eso cambiar el mapeo de un pool en uso no es trivial.
 
 
 :::warning
-**Cambiar** `**inside**`**,** `**outside**`**,** `**block-size**`**,** `**ports**`**,** `**policy**` **o** `**mode**` **en un pool en uso cambia la dirección y los puertos de casi todos, y tira todas las sesiones del pool.** El equipo no deja que esto ocurra por error: el `commit` lo rechaza, dice cuántos suscriptores cambian y pide que usted lo confirme por el nombre.
+**Cambiar** `**prefix-inside**`**,** `**prefix-outside**`**,** `**block-size**`**,** `**ports**`**,** `**policy**` **o** `**mode**` **en un pool en uso cambia la dirección y los puertos de casi todos, y tira todas las sesiones del pool.** El equipo no deja que esto ocurra por error: el `commit` lo rechaza, dice cuántos suscriptores cambian y pide que usted lo confirme por el nombre.
 
 ```
 error: this change re-maps subscribers that already have mappings

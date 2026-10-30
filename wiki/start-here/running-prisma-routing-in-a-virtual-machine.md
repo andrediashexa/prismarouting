@@ -56,6 +56,12 @@ Most VMs have no virtual IOMMU. The box notices this at boot and binds the card 
 | what you gain or lose | the card only reaches the memory it was given, so a defect in the dataplane does not write outside it | forwards the same, without that protection |
 | where to check | `show hardware` says, for each card not yet handed over, which driver the box will move it to | the same      |
 
+## Physical card passed through to the VM
+
+A physical card handed to the VM by the hypervisor (*PCI passthrough*) is treated like any PCI card of the box: the dataplane claims it by the same rule and under the name Linux gave it. On a VM with no virtual IOMMU it goes to `uio_pci_generic`, like a virtio card; up to 0.141.0 a physical card on that driver never reached the dataplane, which came up without it, and since 0.141.1 it forwards.
+
+`uio_pci_generic` needs a legacy INTx interrupt, and a card that only has MSI-X is refused by it; the box says so at boot, and what makes `vfio-pci` available is enabling an IOMMU for the VM. Everything [Sizing and requirements](/s/wiki-en/doc/sizing-and-requirements-IHPnUSMSom) says about physical cards applies to that card, and it is on it that a throughput measurement means something.
+
 ## Card added with the VM running
 
 A card added to the VM by the hypervisor while the box is running forwards **right away**, without restarting anything:
@@ -78,16 +84,15 @@ AF_XDP costs speed, not correctness: the card is read by the kernel driver. On a
 
 ## The MTU the virtual card carries
 
-Every virtual card the hypervisor configures announces a maximum — usually 1500. The dataplane, on its own, starts every interface at 9000, and a card that does not accept that value refuses the port: it stays in error and forwards nothing.
+Every virtual card the hypervisor configures advertises a maximum — usually 1500. Since 0.152.1 the box starts every interface with no `mtu` at **1500**, its default, so an ordinary virtual card already accepts the port. A card that cannot take even that value refuses the port: it stays in error and forwards nothing.
 
 | What the box does | Consequence |
 |-------------------|-------------|
-| reads at boot the maximum of each card it is going to take | the number comes from the hypervisor, not from an assumption |
-| makes **all** interfaces start at the **lowest** maximum among the claimed cards | on a VM with a 1500 card next to a 9000 one, the 9000 one also starts at 1500 |
+| reads, at boot, the maximum of each card it is going to take | the number comes from the hypervisor, not from a guess |
+| when a card it takes has a maximum **below 1500**, makes **all** interfaces start at the **smallest** maximum among the cards taken | on a VM with a 1400 card next to a 9000 one, the 9000 card also starts at 1400 |
 | accepts `mtu <n>` in the interface block afterwards | that is how you raise the port that carries more |
-| writes nothing when all cards carry 9000 or more | it stays the same as a physical box |
 
-To carry frames larger than 1500 on a VM, the MTU must first be raised on the virtual card, in the hypervisor; the box reads the new maximum on the next boot.
+To carry frames larger than 1500 in a VM, the MTU must first be raised on the virtual card, in the hypervisor, and then with `mtu <n>` on the interface; the box reads the card's new maximum on the next boot. A box installed before 0.152.1 stays at 9000: the upgrade wrote `mtu 9000` on its interfaces.
 
 ## Multiple queues on the virtual card (multiqueue)
 
@@ -109,6 +114,8 @@ The hypervisor's *Shutdown* sends the power button (ACPI), and the box shuts dow
 **Up to version 0.139.0 the box ignored this button.** On a box at that version or earlier, the hypervisor's *Shutdown* does nothing and the forced power-off that follows is the same as pulling the power cord: the blocks the dataplane is holding are not closed in the retention log. Upgrade the box, or shut down from the VTY.
 
 :::
+
+**The QEMU agent comes on the medium.** Since 0.156.0 the installation brings `qemu-guest-agent`. With the agent's channel enabled on the VM (`agent: 1` on Proxmox), the hypervisor shuts the box down through the agent, freezes the disk before a backup and shows the box's addresses in its panel. The agent only runs when that channel exists. A box installed from an earlier medium and upgraded with `system upgrade` does not get it, because the upgrade package carries no system packages: install it from an administrator's shell with `apt-get install qemu-guest-agent`.
 
 Shut down or reboot from the VTY, which states the cost before acting and closes the blocks along the way:
 

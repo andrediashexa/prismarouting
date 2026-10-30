@@ -401,7 +401,6 @@ Everything below is refused **at the prompt**, and nothing is stored in the cand
 | `fib-policy connected ...`, or one of the new commands typed halfway | `not how this statement is typed; nothing staged`, and below it the right form |
 | `from protocol` in a `default-information` policy | `from protocol has nothing to match on ospf default-information` (or `isis`) |
 | `set next-hop abc` | `set next-hop: 'abc' is not an address` |
-| `then` with anything other than `accept`, `reject` or `next term` | `then: accept, reject or next term; a change to the route is 'set ...'` |
 | `no` of something that does not exist | `policy-options has no such statement; nothing removed`, with the statement |
 | `neighbor ... import` or `export` of a policy that does not exist, or `export` in an IGP | `no policy-statement named <name>` |
 | a `route-map` or list with a name starting with `PO-` | `the PO- names belong to policy-options; nothing staged` |
@@ -418,6 +417,7 @@ Everything below is refused **at the prompt**, and nothing is stored in the cand
 | `no vrf-import <vrf>` of an import the family does not have | `nothing removed`, and below it `this address family does not import <vrf>` |
 | `from source-vrf` in a policy applied outside a `vrf-import` | `from source-vrf is for a vrf-import, where a route is leaked` |
 | at `commit`, a term with more than 10 combinations | `more than 10 combinations of neighbor, origin, local-preference, next-hop, validation-state and source-vrf; split it into terms` |
+| at `commit`, a line a policy was translated into that the daemon applying it refused, although the syntax passed | `FRR refused <n> line(s) the routing policy compiled to`, with the policy, the term and the line; the commit is undone and the box goes back to the previous state |
 
 ## What exists only in BGP, exported into an IGP
 

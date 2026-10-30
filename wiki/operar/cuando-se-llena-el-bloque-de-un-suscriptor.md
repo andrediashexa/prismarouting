@@ -36,6 +36,8 @@ Un solo contador para los tres no respondería ninguna de las preguntas. Es la d
 
 :::
 
+En un pool BPA hay un caso que ninguno de los tres contadores muestra: el suscriptor que todavía **no tiene bloque** y es rechazado porque la porción de su worker se agotó, aun con bloques libres en la porción de otro worker. Para él, `show cgnat subscriber` indica en la primera línea cuál es su worker y, debajo, que no tiene estado vivo — ningún bloque, ninguna sesión —, en lugar de la línea de rechazos. `show cgnat blocks` muestra cuántos bloques de cada porción están en uso. Lo que el pool garantiza sea cual sea la dirección, y qué hacer cuando es esto, está en [Ampliar la capacidad sin tirar suscriptores](/s/wiki-es/doc/ampliar-la-capacidad-sin-tirar-suscriptores-eHEJEg47aX).
+
 Para encontrar quién está más cerca del límite antes de que alguien llame:
 
 ```
@@ -287,7 +289,7 @@ Un mapeo abierto por un **ALG** en nombre de una conexión de control — datos 
 
 Aun así **cuentan** para el total simultáneo, porque ocupan puertos como cualquier otra cosa: exentos de ser rechazados, no de ser contados.
 
-Un límite tampoco **cierra nunca una sesión que ya existe**. Limita lo que se puede crear; tirar mapeos anteriores a él haría que configurar un límite fuera una caída por sí misma.
+Un límite tampoco **cierra nunca una sesión que ya existe**. Limita lo que se puede crear; tirar mapeos anteriores a él haría que configurar un límite fuera una caída por sí misma. Para terminar las sesiones de un suscriptor, `clear cgnat subscriber <ip>` lo hace sin tocar la configuración.
 
 # Cómo verificar
 

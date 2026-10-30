@@ -28,7 +28,7 @@ flowchart LR
             DOORS["serviço do host:<br/>contas, SSH, SNMP, reboot"]
         end
         VPP["Contêiner do dataplane<br/>VPP / DPDK + CGNAT"]
-        FRR["Contêiner de roteamento<br/>FRR: bgpd · ospfd · ospf6d · isisd"]
+        FRR["Contêiner de roteamento<br/>FRR: bgpd · ospfd · ospf6d · isisd · bfdd"]
         VTY["Contêiner de gerência<br/>prismash, a VTY única"]
         LOGIN --> VTY
         VPP <-->|"linux_cp"| FRR
@@ -44,8 +44,12 @@ flowchart LR
 * **O roteamento** é o FRR, que enxerga cada interface do dataplane por um par no Linux (`linux_cp`) e instala as rotas na tabela de encaminhamento do dataplane.
 * **A gerência** é onde o `prismash` roda: a VTY única, que configura CGNAT, interfaces, roteamento e o sistema pela mesma interface. Cada login entra nela com a própria conta e o próprio papel.
 * **O sistema base** guarda o que o contêiner de gerência não pode fazer sozinho — contas, SSH, SNMP, resolvedores, reinício e desligamento. A VTY **pede** essas mudanças a um serviço do host, que só aceita uma lista fechada de comandos. O `start shell`, restrito a administradores, abre um shell **no sistema base**, não no contêiner.
+* **Os registros** de bloco que vão ao coletor por TCP, e normalmente também o IPFIX por UDP, saem de um contêiner próprio, com memória limitada, para que um coletor lento ou a reposição de um arquivo de transbordo não custem pacotes ao dataplane. Sem esse contêiner no ar, o dataplane volta a enviá-los ele mesmo em cerca de um segundo.
+* **O PPPoE**, quando configurado, roda num quinto contêiner, com limites de memória próprios: uma falha dele não leva o encaminhamento, o roteamento nem a VTY junto. Uma caixa sem PPPoE não o inicia.
 
-Toda mudança no dataplane vai pela sua API binária, um processo por chamada — não por conexão persistente, e não pela linha de comando de texto do dataplane, que sai com código zero mesmo quando falha.
+Toda mudança no dataplane vai pela sua API binária, por uma conexão aberta no início de cada sessão da VTY e mantida enquanto ela dura — não pela linha de comando de texto do dataplane, que sai com código zero mesmo quando falha.
+
+Além do CGNAT de IPv4, a mesma caixa faz **NAT64** (assinantes só IPv6 saindo pelo mesmo espaço público, nos mesmos blocos de portas) e pode **terminar assinantes PPPoE**, autenticados por RADIUS e traduzidos pelo CGNAT. O monitoramento é por SNMP, e uma API gRPC de gerência, desligada por padrão, permite que um sistema externo configure e leia a caixa pelas mesmas regras da VTY.
 
 
 :::info
@@ -64,12 +68,12 @@ O mínimo é **6 GB de RAM** (8 recomendados) e uma CPU com **SSE4.2**. Abaixo d
 | Componente | Estado |
 |------------|--------|
 | Núcleo de mapeamento determinístico | Verificado contra o modelo de referência em Python, mapeamento a mapeamento, o pool inteiro |
-| Dataplane (tradução, handoff, modo dinâmico, fragmentos, erros ICMP, estado TCP) | Verificado com tráfego injetado e real |
-| Roteamento (BGP, OSPF, IS-IS, política de roteamento) | Verificado — rotas chegam à FIB do VPP |
+| Dataplane (tradução, handoff, modo BPA, fragmentos, erros ICMP, estado TCP) | Verificado com tráfego injetado e real |
+| Roteamento (BGP, OSPF, IS-IS, BFD, política de roteamento) | Verificado — rotas chegam à FIB do VPP |
 | Logging IPFIX (UDP e TCP) | Verificado com coletor decodificando |
 | VTY (`prismash`) | Candidata, `commit`, `rollback`, papéis; cada linha é recusada onde é digitada, inclusive as de roteamento |
 | Appliance (ISO, kernel, contêineres, tuning) | Cada versão que publica ISO é instalada num disco e reinicializada a partir dele antes de sair, também numa máquina virtual sem páginas de 1 GB; o self-test reporta pronto |
-| **Alta disponibilidade** | **Ativo/standby implementado**: VRRP na interface do dataplane; o teste de aceitação (uplink arrancado, dataplane parado, dataplane morto) passa, com todo assinante mantendo endereço público e bloco. Sessões **não** são sincronizadas: conexões em curso caem |
+| **Alta disponibilidade** | **Ativo/standby implementado**: VRRP na interface do dataplane, em IPv4 e em IPv6 (um pool NAT64 também troca de caixa); o teste de aceitação (uplink arrancado, dataplane parado, dataplane morto) passa, com todo assinante mantendo endereço público e bloco. Sessões **não** são sincronizadas: conexões em curso caem |
 | **Throughput** | **Bits por segundo NÃO medidos** — isso exige uma placa que o DPDK dirija nativamente. O custo de cada pacote em ciclos de CPU nos nós de tradução é medido |
 
 O projeto permanece em `0.x.x` até ser declarado pronto para produção. Mudanças incompatíveis são permitidas e vêm anunciadas.

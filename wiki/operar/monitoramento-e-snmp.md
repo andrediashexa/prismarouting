@@ -25,7 +25,7 @@ save
 | Linha | O que faz por você | Se ficar de fora |
 |-------|--------------------|------------------|
 | `snmp enabled yes` | liga o agente      | o agente fica desligado, que é o padrão |
-| `snmp listen-address` | o endereço em que o agente atende | o agente escuta só em `127.0.0.1`, e nenhuma NMS de fora o alcança |
+| `snmp listen-address` | os endereços em que o agente atende, um ou mais, IPv4 e IPv6, separados por espaço | o agente escuta só em `127.0.0.1`, e nenhuma NMS de fora o alcança |
 | `snmp port` | a porta UDP        | `161`            |
 | `snmp enterprise-number` | o número sob o qual a MIB do Prisma é servida (ver abaixo) | vale o número do produto |
 | `snmp community` | uma comunidade SNMPv2c, somente leitura | só o v3 consulta |
@@ -33,7 +33,7 @@ save
 
 Qualquer uma dessas linhas volta ao padrão com `no` na frente — `no snmp enterprise-number` volta para o número do produto, `no snmp listen-address` volta para `127.0.0.1` (a partir da versão 0.143.2).
 
-O `commit` recusa um agente ligado sem nenhuma comunidade e sem nenhum usuário v3: seria um agente que ninguém consegue consultar. E o agente é conferido pelo **efeito**: o arquivo é escrito, o serviço reinicia, e se ele não subir com a configuração nova a caixa devolve a anterior e diz isso no `commit`.
+O `commit` recusa um agente ligado sem nenhuma comunidade e sem nenhum usuário v3: seria um agente que ninguém consegue consultar. E o agente é conferido pelo **efeito**: o arquivo é escrito, o serviço reinicia, e se ele não subir com a configuração nova a caixa devolve a anterior e diz isso no `commit`. No boot é diferente: o agente que não sobe (um `listen-address` que só existe depois que as interfaces sobem, por exemplo) vira um aviso, o resto da configuração é aplicado e o SNMP é tentado de novo com as interfaces de pé — uma caixa não deixa de subir por causa do SNMP.
 
 A partir da versão 0.144.1 a caixa responde **só em SNMPv2c e SNMPv3**: uma consulta em SNMPv1, mesmo com a comunidade certa, fica sem resposta. O v1 não carrega contadores de 64 bits, então as portas do dataplane e os contadores da MIB do Prisma nem apareceriam para ele.
 
@@ -215,7 +215,7 @@ Uma linha por pool, em `prPoolTable` (`.10.1.1.<coluna>.<pool>`):
 
 | Objeto | O que traz |
 |--------|------------|
-| `prPoolName`, `prPoolMode` | o nome e o modo: determinístico ou dinâmico |
+| `prPoolName`, `prPoolMode` | o nome e o modo: `deterministic(1)` ou `dynamic(2)`, que é o pool BPA — a MIB guarda a palavra antiga, e o número não mudou |
 | `prPoolBlockSize`, `prPoolInsideAddresses`, `prPoolOutsideAddresses` | o tamanho do bloco e quantos endereços de assinante e públicos o pool tem |
 | `prPoolBlocksTotal`, `prPoolCapacity`, `prPoolGuaranteed` | quantos blocos o pool entrega, quantos assinantes ele comporta no teto e quantos ele **garante** em qualquer worker — é por este que se dimensiona |
 | `prPoolSubscribers`, `prPoolBlocksHeld`, `prPoolUtilisation` | quantos assinantes e blocos estão em uso agora, e a porcentagem de blocos entregues |
@@ -231,7 +231,8 @@ Os descartes ficam em `prDropTable` (`.10.2`), uma linha por motivo, com o nó e
 | `prLogIpfixEnabled`, `prLogIpfixRecords`, `prLogIpfixDropped` | o IPFIX por UDP: ligado, registros emitidos, e eventos sem coletor para onde ir |
 | `prLogTransportTable` (`.11.10`) | os fluxos confiáveis — IPFIX por TCP (1) e syslog (2): ligado, **conectado**, registros, enviados, derramados no arquivo de spill, **perdidos**, e quantas vezes reconectou |
 | `prSystemRelease`, `prSystemDataplaneBuild` | a versão instalada e a do dataplane que está rodando |
-| `prSystemDataplaneCurrent` | se as duas são a mesma. **Falso depois de uma atualização, até o próximo reboot**: a caixa segue encaminhando com a versão antiga, e um `commit` que precisa da nova é recusado |
+| `prSystemDataplaneCurrent` | se as duas são a mesma. **Falso depois de uma atualização, até o próximo reboot ou** `**system dataplane restart**`: a caixa segue encaminhando com a versão antiga, e um `commit` que precisa da nova é recusado |
+| `prSystemDataplaneUptime` | há quanto tempo o dataplane roda. Mais novo que o uptime da caixa é um dataplane que reiniciou sem ela |
 
 ### Capacidade, workers, HA, LACP e identidade
 
@@ -333,7 +334,7 @@ show snmp zabbix-template
 
 Salve a saída como `prisma-routing-zabbix.json` e importe no Zabbix, em *Coleta de dados* > *Templates* > *Importar*. O arquivo é JSON, que o Zabbix importa do mesmo jeito que YAML. No host, crie uma interface SNMP v2c com uma `snmp community` da caixa, ou v3 com um `snmp user`, e vincule o template **Prisma Routing by SNMP**. SNMPv1 é recusado pela caixa.
 
-Os alarmes já vêm prontos: porta administrativamente ligada e operacionalmente fora, porta acima de 90% da velocidade ou com erros, pool acima de 80% e de 95% dos blocos, assinantes perto de esgotar as portas, portas recusadas, memória do CGNAT acabando, vizinho BGP fora de *established*, vizinho OSPF que não chega a *full*, adjacência IS-IS fora de *up*, troca de estado do VRRP, bundle LACP com menos membros ativos que configurados, a FIB perdendo metade das rotas em uma hora, registros de conexão perdidos ou transporte desconectado, dataplane rodando a versão antiga depois de uma atualização e a caixa sem responder SNMP. Os limites são macros do template, que você ajusta no host: `{$IF.UTIL.MAX}`, `{$PRISMA.POOL.UTIL.WARN}`, `{$PRISMA.POOL.UTIL.CRIT}`, `{$PRISMA.SESSIONS.FIT.WARN}` e as demais. Para uma porta que pode ficar fora sem alarme, use `{$IFCONTROL:"<nome da porta>"}` = 0.
+Os alarmes já vêm prontos: porta administrativamente ligada e operacionalmente fora, porta acima de 90% da velocidade ou com erros, pool acima de 80% e de 95% dos blocos, assinantes perto de esgotar as portas, portas recusadas, memória do CGNAT acabando, vizinho BGP fora de *established*, vizinho OSPF que não chega a *full*, adjacência IS-IS fora de *up*, troca de estado do VRRP, bundle LACP com menos membros ativos que configurados, a FIB perdendo metade das rotas em uma hora, registros de conexão perdidos ou transporte desconectado, dataplane rodando a versão antiga depois de uma atualização, o dataplane reiniciado sem a caixa e a caixa sem responder SNMP. E o estado da própria caixa: self-test do boot que falhou, caixa saudável sem nada para encaminhar, `commit confirmed` esperando confirmação ou revertido, mudanças sem `save` há uma hora, trilha de configuração que não confere, menos hugepages que o pedido, tuning esperando reboot, caixa reiniciada e accounting RADIUS recusado. Os limites são macros do template, que você ajusta no host: `{$IF.UTIL.MAX}`, `{$PRISMA.POOL.UTIL.WARN}`, `{$PRISMA.POOL.UTIL.CRIT}`, `{$PRISMA.SESSIONS.FIT.WARN}` e as demais. Para uma porta que pode ficar fora sem alarme, use `{$IFCONTROL:"<nome da porta>"}` = 0.
 
 Os módulos ópticos (0.151.15) têm os seus: potência de RX abaixo do aviso baixo ou acima do aviso alto **do próprio módulo**, temperatura alta, e qualquer leitura além de um limite de alarme. `{$PRISMA.XCVR.RX.MIN}` e `{$PRISMA.XCVR.RX.MAX}` (dBm) e `{$PRISMA.XCVR.TEMP.MAX}` (°C) disparam ao lado dos limites do módulo — para vigiar um nível que o módulo não vigia —, e `{$PRISMA.XCVR.CONTROL:"<porta>"}` = 0 silencia uma porta (uma faixa de QSFP é `"<porta> lane <n>"`).
 

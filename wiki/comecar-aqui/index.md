@@ -5,7 +5,7 @@ Tudo que é preciso para sair de uma máquina sem sistema e chegar a um CGNAT tr
 | Página | Responde |
 |--------|----------|
 | [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) | Quanta máquina, quantos IPs públicos e quanto log o seu caso exige |
-| [Rodar o Prisma Routing numa máquina virtual](/s/wiki/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5) | Memória, CPU, placas virtio, páginas de 1 GB, desligar pela VTY e o que uma medição numa VM mede |
+| [Rodar o Prisma Routing numa máquina virtual](/s/wiki/doc/rodar-o-prisma-routing-numa-maquina-virtual-4l9Vu3QoL5) | Memória, CPU, placas virtio, páginas de 1 GB, o agente do QEMU, desligar pela VTY e o que uma medição numa VM mede |
 | [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) | Como a ISO instala, o que ela pergunta e como automatizar |
 | [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) | Onde você cai ao entrar, e quem pode mudar o quê |
 | [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) | Do disco vazio até assinantes navegando, em dez passos |

@@ -182,7 +182,7 @@ On a 4- or 8-core box this is balanced. On a 32-core processor, it is not: 31 co
 
 ## Giving cores back
 
-`workers <n>`, under `system` > `cpu` in the VTY (from 0.144.4; before that, only by editing `PRISMA_MAX_WORKERS` in `/etc/prisma-routing/tune.env`), limits how many physical cores become forwarding threads. It **comes empty**, and empty means no limit - exactly the behavior above. When it is set, the freed cores stop being isolated and go back to the scheduler, where routing and the VTY can actually use them.
+`workers <n>`, under `system` > `cpu` in the VTY (from 0.146.1; before that, only by editing `PRISMA_MAX_WORKERS` in `/etc/prisma-routing/tune.env`), limits how many physical cores become forwarding threads. It **comes empty**, and empty means no limit - exactly the behavior above. When it is set, the freed cores stop being isolated and go back to the scheduler, where routing and the VTY can actually use them.
 
 Each core given back is that slice of forwarding capacity. There is no default value because the trade-off depends on how much control work the box carries: a box that only receives a default route has almost no control plane; one that receives two full tables, recomputes BGP policy and also serves queries has plenty.
 
@@ -245,6 +245,7 @@ prisma> show system cpu
 configured, in effect from the next reboot:
   control-plane cores   2
   VPP main thread       dedicated
+  VPP workers at most   every core left
   CGNAT workers         all, each also receiving
 this boot:
   VPP main thread       core 0
@@ -409,23 +410,23 @@ When the heap fills up, the box **refuses the new session and counts it**, and t
 
 # The counters segment, which brings down the dataplane when it fills
 
-The dataplane publishes all its counters in a memory segment of **fixed** size. Each interface it carries takes about **2.9 kB** of that segment, and the segment does not grow.
+The dataplane publishes all its counters in a memory segment of **fixed** size. Each interface it carries takes a share of that segment — about 2.4 kB, plus 200 bytes per dataplane thread —, and the segment does not grow.
 
 When it fills up, the dataplane **does not refuse the next interface: it aborts**. The box loses all forwarding, at once, and writes no explanation before going down.
 
-The factory size is the dataplane's own: **32 MB**. Measured, twice and at the same point: a box at that size reached **7,000 interfaces** and aborted before 8,000. With the segment at 1 GB, the same box reached 40,000 interfaces, which is where the measurement stopped and not where it hit a limit.
+The factory size is the dataplane's own: **32 MB**. How much fits in it depends on the number of threads, because each thread adds counters to every interface. Measured with VLAN subinterfaces: a single-thread box aborted after **7,800**, a three-thread box after **5,100**, and an eight-thread box — what an eight-core machine gets — after **3,300**. With the segment at 1 GB, a box reached 40,000 interfaces, which is where the measurement stopped and not where it hit a limit.
 
-**An ordinary CGNAT box does not come close to this.** A subscriber is not an interface: 200 thousand subscribers behind a pool share a handful of ports. Who comes close is whoever creates **one interface per customer** - one QinQ subinterface per subscriber, for example.
+**An ordinary CGNAT box does not come close to this.** A subscriber is not an interface: 200 thousand subscribers behind a pool share a handful of ports. Who comes close is whoever creates **one interface per customer** - one QinQ subinterface per subscriber, for example, or a PPPoE session, which is an interface too.
 
 
 :::info
-**The box sizes this segment by itself, from the interfaces its configuration has.** At boot it counts the interfaces in the configuration file and reserves **4.8 kB for each one** - which is the limit measured above divided by the 7,000 interfaces the box supported, and not the 2.9 kB of content: the counters table is a single block of memory and must fit twice while it grows.
+**The box sizes this segment by itself, from what its configuration makes the dataplane carry.** At boot it counts the interfaces the configuration file names, the Linux side of each pair the dataplane keeps with Linux, and the maximum of PPPoE sessions the configuration allows, and reserves for each one **three times what its counters weigh** on the threads the box is going to run: about 7.9 kB on one thread, 12.1 kB on eight. Three times because growing the counters table needs the old copy and the new one at the same time, and the measured abort reached 2.5 times the weight.
 
-If those interfaces fit in the factory 32 MB, it **writes nothing** - reserving less than what the dataplane already gives for free would only take counters away from your box.
+If those interfaces fit in the factory 32 MB, it **writes nothing** - reserving less than what the dataplane already gives for free would only take counters away from your box. And it never gives the segment more than a quarter of the memory the control plane keeps: a configuration that would ask for more gets that ceiling, and the boot tuning says how many interfaces it holds.
 
 :::
 
-What no configuration file has is the interface created **while the box is running**. If your topology creates interfaces at runtime, the number is yours and is in the next section.
+Apart from PPPoE sessions, whose maximum the configuration declares, what no configuration file has is the interface created **while the box is running**. If your topology creates interfaces at runtime, the number is yours and is in the next section.
 
 **The new size only takes effect on the next dataplane start.** The segment is read when it comes up and never grows afterwards: if you create thousands of subinterfaces on a box that is already running, they consume the segment that box came up with. The calculation goes into the dataplane configuration file on the next boot, and takes effect from there.
 

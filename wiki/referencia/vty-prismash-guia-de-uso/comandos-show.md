@@ -11,13 +11,13 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 | Comando | Argumento | Responde |
 |---------|-----------|----------|
 | `show cgnat subscriber` | `<endereço-interno>` | tudo sobre um assinante |
-| `show cgnat translation` | `<endereço-público> <porta>` | quem estava atrás de um endereço público e porta |
+| `show cgnat translation` | `<endereço-público> <porta> [at <tempo>]` | quem estava atrás de um endereço público e porta; com `at`, num instante passado |
 | `show cgnat top` | `[<n>]`   | assinantes mais próximos de esgotar seus blocos |
 | `show cgnat drops` |           | por que pacotes não passaram |
-| `show cgnat pool` |           | pools configurados, a capacidade de cada um e a distribuição de quanto os assinantes usam do próprio bloco |
+| `show cgnat pool` | `[<pool>]` | pools configurados, a capacidade de cada um e a distribuição de quanto os assinantes usam do próprio bloco; com o nome, um pool só, mais o que ele traduz e para onde, e de qual prefix-list cada lado veio |
 | `show cgnat session` |           | sessões ativas por thread |
 | `show cgnat memory` |           | a memória do CGNAT: quanto o heap tem, quanto está em uso, quantas sessões ainda cabem e o valor dado |
-| `show cgnat blocks` |           | blocos alocados em modo dinâmico, e quantos um encaminhamento de porta prende |
+| `show cgnat blocks` |           | blocos alocados em `mode bpa`, e quantos um encaminhamento de porta prende |
 | `show cgnat logging` |           | estado da exportação dos eventos de bloco: UDP, TCP e syslog |
 | `show cgnat identity` |           | quantas identidades de assinante a caixa tem e quando as leu — nunca uma identidade em si |
 | `show cgnat history` |           | trilha datada de configuração |
@@ -27,6 +27,10 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 | `show cgnat ha` | `[peer <arquivo>]` | se esta caixa e o par mapeiam os assinantes do mesmo jeito; sem `peer`, compara com a cópia da configuração do par guardada na caixa |
 
 `show cgnat translation` é o comando que responde uma ordem judicial: dado um IP público, uma porta e um instante, quem era o assinante.
+
+`at <tempo>` pede a resposta para um instante passado, escrito como o `since` do `show log` (`2026-10-05T14:00`, ou `2h` para trás de agora). Só vale onde a resposta é a fórmula — um pool determinístico, fora da reserva —, porque a fórmula vale para qualquer instante; para um bloco BPA ou da reserva a caixa recusa o `at` e diz onde está o passado: o log de blocos dá o endereço interno, e `show pppoe history address <a> at <tempo>` a sessão. Numa caixa com PPPoE, a resposta traz embaixo a sessão PPPoE que tinha aquele endereço interno, agora ou no instante pedido.
+
+`show cgnat` responde pelo dataplane inteiro, NAT44 e NAT64 juntos. Para as perguntas só do NAT64 há `show nat64 pool`, `show nat64 subscriber <endereço-IPv6>` e `show nat64 translation <endereço-público> <porta>`: cada uma recusa o que não é NAT64 e diz qual `show cgnat` responde.
 
 `show cgnat history` é o outro lado disso no modo determinístico — qual configuração estava em vigor naquela data, e quem a colocou lá. `show cgnat history verify` é o que prova que essa trilha não foi alterada depois: é a conferência a rodar antes de entregar uma resposta, e antes de apagar o disco de uma caixa.
 
@@ -528,6 +532,7 @@ prisma> show version
 Prisma Routing 0.67.0 (a1b2c3d)
   dataplane: 26.06
   plugin:    0.67.0 (a1b2c3d)
+  api:       one connection (vpp_papi)
   routing:   FRRouting 10.7.1
   daemons:   running  bgpd mgmtd ospfd staticd zebra
              stopped  isisd ospf6d
@@ -535,7 +540,9 @@ Prisma Routing 0.67.0 (a1b2c3d)
              nothing; enable it in /etc/frr/daemons and restart frr
 ```
 
-A última linha diz o que fazer: um daemon parado recebe a configuração que depende dele e não chega a lugar nenhum. Habilite em `/etc/frr/daemons` e reinicie o `frr`. Se quem estiver parado for um dos que o próprio FRR sobe sozinho, a mensagem é outra — nesse caso o FRR não terminou de subir, e editar `/etc/frr/daemons` não muda nada.
+A linha `api:` diz como esta sessão fala com o dataplane: `one connection (vpp_papi)` é o normal; `vat2, a process per message` funciona, é bem mais lento por mensagem, e vem com o motivo embaixo. Depois dos daemons vem a linha `uptime:`, com o tempo de pé da caixa e do dataplane.
+
+A linha dos daemons diz o que fazer: um daemon parado recebe a configuração que depende dele e não chega a lugar nenhum. Habilite em `/etc/frr/daemons` e reinicie o `frr`. Se quem estiver parado for um dos que o próprio FRR sobe sozinho, a mensagem é outra — nesse caso o FRR não terminou de subir, e editar `/etc/frr/daemons` não muda nada.
 
 Os parados aparecem **por nome**, e não como ausência na lista dos que rodam. Quem chega aqui veio de uma mensagem que citou **um** daemon, e procurar por uma palavra que não está lá é exatamente como se tira a conclusão errada.
 
@@ -563,8 +570,8 @@ Prisma Routing 0.68.0 (9f8e7d6)
              this is the build the dataplane was loaded with at the last boot,
              and it is not the Prisma Routing build above. An upgrade replaces
              bpa_plugin.so on disk and does not restart the dataplane, so until
-             this box is rebooted, or 'systemctl restart vpp' is run, it goes
-             on translating with the old one - and both of those end every
+             this box is rebooted, or 'system dataplane restart' is run, it
+             goes on translating with the old one - and both of those end every
              session it is carrying.
 ```
 
@@ -595,6 +602,7 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 |---------|--------|
 | `show configuration` | a configuração candidata; no modo operacional, onde não há candidata, a que está em vigor |
 | `show configuration compare` | diferenças da candidata contra a configuração em vigor, ou `no differences` |
+| `show configuration pending` | o que o arquivo salvo tem para uma placa que a caixa não tinha no boot, e que ficou esperando por ela (ver *Commit, rollback e save*) |
 | `show running-config` (ou `show run`) | a configuração em efeito, CGNAT e roteamento |
 | `show this` | a configuração do nível em que você está (acima) |
 | `show rollback` | revisões commitadas disponíveis, com data e comentário |
@@ -606,6 +614,9 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show system cpu` | quais núcleos fazem o quê: o configurado e o que está em vigor |
 | `show system cpu cores` | cada CPU lógica, uma por linha: soquete, núcleo, nó NUMA, irmãos de HT, o plano que ela serve neste boot (plano de controle, thread principal, worker N ou nenhum) e quanto ela está ocupada, com o steal à parte, medido em um segundo. Uma CPU onde uma thread do VPP faz polling marca `polling` — ela aparece perto de 100% ocupada não importa o que encaminhe — e, num worker, o busy do próprio VPP ao lado, que é a carga de verdade |
 | `show system memory` | a RAM por papel: o configurado e o que está em vigor |
+| `show system hardware` | os ajustes dos drivers das placas (módulos SFP+ não listados pelo `ixgbe`): o configurado, que vale a partir do próximo boot, e o que este boot tem |
+| `show system management` | em qual VRF está a gerência da caixa: o configurado e o que o host tem em vigor — as regras, os serviços que atendem naquela VRF e as interfaces nela |
+| `show system tuning advice [seconds <1-60>] [host-topology]` | o ajuste desta caixa julgado pelo que ela tem e mede numa janela de alguns segundos (5 por padrão): cada achado com a medida, o limite e o porquê, e o que mudar, na caixa e — numa máquina virtual — no host. Não muda nada |
 | `show system logging` | para onde vai o registro de eventos da caixa: cada destino syslog configurado em `system` > `logging` e se o vigia está conseguindo entregar (`sending`, `not reached: <motivo>`), com quantos eventos já mandou |
 | `show system uptime` | desde quando a caixa, o dataplane (VPP) e o roteamento (FRR) estão no ar, o motivo do último boot quando foi registrado (`system reboot by <conta>`; senão `not recorded`) e quando a versão foi instalada. Um dataplane mais novo que a caixa aparece como `restarted after the boot`, e desde a 0.151.14 a linha `started by:` diz **por quê**, como a caixa registrou: o boot, um `system dataplane restart`, uma atualização, ou `nothing recorded: unexpected` quando nada na caixa pediu |
 | `show version` | versões do Prisma Routing, do VPP e do FRR, **qual build o dataplane carregado é**, **quais daemons de roteamento estão rodando** e uma linha `uptime` com o tempo da caixa e do dataplane |
@@ -615,7 +626,17 @@ Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista 
 | `show bgp ...` | o restante do BGP (repassado ao FRR) |
 | `show ospf neighbor`, `show ospf interface` | as adjacências OSPF e o que cada interface acredita (acima); `show ip ospf ...` chega ao mesmo lugar |
 | `show isis adjacency`, `show isis interface` | o mesmo para o IS-IS |
-| `show policy [<política>]` | as políticas de roteamento, os terms de cada uma e onde estão aplicadas |
+| `show bfd peers` | cada sessão BFD em duas linhas: onde roda, o estado, há quanto tempo, o intervalo, o tempo de detecção, o diagnóstico e quantas vezes caiu |
+| `show bfd peer <endereço>` | as sessões com aquele vizinho em detalhe: os timers dos dois lados, o eco, os pacotes e as contagens de subida e queda |
+| `show policy [<política> \| route <prefixo> [vrf <nome>]]` | as políticas de roteamento, os terms de cada uma e onde estão aplicadas; com o nome, a política inteira e quantas rotas cada term casou em cada lugar onde ela está aplicada; com `route`, qual política decidiu uma rota em cada lugar por onde ela passou |
+| `show nat64 pool`, `show nat64 subscriber <endereço-IPv6>`, `show nat64 translation <endereço-público> <porta>` | as perguntas do `show cgnat`, só para o NAT64 (acima) |
+| `show pppoe sessions` | uma linha por sessão PPPoE: id, usuário, endereço, limite de banda, há quanto tempo |
+| `show pppoe session <id>` | uma sessão inteira: MAC, tráfego, limite e os contadores dos policers |
+| `show pppoe summary` | o plano de controle PPPoE, as contagens de sessão, a trilha de sessões e o estado de cada servidor RADIUS |
+| `show pppoe history [user <nome>] [address <endereço>] [session <id>] [at <tempo> \| since <tempo>] [last <n>]` | a trilha de sessões: quem teve qual endereço interno, de quando a quando; `show pppoe history verify` confere o encadeamento de hashes dela |
+| `show aaa radius dictionary` | o dicionário RADIUS do Prisma Routing (vendor 67033), para instalar no servidor RADIUS |
+| `show snmp mib` | a PRISMA-ROUTING-MIB, com o número de empresa que esta caixa serve, para carregar no NMS |
+| `show snmp zabbix-template` | o template do Zabbix 7.0 para esta caixa, com o número de empresa preenchido, para importar |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show ip interface` | interfaces como o FRR as enxerga |
 | `show log [last <n>] [since <tempo>] [severity <nível>] [source <origem>] [kind <tipo>]` | **o que aconteceu na caixa**, o mais novo por último: commits, rollbacks, `commit confirmed` vencido, atualização, reboot e reinício pedidos (por quem e de onde), cada partida do dataplane e do roteamento com a causa, e o que a caixa vê acontecer — enlaces, módulos, sessões BGP e BFD, pool esgotado, coletor de log, logins. Veja abaixo |
@@ -639,7 +660,7 @@ prisma> show log kind bgp
 prisma> show log kind link since 1h
 ```
 
-Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.152.0, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`; com PPPoE, `exit` (o plano de controle PPPoE parou, com o motivo) e `radius` (um servidor RADIUS fora, e de volta). Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
+Sem `last` nem `since`, os últimos 50. `since` aceita `30m`, `1h`, `2d`, `1w` ou uma data ISO (`2026-10-05`, `2026-10-05T14:00`; sem fuso é o fuso da caixa). `severity` é `error`, `warning`, `notice` ou `info` e mostra aquele nível e os mais graves. `source` é `vty`, `api`, `host`, `dataplane` ou `routing` — quem viu. `kind` é o que o evento é: `commit`, `rollback`, `confirm`, `confirm-expired`, `asked`, `start`, `boot`, `upgraded`, e, desde a 0.152.0, `link`, `transceiver`, `bgp`, `bfd`, `pool`, `collector`, `login`, `settings` e `gave-up`; com PPPoE, `exit` (o plano de controle PPPoE parou, com o motivo), `radius` (um servidor RADIUS fora, e de volta) e `trail` (a cabeça da trilha de sessões PPPoE, mandada para fora da caixa). Um evento mais largo que o console dobra, com a continuação recuada, como toda linha que a VTY imprime: a primeira linha leva a hora, o nível, a origem e o começo da frase, e é por ela que o `| match` acha o evento. `source` e `severity` escolhem eventos inteiros.
 
 O que ele registra hoje:
 
@@ -674,7 +695,7 @@ O que ele registra hoje:
 
 Uma porta que fica caindo e voltando não enche o registro: quatro mudanças em 5 minutos saem uma a uma; dali em diante são contadas, e sai uma linha por janela de 5 minutos — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. Uma rajada de senhas erradas do mesmo endereço, igual. No primeiro minuto depois de o dataplane ou o FRR partir, nada disso é comparado: o reinício já é um evento, e as portas voltando são o reinício. Os logins vêm de `/var/log/wtmp` e `/var/log/btmp`, os registros que o sshd e o login(1) já escrevem; o módulo de uma placa que está com o Linux (a de gerência) ainda não é vigiado.
 
-**O que já estava errado quando o vigia começou (desde a 0.152.2).** O vigia registra mudanças, então uma condição que já existia quando ele subiu nunca era dita — foi o caso do X520 da 10.40.200.166, com o RX abaixo do aviso antes de o vigia rodar pela primeira vez. Agora a primeira leitura de cada boot também diz o que **está** errado, uma vez, no presente: uma porta ligada e sem enlace, um módulo além de um aviso ou alarme, uma sessão BGP ou BFD configurada que não está de pé, um pool sem blocos recusando, um coletor da exportação CGNAT não alcançado.
+**O que já estava errado quando o vigia começou (desde a 0.152.2).** O vigia registra mudanças, então uma condição que já existia quando ele subiu nunca era dita — foi o caso de uma porta com o RX abaixo do aviso antes de o vigia rodar pela primeira vez. Agora a primeira leitura de cada boot também diz o que **está** errado, uma vez, no presente: uma porta ligada e sem enlace, um módulo além de um aviso ou alarme, uma sessão BGP ou BFD configurada que não está de pé, um pool sem blocos recusando, um coletor da exportação CGNAT não alcançado.
 
 ```
 2026-10-07 00:04:12  warning  dataplane  standing at start: enp1s0: rx power
@@ -691,7 +712,7 @@ prisma> monitor log severity warning
 prisma> monitor log kind bgp last 5
 ```
 
-`severity`, `source` e `kind` escolhem o que é acompanhado; `last` e `since` o que é mostrado antes. Sem nenhum dos dois, começa agora. Um evento que chega depois da própria hora — a partida do dataplane, que o host registra quando a vê; um login, com a hora do wtmp — aparece quando chega, com a hora dele.
+`severity`, `source` e `kind` escolhem o que é acompanhado; `last` e `since` o que é mostrado antes. Sem nenhum dos dois, começa agora. `seconds <n>` para sozinho depois desse tempo. Um evento que chega depois da própria hora — a partida do dataplane, que o host registra quando a vê; um login, com a hora do wtmp — aparece quando chega, com a hora dele.
 
 **Mandar para um syslog:** `**system**` **>** `**logging**`**.** O registro vai para até quatro coletores syslog (RFC 5424, UDP ou TCP), cada um com o nível mínimo; quem manda é o próprio vigia, a partir do `events.log`, que serve de fila: um coletor TCP que caiu recebe o que esperou quando volta, sem perder e sem repetir. Veja a configuração em [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m). **Não é a exportação de registros do CGNAT** (`nat` > `cgnat` > `logging`), que é o registro de quem usou qual porta pública, para ordem judicial: são duas configurações e dois fluxos separados, e devem ir para coletores diferentes.
 
@@ -765,6 +786,8 @@ A barra vertical só é filtro depois de um `show`. Numa declaração de configu
 | "o dataplane não tem interface nenhuma" | `show hardware` |
 | "o enlace está cheio?" | `show interface utilization <nome>` |
 | "quanta luz está chegando? erros de CRC?" | `show interface <nome> transceiver` |
+| "a sessão BFD caiu?" | `show bfd peers` |
+| "o que aconteceu nesta caixa?" | `show log` |
 
 ## Como ler a resposta de `show cgnat translation`
 
@@ -774,10 +797,10 @@ Este é o comando que responde uma ordem judicial, e a resposta dele **diz quant
 flowchart TD
     T["show cgnat translation<br/>&lt;ip-público&gt; &lt;porta&gt;"] --> Q{"A resposta traz…"}
     Q -->|"FORMULA<br/>past or present"| A["Determinístico.<br/>A conta é estável, logo vale<br/>para um instante passado —<br/>junto com show cgnat history."]
-    Q -->|"DYNAMIC<br/>NOW ONLY"| B["Dinâmico.<br/>Descreve o AGORA.<br/>O passado está nos registros<br/>IPFIX que foram ao coletor."]
+    Q -->|"DYNAMIC ou DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, ou bloco da reserva.<br/>Descreve o AGORA.<br/>O passado está nos registros<br/>IPFIX que foram ao coletor."]
 ```
 
-Uma resposta dinâmica **nunca** afirma `FORMULA`. Essa recusa é deliberada: tratar uma alocação sob demanda como se fosse aritmética estável seria apresentar como prova algo que não sustenta a afirmação.
+Uma resposta de bloco BPA ou da reserva **nunca** afirma `FORMULA`. Essa recusa é deliberada: tratar uma alocação sob demanda como se fosse aritmética estável seria apresentar como prova algo que não sustenta a afirmação.
 
 ## O que cada resposta traz
 
@@ -785,7 +808,7 @@ Uma resposta dinâmica **nunca** afirma `FORMULA`. Essa recusa é deliberada: tr
 |---------|---------------------------|
 | `show cgnat subscriber <ip>` | o endereço público, a faixa de portas e `sessions N` |
 | `show cgnat subscriber` de um IP fora dos pools | `not inside any configured pool` — é resposta, não erro |
-| `show cgnat translation` | o assinante, mais `FORMULA`/`past or present` ou `DYNAMIC`/`NOW ONLY` |
+| `show cgnat translation` | o assinante, mais `FORMULA`/`past or present`, ou `DYNAMIC` (ou `DETERMINISTIC RESERVE`)/`NOW ONLY` |
 | `show cgnat top` | os assinantes mais carregados, com as portas que seguram (ex.: `3/512`) |
 | `show cgnat drops` | seção *packets that did not get through* com o motivo, por exemplo `no pool for source address` |
 

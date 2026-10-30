@@ -55,12 +55,12 @@ On a NAT64 pool the subscriber only has IPv6 and the server only has IPv4, and t
 
 After an `AUTH` the server accepts, the box translates nothing more on that connection: the control channel has become TLS.
 
-**It comes off**, unlike the ALGs of an IPv4 pool: RFC 6384 itself recommends turning it on only where needed, because with it the `EPSV` to a server that would understand `EPSV` becomes `PASV` for nothing. Turn it on in the NAT64 pool that serves subscribers with this problem:
+**It comes off**, unlike the ALGs of an IPv4 pool: RFC 6384 itself recommends turning it on only where needed, because with it the `EPSV` to a server that would understand `EPSV` becomes `PASV` for nothing. Turn it on in the NAT64 pool that serves subscribers with this problem — a NAT64 pool lives under `nat` > `nat64`, beside `cgnat`, not inside it:
 
 ```
 configure
  nat
-  cgnat
+  nat64
    pool v6
     alg ftp on
     exit

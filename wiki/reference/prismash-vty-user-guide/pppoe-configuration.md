@@ -38,8 +38,10 @@ Every change in the `pppoe` block restarts the PPPoE control plane: **all sessio
 | `authentication pap chap mschap-v2` | the methods offered; all three if omitted |
 | `session-limit <n>` | at most this many sessions; 16,000 if omitted. Each session is an interface in the dataplane, and the statistics segment is sized for this number at boot, from the saved configuration. `commit` refuses more than 100,000 (the measured maximum) and more than the box's RAM lets the segment hold; until the next reboot, the box accepts only what the segment in use holds, and `show pppoe summary` says so |
 | `mtu <576-1500>` | PPP MTU and MRU; 1492 if omitted |
-| `tcp-mss <536-1460>` | clamps the TCP MSS on each session |
+| `tcp-mss <536-1460>` | clamps the TCP MSS on each session; on the session's IPv6, 20 bytes lower |
 | `rate-limit default <download>/<upload>` | the bandwidth limit of a session for which RADIUS sent none, in kbit/s or with K, M or G (`20M/10M`); without it, that session has no limit |
+| `rate-limit download shaper` or `policer` | how the download limit is enforced: by a queue (shaper, the default) or by dropping (policer). See [Queue or drop](#queue-or-drop-shaper-and-policer) |
+| `rate-limit upload shaper` or `policer` | the same for the upload; policer if omitted |
 | `ac-name <name>` | the concentrator name in the PADO; `prisma-routing` if omitted |
 | `local-user <name> password <password>` | a local user, for a lab without RADIUS |
 | `ipv6 prefix-pool <prefix>` | turns on IPv6 on the sessions; each session receives a /64 from this prefix as WAN, announced by RA (SLAAC). From /16 to /64. Up to 16 |
@@ -119,7 +121,35 @@ prisma> show aaa radius dictionary
 
 On FreeRADIUS, save what this command prints as `/usr/share/freeradius/dictionary.prisma` and add `$INCLUDE /usr/share/freeradius/dictionary.prisma` to the file `/etc/freeradius/3.0/dictionary`. On IXC or another system, register vendor 67033 and the two attributes in the table.
 
-The limit is a policer in the dataplane, on the session's own interface: what exceeds the limit is dropped. The accepted burst (the policer bucket) is half a second of the rate, never less than 15,000 bytes, whether the rate comes from the Prisma attributes or from `Cisco-AVPair`: the `Cisco-AVPair` burst numbers are checked and not used. Half a second is what lets **one** TCP connection, such as a speed test's, reach the plan: with a tenth of a second (0.155.1) it reached half (25 Mbit/s on a 50 plan), even though UDP passed exactly. Up to 0.155.0 the bucket was eight times larger, and a short test measured 7% to 90% above the plan. A session without a RADIUS limit gets the `rate-limit default` of the `pppoe` block, if any.
+The upload is enforced by a policer in the dataplane, on the session's own interface: what exceeds the limit is dropped. The download, by default, by a queue (the next section); with `rate-limit download policer`, also by a policer. The accepted burst (the policer bucket) is half a second of the rate, never less than 15,000 bytes, whether the rate comes from the Prisma attributes or from `Cisco-AVPair`: the `Cisco-AVPair` burst numbers are checked and not used. Half a second is what lets **one** TCP connection, such as a speed test's, reach the plan: with a tenth of a second (0.155.1) it reached half (25 Mbit/s on a 50 plan), even though UDP passed exactly. Up to 0.155.0 the bucket was eight times larger, and a short test measured 7% to 90% above the plan. A session without a RADIUS limit gets the `rate-limit default` of the `pppoe` block, if any.
+
+### Queue or drop: shaper and policer
+
+By default, each session's **download** goes through a queue of its own in the dataplane (the shaper): what arrives above the plan waits in the queue and leaves at the plan's pace, instead of being dropped. The queue holds up to 100 ms of the plan (25,000 bytes on a 2 Mbit/s plan, 250,000 on a 20 Mbit/s one). So that a TCP download does not keep it full, the box drops a packet now and then while the wait exceeds 15 ms (CoDel). The **upload** stays on a policer: what exceeds the plan is dropped.
+
+Measured on a 20 Mbit/s plan, the shaper against the policer:
+
+|     | shaper | policer |
+|-----|--------|---------|
+| one TCP connection | 19.3 Mbit/s, 17 retransmissions | 19.7 Mbit/s, 823 retransmissions |
+| ping during that connection | 25 ms  | 12 ms   |
+| four connections sharing the plan | evenly (Jain 0.994) | unevenly (Jain 0.832) |
+| UDP at 40 Mbit/s | the plan gets through, 19.6 | the plan gets through, 20.3 |
+| ping during that UDP | up to 104 ms: the queue full | 12 ms   |
+
+The shaper measures the plan in IP bytes, without the PPPoE and Ethernet headers, so a TCP speed test reads a little below 20 (the maximum is 19.47). A subscriber sending UDP above the plan non-stop waits, in their own traffic, up to the size of the queue; the other subscribers' traffic is not affected.
+
+To go back to the policer on the download:
+
+```
+prisma# [edit pppoe] rate-limit download policer
+```
+
+`no rate-limit download` goes back to the default. The switch, in either direction, restarts the PPPoE control plane: all sessions drop and dial again, already with the new choice. `show pppoe summary` says what enforces each direction.
+
+An NMS follows the queues over SNMP, in `prBngShaper`: what enforces each direction, the queues now and the packets that passed, waited and were dropped, summed over the whole box (see [Monitoring and SNMP](/s/wiki-en/doc/monitoring-and-snmp-GxrrkTSEJT)).
+
+When upgrading a box that already has PPPoE, the control plane's files are rewritten at the next load of the configuration. At that moment the sessions dial again, once, and the download moves to the shaper.
 
 ## IPv6
 
@@ -163,8 +193,10 @@ Each session's address comes from RADIUS (`Framed-IP-Address`) when it sends one
 | `dynamic-authorization listen` without `client`, or `client` without `listen` | no one could sign a request, or there would be nowhere to receive it |
 | access interfaces on two cards | the dataplane PPPoE answers from a single MAC |
 | a sub-interface with two tags (QinQ) | the dataplane PPPoE reads a single tag |
+| a sub-interface without `vlan <id>` in its block | there would be no tag to answer on |
+| two access interfaces with the same VLAN | both would be the same port |
 | an interface the dataplane does not have | nothing to answer on it |
-| a secret with a space, comma, quotes or `#` | it would break the generated configuration |
+| a secret with a space, comma, quotes or `#` (refused as soon as it is typed) | it would break the generated configuration |
 
 ## The RADIUS secrets
 
@@ -175,7 +207,7 @@ The secret of each server and each `client` is kept in the saved configuration, 
 | Command | What it shows or does |
 |---------|-----------------------|
 | `show pppoe sessions` | one line per session: the id, the user, the address, the limit (download/upload, `-` with no limit) and how long it has been up; a session still authenticating says `start` in place of the time. A session with IPv6 has below it an `ipv6` line with the WAN prefix and a `delegated` line with the delegated prefix |
-| `show pppoe session <id>` | an entire session: the IPv6 prefixes, the CPE's MAC, the traffic, the limit and, for each limited direction, how many packets the policer let through and how many it dropped |
+| `show pppoe session <id>` | an entire session: the IPv6 prefixes, the CPE's MAC, the traffic and the limit. For each direction limited by a policer, how many packets it let through and how many it dropped. For each direction with a shaper, what is in the queue now, how many packets passed straight through and how many waited, how long they waited (average and maximum) and what was dropped: queue full, CoDel, or the box's buffers |
 | `show pppoe summary` | whether the PPPoE control plane is running, how many sessions are active, starting and ending, each RADIUS server (with `failed` if the control plane marked it as down) and the configuration summary |
 | `clear pppoe session <id>` | ends a session; the id is the one in the first column of `show pppoe sessions`, the same `Acct-Session-Id` RADIUS received |
 | `clear pppoe session user <name>` | ends a user's sessions |
@@ -195,7 +227,9 @@ With PPPoE, the subscriber's inside address is handed out at dial time, first co
 | `show pppoe history address <A.B.C.D> at <time>` | the session that had that inside address at that instant: the user, from when to when, the session id, the MAC and the access interface |
 | `show pppoe history address <IPv6 address> at <time>` | the session whose WAN prefix contains that address, or whose delegated prefix contained it at that instant: the delegated one counts from the time it was delegated, not from the start of the session |
 | `show pppoe history user <name>` | a user's sessions |
+| `show pppoe history session <id>` | one session, by its id |
 | `show pppoe history since <time>` | the sessions that were up from that time onward |
+| `show pppoe history last <n>` | only the last `n` sessions; also after a filter (`user`, `address`, `since`) |
 | `show pppoe history verify` | checks the hash chain and gives the first line that does not match |
 | `show cgnat translation <public> <port> at <time>` | on a deterministic pool, both steps at once: the inside address by the formula and the session that had it at that instant |
 
@@ -252,7 +286,7 @@ prisma> show log kind radius
 | exit due to failure, with the code or signal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
 | the start that came after it, with no one asking | `the PPPoE control plane (prisma-bng) started again, by its restart policy, after it exited: ...` |
 | requested stop (commit, upgrade, `no pppoe`) | `the PPPoE control plane (prisma-bng) stopped: stopped (SIGTERM): ...` |
-| restart in an upgrade that rewrites the files | `... started again: PPPoE's files from an older release (format 4) written again in format 5` |
+| restart in an upgrade that rewrites the files | `... started again: PPPoE's files from an older release (format 6) written again in format 7` |
 | RADIUS server down, and back | `RADIUS server 192.0.2.10 failed: it did not answer, ...` / `RADIUS server 192.0.2.10 is active again: ...` |
 
 A start at `warning` level is one nobody asked for: that is the one worth investigating.
@@ -268,7 +302,7 @@ The summary should say `running` and count the active sessions; each subscriber 
 
 
 :::info
-QinQ and high availability of sessions do not exist yet. A session is always IPv4 with optional IPv6: IPv6-only does not exist. The bandwidth limit is by dropping (policer), not by queuing (shaper).
+QinQ and high availability of sessions do not exist yet. A session is always IPv4 with optional IPv6: IPv6-only does not exist. The shaper has one queue per session, not one per connection: UDP above the plan makes the rest of the subscriber's own traffic wait.
 
 :::
 

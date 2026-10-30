@@ -139,8 +139,8 @@ O `exit` do pool volta para `cgnat`, que é onde o próximo passo continua. O pr
 
 | Linha | O que decide |
 |-------|--------------|
-| `inside` | quem é traduzido: os endereços dos assinantes |
-| `outside` | com quais endereços públicos eles saem |
+| `prefix-inside` | quem é traduzido: os endereços dos assinantes |
+| `prefix-outside` | com quais endereços públicos eles saem |
 | `block-size 512` | quantas portas cada assinante ganha |
 | `ports 1024 65535` | a faixa usável de cada endereço público; abaixo de 1024 ficam as portas de serviço |
 | `policy interleaved` | assinantes vizinhos saem por endereços públicos **diferentes**, o que dilui um bloqueio de reputação num IP só |
@@ -201,7 +201,11 @@ prisma# [edit] commit check
 
 ```
 configuration check succeeds for CGNAT and the box's own configuration
+  routing statements are checked for structure only; FRR validates them at
+  commit, and can still refuse one
 ```
+
+A segunda linha aparece porque a rota default do passo 2 é configuração de roteamento: a VTY confere a forma dela, e quem a valida de fato é o roteamento, no `commit`.
 
 O `commit check` recusa aqui o que não daria certo, e diz por quê. A recusa que mais aparece num pool novo é a de um endereço público que também está numa interface da caixa:
 
@@ -209,9 +213,14 @@ O `commit check` recusa aqui o que não daria certo, e diz por quê. A recusa qu
 error: pool 'errado': public address 198.51.100.2 is configured on ens19
     interface ens19 / ipv4 address 198.51.100.2/30
     nat / cgnat / pool errado / prefix-outside 198.51.100.0/30
+    cgnat would translate the box's own control-plane traffic on that address:
+    bpa-out2in runs before the box decides a packet is for itself, so the BGP
+    session or OSPF adjacency on it drops for no apparent reason
+    take the address off the interface, or narrow the pool's public range so
+    that it does not contain it
 ```
 
-Ela existe porque o CGNAT olha o pacote antes de a caixa decidir se ele é para ela mesma: um endereço de enlace dentro do pool faz a sessão BGP daquele enlace cair sem motivo aparente. Corrija o `outside` para um prefixo que não esteja em interface nenhuma.
+Ela existe porque o CGNAT olha o pacote antes de a caixa decidir se ele é para ela mesma: um endereço de enlace dentro do pool faz a sessão BGP daquele enlace cair sem motivo aparente. Corrija o `prefix-outside` para um prefixo que não esteja em interface nenhuma.
 
 # 6. Aplique
 
@@ -279,6 +288,7 @@ Sem o `maximum-prefix`, o `commit` também avisa, e com razão: um vizinho que v
 warning: this eBGP session has no 'maximum-prefix': a peer that leaks a full
     table fills this box and nothing here stops it. 'neighbor 198.51.100.1
     maximum-prefix 10000' tears the session down instead of the box
+    neighbor 198.51.100.1 remote-as 64500
 ```
 
 # 8. Grave
@@ -309,7 +319,7 @@ prisma# [edit nat / cgnat] commit
 
 `src` é obrigatório, e `enable` sem destino é recusado. Para não perder registro quando o coletor cai, existe também o transporte TCP (`logging tcp <ip-do-coletor>`, também dentro de `cgnat`), e para um coletor que só entende syslog, `logging syslog <ip-do-coletor> enterprise <n>`. [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) explica a diferença entre os três.
 
-Se você esquecer, o `commit check` e o `commit` avisam, com o nome do pool e os dois jeitos de exportar. É um aviso, não uma recusa, porque um pool montado antes de o coletor existir é uma configuração válida.
+Se você esquecer, o `commit` **não** avisa: um pool `bpa` sem exportação é aceito em silêncio, porque um pool montado antes de o coletor existir é uma configuração válida. Quem diz se a caixa está exportando é `show cgnat logging` e o autoteste de boot, que avisa quando um pool roda em modo `bpa` e nada está sendo exportado.
 
 No modo determinístico este passo é opcional: a fórmula responde sozinha, como mostra o último passo. A exceção é um pool determinístico com `reserve`, porque os blocos da reserva ficam fora da fórmula e também precisam do coletor.
 
@@ -332,7 +342,7 @@ pool residencial [deterministic / interleaved]
   capacity     2016 subscribers (usable 1024)
 ```
 
-`capacity` é quantos assinantes os endereços públicos comportam, e `usable` é quantos o `inside` tem. Se `usable` for maior que `capacity`, faltam endereços públicos.
+`capacity` é quantos assinantes os endereços públicos comportam, e `usable` é quantos o `prefix-inside` tem. Se `usable` for maior que `capacity`, faltam endereços públicos.
 
 **Um assinante, antes de ele navegar.** No determinístico a caixa já sabe o endereço e as portas dele:
 
@@ -392,13 +402,14 @@ prisma> show cgnat translation 203.0.113.5 1029
 ```
 203.0.113.5:1029  ->  100.64.0.5
   pool residencial, block 5, DETERMINISTIC
+  from the FORMULA. It holds for any instant, past or present, as long as this pool's addresses and block size have not changed since. No allocation record is involved.
 ```
 
 No determinístico essa resposta vale para qualquer momento, passado ou presente, enquanto os endereços e o `block-size` do pool não mudarem. É por isso que mudar o mapeamento de um pool em uso não é trivial.
 
 
 :::warning
-**Mudar** `**inside**`**,** `**outside**`**,** `**block-size**`**,** `**ports**`**,** `**policy**` **ou** `**mode**` **num pool em uso muda o endereço e as portas de quase todo mundo, e derruba todas as sessões do pool.** A caixa não deixa isso acontecer por engano: o `commit` recusa, diz quantos assinantes mudam e pede que você confirme pelo nome.
+**Mudar** `**prefix-inside**`**,** `**prefix-outside**`**,** `**block-size**`**,** `**ports**`**,** `**policy**` **ou** `**mode**` **num pool em uso muda o endereço e as portas de quase todo mundo, e derruba todas as sessões do pool.** A caixa não deixa isso acontecer por engano: o `commit` recusa, diz quantos assinantes mudam e pede que você confirme pelo nome.
 
 ```
 error: this change re-maps subscribers that already have mappings

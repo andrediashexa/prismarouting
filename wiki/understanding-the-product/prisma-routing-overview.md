@@ -28,7 +28,7 @@ flowchart LR
             DOORS["host service:<br/>accounts, SSH, SNMP, reboot"]
         end
         VPP["Dataplane container<br/>VPP / DPDK + CGNAT"]
-        FRR["Routing container<br/>FRR: bgpd · ospfd · ospf6d · isisd"]
+        FRR["Routing container<br/>FRR: bgpd · ospfd · ospf6d · isisd · bfdd"]
         VTY["Management container<br/>prismash, the single VTY"]
         LOGIN --> VTY
         VPP <-->|"linux_cp"| FRR
@@ -44,8 +44,12 @@ flowchart LR
 * **Routing** is FRR, which sees each dataplane interface through a pair in Linux (`linux_cp`) and installs routes in the dataplane's forwarding table.
 * **Management** is where `prismash` runs: the single VTY, which configures CGNAT, interfaces, routing and the system through the same interface. Each login enters it with its own account and its own role.
 * **The base system** keeps what the management container cannot do on its own — accounts, SSH, SNMP, resolvers, restart and shutdown. The VTY **requests** these changes from a host service, which only accepts a closed list of commands. `start shell`, restricted to administrators, opens a shell **on the base system**, not in the container.
+* **The records** of blocks that go to the collector over TCP, and usually the UDP IPFIX too, leave from a container of their own, with limited memory, so that a slow collector or the replay of a spill file costs the dataplane no packets. With that container down, the dataplane sends them itself again within about a second.
+* **PPPoE**, when configured, runs in a fifth container with its own memory limits: a failure there takes neither forwarding, routing nor the VTY with it. A box without PPPoE does not start it.
 
-Every change to the dataplane goes through its binary API, one process per call — not over a persistent connection, and not through the dataplane's text command line, which exits with code zero even when it fails.
+Every change to the dataplane goes through its binary API, over a connection opened at the start of each VTY session and kept while it lasts — not through the dataplane's text command line, which exits with code zero even when it fails.
+
+Besides IPv4 CGNAT, the same box does **NAT64** (IPv6-only subscribers leaving through the same public space, in the same port blocks) and can **terminate PPPoE subscribers**, authenticated by RADIUS and translated by the CGNAT. Monitoring is over SNMP, and a gRPC management API, off by default, lets an external system configure and read the box by the same rules as the VTY.
 
 
 :::info
@@ -64,12 +68,12 @@ The minimum is **6 GB of RAM** (8 recommended) and a CPU with **SSE4.2**. Below 
 | Component | Status |
 |-----------|--------|
 | Deterministic mapping core | Verified against the Python reference model, mapping by mapping, the whole pool |
-| Dataplane (translation, handoff, dynamic mode, fragments, ICMP errors, TCP state) | Verified with injected and real traffic |
-| Routing (BGP, OSPF, IS-IS, routing policy) | Verified — routes reach the VPP FIB |
+| Dataplane (translation, handoff, BPA mode, fragments, ICMP errors, TCP state) | Verified with injected and real traffic |
+| Routing (BGP, OSPF, IS-IS, BFD, routing policy) | Verified — routes reach the VPP FIB |
 | IPFIX logging (UDP and TCP) | Verified with a decoding collector |
 | VTY (`prismash`) | Candidate, `commit`, `rollback`, roles; each line is refused where it is typed, including routing ones |
 | Appliance (ISO, kernel, containers, tuning) | Every version that publishes an ISO is installed on a disk and rebooted from it before release, also on a virtual machine without 1 GB pages; the self-test reports ready |
-| **High availability** | **Active/standby implemented**: VRRP on the dataplane interface; the acceptance test (uplink pulled, dataplane stopped, dataplane killed) passes, with every subscriber keeping their public address and block. Sessions are **not** synchronized: connections in progress drop |
+| **High availability** | **Active/standby implemented**: VRRP on the dataplane interface, over IPv4 and IPv6 (a NAT64 pool fails over too); the acceptance test (uplink pulled, dataplane stopped, dataplane killed) passes, with every subscriber keeping their public address and block. Sessions are **not** synchronized: connections in progress drop |
 | **Throughput** | **Bits per second NOT measured** — that requires a card DPDK drives natively. The per-packet cost in CPU cycles in the translation nodes is measured |
 
 The project stays at `0.x.x` until it is declared production-ready. Incompatible changes are allowed and are announced.

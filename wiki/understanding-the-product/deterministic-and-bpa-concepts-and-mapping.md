@@ -11,7 +11,7 @@ Both give each subscriber a **contiguous block of ports**, instead of one record
 
 BPA is **only** the dynamic mode. Deterministic is not a kind of BPA: the umbrella for both is *port-block CGNAT*, and the choice is between deterministic and BPA.
 
-The dataplane module that does both is called `bpa`, and that name appears in counters and internal identifiers for both modes. It stays that way so as not to break scripts and installed boxes, but it does not mean a deterministic pool is BPA. In the VTY, the commands are `show cgnat ...`.
+The dataplane module that does both is called `bpa`, and that name appears in counters and internal identifiers for both modes. It stays that way so as not to break scripts and installed boxes, but it does not mean a deterministic pool is BPA. In the VTY, the commands are `show cgnat ...`, and `show nat64 ...` to look at the NAT64 pools alone.
 
 |     | Deterministic (`mode deterministic`) | BPA (`mode bpa`) |
 |-----|------------------------------------|----------------|
@@ -25,7 +25,7 @@ The dataplane module that does both is called `bpa`, and that name appears in co
 
 
 :::info
-**A BPA pool without export is a pool nobody can answer for.** In BPA the exported record is the only evidence of who was behind a public port. `commit check` and `commit` warn, naming the pool, when a dynamic pool — or a deterministic one with `reserve` — has no collector configured. It is a warning and not a refusal, because a pool built before the collector existed is a correct configuration.
+**A BPA pool without export is a pool nobody can answer for.** In BPA the exported record is the only evidence of who was behind a public port. `commit` neither refuses nor warns about a pool with no collector — a pool built before the collector existed is a correct configuration —, so the check is yours: `show cgnat logging` says whether the export is on and where it goes, and the boot self-test reports an export the saved configuration turns on and the dataplane does not have. The same goes for a deterministic pool with `reserve`.
 
 :::
 
@@ -100,7 +100,7 @@ That is why `show cgnat pool` shows, below the capacity, the number the pool **g
 
 
 :::info
-There is a mechanism that lends a free block from one worker to another, in the one-second cycle in which the box already expires idle blocks. It works, but **it ships off**: in the lab, every tuning that serves the refused subscriber also lends away a block the next subscriber of the worker itself wanted. Until this is measured with real traffic, size by the floor.
+There is a mechanism that lends a free block from one worker to another, in the one-second cycle in which the box already expires idle blocks. It works, but **it ships off**, and it is not switched on from the VTY. Measured with subscribers that retry on their own, it nearly removes the refusals of the slice that ran out, at the cost of a few first-attempt refusals on the workers that lend; under an even load it has not been measured yet. Size by the floor.
 
 :::
 
@@ -116,7 +116,7 @@ Traffic from a subscriber destined **to the box itself** — the gateway, the up
 
 # What changes without rebuilding the pool
 
-See the pool configuration page. The rule: **changes the mapping → rebuilds; does not change it → applied in place**. Mapping is prefix, `block-size`, `ports`, `policy`, `mode`, `vrf`, `outside-vrf` and `reserve`; the rest — timeouts, ALGs, limits, MSS, bypass, port forwards, `max-blocks`, `initial-allocation` — is applied on a pool with traffic.
+See the pool configuration page. The rule: **changes the mapping → rebuilds; does not change it → applied in place**. Mapping is prefix (`prefix-inside` and `prefix-outside`, or what the lists of `prefix-list-inside` and `prefix-list-outside` resolve to), `block-size`, `ports`, `policy`, `mode`, `vrf`, `outside-vrf` and `reserve` — and, in a NAT64 pool, `subscriber-length` and `nat64-prefix`. Changing a prefix-list a pool uses rebuilds that pool, as changing the typed prefix does. The rest — timeouts, ALGs, limits, MSS, bypass, port forwards, `max-blocks`, `initial-allocation` — is applied on a pool with traffic.
 
 This is not optimization, it is correctness. Dropping the whole subscriber base to turn off an ALG, limit an infected machine or give a customer an inbound port is not a change anyone would ask for.
 

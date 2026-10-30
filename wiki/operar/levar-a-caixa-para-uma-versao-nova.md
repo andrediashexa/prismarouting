@@ -11,8 +11,8 @@ Como colocar uma versão nova do Prisma Routing numa caixa que já está em prod
 | Configuração, contas, comunidades SNMP | Ficam                   | Somem                     |
 | Trilha de configuração e transbordo do exportador | Ficam                   | Somem                     |
 | Parada | Só o reinício do dataplane, e no horário que você escolher | A janela inteira, com boot pela mídia |
-| Publicado para | Toda versão, a partir da 0.79.0 | Só a última versão completa (as que mudam o primeiro ou o segundo número) |
-| Tamanho do download | Cerca de 120 MB, com as imagens dos contêineres | Centenas de megabytes     |
+| Publicado para | Toda versão, a partir da 0.79.0 | Só as versões completas (as que mudam o primeiro ou o segundo número) |
+| Tamanho do download | Perto de 200 MB, com as imagens dos contêineres | Centenas de megabytes     |
 
 **O pacote é o caminho normal.** A reinstalação existe para a máquina nova e para o caso em que a versão nova muda a plataforma por baixo do produto. Você não precisa adivinhar qual é: o pacote confere isso sozinho e **recusa antes de escrever qualquer coisa**, dizendo o que a caixa tem e o que a versão nova precisa.
 
@@ -37,7 +37,7 @@ Três coisas a saber dele:
 
 No fim ele diz `upgraded to <versão>` e lembra do `save`. Vale o que vale para o caminho manual: `save` antes de reiniciar, e o dataplane continua o antigo até você escolher a hora do passo 4.
 
-A partir da versão 0.148.0, a própria VTY passa para a versão nova logo em seguida, sem reboot: poucos segundos depois do `upgraded to`, o container de gerência é recriado com a imagem nova, a sessão que fez o upgrade cai e o próximo login já é da versão nova. O dataplane e os daemons de roteamento **não** são tocados nesse passo e continuam nas imagens anteriores até o reboot. Antes da 0.148.0, a VTY continuava na versão anterior até o reboot, mesmo com a caixa dizendo a versão nova.
+A partir da versão 0.148.0, a própria VTY passa para a versão nova logo em seguida, sem reboot: poucos segundos depois do `upgraded to`, o container de gerência é recriado com a imagem nova, a sessão que fez o upgrade cai e o próximo login já é da versão nova. Um login feito nesses segundos espera a VTY voltar, até 20 segundos, em vez de falhar. O container que exporta os registros de CGNAT também passa para a imagem nova nesse momento; enquanto ele não volta, o próprio dataplane retoma o envio. O dataplane e os daemons de roteamento **não** são tocados nesse passo e continuam nas imagens anteriores até o reboot ou um `system dataplane restart`. Antes da 0.148.0, a VTY continuava na versão anterior até o reboot, mesmo com a caixa dizendo a versão nova.
 
 **As imagens das versões antigas são apagadas.** Cada upgrade carrega quatro imagens novas, e antes dessa correção nenhuma era apagada: uma caixa de teste chegou a 96% da raiz depois de uma série de patches. Agora, logo depois do upgrade e a cada boot, a caixa apaga as imagens `prisma-*` que nenhum contêiner usa e que não são nem da versão instalada nem da versão anterior a ela — esta fica, como caminho de volta. O log do boot (e do `refresh-the-vty`) diz o que foi apagado e quanto espaço voltou. Imagens de outros repositórios nunca são tocadas, e se a caixa não consegue dizer com certeza qual versão ela é, não apaga nada e diz por quê.
 
@@ -45,7 +45,13 @@ Os passos abaixo são o mesmo processo à mão, para uma caixa que não alcança
 
 
 :::info
-**Desde a 0.125.0 o pacote leva as imagens dos contêineres**, por isso tem cerca de 120 MB e não alguns megabytes. Uma caixa que foi atualizada em vez de instalada, e ainda roda o dataplane e o roteamento como serviços do systemd, **passa para os contêineres no próximo boot**, igual a uma caixa instalada pela mídia. Uma caixa que já roda nos contêineres passa a usar as imagens da versão nova, e não mais as da versão anterior.
+**O pacote não leva o kernel nem pacotes do sistema.** Ele leva os arquivos do produto e as imagens dos contêineres, e nada que o Debian por baixo instala: uma caixa atualizada pelo pacote continua com o kernel com que foi instalada. Uma atualização de segurança do kernel do Debian chega a uma caixa só pela mídia de uma versão completa. Pelo mesmo motivo, o `qemu-guest-agent` que a mídia instala desde a 0.156.0 não chega pelo pacote: numa máquina virtual atualizada, instale-o com `apt-get install qemu-guest-agent`, num shell da caixa.
+
+:::
+
+
+:::info
+**Desde a 0.125.0 o pacote leva as imagens dos contêineres**, por isso tem perto de 200 MB e não alguns megabytes. Uma caixa que foi atualizada em vez de instalada, e ainda roda o dataplane e o roteamento como serviços do systemd, **passa para os contêineres no próximo boot**, igual a uma caixa instalada pela mídia. Uma caixa que já roda nos contêineres passa a usar as imagens da versão nova, e não mais as da versão anterior.
 
 :::
 
@@ -59,7 +65,7 @@ Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa
 
 ## 2. Baixe o pacote da versão nova
 
-Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. A pasta `latest/` oferece sempre o pacote de atualização mais novo e, ao lado dele, a ISO mais nova, cada um com o seu `sha256`. A mídia de instalação só existe para as versões completas: uma versão que muda só o terceiro número publica apenas o pacote de atualização, e então a ISO em `latest/` é a da última versão completa. Na própria caixa, trocando `<versão>` pelo número:
+Cada versão fica em uma pasta própria em <https://prismarouting.com.br/releases/>, com o pacote e o `sha256` dele lado a lado. A pasta `latest/` oferece sempre o pacote de atualização mais novo e, ao lado dele, a ISO mais nova, cada um com o seu `sha256`. A mídia de instalação só existe para as versões completas: uma versão que muda só o terceiro número publica apenas o pacote de atualização, e então a ISO em `latest/` é a da última versão completa. É isso que os números querem dizer: uma versão que muda só o terceiro número muda só o que o pacote leva; o kernel, o VPP, o FRR e a própria mídia só mudam numa versão que muda o primeiro ou o segundo. Na própria caixa, trocando `<versão>` pelo número:
 
 ```
 curl -fO https://prismarouting.com.br/releases/<versão>/prisma-routing-<versão>-upgrade.tar.gz
@@ -145,9 +151,9 @@ Nesse caso o caminho é a mídia, e ele apaga o disco. **Leia a seção abaixo i
 :::warning
 **Reinstalar apaga o disco inteiro, inclusive o volume de log.**
 
-Esse volume guarda a trilha de configuração - o que permite dizer qual definição de pool estava em vigor num instante passado, e sem ela a resposta a um ofício sobre o mês passado deixa de ser sustentável - e o spill do exportador, que são registros que o coletor ainda não recebeu. Os registros em si não ficam aqui: a caixa os exporta.
+Esse volume guarda a trilha de configuração - o que permite dizer qual definição de pool estava em vigor num instante passado, e sem ela a resposta a um ofício sobre o mês passado deixa de ser sustentável - e o spill do exportador, que são registros que o coletor ainda não recebeu - e, numa caixa que é o BNG, o histórico de sessões PPPoE, que diz quem segurava cada endereço interno. Os registros de bloco em si não ficam aqui: a caixa os exporta.
 
-Os dois morrem na reinstalação e **nenhum comando deste produto os traz de volta**. Uma caixa reinstalada continua respondendo pelo ano de guarda que já corria.
+Eles morrem na reinstalação e **nenhum comando deste produto os traz de volta**. Uma caixa reinstalada continua respondendo pelo ano de guarda que já corria.
 
 :::
 
@@ -231,7 +237,7 @@ Os arquivos de registro em si não mudam de formato: o que estava escrito contin
 | A configuração em vigor | **Não.** Você precisa levá-la para fora e digitá-la de volta |
 | As senhas das contas e as comunidades SNMP | **Não**, e não dá para copiá-las da tela: a caixa as mascara ao imprimir a configuração |
 | As revisões de rollback | **Não**                   |
-| A trilha de configuração e o spill do exportador | **Não**                   |
+| A trilha de configuração, o spill do exportador e o histórico de sessões PPPoE | **Não**                   |
 | O que já foi exportado para um coletor IPFIX | **Sim** - está fora da caixa, e a reinstalação não o alcança |
 | O que já foi copiado para um syslog remoto | **Sim**, pelo mesmo motivo |
 
@@ -269,7 +275,7 @@ A consequência é que a cópia que você levou **não restaura acesso nenhum**.
 
 ## 3. Confira que os registros já estão fora da caixa
 
-**Modo dinâmico.** Os eventos de alocação vão para o coletor IPFIX enquanto a caixa trabalha, e o que já chegou ao coletor não é afetado. O que morre é o que existe só no volume da caixa. Se a exportação estiver parada ou atrasada, o buraco entre o coletor e a caixa é o que você vai perder.
+**Modo BPA.** Os eventos de alocação vão para o coletor IPFIX enquanto a caixa trabalha, e o que já chegou ao coletor não é afetado. O que morre é o que existe só no volume da caixa. Se a exportação estiver parada ou atrasada, o buraco entre o coletor e a caixa é o que você vai perder.
 
 **Modo determinístico.** Não há alocação para exportar: a prova é o algoritmo mais a configuração que estava em vigor, e é a trilha que diz qual era. Confira a trilha e compare o resumo do topo com a cópia no seu syslog remoto:
 
@@ -286,7 +292,7 @@ Se não houver cópia remota da trilha, **pare aqui**. Ela não se reconstrói d
 O procedimento é o de [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) e não muda. Três pontos que são diferentes quando a máquina não é nova:
 
 * **O disco alvo é o mesmo de antes**, com tudo que está nele, e a confirmação com a palavra `yes` apaga o disco inteiro.
-* **A pergunta sobre quantos gigabytes ficam com o volume de log volta a ser feita.** Responda pelo menos o mesmo número de antes: responder menos encolhe o quanto a caixa aguenta exportando para um coletor inalcançável, sem que nada avise.
+* **A pergunta sobre quantos gigabytes ficam com o volume de log volta a ser feita.** Responda pelo menos o mesmo número de antes: responder menos deixa menos espaço para a trilha, para o transbordo do exportador e, numa caixa que é o BNG, para o histórico de sessões PPPoE, sem que nada avise.
 * **Se a caixa tinha espelho de registros em dois discos**, o segundo disco é perguntado de novo e apagado pelo mesmo `yes`.
 
 ## 5. Digite a configuração de volta

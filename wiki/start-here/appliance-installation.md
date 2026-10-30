@@ -47,6 +47,8 @@ prisma> install
 
 **Serial console or monitor, either one.** The GRUB menu appears on the video output and on the serial port (ttyS0, 115200 8N1), and every entry boots with `console=tty0 console=ttyS0,115200` - the same words the installed box receives. The self-test report and an unattended installation go out on the serial port; the monitor keeps showing the kernel messages and the VTY on tty1. Up to 0.152.x the medium had no `console=` at all, and a machine reached only over serial stayed silent until someone edited the GRUB line by hand.
 
+**On a virtual machine, the hypervisor's agent is already installed.** Since 0.156.0 the medium installs `qemu-guest-agent`, because most boxes run as VMs on Proxmox or another KVM host: with the agent's channel enabled on the VM (`agent: 1` on Proxmox), the hypervisor can shut the box down through it, freeze the disk for a backup and show the box's addresses. The agent only starts when that channel exists, so nothing changes on a physical server. A box installed from an earlier medium and taken to the new version with `system upgrade` does **not** get it, because the upgrade package carries no system packages: install it with `apt-get install qemu-guest-agent` from an administrator's shell (`start shell`).
+
 The `install` command exists in the VTY **only when the machine is running from the medium**. On an already installed appliance it is not in the command tree and the installer refuses to run — a command that overwrites the disk should not be one TAB away from `interface` on a production router.
 
 ## Choosing the disk
@@ -155,7 +157,7 @@ The boot self-test reads **the same file** back at every boot and reports what h
 | `[warn] ens18 is up with no default route` | it has an address, no default route, and no gateway was asked for |
 | `[FAIL] ... has an address and no default route` | **the gateway answered did not take.** The line names the gateway that did not go in |
 | `[FAIL] ... has no address` | DHCP with no reply, or `ifup` failed |
-| `[FAIL] this box has no card called ens18` | the installation card is no longer in the box. Lists the ones that are |
+| `[FAIL] management network: this box has no card called ens18` | the installation card is no longer in the box. Lists the ones that are |
 | `[FAIL] no management network: nothing was ever written for one` | medium up to 0.72.0. The line carries the commands that fix it from that console |
 | `[info] no management network was asked for at install time` | answered `none`, and the box really is console-only |
 | `[warn] no management network was asked for, and this box is on one anyway` | answered `none`, but Linux has a card with an address — and it is a card the dataplane claims at the next boot |
@@ -357,7 +359,7 @@ After the first boot without the medium:
 * the console shows the self-test report, **without any** `**[FAIL]**` **line**;
 * among them, `binary API registered, so pools can be configured` — without it the box routes and answers, and no pool can be created;
 * if you answered with a management card, a `managed on <card>` line with the address below it - that is how you reach the box without going back to the console; if you answered `none`, the `[info] no management network was asked for at install time` line;
-* `the dataplane runs in a container on this box` and `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table` — the installed box runs the dataplane, routing and the management plane (where the VTY lives) in containers, linked by an internal network on `128.0.0.0/8` that sits in its own routing table: real addresses in `128.x` remain reachable, by the box and by subscribers;
+* `the dataplane runs in a container on this box` and `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table` — the installed box runs the dataplane, routing, the management plane (where the VTY lives) and the CGNAT records exporter in containers; the management plane talks to the system over an internal network on `128.0.0.0/8` that sits in its own routing table: real addresses in `128.x` remain reachable, by the box and by subscribers;
 * `show version` answers with the version of Prisma Routing, the dataplane and routing;
 * you can log in with the password set during installation.
 
