@@ -70,7 +70,7 @@ O que cada linha muda:
 
 O intervalo de anúncio não é configurável: é o padrão da RFC, um segundo, e precisa ser igual nas duas caixas. A tomada leva por volta de três segundos e meio.
 
-**Um [pool NAT64](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd) no par precisa do gateway IPv6 também.** Um endereço IPv6 em `vrrp <id> address` cria, ao lado do roteador IPv4, o roteador virtual IPv6 do mesmo id, com a mesma prioridade, o mesmo `track` e o mesmo `preempt`. O primeiro endereço IPv6 tem de ser um link-local (por exemplo `vrrp 1 address fe80::1`, antes do global) — o `commit check` recusa um roteador IPv6 sem ele —, e é para esse link-local que os assinantes IPv6, ou o BNG na frente deles, apontam o gateway. O MAC virtual dele é `00:00:5e:00:02:<id>`. O `track` é por família: um roteador IPv4 que acompanha uma interface sem endereço IPv4 nunca a vê de pé, e o `commit check` avisa nomeando a interface.
+**Um** [**pool NAT64**](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd) **no par precisa do gateway IPv6 também.** Um endereço IPv6 em `vrrp <id> address` cria, ao lado do roteador IPv4, o roteador virtual IPv6 do mesmo id, com a mesma prioridade, o mesmo `track` e o mesmo `preempt`. O primeiro endereço IPv6 tem de ser um link-local (por exemplo `vrrp 1 address fe80::1`, antes do global) — o `commit check` recusa um roteador IPv6 sem ele —, e é para esse link-local que os assinantes IPv6, ou o BNG na frente deles, apontam o gateway. O MAC virtual dele é `00:00:5e:00:02:<id>`. O `track` é por família: um roteador IPv4 que acompanha uma interface sem endereço IPv4 nunca a vê de pé, e o `commit check` avisa nomeando a interface.
 
 
 :::info

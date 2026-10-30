@@ -70,7 +70,7 @@ What each line changes:
 
 The advertisement interval is not configurable: it is the RFC default, one second, and it must be the same on both boxes. Takeover takes about three and a half seconds.
 
-**A [NAT64 pool](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV) in the pair needs the IPv6 gateway too.** An IPv6 address under `vrrp <id> address` builds, beside the IPv4 router, the IPv6 virtual router of the same id, with the same priority, the same `track` and the same `preempt`. The first IPv6 address must be a link-local one (for example `vrrp 1 address fe80::1`, before the global one) — `commit check` refuses an IPv6 router without it —, and that link-local is what the IPv6 subscribers, or the BNG in front of them, point their gateway at. Its virtual MAC is `00:00:5e:00:02:<id>`. `track` is per family: an IPv4 router tracking an interface with no IPv4 address never sees it up, and `commit check` warns, naming the interface.
+**A** [**NAT64 pool**](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV) **in the pair needs the IPv6 gateway too.** An IPv6 address under `vrrp <id> address` builds, beside the IPv4 router, the IPv6 virtual router of the same id, with the same priority, the same `track` and the same `preempt`. The first IPv6 address must be a link-local one (for example `vrrp 1 address fe80::1`, before the global one) — `commit check` refuses an IPv6 router without it —, and that link-local is what the IPv6 subscribers, or the BNG in front of them, point their gateway at. Its virtual MAC is `00:00:5e:00:02:<id>`. `track` is per family: an IPv4 router tracking an interface with no IPv4 address never sees it up, and `commit check` warns, naming the interface.
 
 
 :::info
