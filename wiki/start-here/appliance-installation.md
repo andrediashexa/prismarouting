@@ -90,14 +90,14 @@ An empty Enter is not an answer. Neither is `y`. **A disk cannot be destroyed by
   is then the one card the dataplane will not claim.
 
 Network cards on this machine:
-  a) ens18      up     virtio_net   192.0.2.10/24   <- this medium is reaching the network on this one
-  b) ens19      down   virtio_net   none
+  a) enp1s0     up     virtio_net   192.0.2.10/24   <- this medium is reaching the network on this one
+  b) enp2s0     down   virtio_net   none
   none) no management network   (this box is reached at its console)   <- default
 
 Which card is this box managed on (letter, or a name) [none]:
 ```
 
-The list uses the name Linux gives the card (`ens18`, `enp2s0`), which is also the name it shows up with in the VTY afterwards: the installed box keeps the Linux name for each card, including those the dataplane claims. The list shows **what each card is** - whether it is up, which driver runs it, which address it is carrying this minute - because `ens18` and `ens19` tell nobody which cable is in which. The card through which the medium itself is reaching the network right now is pointed out in the list, because it is the one the operator wants when they want one: it is no longer the default.
+The list uses the name Linux gives the card (`enp1s0`, `enp2s0`), which is also the name it shows up with in the VTY afterwards: the installed box keeps the Linux name for each card, including those the dataplane claims. The list shows **what each card is** - whether it is up, which driver runs it, which address it is carrying this minute - because `enp1s0` and `enp2s0` tell nobody which cable is in which. The card through which the medium itself is reaching the network right now is pointed out in the list, because it is the one the operator wants when they want one: it is no longer the default.
 
 
 :::info
@@ -139,8 +139,8 @@ To keep a card for Linux later, write the stanza the installer would have writte
 
 ```
 F=/etc/network/interfaces.d/prisma-routing
-echo "auto ens19" >> $F
-echo "iface ens19 inet dhcp" >> $F
+echo "auto enp2s0" >> $F
+echo "iface enp2s0 inet dhcp" >> $F
 ```
 
 A static address takes `inet static` and an `address` line. The other way, without a shell, is to name the subscriber card in the VTY under `system` > `dataplane` > `interface <card>`: the dataplane then claims only that one, and the rest stay with Linux. See [Getting started](/s/wiki-en/doc/getting-started-WksYlCtcGd).
@@ -153,11 +153,11 @@ The boot self-test reads **the same file** back at every boot and reports what h
 
 | Line in the self-test | Meaning |
 |-----------------------|---------|
-| `[ ok ] managed on ens18 (dhcp)` | with the address and route printed below |
-| `[warn] ens18 is up with no default route` | it has an address, no default route, and no gateway was asked for |
+| `[ ok ] managed on enp1s0 (dhcp)` | with the address and route printed below |
+| `[warn] enp1s0 is up with no default route` | it has an address, no default route, and no gateway was asked for |
 | `[FAIL] ... has an address and no default route` | **the gateway answered did not take.** The line names the gateway that did not go in |
 | `[FAIL] ... has no address` | DHCP with no reply, or `ifup` failed |
-| `[FAIL] management network: this box has no card called ens18` | the installation card is no longer in the box. Lists the ones that are |
+| `[FAIL] management network: this box has no card called enp1s0` | the installation card is no longer in the box. Lists the ones that are |
 | `[FAIL] no management network: nothing was ever written for one` | medium up to 0.72.0. The line carries the commands that fix it from that console |
 | `[info] no management network was asked for at install time` | answered `none`, and the box really is console-only |
 | `[warn] no management network was asked for, and this box is on one anyway` | answered `none`, but Linux has a card with an address — and it is a card the dataplane claims at the next boot |

@@ -44,7 +44,7 @@ flowchart LR
 | CGNAT | `prisma# [edit nat / cgnat] ` | `cgnat`, inside `nat` | `exit`, `up` or `top` |
 | NAT64 | `prisma# [edit nat / nat64] ` | `nat64`, inside `nat` | `exit`, `up` or `top` |
 | Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <name>`, inside `cgnat` — or inside `nat64`, with `[edit nat / nat64 / pool <name>]` | `exit` goes back to `cgnat` (or `nat64`); `top` goes to the top |
-| Interface | `prisma# [edit interface ens18] ` | `interface <name>` | `exit`, `up` or `top` |
+| Interface | `prisma# [edit interface enp1s0] ` | `interface <name>` | `exit`, `up` or `top` |
 | User | `prisma# [edit user joao] ` | `user <name>` | `exit`, `up` or `top` |
 | SNMP user | `prisma# [edit snmp user nms] ` | `snmp-user <name>` | `exit`, `up` or `top` |
 | Static routes | `prisma# [edit router static] ` | `router static` | `exit`, `up` or `top` |
@@ -118,8 +118,8 @@ And where the tree expects a **name**, both complete with what the box actually 
 
 ```
 prisma# [edit] interface ?
-  ens18  interface (up)
-  ens19  interface (up)
+  enp1s0  interface (up)
+  enp2s0  interface (up)
   <interface>, or a name that creates one
 ```
 
@@ -168,20 +168,20 @@ The next-hop of a static route completes with the neighbors the dataplane has re
 You do not need to type the whole word. **Any abbreviation that fits a single statement counts as the whole statement** — the box completes it for you before reading the line:
 
 ```
-prisma# [edit] interf ens18
-prisma# [edit interface ens18] no shut
-prisma# [edit interface ens18] descr uplink da transito
-prisma# [edit interface ens18] mt 9000
+prisma# [edit] interf enp1s0
+prisma# [edit interface enp1s0] no shut
+prisma# [edit interface enp1s0] descr uplink da transito
+prisma# [edit interface enp1s0] mt 9000
 ```
 
-is exactly the same as `interface ens18`, `no shutdown`, `description uplink da transito` and `mtu 9000`. The words that count are the same ones `?` and TAB offer at that point, so what the box accepts and what it offers never disagree.
+is exactly the same as `interface enp1s0`, `no shutdown`, `description uplink da transito` and `mtu 9000`. The words that count are the same ones `?` and TAB offer at that point, so what the box accepts and what it offers never disagree.
 
 **What is stored is always the full spelling.** `show this`, `show configuration` and the file `save` writes never show `no shut`: `mt 9000` appears as `mtu 9000`, and an interface brought up with `no shut` simply no longer has the `shutdown` line - the box only writes `shutdown` when the interface is down. Abbreviation exists for your fingers, not for the file.
 
 ### An ambiguous abbreviation is refused, with the candidates
 
 ```
-prisma# [edit interface ens18] i 1
+prisma# [edit interface enp1s0] i 1
 error: an ambiguous abbreviation
     'i' begins 4 statements here: ip, ipv4, ipv6, isis
     type enough of one to tell them apart, or '?' to read what each does
@@ -437,13 +437,13 @@ The blocks with many statements are documented separately, each with the complet
 ## An interface name that does not exist is refused
 
 ```
-error: interface ens9: this box has no such interface
-    it has: ens18, ens19
+error: interface enp2s1: this box has no such interface
+    it has: enp1s0, enp2s0
     (a linux_cp pair answers to both its dataplane name and its Linux one)
     the statement would commit and do nothing
 ```
 
-`interface ens9` — a typo for `ens19` — would commit cleanly, appear in the running configuration and do nothing. The refusal comes at `commit` and at `commit check`, and **lists what the box has**, because it already knows: it is the same source completion comes from, and whoever gets only a "no" has to go looking.
+`interface enp2s1` — a typo for `enp2s0` — would commit cleanly, appear in the running configuration and do nothing. The refusal comes at `commit` and at `commit check`, and **lists what the box has**, because it already knows: it is the same source completion comes from, and whoever gets only a "no" has to go looking.
 
 It applies to **any** `interface` block with any statement inside — address, MTU, description, CGNAT side, VRRP, an OSPF line — and to the `interface <name> inside|outside` that the `cgnat` level still accepts.
 
@@ -453,7 +453,7 @@ The exceptions are the names that **create** an interface: `interface loop<n>`, 
 
 
 :::info
-A `linux_cp` interface answers to **more than one name** when the `linux-name` is different — the dataplane one (`ens18`) and the Linux one (`vppwan0`). Both are accepted, because both are real and FRR uses the second. A card without `linux-name` is called `ens18` on both sides.
+A `linux_cp` interface answers to **more than one name** when the `linux-name` is different — the dataplane one (`enp1s0`) and the Linux one (`vppwan0`). Both are accepted, because both are real and FRR uses the second. A card without `linux-name` is called `enp1s0` on both sides.
 
 :::
 
@@ -483,7 +483,7 @@ It is FRR's entire grammar, and it works even with the protocol daemon stopped. 
 Inside a block, only what applies there:
 
 ```
-prisma# [edit interface ens18] ?
+prisma# [edit interface enp1s0] ?
   cgnat        this interface's side of the CGNAT
   description  what this interface is for
   exit         leave the interface
@@ -517,7 +517,7 @@ The routing blocks this VTY models — `router bgp` and its address family, `rou
 
 Where the tree expects a **name**, the box answers: interfaces come from the dataplane with their state, and pools, accounts, SNMP users, prefix-lists, route-maps, neighbors and peer groups come from the **candidate** — they complete what is being edited, not just what has already been committed.
 
-Completion **ignores upper and lower case** and always inserts the machine's spelling: `ENS19` and `Ens19` complete to `ens19`.
+Completion **ignores upper and lower case** and always inserts the machine's spelling: `ENS19` and `Ens19` complete to `enp2s0`.
 
 
 :::info
@@ -525,7 +525,7 @@ A source that does not answer — the dataplane down, for example — offers not
 
 :::
 
-The prompt names where you are, including which pool or which interface: `[edit interface ens19]`. Without that, a statement typed one block after the intended one lands on the wrong interface, without warning.
+The prompt names where you are, including which pool or which interface: `[edit interface enp2s0]`. Without that, a statement typed one block after the intended one lands on the wrong interface, without warning.
 
 # See also
 

@@ -441,7 +441,7 @@ show interface utilization <name>           how much is going through the port, 
 `show interface utilization` samples the dataplane counters several times and shows the rate in bit/s of each port, receiving and transmitting, with a small bar chart of that run's samples. By default it is 5 samples every 2 seconds; `interval <seconds>` (0.1 to 60) and `count <n>` (1 to 120) change that, and the port name at the end limits it to a single one:
 
 ```
-show interface utilization interval 1 count 30 ens19
+show interface utilization interval 1 count 30 enp2s0
 ```
 
 Where the dataplane reports the link speed, the bars and the percentage are of that port's line rate. Where it does not — every virtual interface —, the bars are scaled by the run's highest sample, and the footer says so instead of making up a percentage. Ctrl-C ends the sampling before the end and shows what has already been measured. It is the answer to *"is the link full?"* without waiting for the NMS graph to close the interval — but it keeps no history between one run and another: history is the NMS's job.

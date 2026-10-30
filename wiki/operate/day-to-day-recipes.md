@@ -314,7 +314,7 @@ The box you want to work on holds the service address. Move the service to the p
 
 ```
 configure
- interface ens18
+ interface enp1s0
   vrrp 1 priority 50
   exit
  commit
@@ -323,7 +323,7 @@ configure
 The box warns what this costs before applying:
 
 ```
-  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  changing vrrp 1 on enp1s0 restarts it: this box stops advertising while it is
   rebuilt, the peer takes the address, and preempt hands it back - two
   elections, a few seconds apart
 ```
@@ -332,7 +332,7 @@ Check which box ended up with the service — `show cgnat ha` on both — and on
 
 ```
 configure
- interface ens18
+ interface enp1s0
   vrrp 1 priority 200
   exit
  commit

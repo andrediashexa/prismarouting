@@ -20,7 +20,7 @@ La verificación es el *unicast Reverse Path Forwarding*: la dirección de orige
 
 ```
 configure
- interface ens19
+ interface enp2s0
   urpf strict
   exit
  commit
@@ -64,7 +64,7 @@ Ese límite está **verificado**, no solo descrito: la verificación envía la d
 # Cómo verificar
 
 ```
-show interface ens19
+show interface enp2s0
 ```
 
 La pantalla de la interfaz trae una línea `urpf` con el modo que el **dataplane** está aplicando — `strict`, `loose` u `off` —, leído del equipo y no del archivo, y los contadores del puerto, donde entran los descartes.

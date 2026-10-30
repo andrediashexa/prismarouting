@@ -8,7 +8,7 @@ Cómo poner dos equipos Prisma Routing sosteniendo la misma dirección de servic
 
 :::
 
-En los ejemplos, el equipo A es el que debe quedarse con el servicio y el equipo B es la reserva. `ens18` es el puerto interno (suscriptores) y `ens19` el puerto externo (upstream); reemplácelos por los nombres de sus equipos. Los nombres de los puertos no necesitan ser iguales en los dos: el par se empareja por el número del router virtual y por la dirección, nunca por el nombre de la interfaz.
+En los ejemplos, el equipo A es el que debe quedarse con el servicio y el equipo B es la reserva. `enp1s0` es el puerto interno (suscriptores) y `enp2s0` el puerto externo (upstream); reemplácelos por los nombres de sus equipos. Los nombres de los puertos no necesitan ser iguales en los dos: el par se empareja por el número del router virtual y por la dirección, nunca por el nombre de la interfaz.
 
 # 1. Los mismos pools en los dos equipos
 
@@ -26,17 +26,17 @@ En el equipo A, prioridad mayor, y cada puerto monitoreando (`track`) al otro:
 
 ```
 configure
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.3.252/22
   vrrp 1 address 100.64.3.254
   vrrp 1 priority 200
-  vrrp 1 track ens19 decrement 150
+  vrrp 1 track enp2s0 decrement 150
   exit
- interface ens19
+ interface enp2s0
   ipv4 address 198.51.100.2/29
   vrrp 2 address 198.51.100.1
   vrrp 2 priority 200
-  vrrp 2 track ens18 decrement 150
+  vrrp 2 track enp1s0 decrement 150
   exit
 ```
 
@@ -44,15 +44,15 @@ En el equipo B, los **mismos números de router virtual y las mismas direcciones
 
 ```
 configure
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.3.253/22
   vrrp 1 address 100.64.3.254
-  vrrp 1 track ens19 decrement 150
+  vrrp 1 track enp2s0 decrement 150
   exit
- interface ens19
+ interface enp2s0
   ipv4 address 198.51.100.3/29
   vrrp 2 address 198.51.100.1
-  vrrp 2 track ens18 decrement 150
+  vrrp 2 track enp1s0 decrement 150
   exit
 ```
 
@@ -85,7 +85,7 @@ Antes del `commit`, `commit check` verifica la candidata. Dos rechazos son espec
 Un router virtual sin dirección:
 
 ```
-error: interface ens18: vrrp 1 has no address
+error: interface enp1s0: vrrp 1 has no address
     a virtual router with nothing to stand for would elect a master that
     answers for nothing
 ```
@@ -93,7 +93,7 @@ error: interface ens18: vrrp 1 has no address
 Un `track` apuntando a una interfaz que el equipo no tiene:
 
 ```
-error: interface ens18: vrrp 1: no interface ens20
+error: interface enp1s0: vrrp 1: no interface enp5s0
     the dataplane does not have the interface this virtual router was told to
     track
 ```
@@ -105,7 +105,7 @@ Y `vrrp` en una interfaz que el equipo no tiene se rechaza con las mismas palabr
 **Cambiar un router virtual que ya existe cuesta dos elecciones.** El router no se edita sin reconstruir: el equipo lo borra y lo recrea. Si tiene la dirección de servicio, el peer asume durante la reconstrucción y el `preempt` la devuelve enseguida. El equipo advierte antes de aplicar:
 
 ```
-  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  changing vrrp 1 on enp1s0 restarts it: this box stops advertising while it is
   rebuilt, the peer takes the address, and preempt hands it back - two
   elections, a few seconds apart
 ```
@@ -192,7 +192,7 @@ Las advertencias que pueden aparecer en su lugar:
 Mirando un solo puerto, durante una falla:
 
 ```
-show interface ens18
+show interface enp1s0
 ```
 
 En un puerto con router virtual, la pantalla trae el rol y cada dirección de servicio con la MAC virtual:
@@ -253,7 +253,7 @@ Haga esto en una ventana, antes de necesitar el par:
    show cgnat subscriber <ip del suscriptor>
    ```
 3. Provoque la falla en el equipo A. Una a la vez, y con tiempo para volver entre ellas:
-   * **desconecte el cable del upstream** (`ens19`): prueba el `track`. El equipo A debe anunciar 50 y perder frente a B;
+   * **desconecte el cable del upstream** (`enp2s0`): prueba el `track`. El equipo A debe anunciar 50 y perder frente a B;
    * **baje la prioridad** por la VTY (`vrrp 1 priority 50` y `vrrp 2 priority 50`, `commit`): prueba la elección;
    * **apague el equipo A**: prueba la pérdida del equipo entero.
 4. En el equipo B, `show cgnat ha` debe mostrar `master, holding the address`, y el suscriptor debe volver a navegar en algunos segundos. Verifique `show cgnat subscriber` en B: en un pool determinístico, la misma dirección pública y el mismo bloque; en un pool BPA, un bloque nuevo.

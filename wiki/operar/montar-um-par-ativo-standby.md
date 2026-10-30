@@ -8,7 +8,7 @@ Como pôr duas caixas Prisma Routing sustentando o mesmo endereço de serviço, 
 
 :::
 
-Nos exemplos, a caixa A é a que deve ficar com o serviço e a caixa B é a reserva. `ens18` é a porta de dentro (assinantes) e `ens19` a porta de fora (upstream); troque pelos nomes das suas caixas. Os nomes das portas não precisam ser iguais nas duas: o par é casado pelo número do roteador virtual e pelo endereço, nunca pelo nome da interface.
+Nos exemplos, a caixa A é a que deve ficar com o serviço e a caixa B é a reserva. `enp1s0` é a porta de dentro (assinantes) e `enp2s0` a porta de fora (upstream); troque pelos nomes das suas caixas. Os nomes das portas não precisam ser iguais nas duas: o par é casado pelo número do roteador virtual e pelo endereço, nunca pelo nome da interface.
 
 # 1. Os mesmos pools nas duas caixas
 
@@ -26,17 +26,17 @@ Na caixa A, prioridade maior, e cada porta acompanhando (`track`) a outra:
 
 ```
 configure
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.3.252/22
   vrrp 1 address 100.64.3.254
   vrrp 1 priority 200
-  vrrp 1 track ens19 decrement 150
+  vrrp 1 track enp2s0 decrement 150
   exit
- interface ens19
+ interface enp2s0
   ipv4 address 198.51.100.2/29
   vrrp 2 address 198.51.100.1
   vrrp 2 priority 200
-  vrrp 2 track ens18 decrement 150
+  vrrp 2 track enp1s0 decrement 150
   exit
 ```
 
@@ -44,15 +44,15 @@ Na caixa B, os **mesmos números de roteador virtual e os mesmos endereços de s
 
 ```
 configure
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.3.253/22
   vrrp 1 address 100.64.3.254
-  vrrp 1 track ens19 decrement 150
+  vrrp 1 track enp2s0 decrement 150
   exit
- interface ens19
+ interface enp2s0
   ipv4 address 198.51.100.3/29
   vrrp 2 address 198.51.100.1
-  vrrp 2 track ens18 decrement 150
+  vrrp 2 track enp1s0 decrement 150
   exit
 ```
 
@@ -85,7 +85,7 @@ Antes do `commit`, `commit check` confere a candidata. Duas recusas são especí
 Um roteador virtual sem endereço:
 
 ```
-error: interface ens18: vrrp 1 has no address
+error: interface enp1s0: vrrp 1 has no address
     a virtual router with nothing to stand for would elect a master that
     answers for nothing
 ```
@@ -93,7 +93,7 @@ error: interface ens18: vrrp 1 has no address
 Um `track` apontando para uma interface que a caixa não tem:
 
 ```
-error: interface ens18: vrrp 1: no interface ens20
+error: interface enp1s0: vrrp 1: no interface enp5s0
     the dataplane does not have the interface this virtual router was told to
     track
 ```
@@ -105,7 +105,7 @@ E `vrrp` numa interface que a caixa não tem é recusado com as mesmas palavras 
 **Mudar um roteador virtual que já existe custa duas eleições.** O roteador não é editado no lugar: a caixa o apaga e o recria. Se ele está com o endereço de serviço, a parceira assume durante a reconstrução e o `preempt` devolve em seguida. A caixa avisa antes de aplicar:
 
 ```
-  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  changing vrrp 1 on enp1s0 restarts it: this box stops advertising while it is
   rebuilt, the peer takes the address, and preempt hands it back - two
   elections, a few seconds apart
 ```
@@ -192,7 +192,7 @@ Os avisos que podem aparecer no lugar disso:
 Olhando uma porta só, durante uma falha:
 
 ```
-show interface ens18
+show interface enp1s0
 ```
 
 Numa porta com roteador virtual, a tela traz o papel e cada endereço de serviço com o MAC virtual:
@@ -253,7 +253,7 @@ Faça isto numa janela, antes de precisar do par:
    show cgnat subscriber <ip do assinante>
    ```
 3. Provoque a falha na caixa A. Uma de cada vez, e com o tempo de voltar entre elas:
-   * **tire o cabo do upstream** (`ens19`): prova o `track`. A caixa A deve anunciar 50 e perder para a B;
+   * **tire o cabo do upstream** (`enp2s0`): prova o `track`. A caixa A deve anunciar 50 e perder para a B;
    * **baixe a prioridade** pela VTY (`vrrp 1 priority 50` e `vrrp 2 priority 50`, `commit`): prova a eleição;
    * **desligue a caixa A**: prova a perda da caixa inteira.
 4. Na caixa B, `show cgnat ha` deve mostrar `master, holding the address`, e o assinante deve voltar a navegar em alguns segundos. Confira `show cgnat subscriber` na B: num pool determinístico, o mesmo endereço público e o mesmo bloco; num pool BPA, um bloco novo.

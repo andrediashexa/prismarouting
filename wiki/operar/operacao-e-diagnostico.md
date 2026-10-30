@@ -92,9 +92,9 @@ Se o par não existir, não há para onde o endereço voltar. A caixa sobe encam
         linux_cp pair is where the address the box answers on goes back.
         Without one it comes up forwarding and unreachable from anywhere but
         its console.
-        the way back it computed on this boot: ens18 192.0.2.10/24
+        the way back it computed on this boot: enp1s0 192.0.2.10/24
         52:54:00:00:00:01
-        without a pair: ens18
+        without a pair: enp1s0
         give each one an 'interface' block in prismash, and commit:
         the block pairs it under its own name.
 ```
@@ -103,7 +103,7 @@ A linha do caminho de gerência é a que interessa primeiro: ela é o endereço 
 
 ```
 configure
-interface ens18
+interface enp1s0
  no shutdown
  exit
 commit
@@ -326,13 +326,13 @@ O tuning roda em todo boot justamente para que uma mudança em `tune.env` ou uma
 O autoteste lê, do dataplane em execução, quantas filas de recepção cada placa realmente abriu, e compara com o que o ajuste de boot pediu para aquela placa:
 
 ```
-  [ ok ] rx queues: 1 of 1 on ens9, as requested (1)
+  [ ok ] rx queues: 1 of 1 on enp6s0, as requested (1)
 ```
 
 `1 of 1` é o que a placa abriu e o máximo que ela tem; o nome é o que o dataplane dá à placa, que é o nome que ela tinha no Linux. Quando o que foi aberto difere do pedido, a linha vira aviso e diz por que isso importa:
 
 ```
-  [warn] rx queues: 1 of 1 on ens9, 4 requested
+  [warn] rx queues: 1 of 1 on enp6s0, 4 requested
          the tuner asked for one queue per worker, capped at
          what the card reported, and the dataplane opened 1:
          at most 1 worker(s) receive from this card, and the
@@ -344,7 +344,7 @@ O ajuste de boot dimensiona os workers pelo processador e pede uma fila por work
 Há um caso pior: o driver recusa a placa e não abre fila nenhuma, embora o dataplane ainda liste a contagem com que ela foi configurada. O autoteste lê o estado do driver junto com a contagem e trata isso como falha, não como fila aberta:
 
 ```
-  [FAIL] rx queues: none opened on ens9
+  [FAIL] rx queues: none opened on enp6s0
         'show hardware-interfaces' marks the card pmd-init-fail, so the
         1 of 1 it lists were configured and never opened:
         the driver refused the port and the card carries no

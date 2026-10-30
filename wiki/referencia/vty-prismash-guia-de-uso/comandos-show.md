@@ -68,9 +68,9 @@ E esta é a primeira coisa a estabelecer quando alguém liga dizendo que o encam
 
 ```
 prisma> show route
-  Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       ens19        forward
-  200.150.0.0/24       connected         ens19        connected
+  Destination    Next hop    Interface Kind
+  0.0.0.0/0      200.150.0.1 enp2s0    forward
+  200.150.0.0/24 -           enp2s0    connected
 
   2 entries carrying traffic
 ```
@@ -88,15 +88,15 @@ Quando o tráfego não passa e a rota parece certa, `show route verbose` é o co
 ```
 prisma> show interface
   Interface                  State  MTU    Address             Linux
-  ens18                      up     9000   203.0.113.1/24      tap0 ens18
-  ens19                      up     1500   -                   -
+  enp1s0                     up     9000   203.0.113.1/24      tap0 enp1s0
+  enp2s0                     up     1500   -                   -
 
   2 interface(s) on the dataplane can forward
 ```
 
 Responde pelo **dataplane**, com estado, MTU, endereços e o par do `linux_cp`. Esse último porque é o nome que o FRR e o `ip` usam, e quem transita entre as duas ferramentas precisa dos dois lado a lado.
 
-**A placa aparece com o nome que o Linux dava a ela.** A caixa reivindica as placas sozinha e batiza cada uma, no dataplane, com o nome que ela tinha no Linux: a `ens18` continua sendo `ens18`, e é assim que ela aparece aqui, no prompt e no roteamento. Uma placa com bloco `interface` entra no Linux com esse mesmo nome, e é ele que a coluna **Linux** mostra, ao lado do `tap` interno que o par usa - `linux-name` só é preciso para escolher outro. Uma porta cujo nome tem barras é uma placa que ninguém nomeou; o roteamento recusa nomes acima de 16 caracteres, e o `commit` diz isso antes de tentar.
+**A placa aparece com o nome que o Linux dava a ela.** A caixa reivindica as placas sozinha e batiza cada uma, no dataplane, com o nome que ela tinha no Linux: a `enp1s0` continua sendo `enp1s0`, e é assim que ela aparece aqui, no prompt e no roteamento. Uma placa com bloco `interface` entra no Linux com esse mesmo nome, e é ele que a coluna **Linux** mostra, ao lado do `tap` interno que o par usa - `linux-name` só é preciso para escolher outro. Uma porta cujo nome tem barras é uma placa que ninguém nomeou; o roteamento recusa nomes acima de 16 caracteres, e o `commit` diz isso antes de tentar.
 
 
 :::warning
@@ -121,11 +121,11 @@ Uma linha por interface, com **duas** colunas de estado:
 ```
 prisma> show interface terse
   Interface                  Admin  Link   Proto  Local
-  ens18                      up     up     inet   203.0.113.1/24
-  ens19                      up     down   -      -
+  enp1s0                     up     up     inet   203.0.113.1/24
+  enp2s0                     up     down   -      -
 
   2 interface(s) on the dataplane can forward
-  ens19: configured up, link down - that is the wire or the far end, not this configuration
+  enp2s0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
 | `Admin` | `Link` | O que é |
@@ -145,8 +145,8 @@ Um endereço por linha: uma interface com IPv4 e IPv6 aparece em duas linhas, co
 ```
 prisma> show interface description
   Interface                  Admin  Link   Description
-  ens18                      up     up     ASSINANTES PON-3
-  ens19                      up     down   TRANSITO Vivo AS26599
+  enp1s0                     up     up     ASSINANTES PON-3
+  enp2s0                     up     down   TRANSITO Vivo AS26599
 
   2 of 2 interface(s) described
 ```
@@ -168,12 +168,12 @@ prisma> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
-  ens19                      675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
-  ens18                        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp1s0                       8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp2s0                     675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
 
   bars are each interface's share of its own line rate
-    ens19                     12.4% of 10.00 Gbit/s
-    ens18                      0.8% of 1.00 Gbit/s
+    enp1s0                     0.8% of 1.00 Gbit/s
+    enp2s0                    12.4% of 10.00 Gbit/s
 ```
 
 | Argumento | Efeito |
@@ -244,8 +244,8 @@ show interface <nome> transceiver
 O módulo que está na gaiola da porta (SFP, SFP+, QSFP): quem fez, qual é, e — quando ele tem diagnóstico (DDM) — a temperatura, a tensão, a corrente do laser e as potências de TX e RX, cada uma ao lado dos limites de alarme e de aviso **que o próprio módulo grava** e dizendo se passou de algum. É a mesma leitura que o `display transceiver ... verbose` do switch do outro lado dá, e é a que se compara com ela:
 
 ```
-prisma> show interface ens18 transceiver
-  ens18: SFP/SFP+/SFP28, LC connector, 1310 nm
+prisma> show interface enp1s0 transceiver
+  enp1s0: SFP/SFP+/SFP28, LC connector, 1310 nm
     vendor      Rei do SFP (OUI 00:90:65)
     part        RSMPP8510GL-03D  revision 2.1
     serial      FP23H150378  date 2023-08-15
@@ -276,11 +276,11 @@ prisma> show interface ens18 transceiver
 **No** `**show interface**`, duas notas aparecem embaixo da lista quando valem — notas, não erros: a porta encaminha, e a nota diz onde olhar.
 
 ```
-  ens18: rx power -19.00 dBm, below its low warning (-18.01 dBm)
-    'show interface ens18 transceiver' has the module's levels
-  ens18: 0.58% of received frames failed their CRC (60,674 of 10,460,674) since
-    the counters started: look at the fibre, the connectors and the modules at
-    both ends; 'show interface ens18 transceiver' has this end's
+  enp1s0: rx power -19.00 dBm, below its low warning (-18.01 dBm)
+    'show interface enp1s0 transceiver' has the module's levels
+  enp1s0: 0.58% of received frames failed their CRC (60,674 of 10,460,674)
+    since the counters started: look at the fibre, the connectors and the
+    modules at both ends; 'show interface enp1s0 transceiver' has this end's
 ```
 
 A primeira, quando a potência de RX de um módulo passou de um dos avisos dele. A segunda, quando os erros de CRC de uma porta passam de **0,01%** dos quadros recebidos desde que os contadores começaram (e são pelo menos dez, para que um enlace que pegou meia dúzia ao subir não diga isso para sempre). Óptica e fibra limpas não contam erro nenhum — a taxa de erro especificada de um enlace de 10G é de 1 bit em 10¹², alguns quadros por dia —, então uma taxa desse tamanho é fibra, conector ou módulo. A porta que motivou isso contava 0,58%: 58 vezes acima.
@@ -410,8 +410,8 @@ Sempre, e antes da lista. Uma placa que o **dataplane já tomou** desaparece da 
 
 ```
 prisma> show hardware
-  the dataplane holds ens19. A NIC VPP owns is no longer listed by Linux, so it
-  is not in the list below.
+  the dataplane holds enp2s0. A NIC VPP owns is no longer listed by Linux, so
+  it is not in the list below.
 ```
 
 Quando o dataplane não tem interface nenhuma, a linha é o **mesmo diagnóstico** que o `show interface` e o autoteste de boot dão, lido das mesmas fontes: dois diagnósticos do mesmo fato que discordam entre si são piores que um.
@@ -442,7 +442,7 @@ Repare que `policy` e `mode` aparecem sem você ter digitado. Não é a tela acr
 
 Dentro de um pool, o bloco sai como se digita ali: `pool residential` e os campos. Em `cgnat`, `show this` mostra o que o nível tem; em `nat`, o bloco inteiro; em `system` e nos níveis abaixo dele, o que aquele nível tem. `show configuration` e `show running-config`, que mostram a caixa inteira, trazem o CGNAT como o bloco `nat` > `cgnat` — pools e ajustes globais, na ordem em que se digita —, o lado de CGNAT de cada interface (`cgnat inside` ou `cgnat outside`) dentro do bloco da própria interface, e as rotas estáticas num bloco `router static`. É também como o `save` grava, então copiar a tela para um arquivo e carregá-lo de volta funciona.
 
-O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface ens19]` — para que a próxima declaração não caia no bloco errado.
+O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface enp2s0]` — para que a próxima declaração não caia no bloco errado.
 
 ## O que a caixa conferiu, e o que ela apenas repassou
 

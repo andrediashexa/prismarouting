@@ -101,7 +101,7 @@ On a box with several and one reserved at installation, the screen counts the ca
 Reserved for Linux:
 ```
 
-followed by the card's name and the sentence saying it is the management network the box was installed with. The name is always the one Linux gave the card (`ens19`, `enp2s0`): the box keeps that name for the cards the dataplane claims, and that is the name they appear with in `show interface` and in the `[edit interface ens19]` prompt. The boot self-test says the same thing on the console, for whoever is looking at the screen and has not typed anything yet.
+followed by the card's name and the sentence saying it is the management network the box was installed with. The name is always the one Linux gave the card (`enp4s0`, `enp2s0`): the box keeps that name for the cards the dataplane claims, and that is the name they appear with in `show interface` and in the `[edit interface enp4s0]` prompt. The boot self-test says the same thing on the console, for whoever is looking at the screen and has not typed anything yet.
 
 A box that silently ate a card would be worse than one that asks; and one that silently spared a card would leave the operator with no explanation for a missing card. That is why both halves are stated.
 
@@ -196,7 +196,7 @@ If the box comes up with the card handed over and **nothing** on the other side 
 
 ```
 error: the card this box is reached on was handed over and nothing took it
-    Linux no longer has ens18 and no interface the dataplane holds has
+    Linux no longer has enp3s0 and no interface the dataplane holds has
     52:54:00:12:34:56, so there is no pair for 192.0.2.10/24 to go on
     this box has no address and cannot be reached over the network until that
     is repaired from here
@@ -259,10 +259,10 @@ Not sure what to type? **TAB** completes and `**?**` lists the valid options wit
 The CGNAT side is typed in each interface's block:
 
 ```
-interface ens18
+interface enp3s0
  cgnat inside
  exit
-interface ens19
+interface enp4s0
  cgnat outside
  exit
 ```

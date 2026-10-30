@@ -101,7 +101,7 @@ En un equipo con varias y una reservada en la instalación, la pantalla cuenta l
 Reserved for Linux:
 ```
 
-seguida del nombre de la placa y de la frase que dice que es la red de gestión con la que se instaló el equipo. El nombre es siempre el que Linux le dio a la placa (`ens19`, `enp2s0`): el equipo mantiene ese nombre para las placas que reclama el dataplane, y es con él que aparecen en `show interface` y en el prompt `[edit interface ens19]`. El autotest de arranque dice lo mismo en la consola, para quien está mirando la pantalla y todavía no escribió nada.
+seguida del nombre de la placa y de la frase que dice que es la red de gestión con la que se instaló el equipo. El nombre es siempre el que Linux le dio a la placa (`enp4s0`, `enp2s0`): el equipo mantiene ese nombre para las placas que reclama el dataplane, y es con él que aparecen en `show interface` y en el prompt `[edit interface enp4s0]`. El autotest de arranque dice lo mismo en la consola, para quien está mirando la pantalla y todavía no escribió nada.
 
 Un equipo que se tragara una placa en silencio sería peor que uno que pregunta; y uno que reservara una en silencio dejaría al operador sin explicación para una placa ausente. Por eso se dicen las dos mitades.
 
@@ -196,7 +196,7 @@ Si el equipo arranca con la placa entregada y **nada** del otro lado se quedó c
 
 ```
 error: the card this box is reached on was handed over and nothing took it
-    Linux no longer has ens18 and no interface the dataplane holds has
+    Linux no longer has enp3s0 and no interface the dataplane holds has
     52:54:00:12:34:56, so there is no pair for 192.0.2.10/24 to go on
     this box has no address and cannot be reached over the network until that
     is repaired from here
@@ -259,10 +259,10 @@ Lo que decide cada línea:
 El lado del CGNAT se escribe en el bloque de cada interfaz:
 
 ```
-interface ens18
+interface enp3s0
  cgnat inside
  exit
-interface ens19
+interface enp4s0
  cgnat outside
  exit
 ```

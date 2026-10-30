@@ -523,10 +523,10 @@ configure
     exit
    exit
   exit
- interface ens18
+ interface enp1s0
   cgnat inside
   exit
- interface ens19
+ interface enp2s0
   cgnat outside
   exit
  show configuration compare

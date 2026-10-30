@@ -441,7 +441,7 @@ show interface utilization <nombre>         cuánto está pasando por el puerto,
 `show interface utilization` muestrea los contadores del dataplane varias veces y muestra la tasa en bit/s de cada puerto, recibiendo y transmitiendo, con un pequeño gráfico de barras de las muestras de esa ejecución. Por defecto son 5 muestras cada 2 segundos; `interval <segundos>` (0,1 a 60) y `count <n>` (1 a 120) lo cambian, y el nombre del puerto al final limita a uno solo:
 
 ```
-show interface utilization interval 1 count 30 ens19
+show interface utilization interval 1 count 30 enp2s0
 ```
 
 Donde el dataplane informa la velocidad del enlace, las barras y el porcentaje son de la tasa de línea de ese puerto. Donde no la informa —toda interfaz virtual—, las barras se escalan por la muestra más alta de la ejecución, y el pie lo indica en lugar de inventar un porcentaje. Ctrl-C termina el muestreo antes del final y muestra lo que ya se midió. Es la respuesta a *"¿el enlace está lleno?"* sin esperar a que el gráfico de la NMS cierre el intervalo, pero no guarda historial entre una ejecución y otra: el historial es trabajo de la NMS.

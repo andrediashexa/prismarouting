@@ -62,19 +62,19 @@ Activo/standby con VRRP en los dos lados (público e interno), **sin** sincroniz
 En cada equipo, un router virtual por lado, con el mismo `vrid` en ambos equipos y prioridad diferente:
 
 ```
-interface ens18
+interface enp1s0
  ipv4 address 100.64.3.252/22
  cgnat inside
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp2s0 decrement 150
  exit
-interface ens19
+interface enp2s0
  ipv4 address 200.150.0.11/24
  cgnat outside
  vrrp 2 address 200.150.0.254
  vrrp 2 priority 200
- vrrp 2 track ens18 decrement 150
+ vrrp 2 track enp1s0 decrement 150
  exit
 ```
 
@@ -143,7 +143,7 @@ Dos hallazgos, y los dos son errores de configuración sin síntoma hasta el dí
 * **la misma prioridad en los dos equipos.** La RFC 5798 desempata por la dirección de origen mayor, así que el par funciona y quién se queda con el servicio lo decide algo que nadie escribió. El primer failover cae donde lo ponga el direccionamiento.
 * **un** `**vrid**` **que solo uno de los equipos sostiene.** No existe standby para esa dirección: el equipo que la tiene está solo. Una dirección virtual diferente bajo el mismo `vrid` es este mismo hallazgo dos veces, una por cada equipo.
 
-La comparación es por el `**vrid**` **y por la dirección**, nunca por el nombre de la interfaz: los dos equipos sostienen una dirección bajo un `vrid`, y cómo se llama el puerto en cada lado es asunto de cada uno: `ens18` aquí puede ser `ens19` allá y el par está correcto.
+La comparación es por el `**vrid**` **y por la dirección**, nunca por el nombre de la interfaz: los dos equipos sostienen una dirección bajo un `vrid`, y cómo se llama el puerto en cada lado es asunto de cada uno: `enp1s0` aquí puede ser `enp2s0` allá y el par está correcto.
 
 Cuando los dos divergen:
 
@@ -154,7 +154,7 @@ prisma> show cgnat ha
     pools                residencial
 
   role
-    ens18 vrrp 1   master, holding the address
+    enp1s0 vrrp 1   master, holding the address
       address(es)        100.64.3.254
       virtual mac        00:00:5e:00:01:01
       priority           200

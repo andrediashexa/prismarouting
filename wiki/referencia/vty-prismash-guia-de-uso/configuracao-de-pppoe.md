@@ -11,7 +11,7 @@ prisma# [edit aaa / radius] server 192.0.2.11 secret <segredo> priority 2
 prisma# [edit aaa / radius] exit
 prisma# [edit aaa] exit
 prisma# [edit] pppoe
-prisma# [edit pppoe] interface ens19
+prisma# [edit pppoe] interface enp2s0
 prisma# [edit pppoe] gateway 100.64.0.1
 prisma# [edit pppoe] address-pool 100.64.0.10-100.64.3.250
 prisma# [edit pppoe] dns 8.8.8.8
@@ -239,7 +239,7 @@ A hora é a do `show log`: um horário ISO com `Z` (o do log de blocos, copiado 
 prisma> show pppoe history address 100.64.0.11 at 2026-10-13T02:51:00Z
 maria.souza held 100.64.0.11
   from 2026-10-13T02:49:02.789Z  to still held
-  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on ens19.100
+  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on enp2s0.100
 ```
 
 Num pool **dinâmico**, o bloco pertence a quem o tem agora: o `show cgnat translation` responde só pelo agora e recusa o `at`. Para um instante passado, a linha `BLOCK-ALLOC` do log de blocos cuja faixa contém a porta dá o endereço interno e a hora, e o `show pppoe history address <endereço> at <hora>` dá o assinante.

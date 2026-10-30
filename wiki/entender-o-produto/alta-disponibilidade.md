@@ -62,19 +62,19 @@ Ativo/standby com VRRP nos dois lados — público e interno —, **sem** sincro
 Em cada caixa, um roteador virtual por lado, com o mesmo `vrid` dos dois lados e prioridade diferente:
 
 ```
-interface ens18
+interface enp1s0
  ipv4 address 100.64.3.252/22
  cgnat inside
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp2s0 decrement 150
  exit
-interface ens19
+interface enp2s0
  ipv4 address 200.150.0.11/24
  cgnat outside
  vrrp 2 address 200.150.0.254
  vrrp 2 priority 200
- vrrp 2 track ens18 decrement 150
+ vrrp 2 track enp1s0 decrement 150
  exit
 ```
 
@@ -143,7 +143,7 @@ Dois achados, e os dois são erro de configuração sem sintoma até o dia em qu
 * **a mesma prioridade nas duas caixas.** A RFC 5798 desempata pelo endereço de origem maior, então o par funciona e quem fica com o serviço é decidido por algo que ninguém escreveu. O primeiro failover cai onde o endereçamento puser.
 * **um** `**vrid**` **que só uma das caixas sustenta.** Não existe standby para aquele endereço: a caixa que está com ele está sozinha. Endereço virtual diferente sob o mesmo `vrid` é esse mesmo achado duas vezes, uma para cada caixa.
 
-A comparação é pelo `**vrid**` **e pelo endereço**, nunca pelo nome da interface: as duas caixas sustentam um endereço sob um `vrid`, e como a porta se chama de cada lado é problema de cada uma — `ens18` aqui pode ser `ens19` lá e o par está certo.
+A comparação é pelo `**vrid**` **e pelo endereço**, nunca pelo nome da interface: as duas caixas sustentam um endereço sob um `vrid`, e como a porta se chama de cada lado é problema de cada uma — `enp1s0` aqui pode ser `enp2s0` lá e o par está certo.
 
 Quando as duas divergem:
 
@@ -154,7 +154,7 @@ prisma> show cgnat ha
     pools                residencial
 
   role
-    ens18 vrrp 1   master, holding the address
+    enp1s0 vrrp 1   master, holding the address
       address(es)        100.64.3.254
       virtual mac        00:00:5e:00:01:01
       priority           200

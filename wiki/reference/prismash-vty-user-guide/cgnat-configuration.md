@@ -10,8 +10,8 @@ prisma# [edit nat / cgnat] pool residencial
 prisma# [edit nat / cgnat / pool residencial] prefix-inside 100.64.0.0/22
 prisma# [edit nat / cgnat / pool residencial] exit
 prisma# [edit nat / cgnat] top
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] cgnat inside
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] cgnat inside
 ```
 
 The prompt always says which level you are at. `?` and TAB offer only what is valid at that level: under `nat` you see `cgnat` and `nat64`; under `cgnat` you see `pool`, `interface`, `logging`, `timeout` and the rest of this page.
@@ -37,7 +37,7 @@ error: under 'nat' there is 'cgnat' and 'nat64'
 
 
 :::warning
-**The one-line form no longer exists.** `nat cgnat pool residencial`, `nat cgnat interface ens18 inside` and the older spelling `cgnat pool ...` are refused at the prompt and also in a saved file:
+**The one-line form no longer exists.** `nat cgnat pool residencial`, `nat cgnat interface enp1s0 inside` and the older spelling `cgnat pool ...` are refused at the prompt and also in a saved file:
 
 ```
 prisma# [edit] nat cgnat pool residencial
@@ -140,10 +140,10 @@ nat
    exit
   exit
  exit
-interface ens18
+interface enp1s0
  cgnat inside
  exit
-interface ens19
+interface enp2s0
  cgnat outside
  exit
 ```
@@ -155,21 +155,21 @@ Inside `nat` / `cgnat` are the pools and then the global settings. The side of e
 The CGNAT side is a property of the interface and is typed in its block:
 
 ```
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] cgnat inside
-prisma# [edit interface ens18] exit
-prisma# [edit] interface ens19
-prisma# [edit interface ens19] cgnat outside
-prisma# [edit interface ens19] exit
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] cgnat inside
+prisma# [edit interface enp1s0] exit
+prisma# [edit] interface enp2s0
+prisma# [edit interface enp2s0] cgnat outside
+prisma# [edit interface enp2s0] exit
 ```
 
 `inside` is the port subscribers arrive through; `outside`, the port translated traffic goes out through. `no cgnat`, inside the block, takes the interface out of CGNAT.
 
-The old form, `interface ens18 inside` under `nat` / `cgnat`, is still accepted, so that runbooks and scripts already written keep working. The box tells you where the line will appear:
+The old form, `interface enp1s0 inside` under `nat` / `cgnat`, is still accepted, so that runbooks and scripts already written keep working. The box tells you where the line will appear:
 
 ```
-prisma# [edit nat / cgnat] interface ens18 inside
-  note: kept as 'cgnat inside' in the block of interface ens18
+prisma# [edit nat / cgnat] interface enp1s0 inside
+  note: kept as 'cgnat inside' in the block of interface enp1s0
 ```
 
 A file saved by an earlier version, with the lines inside `cgnat`, is read normally, and the next `save` writes each one into its interface's block.

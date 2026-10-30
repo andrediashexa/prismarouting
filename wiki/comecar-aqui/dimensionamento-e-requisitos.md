@@ -61,17 +61,17 @@ O ajuste de boot pergunta **à placa** quantas filas ela tem e qual é a MTU má
 
 A MTU também é lida e **corrigida**. Desde a 0.152.1 toda interface sem `mtu` começa em **1500**, o padrão da caixa — antes começava nos 9000 do próprio VPP, e com isso o `tcp-mss auto` dava 8960 e não rebaixava nada num caminho de 1500. Uma placa que não aceita nem o padrão recusa o dispositivo: a porta fica em erro e não encaminha nada. Por isso, quando alguma placa reivindicada tem máximo abaixo de 1500, a caixa faz as interfaces começarem no **menor máximo** entre as placas que ela reivindica. O valor vale para todas: numa caixa com uma placa de 1400 ao lado de uma de 9000, a de 9000 também começa em 1400, e `mtu <n>` no bloco da interface sobe aquela porta depois.
 
-O relatório de boot diz o que ele encontrou, uma linha por placa. Numa máquina de oito núcleos com uma placa virtual `ens18` de máximo 1500:
+O relatório de boot diz o que ele encontrou, uma linha por placa. Numa máquina de oito núcleos com uma placa virtual `enp1s0` de máximo 1500:
 
 ```
-# NIC queues, ens18: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
+# NIC queues, enp1s0: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
 # interfaces start at: 1500, this box's default. 'mtu <n>' under
 ```
 
 Com uma placa de máximo 1400, aparece a linha dela e o parágrafo começa no máximo da placa:
 
 ```
-# NIC max MTU, ens18: 1400, below the box's default of 1500
+# NIC max MTU, enp1s0: 1400, below the box's default of 1500
 ```
 
 seguida de um parágrafo que começa com `# interfaces start at: 1400` e diz por que aquele valor vale para todas as placas.
@@ -87,13 +87,13 @@ seguida de um parágrafo que começa com `# interfaces start at: 1400` e diz por
 Placa com filas de sobra recebe uma linha curta, e placa que aguenta o padrão **não** ganha linha de MTU nenhuma:
 
 ```
-# NIC queues, ens18: 8, enough for 7 worker(s)
+# NIC queues, enp1s0: 8, enough for 7 worker(s)
 ```
 
 E quando a caixa não consegue ler as filas da placa, ela **diz isso**, porque é exatamente esse o estado em que o defeito morava:
 
 ```
-# NIC queues, ens18: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
+# NIC queues, enp1s0: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
 ```
 
 Nesse caso ela volta a pedir uma fila por worker, que é o número que falhava. Uma caixa prestes a recusar a própria placa não pode ter a mesma cara de uma caixa saudável.

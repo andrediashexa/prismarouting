@@ -10,8 +10,8 @@ prisma# [edit nat / cgnat] pool residencial
 prisma# [edit nat / cgnat / pool residencial] prefix-inside 100.64.0.0/22
 prisma# [edit nat / cgnat / pool residencial] exit
 prisma# [edit nat / cgnat] top
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] cgnat inside
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] cgnat inside
 ```
 
 El prompt siempre dice en qué nivel está usted. `?` y TAB ofrecen solo lo que vale en ese nivel: en `nat` aparecen `cgnat` y `nat64`; en `cgnat` aparecen `pool`, `interface`, `logging`, `timeout` y el resto de esta página.
@@ -37,7 +37,7 @@ error: under 'nat' there is 'cgnat' and 'nat64'
 
 
 :::warning
-**La forma de una sola línea ya no existe.** `nat cgnat pool residencial`, `nat cgnat interface ens18 inside` y la grafía más antigua `cgnat pool ...` se rechazan en el prompt y también en un archivo guardado:
+**La forma de una sola línea ya no existe.** `nat cgnat pool residencial`, `nat cgnat interface enp1s0 inside` y la grafía más antigua `cgnat pool ...` se rechazan en el prompt y también en un archivo guardado:
 
 ```
 prisma# [edit] nat cgnat pool residencial
@@ -140,10 +140,10 @@ nat
    exit
   exit
  exit
-interface ens18
+interface enp1s0
  cgnat inside
  exit
-interface ens19
+interface enp2s0
  cgnat outside
  exit
 ```
@@ -155,21 +155,21 @@ Dentro de `nat` / `cgnat` están los pools y después los ajustes globales. El l
 El lado del CGNAT es una propiedad de la interfaz y se escribe en su bloque:
 
 ```
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] cgnat inside
-prisma# [edit interface ens18] exit
-prisma# [edit] interface ens19
-prisma# [edit interface ens19] cgnat outside
-prisma# [edit interface ens19] exit
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] cgnat inside
+prisma# [edit interface enp1s0] exit
+prisma# [edit] interface enp2s0
+prisma# [edit interface enp2s0] cgnat outside
+prisma# [edit interface enp2s0] exit
 ```
 
 `inside` es el puerto por donde llegan los suscriptores; `outside`, el puerto por donde sale el tráfico traducido. `no cgnat`, dentro del bloque, quita la interfaz del CGNAT.
 
-La forma antigua, `interface ens18 inside` dentro de `nat` / `cgnat`, sigue aceptándose, para que los procedimientos y scripts ya escritos sigan funcionando. El equipo advierte dónde pasa a aparecer la línea:
+La forma antigua, `interface enp1s0 inside` dentro de `nat` / `cgnat`, sigue aceptándose, para que los procedimientos y scripts ya escritos sigan funcionando. El equipo advierte dónde pasa a aparecer la línea:
 
 ```
-prisma# [edit nat / cgnat] interface ens18 inside
-  note: kept as 'cgnat inside' in the block of interface ens18
+prisma# [edit nat / cgnat] interface enp1s0 inside
+  note: kept as 'cgnat inside' in the block of interface enp1s0
 ```
 
 Un archivo guardado por una versión anterior, con las líneas dentro de `cgnat`, se lee normalmente, y el próximo `save` graba cada una en el bloque de su interfaz.

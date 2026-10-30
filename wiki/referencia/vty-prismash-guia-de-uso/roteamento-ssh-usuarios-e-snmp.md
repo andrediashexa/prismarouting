@@ -21,7 +21,7 @@ configure
  router ospf6
   ospf6 router-id 10.0.0.1
   exit
- interface ens18
+ interface enp1s0
   ipv6 ospf6 area 0
   exit
  commit
@@ -239,9 +239,9 @@ flowchart LR
 ```
 prisma> show route
   Destination    Next hop    Interface Kind
-  0.0.0.0/0      200.150.0.1 ens19     forward
-  200.150.0.0/24 -           ens19     connected
-  203.0.113.0/24 200.150.0.1 ens19     forward
+  0.0.0.0/0      200.150.0.1 enp2s0    forward
+  200.150.0.0/24 -           enp2s0    connected
+  203.0.113.0/24 200.150.0.1 enp2s0    forward
 
   3 entries carrying traffic
 ```

@@ -90,14 +90,14 @@ Enter vazio não é resposta. `y` também não. **Um disco não pode ser destru�
   is then the one card the dataplane will not claim.
 
 Network cards on this machine:
-  a) ens18      up     virtio_net   192.0.2.10/24   <- this medium is reaching the network on this one
-  b) ens19      down   virtio_net   none
+  a) enp1s0     up     virtio_net   192.0.2.10/24   <- this medium is reaching the network on this one
+  b) enp2s0     down   virtio_net   none
   none) no management network   (this box is reached at its console)   <- default
 
 Which card is this box managed on (letter, or a name) [none]:
 ```
 
-A lista usa o nome que o Linux dá à placa (`ens18`, `enp2s0`), que é também o nome com que ela aparece na VTY depois: a caixa instalada mantém o nome do Linux para cada placa, inclusive as que o dataplane reivindica. A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. A placa pela qual a própria mídia está alcançando a rede agora é apontada na lista, porque é a que o operador quer quando quer uma: ela não é mais o padrão.
+A lista usa o nome que o Linux dá à placa (`enp1s0`, `enp2s0`), que é também o nome com que ela aparece na VTY depois: a caixa instalada mantém o nome do Linux para cada placa, inclusive as que o dataplane reivindica. A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `enp1s0` e `enp2s0` não dizem a ninguém qual cabo está em qual. A placa pela qual a própria mídia está alcançando a rede agora é apontada na lista, porque é a que o operador quer quando quer uma: ela não é mais o padrão.
 
 
 :::info
@@ -139,8 +139,8 @@ Para guardar uma placa para o Linux depois, escreva a estrofe que o instalador t
 
 ```
 F=/etc/network/interfaces.d/prisma-routing
-echo "auto ens19" >> $F
-echo "iface ens19 inet dhcp" >> $F
+echo "auto enp2s0" >> $F
+echo "iface enp2s0 inet dhcp" >> $F
 ```
 
 Endereço estático leva `inet static` e uma linha `address`. O outro caminho, sem shell, é nomear na VTY a placa dos assinantes em `system` > `dataplane` > `interface <placa>`: o dataplane passa a reivindicar só ela, e as demais ficam com o Linux. Ver [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7).
@@ -153,11 +153,11 @@ O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que 
 
 | Linha no autoteste | Significado |
 |--------------------|-------------|
-| `[ ok ] managed on ens18 (dhcp)` | com o endereço e a rota impressos embaixo |
-| `[warn] ens18 is up with no default route` | tem endereço, não tem rota padrão, e nenhum gateway foi pedido |
+| `[ ok ] managed on enp1s0 (dhcp)` | com o endereço e a rota impressos embaixo |
+| `[warn] enp1s0 is up with no default route` | tem endereço, não tem rota padrão, e nenhum gateway foi pedido |
 | `[FAIL] ... has an address and no default route` | **o gateway respondido não valeu.** A linha nomeia o gateway que não entrou |
 | `[FAIL] ... has no address` | DHCP sem resposta, ou o `ifup` falhou |
-| `[FAIL] management network: this box has no card called ens18` | a placa da instalação não está mais na caixa. Lista as que estão |
+| `[FAIL] management network: this box has no card called enp1s0` | a placa da instalação não está mais na caixa. Lista as que estão |
 | `[FAIL] no management network: nothing was ever written for one` | mídia até a 0.72.0. A linha traz os comandos que resolvem a partir daquele console |
 | `[info] no management network was asked for at install time` | respondeu `none`, e a caixa está mesmo só no console |
 | `[warn] no management network was asked for, and this box is on one anyway` | respondeu `none`, mas o Linux tem placa com endereço — e é placa que o dataplane reivindica no próximo boot |

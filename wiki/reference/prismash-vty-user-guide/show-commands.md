@@ -68,9 +68,9 @@ And this is the first thing to establish when someone calls saying the port forw
 
 ```
 prisma> show route
-  Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       ens19        forward
-  200.150.0.0/24       connected         ens19        connected
+  Destination    Next hop    Interface Kind
+  0.0.0.0/0      200.150.0.1 enp2s0    forward
+  200.150.0.0/24 -           enp2s0    connected
 
   2 entries carrying traffic
 ```
@@ -88,15 +88,15 @@ When traffic does not pass and the route looks right, `show route verbose` is th
 ```
 prisma> show interface
   Interface                  State  MTU    Address             Linux
-  ens18                      up     9000   203.0.113.1/24      tap0 ens18
-  ens19                      up     1500   -                   -
+  enp1s0                     up     9000   203.0.113.1/24      tap0 enp1s0
+  enp2s0                     up     1500   -                   -
 
   2 interface(s) on the dataplane can forward
 ```
 
 It answers from the **dataplane**, with state, MTU, addresses and the `linux_cp` pair. The latter because it is the name FRR and `ip` use, and whoever moves between the two tools needs both side by side.
 
-**The card shows up with the name Linux gave it.** The box claims the cards on its own and names each one, in the dataplane, with the name it had in Linux: `ens18` remains `ens18`, and that is how it shows up here, at the prompt and in routing. A card with an `interface` block enters Linux with that same name, and that is what the **Linux** column shows, next to the internal `tap` the pair uses - `linux-name` is only needed to choose a different one. A port whose name has slashes is a card no one named; routing refuses names longer than 16 characters, and `commit` says so before trying.
+**The card shows up with the name Linux gave it.** The box claims the cards on its own and names each one, in the dataplane, with the name it had in Linux: `enp1s0` remains `enp1s0`, and that is how it shows up here, at the prompt and in routing. A card with an `interface` block enters Linux with that same name, and that is what the **Linux** column shows, next to the internal `tap` the pair uses - `linux-name` is only needed to choose a different one. A port whose name has slashes is a card no one named; routing refuses names longer than 16 characters, and `commit` says so before trying.
 
 
 :::warning
@@ -121,11 +121,11 @@ One line per interface, with **two** state columns:
 ```
 prisma> show interface terse
   Interface                  Admin  Link   Proto  Local
-  ens18                      up     up     inet   203.0.113.1/24
-  ens19                      up     down   -      -
+  enp1s0                     up     up     inet   203.0.113.1/24
+  enp2s0                     up     down   -      -
 
   2 interface(s) on the dataplane can forward
-  ens19: configured up, link down - that is the wire or the far end, not this configuration
+  enp2s0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
 | `Admin` | `Link` | What it is |
@@ -145,8 +145,8 @@ One address per line: an interface with IPv4 and IPv6 appears on two lines, with
 ```
 prisma> show interface description
   Interface                  Admin  Link   Description
-  ens18                      up     up     ASSINANTES PON-3
-  ens19                      up     down   TRANSITO Vivo AS26599
+  enp1s0                     up     up     ASSINANTES PON-3
+  enp2s0                     up     down   TRANSITO Vivo AS26599
 
   2 of 2 interface(s) described
 ```
@@ -168,12 +168,12 @@ prisma> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
-  ens19                      675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
-  ens18                        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp1s0                       8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp2s0                     675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
 
   bars are each interface's share of its own line rate
-    ens19                     12.4% of 10.00 Gbit/s
-    ens18                      0.8% of 1.00 Gbit/s
+    enp1s0                     0.8% of 1.00 Gbit/s
+    enp2s0                    12.4% of 10.00 Gbit/s
 ```
 
 | Argument | Effect |
@@ -244,8 +244,8 @@ show interface <name> transceiver
 The module that is in the port's cage (SFP, SFP+, QSFP): who made it, what it is, and — when it has diagnostics (DDM) — the temperature, voltage, laser bias current and TX and RX power, each next to the alarm and warning thresholds **that the module itself stores** and saying whether it has crossed any. It is the same reading that `display transceiver ... verbose` on the switch at the other end gives, and it is the one you compare it with:
 
 ```
-prisma> show interface ens18 transceiver
-  ens18: SFP/SFP+/SFP28, LC connector, 1310 nm
+prisma> show interface enp1s0 transceiver
+  enp1s0: SFP/SFP+/SFP28, LC connector, 1310 nm
     vendor      Rei do SFP (OUI 00:90:65)
     part        RSMPP8510GL-03D  revision 2.1
     serial      FP23H150378  date 2023-08-15
@@ -276,11 +276,11 @@ prisma> show interface ens18 transceiver
 **In** `**show interface**`, two notes appear below the list when they apply — notes, not errors: the port forwards, and the note says where to look.
 
 ```
-  ens18: rx power -19.00 dBm, below its low warning (-18.01 dBm)
-    'show interface ens18 transceiver' has the module's levels
-  ens18: 0.58% of received frames failed their CRC (60,674 of 10,460,674) since
-    the counters started: look at the fibre, the connectors and the modules at
-    both ends; 'show interface ens18 transceiver' has this end's
+  enp1s0: rx power -19.00 dBm, below its low warning (-18.01 dBm)
+    'show interface enp1s0 transceiver' has the module's levels
+  enp1s0: 0.58% of received frames failed their CRC (60,674 of 10,460,674)
+    since the counters started: look at the fibre, the connectors and the
+    modules at both ends; 'show interface enp1s0 transceiver' has this end's
 ```
 
 The first, when a module's RX power has crossed one of its warnings. The second, when a port's CRC errors exceed **0.01%** of the frames received since the counters started (and are at least ten, so that a link that picked up half a dozen when coming up does not say so forever). Clean optics and fiber count no errors at all — the specified error rate of a 10G link is 1 bit in 10¹², a few frames a day —, so a rate of that size is fiber, connector or module. The port that prompted this was counting 0.58%: 58 times above.
@@ -410,8 +410,8 @@ Always, and before the list. A card the **dataplane has already taken** disappea
 
 ```
 prisma> show hardware
-  the dataplane holds ens19. A NIC VPP owns is no longer listed by Linux, so it
-  is not in the list below.
+  the dataplane holds enp2s0. A NIC VPP owns is no longer listed by Linux, so
+  it is not in the list below.
 ```
 
 When the dataplane has no interface at all, the line is the **same diagnosis** that `show interface` and the boot self-test give, read from the same sources: two diagnoses of the same fact that disagree with each other are worse than one.
@@ -442,7 +442,7 @@ Note that `policy` and `mode` appear without you having typed them. It is not th
 
 Inside a pool, the block comes out the way it is typed there: `pool residential` and the fields. Under `cgnat`, `show this` shows what the level has; under `nat`, the whole block; under `system` and the levels below it, what that level has. `show configuration` and `show running-config`, which show the whole box, carry CGNAT as the `nat` > `cgnat` block — pools and global settings, in the order they are typed —, the CGNAT side of each interface (`cgnat inside` or `cgnat outside`) inside the interface's own block, and static routes in a `router static` block. It is also how `save` writes it, so copying the screen to a file and loading it back works.
 
-The prompt names where you are, including which pool or which interface — `[edit interface ens19]` — so that the next statement does not land in the wrong block.
+The prompt names where you are, including which pool or which interface — `[edit interface enp2s0]` — so that the next statement does not land in the wrong block.
 
 ## What the box checked, and what it merely passed on
 

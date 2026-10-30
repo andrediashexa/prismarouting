@@ -20,7 +20,7 @@ The check is *unicast Reverse Path Forwarding*: the source address must **route 
 
 ```
 configure
- interface ens19
+ interface enp2s0
   urpf strict
   exit
  commit
@@ -64,7 +64,7 @@ This limit is **verified**, not merely described: the test sends a neighbor's ad
 # How to check
 
 ```
-show interface ens19
+show interface enp2s0
 ```
 
 The interface screen has a `urpf` line with the mode the **dataplane** is applying — `strict`, `loose` or `off` —, read from the box and not from the file, and the port counters, where the drops are counted.

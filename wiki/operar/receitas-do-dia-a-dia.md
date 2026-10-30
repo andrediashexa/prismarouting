@@ -314,7 +314,7 @@ A caixa que você quer mexer está com o endereço de serviço. Passe o serviço
 
 ```
 configure
- interface ens18
+ interface enp1s0
   vrrp 1 priority 50
   exit
  commit
@@ -323,7 +323,7 @@ configure
 A caixa avisa o que isso custa antes de aplicar:
 
 ```
-  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  changing vrrp 1 on enp1s0 restarts it: this box stops advertising while it is
   rebuilt, the peer takes the address, and preempt hands it back - two
   elections, a few seconds apart
 ```
@@ -332,7 +332,7 @@ Confira em qual caixa o serviço ficou — `show cgnat ha` nas duas — e só en
 
 ```
 configure
- interface ens18
+ interface enp1s0
   vrrp 1 priority 200
   exit
  commit

@@ -6,8 +6,8 @@ O exemplo usa uma topologia pequena, que você troca pelos seus números:
 
 ```mermaid
 flowchart LR
-    S["Assinante<br/>100.64.0.5"] -->|"ens18 · inside<br/>100.64.0.1/22"| B["Prisma Routing<br/>pool residencial<br/>203.0.113.0/28"]
-    B -->|"ens19 · outside<br/>198.51.100.2/30"| U["Upstream<br/>198.51.100.1"]
+    S["Assinante<br/>100.64.0.5"] -->|"enp1s0 · inside<br/>100.64.0.1/22"| B["Prisma Routing<br/>pool residencial<br/>203.0.113.0/28"]
+    B -->|"enp2s0 · outside<br/>198.51.100.2/30"| U["Upstream<br/>198.51.100.1"]
     U --> I["Internet"]
 ```
 
@@ -15,8 +15,8 @@ flowchart LR
 |-------|------------|-------------|
 | Rede dos assinantes (atrás da caixa) | `100.64.0.0/22` | o que o seu BNG/OLT entrega; `100.64.0.0/10` é o espaço reservado para isso |
 | Endereços públicos do pool | `203.0.113.0/28` | um prefixo seu, que **não** está configurado em interface nenhuma |
-| Porta dos assinantes | `ens18`    | a placa virada para o BNG |
-| Porta de saída | `ens19`, com `198.51.100.2/30` | a placa virada para o upstream |
+| Porta dos assinantes | `enp1s0`    | a placa virada para o BNG |
+| Porta de saída | `enp2s0`, com `198.51.100.2/30` | a placa virada para o upstream |
 
 # Antes de começar: três decisões
 
@@ -53,8 +53,8 @@ prisma> show interface terse
 
 ```
   Interface                  Admin  Link   Proto  Local
-  ens18                      down   up     -      -
-  ens19                      down   up     -      -
+  enp1s0                     down   up     -      -
+  enp2s0                     down   up     -      -
 
   2 interface(s) on the dataplane can forward
 ```
@@ -65,16 +65,16 @@ prisma> show interface terse
 
 ```
 prisma> configure
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] description assinantes
-prisma# [edit interface ens18] ipv4 address 100.64.0.1/22
-prisma# [edit interface ens18] no shutdown
-prisma# [edit interface ens18] exit
-prisma# [edit] interface ens19
-prisma# [edit interface ens19] description upstream
-prisma# [edit interface ens19] ipv4 address 198.51.100.2/30
-prisma# [edit interface ens19] no shutdown
-prisma# [edit interface ens19] exit
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] description assinantes
+prisma# [edit interface enp1s0] ipv4 address 100.64.0.1/22
+prisma# [edit interface enp1s0] no shutdown
+prisma# [edit interface enp1s0] exit
+prisma# [edit] interface enp2s0
+prisma# [edit interface enp2s0] description upstream
+prisma# [edit interface enp2s0] ipv4 address 198.51.100.2/30
+prisma# [edit interface enp2s0] no shutdown
+prisma# [edit interface enp2s0] exit
 prisma# [edit] router static
 prisma# [edit router static] 0.0.0.0/0 next-hop 198.51.100.1 description upstream
 prisma# [edit router static] exit
@@ -83,8 +83,8 @@ prisma# [edit] commit
 
 | Linha | Para quê |
 |-------|----------|
-| `ipv4 address 100.64.0.1/22` em `ens18` | é o gateway que os assinantes usam |
-| `ipv4 address 198.51.100.2/30` em `ens19` | o enlace com o upstream |
+| `ipv4 address 100.64.0.1/22` em `enp1s0` | é o gateway que os assinantes usam |
+| `ipv4 address 198.51.100.2/30` em `enp2s0` | o enlace com o upstream |
 | `0.0.0.0/0 next-hop 198.51.100.1` | a rota default: por onde o tráfego traduzido sai |
 
 Se os assinantes **não** estão numa rede diretamente conectada, e sim atrás de um BNG que fala com a caixa por um enlace, acrescente também a rota de volta para eles, no mesmo bloco: `100.64.0.0/10 next-hop <endereço-do-BNG>`.
@@ -98,8 +98,8 @@ prisma> show interface terse
 
 ```
   Interface                  Admin  Link   Proto  Local
-  ens18                      up     up     inet   100.64.0.1/22
-  ens19                      up     up     inet   198.51.100.2/30
+  enp1s0                     up     up     inet   100.64.0.1/22
+  enp2s0                     up     up     inet   198.51.100.2/30
 
   2 interface(s) on the dataplane can forward
 ```
@@ -155,12 +155,12 @@ O lado do CGNAT é uma propriedade da interface, e se digita no bloco dela:
 
 ```
 prisma# [edit nat / cgnat] top
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] cgnat inside
-prisma# [edit interface ens18] exit
-prisma# [edit] interface ens19
-prisma# [edit interface ens19] cgnat outside
-prisma# [edit interface ens19] exit
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] cgnat inside
+prisma# [edit interface enp1s0] exit
+prisma# [edit] interface enp2s0
+prisma# [edit interface enp2s0] cgnat outside
+prisma# [edit interface enp2s0] exit
 ```
 
 `inside` é a porta por onde os assinantes chegam. `outside` é a porta por onde o tráfego traduzido sai.
@@ -185,13 +185,13 @@ prisma# [edit] show configuration compare
 +   exit
 +  exit
 + exit
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.0.1/22
 + cgnat inside
   exit
 ```
 
-E, mais abaixo, a mesma linha `+ cgnat outside` no bloco da `ens19`.
+E, mais abaixo, a mesma linha `+ cgnat outside` no bloco da `enp2s0`.
 
 Tudo com `+` é o que entra. Depois peça à caixa para validar, sem aplicar nada:
 
@@ -210,8 +210,8 @@ A segunda linha aparece porque a rota default do passo 2 é configuração de ro
 O `commit check` recusa aqui o que não daria certo, e diz por quê. A recusa que mais aparece num pool novo é a de um endereço público que também está numa interface da caixa:
 
 ```
-error: pool 'errado': public address 198.51.100.2 is configured on ens19
-    interface ens19 / ipv4 address 198.51.100.2/30
+error: pool 'errado': public address 198.51.100.2 is configured on enp2s0
+    interface enp2s0 / ipv4 address 198.51.100.2/30
     nat / cgnat / pool errado / prefix-outside 198.51.100.0/30
     cgnat would translate the box's own control-plane traffic on that address:
     bpa-out2in runs before the box decides a packet is for itself, so the BGP

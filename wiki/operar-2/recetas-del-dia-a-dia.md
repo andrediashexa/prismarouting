@@ -314,7 +314,7 @@ El equipo que usted quiere tocar tiene la dirección de servicio. Pase el servic
 
 ```
 configure
- interface ens18
+ interface enp1s0
   vrrp 1 priority 50
   exit
  commit
@@ -323,7 +323,7 @@ configure
 El equipo advierte lo que esto cuesta antes de aplicar:
 
 ```
-  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  changing vrrp 1 on enp1s0 restarts it: this box stops advertising while it is
   rebuilt, the peer takes the address, and preempt hands it back - two
   elections, a few seconds apart
 ```
@@ -332,7 +332,7 @@ Verifique en qué equipo quedó el servicio — `show cgnat ha` en los dos — y
 
 ```
 configure
- interface ens18
+ interface enp1s0
   vrrp 1 priority 200
   exit
  commit

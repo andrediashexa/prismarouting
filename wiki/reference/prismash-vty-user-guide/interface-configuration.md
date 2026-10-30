@@ -6,8 +6,8 @@ You enter an interface from configuration mode, and leave with `exit`:
 
 ```
 prisma> configure
-prisma# [edit] interface ens18
-prisma# [edit interface ens18]
+prisma# [edit] interface enp3s0
+prisma# [edit interface enp3s0]
 ```
 
 The prompt says which interface you are in. `?` or TAB list what is valid in there and nothing else.
@@ -51,7 +51,7 @@ Changing an interface requires the **administrator** capability. The exception i
 An interface without `mtu` stays at **1500**, the box default since 0.152.1, and `no mtu` goes back to it. This also applies to what `commit` creates: a VLAN, a loopback, a bundle. On a card that cannot handle 1500, the default is the card's maximum.
 
 ```
-interface ens18
+interface enp3s0
  mtu 9000
  exit
 ```
@@ -63,7 +63,7 @@ On a box installed **before** 0.152.1 the interfaces remain at 9000: the upgrade
 ## Addresses
 
 ```
-interface ens18
+interface enp3s0
  ipv4 address 200.150.0.1/24
  ipv4 address 200.150.1.1/24
  ipv6 address 2001:db8::1/64
@@ -92,12 +92,12 @@ When replacing one address with another, the old one goes out before the new one
 
 The dataplane and the operating system are two worlds, and routing lives in the second. What links them is the pair: the interface through which the kernel, `ip` and FRR see the dataplane port.
 
-**Every interface enters Linux with its own name, on its own.** As soon as an interface has an `interface` block - with anything inside, even just a `no shutdown` -, it appears in `ip` and in routing with the same name. This applies to cards, sub-interfaces, loopbacks and cards added while the box is running. The dataplane's `ens18` is FRR's `ens18`, and none of this appears in the configuration: there is no line to write.
+**Every interface enters Linux with its own name, on its own.** As soon as an interface has an `interface` block - with anything inside, even just a `no shutdown` -, it appears in `ip` and in routing with the same name. This applies to cards, sub-interfaces, loopbacks and cards added while the box is running. The dataplane's `enp3s0` is FRR's `enp3s0`, and none of this appears in the configuration: there is no line to write.
 
 The name belongs to Linux, and its rules apply: at most 15 characters and no slash. A card nobody named keeps the spelling the dataplane gives it, full of slashes, and Linux does not accept that one. For that case, and for whoever wants a different name, there is `linux-name`:
 
 ```
-interface ens18
+interface enp3s0
  linux-name vppwan0
  ipv4 address 200.150.0.1/24
  exit
@@ -109,7 +109,7 @@ Only in that case does the line appear in the configuration: when it gives a nam
 error: linux-name: 'GigabitEthernet0/12/0' cannot be a Linux interface name (15 characters, no '/')
 ```
 
-The pair is **read back** from the box, not remembered by the VTY. A configuration saved by an earlier version, which carries `linux-name ens18` in `interface ens18`, is read normally, and the next `save` writes the file without the line. The box stays exactly the same.
+The pair is **read back** from the box, not remembered by the VTY. A configuration saved by an earlier version, which carries `linux-name enp3s0` in `interface enp3s0`, is read normally, and the next `save` writes the file without the line. The box stays exactly the same.
 
 The box does not take a name Linux already uses for something else: requesting the pair with a name in use fails, and would bring down the whole `commit`.
 
@@ -143,8 +143,8 @@ Two or more ports become a single interface, `ae<n>`, as in Junos. The bundle is
 ```
 configure
  interface ae0
-  member ens19
-  member ens20
+  member enp4s0
+  member enp5s0
   lacp rate fast
   ipv4 address 10.9.0.1/24
   exit
@@ -174,10 +174,10 @@ Measured in a lab against a Linux 802.3ad bond: both members negotiated and stay
 
 ```
 prisma> configure
-prisma# [edit] interface ens18.100
-prisma# [edit interface ens18.100] vlan 100
-prisma# [edit interface ens18.100] ipv4 address 100.64.0.1/22
-prisma# [edit interface ens18.100] exit
+prisma# [edit] interface enp3s0.100
+prisma# [edit interface enp3s0.100] vlan 100
+prisma# [edit interface enp3s0.100] ipv4 address 100.64.0.1/22
+prisma# [edit interface enp3s0.100] exit
 prisma# [edit] commit
 commit complete
 ```
@@ -187,16 +187,16 @@ After that the sub-interface exists in the dataplane, carries the tag, and gets 
 ```
 prisma> show interface
   Interface                  State  MTU    Address             Linux
-  ens18                      up     1500   192.0.2.198/24      tap4096 ens18
-  ens18.100                  up     1500   100.64.0.1/22       tap4096.100 ens18.100
+  enp3s0                     up     1500   192.0.2.198/24      tap4096 enp3s0
+  enp3s0.100                 up     1500   100.64.0.1/22       tap4096.100 enp3s0.100
 ```
 
 **If the parent is** `**shutdown**`**, the sub-interface waits — and the** `**commit**` **goes through anyway.** VPP does not bring a sub-interface up while the parent interface is down, so the box does not try and says so:
 
 ```
-warning: interface ens19.100: left shut down
+warning: interface enp4s0.100: left shut down
     the dataplane will not bring a sub-interface up while its parent is down,
-    and ens19 is shut down; 'no shutdown' on ens19 brings both up
+    and enp4s0 is shut down; 'no shutdown' on enp4s0 brings both up
 ```
 
 A `no shutdown` on the parent brings both up. It is a warning and not a refusal: `commit` applies the rest normally.
@@ -211,21 +211,21 @@ error: candidate did not pass validation; nothing applied
 A sub-interface is an interface: everything in the table above applies inside it.
 
 ```
-interface ens18.100
+interface enp3s0.100
  vlan 100
  ipv4 address 100.64.0.1/22
  exit
 
-interface ens18.200
+interface enp3s0.200
  vlan 200 inner 10
  exit
 ```
 
-`no interface ens18.100` removes the sub-interface **and what was on it** — an address left behind would describe a port that does not exist.
+`no interface enp3s0.100` removes the sub-interface **and what was on it** — an address left behind would describe a port that does not exist.
 
 
 :::warning
-**The number after the dot must equal the outer tag.** `ens18.7` with `vlan 100` is refused.
+**The number after the dot must equal the outer tag.** `enp3s0.7` with `vlan 100` is refused.
 
 The box names the sub-interface by the tag, and the running configuration is read from the box. If the two names could diverge, you would read one name and the box would have another.
 
@@ -248,7 +248,7 @@ On a double-tagged sub-interface (`inner`), frames arriving with **more** than t
 ## VRF
 
 ```
-interface ens18
+interface enp3s0
  vrf 7
  ipv4 address 10.7.0.1/24
  exit
@@ -262,7 +262,7 @@ Moving an interface to another VRF **takes the addresses with it**: they are rem
 
 ```
 vrf red table 10
-interface ens18
+interface enp3s0
  vrf 10
  ipv4 address 10.10.0.1/24
  exit
@@ -315,7 +315,7 @@ Up to 0.152.5, right after the card joined the VRF its IPv6 address could go una
 
 Up to 0.152.6, on a busy box, removing the VRF (a `commit confirmed` that expired, for example) and putting it back could leave the VRF's IPv6 default out of Linux until FRR restarted: zebra kept the connected route of the inactive card. From 0.152.7 on the box moves the card to the VRF with no address on it, waits for zebra to catch up before giving the addresses back, and only removes a VRF after zebra lets go of it. This applies to management and to any customer's VRF. If zebra takes more than 10 seconds, the commit proceeds and warns, and `show log` keeps what zebra still had.
 
-**A management card the dataplane does not own** (from 0.155.19). In a virtual machine the management card is usually a virtio NIC that Linux keeps next to the cards the dataplane takes, such as `ens18` with the address the installer put in `/etc/network/interfaces.d/prisma-routing`. It goes into the VRF the same way, with `interface ens18` and `vrf 100`: the box moves only its Linux side, takes its addresses and the installer's default route along, and puts that default into the VRF's table as the way back. A `commit confirmed` that expires takes it out again, with the default back in the main table, and SSH answers there as before. Up to 0.155.18 that commit passed `commit check` and failed when applied (`the dataplane does not have it`), and with management in the main table the installer's default won over the `router static` one: the dataplane was left without a default for the subscribers. On such a card the block takes only `vrf`; addresses, MTU, description and routing protocols stay in Linux, and `commit check` refuses them, as it refuses a name that neither the dataplane nor Linux has and a `vrf` whose table no `vrf <name> table <n>` creates. By the same path, a Linux interface put into a VRF by hand becomes part of the configuration: a `rollback` to a revision without it takes it out of the VRF.
+**A management card the dataplane does not own** (from 0.155.19). In a virtual machine the management card is usually a virtio NIC that Linux keeps next to the cards the dataplane takes, such as `enp1s0` with the address the installer put in `/etc/network/interfaces.d/prisma-routing`. It goes into the VRF the same way, with `interface enp1s0` and `vrf 100`: the box moves only its Linux side, takes its addresses and the installer's default route along, and puts that default into the VRF's table as the way back. A `commit confirmed` that expires takes it out again, with the default back in the main table, and SSH answers there as before. Up to 0.155.18 that commit passed `commit check` and failed when applied (`the dataplane does not have it`), and with management in the main table the installer's default won over the `router static` one: the dataplane was left without a default for the subscribers. On such a card the block takes only `vrf`; addresses, MTU, description and routing protocols stay in Linux, and `commit check` refuses them, as it refuses a name that neither the dataplane nor Linux has and a `vrf` whose table no `vrf <name> table <n>` creates. By the same path, a Linux interface put into a VRF by hand becomes part of the configuration: a `rollback` to a revision without it takes it out of the VRF.
 
 | What | Which way it goes |
 |------|-------------------|
@@ -340,7 +340,7 @@ An interface with an IPv6 address does **not advertise** this box as a router. T
 On the ports where advertising makes sense — an uplink, a transit, a port facing other routers — turn it on by exception:
 
 ```
-interface ens18
+interface enp3s0
  no ipv6 nd suppress-ra
  exit
 ```
@@ -360,7 +360,7 @@ On an IPv6-only access served by a NAT64 pool, the subscriber still has programs
 The box tells it, in the router advertisements themselves — the RFC 8781 PREF64 option —, on the subscriber-facing interface:
 
 ```
-interface ens19
+interface enp4s0
  no ipv6 nd suppress-ra
  ipv6 nd nat64 64:ff9b:1::/48
  exit
@@ -386,22 +386,22 @@ The CLAT can also learn the prefix by asking a DNS64 resolver for `ipv4only.arpa
 Two boxes, one service address, and the subscriber pointed at it instead of at either of the two. It is RFC 5798 VRRP, and here it runs **on the dataplane interface**, which is where packets arrive:
 
 ```
-interface ens18
+interface enp3s0
  ipv4 address 100.64.3.252/22
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp4s0 decrement 150
  exit
 ```
 
 On the other box, the same with its own address and a lower priority:
 
 ```
-interface ens18
+interface enp3s0
  ipv4 address 100.64.3.251/22
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 100
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp4s0 decrement 150
  exit
 ```
 
@@ -416,14 +416,14 @@ interface ens18
 **The same** `**vrid**` **serves IPv6** (from version 0.153.1 on). An IPv6 address in the same `vrrp <vrid>` creates the IPv6 virtual router (VRRPv3, RFC 5798) alongside the IPv4 one, with the same priority, the same `track` and the same preempt — so the subscribers' IPv6 gateway changes boxes together with the IPv4 side:
 
 ```
-interface ens18
+interface enp3s0
  ipv6 address 2001:db8:1200:ab00::2/56
  ipv4 address 100.64.3.252/22
  vrrp 1 address 100.64.3.254
  vrrp 1 address fe80::1
  vrrp 1 address 2001:db8:1200:ab00::1
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp4s0 decrement 150
  exit
 ```
 
@@ -450,7 +450,7 @@ prisma> show cgnat ha
     pools                residencial
 
   role
-    ens18 vrrp 1   master, holding the address
+    enp3s0 vrrp 1   master, holding the address
       address(es)        100.64.3.254
       virtual mac        00:00:5e:00:01:01
       priority           200
@@ -463,7 +463,7 @@ When some tracked port is down, the priority line says both things — what is b
 Routing protocols come onto the port through statements inside the `interface` block itself, which is where FRR keeps them. These go to routing word for word; those in the table at the top of the page are applied by the box in the dataplane.
 
 ```
-interface ens19
+interface enp4s0
  ip ospf area 0
  ip ospf network point-to-point
  ip ospf cost 10
@@ -532,7 +532,7 @@ The interface carries two kinds of line: this box's own - `description`, `shutdo
 
 ### `no vlan` does not exist, and the box says what to do instead
 
-A sub-interface **is** its tag: the name `ens18.700` and VLAN 700 are the same information, and the box refuses to create one where the two disagree. There is, therefore, no sub-interface without a tag - what you want is the sub-interface gone:
+A sub-interface **is** its tag: the name `enp3s0.700` and VLAN 700 are the same information, and the box refuses to create one where the two disagree. There is, therefore, no sub-interface without a tag - what you want is the sub-interface gone:
 
 Typing `no vlan 700` inside the sub-interface is refused, and the refusal says what to do instead:
 
@@ -547,15 +547,15 @@ The refusal comes on lines of its own, within the console width: the verdict on 
 
 `no vlan`, without a number, gets the same refusal: there is no tag to remove either way.
 
-`no interface ens18.700`, at the level above, removes the sub-interface and everything that was on it.
+`no interface enp3s0.700`, at the level above, removes the sub-interface and everything that was on it.
 
 ## An interface in detail
 
 `show interface` lists them all. Naming one, the answer changes from a table to a report:
 
 ```
-prisma> show interface ens18
-  ens18
+prisma> show interface enp3s0
+  enp3s0
     state       up
     mtu         9000
     addresses   200.150.0.1/24
@@ -583,7 +583,7 @@ It is the first thing that matters about a port when there is a peer: whether th
 
 What appears is the **role in effect**, read from the dataplane — what was *configured* is in `show this` and in the saved file. A port without a virtual router shows no line at all: most have none, and a notice that always appears is a notice nobody reads.
 
-The exact name takes precedence: asking for `ens18` on a box that also has `ens18.100` returns the interface's report, not the list of both.
+The exact name takes precedence: asking for `enp3s0` on a box that also has `enp3s0.100` returns the interface's report, not the list of both.
 
 ## The card handed to the dataplane is not one of these
 
@@ -619,9 +619,9 @@ Instead it **attaches the card to the running dataplane through AF_XDP**, which 
 **What the box does on its own**, seconds after the card appears:
 
 * checks whether the boot rule would take that card. The card reserved for management, `PRISMA_DATAPLANE_IF` and the card that has an address or the default route remain Linux's, exactly as at boot;
-* attaches the card with the **same name** Linux gave it (`ens20`, for example) and with its own MAC.
+* attaches the card with the **same name** Linux gave it (`enp5s0`, for example) and with its own MAC.
 
-**What you do** is configure the card like any other: `interface ens20`, the address and `no shutdown`. It enters Linux and routing with its own name, like the others. `show interface` warns, below the count, that it is on AF_XDP and what takes it to DPDK.
+**What you do** is configure the card like any other: `interface enp5s0`, the address and `no shutdown`. It enters Linux and routing with its own name, like the others. `show interface` warns, below the count, that it is on AF_XDP and what takes it to DPDK.
 
 **Moving the card to DPDK** is your decision, in the window you choose:
 
