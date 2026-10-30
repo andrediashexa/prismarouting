@@ -11,7 +11,7 @@ Os dois dão a cada assinante um **bloco contíguo de portas**, em vez de um reg
 
 BPA é **só** o modo dinâmico. Determinístico não é um tipo de BPA: o guarda-chuva dos dois é *CGNAT por bloco de portas*, e a escolha é entre determinístico e BPA.
 
-O módulo do dataplane que faz as duas coisas se chama `bpa`, e esse nome aparece em contadores e identificadores internos para os dois modos. Continua assim para não quebrar scripts e caixas instaladas, mas não quer dizer que um pool determinístico seja BPA. Na VTY, os comandos são `show cgnat ...`.
+O módulo do dataplane que faz as duas coisas se chama `bpa`, e esse nome aparece em contadores e identificadores internos para os dois modos. Continua assim para não quebrar scripts e caixas instaladas, mas não quer dizer que um pool determinístico seja BPA. Na VTY, os comandos são `show cgnat ...`, e `show nat64 ...` para olhar só os pools NAT64.
 
 |     | Determinístico (`mode deterministic`) | BPA (`mode bpa`) |
 |-----|-------------------------------------|----------------|
@@ -25,7 +25,7 @@ O módulo do dataplane que faz as duas coisas se chama `bpa`, e esse nome aparec
 
 
 :::info
-**Um pool BPA sem exportação é um pool que ninguém consegue responder.** Em BPA o registro exportado é a única prova de quem estava atrás de uma porta pública. O `commit check` e o `commit` avisam, nomeando o pool, quando um pool dinâmico — ou um determinístico com `reserve` — não tem coletor configurado. É aviso e não recusa, porque um pool montado antes do coletor existir é uma configuração correta.
+**Um pool BPA sem exportação é um pool que ninguém consegue responder.** Em BPA o registro exportado é a única prova de quem estava atrás de uma porta pública. O `commit` não recusa nem avisa sobre um pool sem coletor — um pool montado antes do coletor existir é uma configuração correta —, então a conferência é sua: `show cgnat logging` diz se a exportação está ligada e para onde vai, e o autoteste de boot acusa uma exportação que a configuração salva liga e o dataplane não tem. Vale o mesmo para um pool determinístico com `reserve`.
 
 :::
 
@@ -100,7 +100,7 @@ Por isso o `show cgnat pool` mostra, abaixo da capacidade, o número que o pool 
 
 
 :::info
-Existe um mecanismo que empresta um bloco livre de um worker para outro, no ciclo de um segundo em que a caixa já expira blocos ociosos. Ele funciona, mas **vem desligado**: em laboratório, toda regulagem que serve o assinante recusado também empresta um bloco que o próximo assinante do próprio worker queria. Até isso ser medido com tráfego real, dimensione pelo piso.
+Existe um mecanismo que empresta um bloco livre de um worker para outro, no ciclo de um segundo em que a caixa já expira blocos ociosos. Ele funciona, mas **vem desligado**, e não se liga pela VTY. Medido com assinantes que repetem a tentativa por conta própria, ele quase elimina as recusas da fatia que esgotou, ao custo de algumas recusas iniciais nos workers que emprestam; com carga uniforme ainda não foi medido. Dimensione pelo piso.
 
 :::
 
@@ -116,7 +116,7 @@ Tráfego de um assinante destinado **à própria caixa** — o gateway, o endere
 
 # O que muda sem reconstruir o pool
 
-Ver a página de configuração de pool. A regra: **muda o mapeamento → reconstrói; não muda → aplica no lugar**. Mapeamento é prefixo, `block-size`, `ports`, `policy`, `mode`, `vrf`, `outside-vrf` e `reserve`; o resto — timeouts, ALGs, limites, MSS, bypass, encaminhamentos, `max-blocks`, `initial-allocation` — é aplicado num pool com tráfego.
+Ver a página de configuração de pool. A regra: **muda o mapeamento → reconstrói; não muda → aplica no lugar**. Mapeamento é prefixo (`prefix-inside` e `prefix-outside`, ou o que as listas de `prefix-list-inside` e `prefix-list-outside` resolvem), `block-size`, `ports`, `policy`, `mode`, `vrf`, `outside-vrf` e `reserve` — e, num pool NAT64, `subscriber-length` e `nat64-prefix`. Mudar uma prefix-list que um pool usa reconstrói esse pool, como mudar o prefixo digitado. O resto — timeouts, ALGs, limites, MSS, bypass, encaminhamentos, `max-blocks`, `initial-allocation` — é aplicado num pool com tráfego.
 
 Isso não é otimização, é correção. Derrubar a base inteira de assinantes para desligar um ALG, limitar uma máquina infectada ou dar uma porta de entrada a um cliente não é mudança que alguém pediria.
 

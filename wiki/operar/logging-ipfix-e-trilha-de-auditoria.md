@@ -6,12 +6,12 @@ Duas coisas diferentes com o mesmo objetivo — poder responder *"quem estava us
 flowchart TD
     P["Pergunta: quem usava<br/>este IP:porta naquela data?"] --> M{"Modo do pool"}
     M -->|deterministic| A["a aritmética responde<br/>+<br/>show cgnat history prova<br/>qual config estava em vigor"]
-    M -->|dynamic| B["os registros IPFIX ou syslog<br/>no coletor respondem"]
+    M -->|bpa| B["os registros IPFIX ou syslog<br/>no coletor respondem"]
 ```
 
 
 :::info
-**A caixa não guarda os registros de conexão: ela os exporta, e quem guarda o ano de guarda é o seu coletor.** O volume de log da caixa tem só duas coisas: a trilha de configuração e o transbordo do exportador, os registros que um coletor fora do ar ainda não recebeu. O tamanho dele diz quanto tempo a caixa aguenta exportando para um coletor inalcançável, não quanto histórico ela tem.
+**A caixa não guarda os registros de conexão: ela os exporta, e quem guarda o ano de guarda é o seu coletor.** O volume de log da caixa tem só duas coisas: a trilha de configuração e o transbordo do exportador, os registros que um coletor fora do ar ainda não recebeu. O transbordo de cada transporte para em 256 MB, seja qual for o tamanho do volume: é esse teto que diz quanto tempo a caixa aguenta exportando para um coletor inalcançável, e nada ali é histórico.
 
 :::
 
@@ -23,7 +23,7 @@ Não existem eventos de alocação por assinante, então não há o que exportar
 
 Isso só se sustenta enquanto se souber **qual** configuração estava em vigor. É para isso que existe a **trilha de configuração**.
 
-**Uma exceção: a** `**reserve**`**.** Um pool determinístico com `reserve` guarda blocos fora da fórmula para entregar a quem enche o próprio bloco. Esses são justamente os blocos que a fórmula **não** produz, então cada um sai como `natEvent 16` ao ser entregue e `natEvent 17` ao voltar, igual a um bloco dinâmico — e um pool assim precisa de exportação ligada como um pool dinâmico.
+**Uma exceção: a** `**reserve**`**.** Um pool determinístico com `reserve` guarda blocos fora da fórmula para entregar a quem enche o próprio bloco. Esses são justamente os blocos que a fórmula **não** produz, então cada um sai como `natEvent 16` ao ser entregue e `natEvent 17` ao voltar, igual a um bloco de um pool BPA — e um pool assim precisa de exportação ligada como um pool BPA.
 
 ## A trilha de configuração
 
@@ -58,7 +58,9 @@ Uma entrada que não puder ser atribuída a alguém **diz isso**, com a palavra 
 show cgnat history
 ```
 
-# Modo dinâmico: IPFIX por bloco
+Na trilha, um pool BPA aparece como `mode dynamic`, a palavra de antes da 0.151.0: uma entrada nunca é reescrita, e as novas usam a mesma palavra das antigas.
+
+# Modo BPA: IPFIX por bloco
 
 Um registro por **alocação de bloco** (RFC 8158) — não por fluxo. É a diferença entre alguns registros por assinante por dia e um por conexão.
 
@@ -66,13 +68,13 @@ Três transportes, que podem ficar ligados ao mesmo tempo:
 
 | Transporte | Por onde sai | Quando usar |
 |------------|--------------|-------------|
-| IPFIX sobre UDP | pelo próprio dataplane: o coletor tem de ser alcançável pelas rotas do encaminhamento | telemetria. Perde registro sob congestionamento, sem aviso |
-| IPFIX sobre TCP | pelo Linux da caixa, com transbordo em disco se o coletor cair | **guarda legal**. Carrega a identidade do assinante, como o syslog; o UDP não |
+| IPFIX sobre UDP | pelo contêiner de log da caixa, de um socket no endereço `src`; pelo próprio dataplane quando o exportador está numa VRF, quando o contêiner não consegue usar esse endereço ou quando ele não está no ar | telemetria. Perde registro sob congestionamento, sem aviso |
+| IPFIX sobre TCP | pelo Linux da caixa (o contêiner de log; o próprio dataplane, se o contêiner não estiver no ar), com transbordo em disco se o coletor cair | **guarda legal**. Carrega a identidade do assinante, como o syslog; o UDP não |
 | syslog (RFC 5424 sobre TCP) | pelo Linux, com o mesmo transbordo | o coletor que só lê syslog, que é a maioria |
 
 
 :::warning
-**Um pool dinâmico sem nenhuma exportação é um pool que não consegue responder a um ofício.** Em modo dinâmico o registro exportado é a única prova de quem segurava uma porta pública. `commit check` e `commit` avisam, nomeando o pool, quando um pool dinâmico — ou determinístico com `reserve` — vai ficar numa caixa em que nada exporta: nem UDP ligado com coletor, nem coletor TCP, nem syslog. É aviso e não recusa, porque um pool montado antes do coletor existir é uma configuração correta; mas não o deixe carregando assinantes assim.
+**Um pool BPA sem nenhuma exportação é um pool que não consegue responder a um ofício.** Em modo BPA o registro exportado é a única prova de quem segurava uma porta pública. `commit check` e `commit` avisam, nomeando o pool, quando um pool BPA — ou determinístico com `reserve` — vai ficar numa caixa em que nada exporta: nem UDP ligado com coletor, nem coletor TCP, nem syslog. É aviso e não recusa, porque um pool montado antes do coletor existir é uma configuração correta; mas não o deixe carregando assinantes assim.
 
 :::
 
@@ -127,7 +129,7 @@ A recusa vale quando é **esta mudança** que cria o problema. Numa caixa que j�
 :::warning
 **Em versões até a 0.63.0 a exportação por UDP não funcionava em nenhuma appliance instalada.** Não havia comando na VTY que dissesse para qual coletor enviar, então o dataplane recusava `logging enable` — e, até a 0.63.0, o `commit` respondia `commit complete` por cima dessa recusa. Uma operação que acreditava estar guardando registros de retenção legal não estava guardando nada.
 
-Se você opera modo dinâmico e ligou a exportação por UDP em versão anterior, trate isso como uma lacuna de retenção no período: os registros daquele intervalo não existem. A exportação por TCP nunca foi afetada.
+Se você opera modo BPA (chamado `dynamic` até a 0.151.0) e ligou a exportação por UDP em versão anterior, trate isso como uma lacuna de retenção no período: os registros daquele intervalo não existem. A exportação por TCP nunca foi afetada.
 
 :::
 
@@ -140,6 +142,8 @@ show cgnat logging       estado da exportação e para onde ela vai
 Uma linha `exporter` com endereço é a prova de que existe destino; `exporter none` significa que nada sai por UDP, **mesmo com o estado** `**enabled**` — apagar o destino não desliga a exportação, só a deixa sem para onde ir.
 
 A mesma tela tem uma parte para o transporte TCP e outra para o syslog. Cada uma diz o coletor e se está `connected`, `connecting` ou `disconnected`, quanto já foi enviado e quanto está pendente, e a linha `spill`: bytes no disco, quantos já voltaram ao coletor e quantos foram descartados. Um transporte desligado aparece como `disabled`.
+
+Acima das duas, uma linha diz quem carrega os fluxos TCP: `TCP streams carried by the log container`, o contêiner de log da caixa, ou `TCP streams carried by the dataplane` quando ele não está no ar. Na parte do UDP, a linha `sender` diz o mesmo para o IPFIX sobre UDP e, quando é o dataplane, por quê. E a linha `file` de cada transporte diz quantos bytes o arquivo de transbordo tem agora, o teto dele (256 MB) e quanto o teto já recusou.
 
 O autoteste de boot também confere isso, e compara duas coisas diferentes: o que a caixa foi mandada fazer e o que o dataplane realmente tem. Se a configuração pede exportação e o dataplane está sem ela, o boot falha e diz qual das duas metades não pegou — porque uma configuração recusada é indistinguível de uma que está funcionando quando se olha só para o arquivo.
 
@@ -171,7 +175,7 @@ monitor cgnat logging   Ctrl-C to stop
 21:26:15 -- +30 exhaustion repeats held back
 ```
 
-Cada linha é um evento de bloco: `ALLOC` (o assinante recebeu o bloco), `RELEASE` (devolveu), `EXHAUSTED` (pediu e não havia bloco livre), com o IP do assinante, o IP público, a faixa de portas e o pool pelo nome. A hora é a mesma que vai no registro. Quando a caixa conhece a identidade do assinante (login PPPoE ou DHCP), ela aparece logo abaixo.
+Cada linha é um evento de bloco: `ALLOC` (o assinante recebeu o bloco), `RELEASE` (devolveu), `EXHAUSTED` (pediu e não havia bloco livre; um por assinante a cada 10 segundos, não um por pacote recusado), com o IP do assinante, o IP público, a faixa de portas e o pool pelo nome. A hora é a mesma que vai no registro. Quando a caixa conhece a identidade do assinante (login PPPoE ou DHCP), ela aparece logo abaixo.
 
 As linhas `--` saem a cada 10 segundos, só quando algo mudou, e dizem por transporte quanto foi enviado, quanto está esperando e quanto se perdeu. A tela não sabe se **um** registro específico chegou ao coletor — a exportação conta por transporte, não por registro — e diz isso no cabeçalho.
 
@@ -192,7 +196,7 @@ O monitor só lê: não para, não atrasa e não tira nada da exportação. Se e
 
 ## Bloco preso por encaminhamento de porta também é evento
 
-Um [encaminhamento de porta](/s/wiki/doc/encaminhamento-de-porta-epIZfdmzU3) num pool dinâmico prende o bloco do assinante enquanto o forward existir. Prender gera uma **alocação** e soltar gera uma **liberação**, como qualquer outro bloco: em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado sem registro é um mapeamento que ninguém consegue atribuir depois.
+Um [encaminhamento de porta](/s/wiki/doc/encaminhamento-de-porta-epIZfdmzU3) num pool BPA prende o bloco do assinante enquanto o forward existir. Prender gera uma **alocação** e soltar gera uma **liberação**, como qualquer outro bloco: em modo BPA o log é o único registro de quem segurou um bloco, e um bloco segurado sem registro é um mapeamento que ninguém consegue atribuir depois.
 
 Um segundo forward dentro de um bloco que já está preso **não** gera outro registro — o evento é do bloco, não do forward. Duas alocações do mesmo bloco sem uma liberação entre elas é exatamente a lacuna que faz uma consulta futura responder errado.
 
@@ -254,7 +258,7 @@ nat
 
 Sem `port`, a caixa escuta na 1813, a porta de contabilidade do RADIUS. `identity radius disable` fecha o listener.
 
-Esta caixa não é um servidor RADIUS: ela não autentica ninguém e não responde Access-Request. Ela é um segundo destino da contabilidade, lendo dela uma coisa só — qual assinante está em qual endereço. Um `Start` ou um `Interim` que traz endereço e nome diz quem está ali, um `Stop` tira o nome, e um `Interim` sem endereço não muda nada, porque adivinhar de qual endereço ele falava é exatamente como um assinante acaba nomeado no registro de outro.
+Aqui a caixa não é o servidor RADIUS: ela não autentica ninguém e não responde Access-Request. Ela é um segundo destino da contabilidade, lendo dela uma coisa só — qual assinante está em qual endereço. Um `Start` ou um `Interim` que traz endereço e nome diz quem está ali, um `Stop` tira o nome, e um `Interim` sem endereço não muda nada, porque adivinhar de qual endereço ele falava é exatamente como um assinante acaba nomeado no registro de outro.
 
 **O segredo é obrigatório e conferido em todo pacote**, e pacote que não bate é descartado sem resposta. Sem essa conferência, qualquer um que alcance a porta nomearia qualquer assinante em qualquer endereço, e o log de compliance passaria a aceitar ditado. As duas recusas são contadas separadas — autenticador ruim é a caixa de outro (ou o segredo desta errado), pacote malformado é cliente quebrado de alguém:
 
@@ -288,6 +292,8 @@ Nenhuma outra tela desta caixa carrega identidade. A presença dela no log é a 
 O exportador **UDP** não mudou: ele continua com os sete campos da RFC 8158 e sem identidade.
 
 **Assinante só IPv6, de um pool NAT64:** quem o nomeia é o `Delegated-IPv6-Prefix` (atributo 123 da RFC 4818), o prefixo que o BNG delegou. O registro leva o nome da delegação que **cobre** o prefixo do assinante: um /56 delegado a cada cliente de um pool cortado em /56, ou um /48 que cobre todos os /56 de uma empresa. Uma delegação mais longa que o assinante — um /60 dentro de um /56 — cobre só parte dele, e o registro diz `unknown`. Uma delegação nova substitui qualquer outra que ela sobreponha: o prefixo delegado agora é daquele cliente, e a entrada antiga é um `Stop` que não chegou.
+
+**Quando a própria caixa é o BNG** (PPPoE), quem segurava cada endereço interno é ela mesma que registra: o histórico de sessões, `show pppoe history`, escrito no início e no fim de cada sessão, com ou sem resposta do RADIUS, encadeado por hashes como a trilha de configuração e guardado no mesmo volume de log. O endereço interno e o instante de um registro de bloco levam ao assinante com `show pppoe history address <endereço> at <hora>`; veja [Configuração de PPPoE](/s/wiki/doc/configuracao-de-pppoe-bfl7lzpl2O).
 
 **A contabilidade é lida a cada segundo, com ou sem exportação ligada.** Antes ela só era lida depois que o primeiro template IPFIX saía — até um intervalo de template depois do `logging enable` —, e todo bloco alocado nesse meio-tempo saía `unknown` mesmo com o BNG já tendo dito quem era.
 
@@ -371,7 +377,7 @@ Três consequências, e a terceira é a que importa para guarda legal:
 * os dois transportes não podiam se corroborar, que é a única razão de rodar os dois;
 * **um pedido que nomeia uma hora do dia — que é todo pedido que este log existe para responder — não podia ser resolvido.**
 
-Corrigido na **0.35.0**. Um log já coletado por TCP pode ser reparado se a hora de boot da caixa for conhecida; **nada recupera a ordenação entre reinícios**. Se você opera modo dinâmico e coletou por TCP em versão anterior, trate isso como um problema de retenção, não de cosmética.
+Corrigido na **0.35.0**. Um log já coletado por TCP pode ser reparado se a hora de boot da caixa for conhecida; **nada recupera a ordenação entre reinícios**. Se você opera modo BPA e coletou por TCP em versão anterior, trate isso como um problema de retenção, não de cosmética.
 
 :::
 
@@ -390,7 +396,7 @@ Os três valores de `natEvent` usados:
 |------:|--------|
 | **16** | bloco alocado (inclui extensão) |
 | **17** | bloco liberado |
-| **12** | portas esgotadas |
+| **12** | portas esgotadas (um por assinante a cada 10 segundos) |
 
 # Por que a liberação é obrigatória
 
@@ -437,13 +443,13 @@ As liberações são escritas no instante da parada, mas o coletor pode não est
 * um coletor lento, ou que parou de ler sem fechar a conexão;
 * uma caixa com **muitos blocos segurados**. A parada escreve uma liberação por bloco, de uma só vez, e isso é mais do que cabe no socket em uma passada.
 
-Nos dois casos os bytes que sobraram **não são perdidos**: vão para um arquivo no disco da própria caixa, `/var/log/prisma-routing/ipfix-spill.bin` para o IPFIX sobre TCP e `/var/log/prisma-routing/syslog-spill.bin` para o syslog, e voltam na próxima conexão com o coletor, na ordem em que foram escritos. São os mesmos arquivos que cobrem um coletor fora do ar.
+Nos dois casos os bytes que sobraram **não são perdidos** enquanto houver onde escrever: vão para um arquivo no disco da própria caixa, `/var/log/prisma-routing/ipfix-spill.bin` para o IPFIX sobre TCP e `/var/log/prisma-routing/syslog-spill.bin` para o syslog, e voltam na próxima conexão com o coletor, na ordem em que foram escritos. São os mesmos arquivos que cobrem um coletor fora do ar, e cada um para em 256 MB.
 
 O que isso muda para quem opera:
 
 * depois de um reboot, parte das liberações pode chegar ao coletor **alguns segundos depois de a caixa voltar**, e não no instante da parada. O carimbo de cada registro continua sendo o instante da parada, que é o que responde a uma ordem judicial;
 * enquanto a exportação por TCP não voltar a conectar, o arquivo fica no disco. Uma caixa desligada em definitivo deixa esses registros lá - copie o arquivo antes de descomissionar;
-* o estado da exportação mostra, por transporte, quantos bytes foram para o arquivo, quantos já voltaram e quantos foram descartados. Descarte só acontece quando não há onde escrever, e é contado - nunca silencioso. Um descarte na própria parada, quando o contador morre junto com o processo, é dito no registro do sistema com quantos bytes não puderam ser escritos.
+* o estado da exportação mostra, por transporte, quantos bytes foram para o arquivo, quantos já voltaram e quantos foram descartados. Descarte só acontece quando não há onde escrever ou quando o arquivo chegou ao teto de 256 MB, e é contado - nunca silencioso. Um descarte na própria parada, quando o contador morre junto com o processo, é dito no registro do sistema com quantos bytes não puderam ser escritos.
 
 ```
 show cgnat logging
@@ -463,7 +469,7 @@ Uma caixa que perde energia, que é morta pelo kernel por falta de memória ou q
 
 ## O marcador de reinício
 
-Para separar os dois casos, a caixa anuncia periodicamente **quando esta encarnação do dataplane começou**, em um segundo template, no campo `systemInitTimeMilliseconds` (IE 160) - que o IANA registra exatamente como *"o instante absoluto da última (re)inicialização do dispositivo IPFIX"*.
+Para separar os dois casos, a caixa anuncia **quando esta encarnação do dataplane começou**, em um segundo template, no campo `systemInitTimeMilliseconds` (IE 160) - que o IANA registra exatamente como *"o instante absoluto da última (re)inicialização do dispositivo IPFIX"*. O anúncio sai a cada 30 segundos no UDP, e uma vez por boot, no começo do fluxo, no TCP e no syslog.
 
 Com isso, uma alocação sem liberação passa a ter três leituras, e não duas:
 

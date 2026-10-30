@@ -248,26 +248,26 @@ flowchart LR
     T["prisma-routing-tune<br/><i>isolcpus, hugepages, bind da placa</i>"] -->|Before| C["prisma-routing-containers<br/><i>vpp + frr em containers</i>"]
     C --> H["prisma-routing.service<br/><i>aplica a config salva</i>"]
     H --> S["prisma-routing-selftest<br/><i>relatório no console</i>"]
-    W["card-watch.timer<br/><i>a cada 30s</i>"] -.->|se o dataplane desistir| C
+    W["card-watch.timer<br/><i>a cada 5s</i>"] -.->|se o dataplane desistir| C
 ```
 
 | Serviço | Função |
 |---------|--------|
-| `prisma-routing-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela |
-| `prisma-routing-containers` | sobe o dataplane, o roteamento e o plano de gerência (a VTY) como containers |
-| `prisma-routing-doors` | executa no host o que a VTY pede (contas, sshd, SNMP, reboot); só para root, cada pedido vira uma linha no journal |
-| `prisma-routing-card-watch.timer` | percebe um dataplane que o Docker desistiu de reiniciar, anota o motivo e devolve a placa ao kernel |
+| `prisma-routing-tune` | tuning de boot (isolcpus, hugepages); roda em **todo** boot, sem sentinela, e de novo em cada `system dataplane restart` |
+| `prisma-routing-containers` | sobe o dataplane, o roteamento, o plano de gerência (a VTY), o exportador dos registros de CGNAT e, com PPPoE configurado, o plano de controle do PPPoE como containers |
+| `prisma-routing-doors` | executa no host o que a VTY pede (contas, sshd, SNMP, reboot), só nas formas que conhece; cada pedido vira uma linha no journal. Mudanças são de root; atualização, reboot, desligamento e reinício do dataplane também de quem tem `operator`; perguntas que só leem, de qualquer conta |
+| `prisma-routing-card-watch.timer` | a cada 5 segundos: devolve a configuração a um dataplane que o Docker subiu de novo depois de uma queda, e percebe um dataplane que o Docker desistiu de reiniciar, anota o motivo e devolve a placa ao kernel |
 | `prisma-routing-backplane` | a rede interna própria dos containers, numa VRF separada, que não vaza para a tabela principal |
 | `prisma-routing.service` | aplica a configuração salva (`prismash --load`) |
 | `prisma-routing-selftest` | verifica e reporta no console |
 
-**A VTY roda no container de gerência** (`prisma-routing_mgmt_1`). O login cai nela com o próprio usuário e os próprios grupos, então o papel de cada conta é o mesmo de antes. O container só tem uma rede interna própria, que alcança o host e nada além dele, e lê do host, só leitura, o que a VTY precisa saber da caixa: as placas, as rotas, os núcleos, se a caixa está na mídia de instalação. O que age no host passa pelo host: `ping`, `traceroute` e `mtr` saem pela rede do host; `install`, `system upgrade` e `system dataplane restart` rodam na VTY do host, no mesmo terminal; `start shell` abre um shell no host, e só para `root` e para contas com o papel `administrator` - qualquer outra conta recebe a recusa, e um comando que ela passe pelo `ssh` é executado pela VTY, com o papel dela, e não por um shell. Se o container não estiver no ar, a VTY roda no host, e ninguém fica trancado para fora. Para voltar a VTY para o host numa caixa: `touch /etc/prisma-routing/vty-on-host`.
+**A VTY roda no container de gerência** (`prisma-routing_mgmt_1`). O login cai nela com o próprio usuário e os próprios grupos, então o papel de cada conta é o mesmo de antes. O container só tem uma rede interna própria, que alcança o host e nada além dele, e lê do host, só leitura, o que a VTY precisa saber da caixa: as placas, as rotas, os núcleos, se a caixa está na mídia de instalação. O que age no host passa pelo host: `ping`, `traceroute` e `mtr` saem pela rede do host; `install`, `system upgrade` e `system dataplane restart` rodam na VTY do host, no mesmo terminal (para uma conta com `operator` que não é root, a atualização e o reinício do dataplane rodam no host como uma unidade própria, e a VTY mostra o que ela escreve); `start shell` abre um shell no host, e só para `root` e para contas com o papel `administrator` - qualquer outra conta recebe a recusa, e um comando que ela passe pelo `ssh` é executado pela VTY, com o papel dela, e não por um shell. Se o container não estiver no ar, a VTY roda no host, e ninguém fica trancado para fora. Para voltar a VTY para o host numa caixa: `touch /etc/prisma-routing/vty-on-host`.
 
 ```
 docker ps --format "{{.Names}} {{.Status}}"
 ```
 
-Numa caixa saudável, a lista traz os três containers — `prisma-routing_vpp_1` (o dataplane), `prisma-routing_frr_1` (o roteamento) e `prisma-routing_mgmt_1` (a VTY) — todos `Up`.
+Numa caixa saudável, a lista traz `prisma-routing_vpp_1` (o dataplane), `prisma-routing_frr_1` (o roteamento), `prisma-routing_mgmt_1` (a VTY) e `prisma-routing_logger_1` (o exportador dos registros de CGNAT por TCP, syslog e UDP), todos `Up`; com PPPoE configurado, também `prisma-routing_bng_1`. Sem o `logger` a caixa continua registrando: o próprio dataplane volta a enviar os registros, e `show cgnat logging` diz quem está enviando.
 
 Antes de o compose ver o arquivo, a unit faz três coisas, e cada uma existe porque uma caixa que pulou aquela etapa subiu errada:
 
@@ -278,7 +278,9 @@ Antes de o compose ver o arquivo, a unit faz três coisas, e cada uma existe por
 
 ### Quando o dataplane desistiu
 
-O dataplane em container tenta subir cinco vezes. Depois disso o Docker desiste, e a cada 30 segundos o vigia confere: achando o dataplane parado, ele **anota por quê** — o estado do container, o código de saída e as últimas oitenta linhas que o dataplane escreveu — em `/var/log/prisma-routing/why-the-dataplane-stopped`, e só então devolve a placa ao kernel, uma vez por boot.
+O dataplane em container tenta subir cinco vezes. Depois disso o Docker desiste, e a cada 5 segundos o vigia confere: achando o dataplane parado, ele **anota por quê** — o estado do container, o código de saída e as últimas oitenta linhas que o dataplane escreveu — em `/var/log/prisma-routing/why-the-dataplane-stopped`, e só então devolve a placa ao kernel, uma vez por boot.
+
+O mesmo vigia cuida de dois casos antes desse. Um dataplane que caiu e que o Docker subiu de novo volta sem configuração nenhuma, e o vigia põe nele a configuração em vigor, alguns segundos depois. E um dataplane que saiu sozinho com status 0, sem ninguém mandar (o Docker não reinicia esse), é iniciado de novo, até cinco vezes por boot.
 
 Esse arquivo é a primeira coisa a ler numa caixa que subiu sem encaminhar. Reiniciar a caixa apaga o log do container, e o arquivo fica justamente porque reiniciar é a primeira coisa que qualquer um faz. Quando ele existe, a VTY e o autoteste apontam para ele em vez de mandar consultar o log do container, que naquela caixa está vazio.
 
@@ -453,7 +455,7 @@ flowchart TD
 | "de quem era esse IP:porta?" | `show cgnat translation <ip> <porta>` |
 | "o pool vai encher?" | `show cgnat top` |
 | "quantas sessões, por thread?" | `show cgnat session` |
-| "o coletor está recebendo?" | `show cgnat logging` |
+| "o coletor está recebendo?" | `show cgnat logging`, e `show log kind collector` para quando ele sumiu e voltou |
 | "o que aconteceu na caixa?" | `show log` |
 | "quem fez commit, e de onde?" | `show log source vty` (ou `source api`) |
 | "por que o dataplane reiniciou?" | `show log source dataplane`, e a linha `started by:` de `show system uptime` |
@@ -477,6 +479,8 @@ flowchart TD
 | "a trilha de configuração foi adulterada?" | `show cgnat history verify` |
 | "quais placas a caixa tem, e qual ela tomou?" | `show hardware` |
 | "quais núcleos fazem o quê?" | `show system cpu` |
+| "o ajuste da caixa está bom? o que mudar?" | `show system tuning` e `show system tuning advice` |
+| "o que da configuração salva ficou esperando uma placa?" | `show configuration pending` |
 | "quanto cada núcleo está ocupado? tem steal?" | `show system cpu cores` |
 | "como a memória está dividida?" | `show system memory` |
 | "o agregado LACP está inteiro?" | `show lacp` |
@@ -501,6 +505,7 @@ flowchart TD
 | Sessão BGP caiu e voltou sem ninguém ver | `show log kind bgp`: cada queda com o motivo do FRR, e `went down and came back between two readings` quando caiu e voltou entre duas leituras |
 | Porta que caiu e voltou rápido demais para alguém ver | `show log kind link`: `went down and came back between two readings (N time(s))` — o dataplane conta cada queda de link da porta, e o Linux, as das placas que ficaram com ele; a queda é registrada mesmo que as duas leituras tenham visto o link em pé |
 | O módulo da placa de gerência (a que ficou com o Linux) | `show log kind transceiver`: módulo inserido, retirado, luz abaixo do aviso, com a placa nomeada `(held by Linux)` e origem `host`; uma placa virtio, que não tem módulo, não gera evento nenhum |
+| A caixa subiu e parte da configuração não foi aplicada | uma placa que a configuração salva nomeia não estava lá no boot: o resto foi aplicado, e `show configuration pending` diz o que espera por ela. `save` é recusado enquanto houver pendência; quando a placa aparece, a caixa aplica o que faltava, e `clear configuration pending` desiste dela |
 | A caixa ficou sem placas depois de um reinício | `show log kind gave-up`: o dataplane abandonado, ou o `system dataplane restart` que não terminou, e por quê |
 | Os assinantes PPPoE caíram todos juntos | `show log kind exit`: o plano de controle PPPoE parou, e por quê (o código, o sinal, um commit); `show log kind start` diz quem o pôs de pé de novo |
 | `show system uptime` diz `restarted after the boot` | `show log source dataplane` diz a causa: um `system dataplane restart` (de quem), uma atualização, ou `unexpected` — ninguém pediu, e `why-the-dataplane-stopped` costuma ter o motivo |

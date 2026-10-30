@@ -54,12 +54,13 @@ Pointing the login shell at an application creates a risk of total lockout: a `p
 
 ### The VTY runs in the management plane
 
-The installed box runs three containers: the dataplane, routing and the **management plane**, where the VTY runs. A login lands there **as itself** — with the same user and the same groups it has on the system —, so the role the VTY reads is the account's, and a read-only account inside the container can do exactly what it could outside it. What the VTY does on the system — creating accounts, touching SSH, SNMP and the DNS resolvers, adjusting the Linux side of an interface, rebooting the box — it asks the system to do, which checks who is asking through the kernel itself and only executes for `root`. It is the same rule as when the VTY ran those commands itself: what changed is where the command runs, not who can run it.
+The installed box runs in containers the dataplane, routing, the CGNAT records exporter and the **management plane**, where the VTY runs; a box with PPPoE configured runs one more, PPPoE's own. A login lands there **as itself** — with the same user and the same groups it has on the system —, so the role the VTY reads is the account's, and a read-only account inside the container can do exactly what it could outside it. What the VTY does on the system — creating accounts, touching SSH, SNMP and the DNS resolvers, adjusting the Linux side of an interface, rebooting the box — it asks the system to do, which checks who is asking through the kernel itself and only executes for `root`. It is the same rule as when the VTY ran those commands itself: what changed is where the command runs, not who can run it.
 
 For the operator nothing changes in what is typed. Two practical consequences:
 
 * **If the management container is not running, the VTY runs directly on the system**, as before. A box with that container stopped remains reachable.
 * `install`, `system upgrade` and `system dataplane restart` are executed by the system, with its own VTY, in the same terminal. You do not need to do anything differently.
+* A `system upgrade` recreates the management container at the end, and a login that arrives in those seconds **waits** up to 20 seconds, saying once that the VTY is restarting because of an upgrade. If the time runs out, the table at the top of this page applies: `root` and `prisma-admin` land in a shell with the reason printed, and other accounts see the reason and the session ends.
 
 
 :::info
@@ -171,7 +172,7 @@ Media earlier than **0.37.0** did not install the component that serves this cal
 | Type of change | Required capability |
 |----------------|---------------------|
 | Pools, `cgnat inside`/`cgnat outside` on interfaces, timeouts, limits, bypass, forwards, logging | `prisma-cgnat`      |
-| Everything else: routing, addresses and other interface settings, SSH, accounts, SNMP, DNS, `system` (cards, cores, memory) and CGNAT memory (`nat` > `cgnat` > `memory`), which is a machine setting | `prisma-admin`      |
+| Everything else: routing, addresses and other interface settings, SSH, accounts, SNMP, DNS, PPPoE and RADIUS, `system` (cards, cores, memory) and CGNAT memory (`nat` > `cgnat` > `memory`), which is a machine setting | `prisma-admin`      |
 | `start shell`, `install` | `prisma-admin`      |
 | `system reboot`, `system shutdown`, `system upgrade <version>`, `system dataplane restart` | `root` or `operator` (`prisma-operator`), whatever the role |
 | `system upgrade` without a version (the query) | any account, including read-only |

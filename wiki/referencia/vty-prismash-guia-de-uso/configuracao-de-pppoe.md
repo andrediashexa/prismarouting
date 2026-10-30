@@ -38,7 +38,7 @@ Toda mudança no bloco `pppoe` reinicia o plano de controle PPPoE: **todas as se
 | `authentication pap chap mschap-v2` | os métodos oferecidos; os três se omitido |
 | `session-limit <n>` | no máximo tantas sessões; 16.000 se omitido. Cada sessão é uma interface no dataplane, e o segmento de estatísticas é dimensionado para esse número no boot, a partir da configuração salva. O `commit` recusa mais de 100.000 (o máximo medido) e mais do que a RAM da caixa deixa o segmento comportar; até o próximo reboot, a caixa aceita só o que o segmento em uso comporta, e o `show pppoe summary` diz isso |
 | `mtu <576-1500>` | MTU e MRU do PPP; 1492 se omitido |
-| `tcp-mss <536-1460>` | limita o MSS do TCP em cada sessão |
+| `tcp-mss <536-1460>` | limita o MSS do TCP em cada sessão; no IPv6 da sessão, 20 bytes abaixo |
 | `rate-limit default <download>/<upload>` | o limite de banda de uma sessão para a qual o RADIUS não mandou nenhum, em kbit/s ou com K, M ou G (`20M/10M`); sem ele, essa sessão não tem limite |
 | `rate-limit download shaper` ou `policer` | como o limite de download é aplicado: por uma fila (shaper, o padrão) ou por descarte (policer). Veja [Fila ou descarte](#fila-ou-descarte-shaper-e-policer) |
 | `rate-limit upload shaper` ou `policer` | o mesmo para o upload; policer se omitido |
@@ -193,8 +193,10 @@ O endereço de cada sessão vem do RADIUS (`Framed-IP-Address`) quando ele manda
 | `dynamic-authorization listen` sem `client`, ou `client` sem `listen` | ninguém poderia assinar um pedido, ou não haveria onde recebê-lo |
 | interfaces de acesso em duas placas | o PPPoE do dataplane responde de um MAC só |
 | uma sub-interface com duas tags (QinQ) | o PPPoE do dataplane lê uma tag só |
+| uma sub-interface sem `vlan <id>` no bloco dela | não haveria tag para atender |
+| duas interfaces de acesso com a mesma VLAN | as duas seriam a mesma porta |
 | uma interface que o dataplane não tem | nada para atender nela |
-| um segredo com espaço, vírgula, aspas ou `#` | quebraria a configuração gerada |
+| um segredo com espaço, vírgula, aspas ou `#` (recusado já na hora em que se digita) | quebraria a configuração gerada |
 
 ## Os segredos do RADIUS
 
@@ -225,7 +227,9 @@ Com PPPoE, o endereço interno do assinante é entregue na hora da discagem, por
 | `show pppoe history address <A.B.C.D> at <hora>` | a sessão que tinha aquele endereço interno naquele instante: o usuário, de quando a quando, o id da sessão, o MAC e a interface de acesso |
 | `show pppoe history address <endereço IPv6> at <hora>` | a sessão cujo prefixo de WAN contém aquele endereço, ou cujo prefixo delegado o continha naquele instante: o delegado conta a partir da hora em que foi delegado, não do início da sessão |
 | `show pppoe history user <nome>` | as sessões de um usuário |
+| `show pppoe history session <id>` | uma sessão, pelo id |
 | `show pppoe history since <hora>` | as sessões que estiveram de pé daquela hora em diante |
+| `show pppoe history last <n>` | só as últimas `n` sessões; também depois de um filtro (`user`, `address`, `since`) |
 | `show pppoe history verify` | confere a cadeia de hashes e diz a primeira linha que não confere |
 | `show cgnat translation <público> <porta> at <hora>` | num pool determinístico, as duas etapas de uma vez: o endereço interno pela fórmula e a sessão que o tinha naquele instante |
 
@@ -282,7 +286,7 @@ prisma> show log kind radius
 | saída por falha, com o código ou o sinal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
 | a partida que veio depois dela, sem ninguém pedir | `the PPPoE control plane (prisma-bng) started again, by its restart policy, after it exited: ...` |
 | parada pedida (commit, atualização, `no pppoe`) | `the PPPoE control plane (prisma-bng) stopped: stopped (SIGTERM): ...` |
-| reinício numa atualização que regrava os arquivos | `... started again: PPPoE's files from an older release (format 4) written again in format 5` |
+| reinício numa atualização que regrava os arquivos | `... started again: PPPoE's files from an older release (format 6) written again in format 7` |
 | servidor RADIUS fora, e de volta | `RADIUS server 192.0.2.10 failed: it did not answer, ...` / `RADIUS server 192.0.2.10 is active again: ...` |
 
 Uma partida em nível `warning` é uma que ninguém pediu: é ela que vale investigar.

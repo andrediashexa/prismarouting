@@ -79,6 +79,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The wiki against the product at 0.156.0.**
+  ([#615](https://github.com/andrediashexa/hexarouting/issues/615))
+  Asked for by the maintainer; the last full pass was at 0.138.5. Every
+  page, claim by claim against `docs/`, this file and the code, the same
+  corrections in PT, EN and ES. The ones an operator would have paid for:
+  the export spill holds 256 MB per transport (days, not the year the pages
+  promised); UDP export leaves through the log container; `mode bpa` and
+  `prefix-inside`/`prefix-outside`; NAT64 pools under `nat` > `nat64`; no
+  `commit` warning for a BPA pool without a collector since 0.151.10; MTU
+  1500 by default; `operator` accounts; management in a VRF; an upgrade
+  carries no kernel and no host packages; lab management addresses on
+  public pages replaced by documentation ones. **`tools/wiki-pull.sh`**
+  wrote a page whose title two languages share ("Operar", "Comandos show")
+  to one file and listed it twice in `wiki/.ids`: four ES pages had never
+  been in the mirror, and `wiki-publish.sh` stopped at the first. The ES
+  pages now live under `wiki/operar-2/` and `wiki/referencia-2/`;
+  `test/test_wiki_roundtrip.sh` asserts it.
+
 ## 0.156.0 - the medium installs qemu-guest-agent
 
 ### Added

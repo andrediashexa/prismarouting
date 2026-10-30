@@ -401,7 +401,6 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | `fib-policy connected ...`, ou um dos comandos novos digitado pela metade | `not how this statement is typed; nothing staged`, e embaixo a forma certa |
 | `from protocol` numa política do `default-information` | `from protocol has nothing to match on ospf default-information` (ou `isis`) |
 | `set next-hop abc` | `set next-hop: 'abc' is not an address` |
-| `then` com outra coisa que não `accept`, `reject` ou `next term` | `then: accept, reject or next term; a change to the route is 'set ...'` |
 | `no` de algo que não existe | `policy-options has no such statement; nothing removed`, com a declaração |
 | `neighbor ... import` ou `export` de uma política que não existe, ou `export` num IGP | `no policy-statement named <nome>` |
 | uma `route-map` ou lista com nome começado por `PO-` | `the PO- names belong to policy-options; nothing staged` |
@@ -418,6 +417,7 @@ Tudo o que está abaixo é recusado **no prompt**, e nada é guardado na candida
 | `no vrf-import <vrf>` de uma importação que a família não tem | `nothing removed`, e embaixo `this address family does not import <vrf>` |
 | `from source-vrf` numa política aplicada fora de um `vrf-import` | `from source-vrf is for a vrf-import, where a route is leaked` |
 | no `commit`, um term com mais de 10 combinações | `more than 10 combinations of neighbor, origin, local-preference, next-hop, validation-state and source-vrf; split it into terms` |
+| no `commit`, uma linha em que a política foi traduzida que o daemon que a aplica recusou, embora a sintaxe tenha passado | `FRR refused <n> line(s) the routing policy compiled to`, com a política, o term e a linha; o commit é desfeito e a caixa volta ao estado anterior |
 
 ## O que só existe no BGP, exportado para um IGP
 

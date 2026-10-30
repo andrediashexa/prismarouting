@@ -124,6 +124,7 @@ for line in open(tmp + "/pages.json"):
         docs.append({"id": d["id"], "parent": d.get("parentDocumentId"),
                      "title": d["title"], "text": d.get("text") or "",
                      "collection": names.get(d.get("collectionId")),
+                     "cid": d.get("collectionId") or "",
                      "updatedAt": d["updatedAt"]})
 docs.sort(key=lambda d: (d["collection"] or "", d["parent"] or "",
                          d["title"]))
@@ -200,20 +201,41 @@ n = [0]
 # the caller supply the id by hand - and a mirror 28 pages behind is 28 ids to
 # find in a web interface before a single correction reaches an operator.
 ids = []
+# TWO DOCUMENTS, ONE PATH. The PT, ES and EN collections are all named
+# "Prisma Routing" and the path carries no collection, so a page whose title
+# is the same in two languages ("Operar", "Comandos show") was written to one
+# file, the second overwriting the first, and wiki/.ids listed the path twice
+# - which wiki-push.sh then read as two arguments. Measured on 2026-10-30:
+# four ES pages had never been in the mirror at all, and the publish stopped
+# at the first of them. Siblings are now ordered by their slug, then by
+# collection id ("Referência" and "Referencia" are one slug and two titles),
+# so which one keeps the plain name never depends on the API's order, and a
+# taken path gets "-2", "-3" - a directory, for a page with children.
+taken = set()
+def free(path, name, ext):
+    n = 1
+    while True:
+        cand = os.path.join(path, (name if n == 1 else "%s-%d" % (name, n)) + ext)
+        if cand not in taken:
+            taken.add(cand)
+            return cand
+        n += 1
 def walk(parent, path):
-    for d in sorted(by_parent.get(parent, []), key=lambda x: x["title"]):
+    for d in sorted(by_parent.get(parent, []),
+                    key=lambda x: (slug(x["title"]), x.get("cid", ""),
+                                   x["title"], x["id"])):
         if d["title"] in DEFAULTS:
             continue
         kids = [k for k in by_parent.get(d["id"], [])
                 if k["title"] not in DEFAULTS]
         name = slug(d["title"])
         if kids:
-            sub = os.path.join(path, name)
+            sub = free(path, name, "")
             if not ids_only:
                 os.makedirs(sub, exist_ok=True)
             f = os.path.join(sub, "index.md")
         else:
-            f = os.path.join(path, name + ".md")
+            f = free(path, name, ".md")
         if not ids_only:
             open(f, "w").write("# %s\n\n%s\n"
                                % (d["title"], (d["text"] or "").strip()))

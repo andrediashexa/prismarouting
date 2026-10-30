@@ -75,6 +75,8 @@ configure
  commit
 ```
 
+These globals apply to the NAT64 pools too: those live under `nat` > `nat64`, but the timeouts, the interfaces and the log are those of `nat` > `cgnat`, shared by both.
+
 Per pool — overrides the global; if absent, it inherits. A pool accepts the four above plus four more that exist only there:
 
 ```

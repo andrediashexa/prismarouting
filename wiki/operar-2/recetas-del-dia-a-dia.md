@@ -128,11 +128,19 @@ show cgnat top
 
 Lista los suscriptores más cerca de llenar el bloque, con los puertos que tiene cada uno (por ejemplo `3/512`).
 
+Los límites valen para lo que se cree después: las sesiones que el host ya tiene siguen. Para terminarlas de una vez, sin tocar la configuración — con una cuenta `administrator` o `cgnat-operator`:
+
+```
+clear cgnat subscriber 100.64.3.19
+```
+
+Todas las sesiones de ese suscriptor terminan, en todos los workers, y el equipo dice cuántas terminó. En un pool BPA el bloque no vuelve en el acto: queda retenido por el `block-holddown` y se libera con su registro de liberación en el log, como en una expiración común.
+
 # Ampliar el pool sin tirar a todos
 
 **Existe un camino que no tira a nadie**, y no es hacer crecer el pool actual.
 
-Agregar un prefijo en `outside` cambia el cálculo del mapeo y mueve a **todos** los suscriptores al mismo tiempo. En cambio, un **segundo pool**, que sirve una porción diferente del espacio de suscriptores, tiene su propio mapeo y no toca el existente:
+Agregar un prefijo en `prefix-outside` cambia el cálculo del mapeo y mueve a **todos** los suscriptores al mismo tiempo. En cambio, un **segundo pool**, que sirve una porción diferente del espacio de suscriptores, tiene su propio mapeo y no toca el existente:
 
 ```
 configure

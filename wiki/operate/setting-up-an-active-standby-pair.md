@@ -12,7 +12,7 @@ In the examples, box A is the one that should hold the service and box B is the 
 
 # 1. The same pools on both boxes
 
-Configure the CGNAT pools **exactly the same** on both boxes: inside and outside prefixes, `block-size`, `ports`, `policy`, `mode`, `reserve` and the VRFs. These are the fields that decide where each subscriber lands, and two boxes that disagree on them fail **silently** — the switchover puts subscribers into blocks the other never used, and neither of them records anything abnormal.
+Configure the CGNAT pools **exactly the same** on both boxes: inside and outside prefixes (typed or taken from a `prefix-list`), `block-size`, `ports`, `policy`, `mode`, `reserve` and the VRFs — and, on a NAT64 pool, `subscriber-length` and `nat64-prefix`. These are the fields that decide where each subscriber lands, and two boxes that disagree on them fail **silently** — the switchover puts subscribers into blocks the other never used, and neither of them records anything abnormal.
 
 What does not touch the mapping can differ without problem: timeouts, ALGs, TCP clamp, bypass lists, session and rate limits, port forwards, `block-stride`, utilization alarm.
 
@@ -69,6 +69,8 @@ What each line changes:
 **Equal priorities on both boxes work, but the addressing decides**, not you: the RFC breaks the tie by the highest address. Use different priorities.
 
 The advertisement interval is not configurable: it is the RFC default, one second, and it must be the same on both boxes. Takeover takes about three and a half seconds.
+
+**A NAT64 pool in the pair needs the IPv6 gateway too.** An IPv6 address under `vrrp <id> address` builds, beside the IPv4 router, the IPv6 virtual router of the same id, with the same priority, the same `track` and the same `preempt`. The first IPv6 address must be a link-local one (for example `vrrp 1 address fe80::1`, before the global one) — `commit check` refuses an IPv6 router without it —, and that link-local is what the IPv6 subscribers, or the BNG in front of them, point their gateway at. Its virtual MAC is `00:00:5e:00:02:<id>`. `track` is per family: an IPv4 router tracking an interface with no IPv4 address never sees it up, and `commit check` warns, naming the interface.
 
 
 :::info

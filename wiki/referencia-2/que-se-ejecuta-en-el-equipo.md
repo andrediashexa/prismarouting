@@ -1,6 +1,6 @@
 # Qué se ejecuta en el equipo
 
-Las partes de un equipo instalado (los tres contenedores, la red interna entre ellos, el servicio del sistema que ejecuta lo que pide la VTY, y el kernel), con lo que cada una almacena y lo que comparte con el sistema. Para quien necesita saber dónde está algo antes de diagnosticar, o quiere entender qué toca realmente un comando de la VTY.
+Las partes de un equipo instalado (los contenedores, la red interna entre ellos, el servicio del sistema que ejecuta lo que pide la VTY, y el kernel), con lo que cada una almacena y lo que comparte con el sistema. Para quien necesita saber dónde está algo antes de diagnosticar, o quiere entender qué toca realmente un comando de la VTY.
 
 ```mermaid
 flowchart LR
@@ -14,7 +14,7 @@ flowchart LR
 
 # Los contenedores
 
-Desde la versión 0.117 un equipo instalado ejecuta el dataplane y el enrutamiento como contenedores, y desde la 0.138 la VTY se ejecuta en un tercero. Los tres se inician juntos, en cada arranque, mediante el servicio `prisma-routing-containers`.
+Desde la versión 0.117 un equipo instalado ejecuta el dataplane y el enrutamiento como contenedores, desde la 0.138 la VTY se ejecuta en un tercero, y desde la 0.149 los registros que van al colector salen de un cuarto. Los cuatro se inician juntos, en cada arranque, mediante el servicio `prisma-routing-containers`. Un quinto, el del PPPoE, solo arranca cuando la configuración tiene PPPoE.
 
 ## Dataplane
 
@@ -31,22 +31,43 @@ Desde la versión 0.117 un equipo instalado ejecuta el dataplane y el enrutamien
 
 |     |     |
 |-----|-----|
-| Qué almacena | los daemons de FRR: BGP, OSPF, IS-IS, rutas estáticas |
+| Qué almacena | los daemons de FRR: BGP, OSPF, IS-IS, BFD, rutas estáticas |
 | Red | la del propio sistema, por el mismo motivo: FRR enruta por las interfaces que el dataplane refleja en Linux |
-| Qué comparte con el sistema | `/etc/frr`, la configuración de enrutamiento, y el directorio de los sockets de FRR |
+| Qué comparte con el sistema | `/etc/frr`, la configuración de enrutamiento, y el directorio de los sockets de FRR; y, para el SNMP de los protocolos de enrutamiento, el socket del agente SNMP y su configuración, solo lectura |
 | Reinicio | vuelve solo si se cae, a menos que alguien lo haya detenido |
 
 ## Plano de gestión (la VTY)
 
 |     |     |
 |-----|-----|
-| Qué almacena | la VTY `prismash` y los clientes que usa para hablar con el dataplane y con FRR. No ejecuta ningún daemon |
+| Qué almacena | la VTY `prismash` y los clientes que usa para hablar con el dataplane y con FRR. No ejecuta ningún daemon, salvo el servidor de la API de gestión cuando está encendida (`api enabled yes`); el sistema la expone en la dirección de gestión y pasa las conexiones por el backplane |
 | Red | **ninguna**, además de un único enlace al backplane (abajo), en 128.0.0.2. No alcanza internet ni la red de gestión |
 | Qué comparte con el sistema | la configuración del equipo y sus revisiones (`/etc/prisma-routing`), los sockets del dataplane y de FRR, `/var/log/prisma-routing`, y las cuentas del sistema, **solo para lectura** |
 | Qué lee del sistema | placas, bus PCI, procesadores, memoria, rutas y el archivo de ajuste del dataplane, todo **solo para lectura**. Por eso `show hardware`, `show interface` y `show system cpu` responden allí lo mismo que en el sistema |
 | Cómo entra usted | cada login llega allí **como la propia cuenta**, con el mismo rol que tendría en el sistema: una cuenta de solo lectura sigue siendo de solo lectura |
 
 `ping`, `traceroute` y `mtr` escritos en la VTY salen por el sistema, no por el contenedor, porque la red del contenedor termina en el backplane. `install`, `system upgrade` y `system dataplane restart` también se ejecutan en el sistema, con la VTY del sistema en su terminal.
+
+## Registros (log)
+
+|     |     |
+|-----|-----|
+| Qué almacena | el envío de los registros de bloque al colector: syslog e IPFIX por TCP, con el archivo de desborde, su reposición y la reconexión, y normalmente también el IPFIX por UDP |
+| Red | la del propio sistema: sale con la misma ruta, el mismo origen y la misma VRF que usaría el dataplane |
+| Qué comparte con el sistema | el segmento de memoria donde el dataplane deja cada evento, y `/var/log/prisma-routing`, donde están los archivos de desborde |
+| Límites | memoria propia limitada: si un colector se traba, es este contenedor el que se queda sin memoria, nunca el dataplane |
+| Cuando se detiene | el dataplane vuelve a enviar los registros él mismo en cerca de un segundo. Un exportador UDP en una VRF, o en un origen que el contenedor no puede usar, queda siempre en el dataplane; `show cgnat logging` dice quién está enviando y por qué |
+
+## PPPoE
+
+|     |     |
+|-----|-----|
+| Qué almacena | la terminación de los suscriptores PPPoE y el cliente RADIUS, comandando el PPPoE del dataplane |
+| Cuándo arranca | solo en un equipo con PPPoE configurado; el `commit` que genera su configuración lo inicia o reinicia, y un equipo sin PPPoE nunca lo ejecuta |
+| Red | la del propio sistema, por donde se alcanza el RADIUS |
+| Qué comparte con el sistema | el socket de la API del dataplane, la configuración que generó la VTY (solo lectura) y `/var/log/prisma-routing` |
+| Límites | memoria y procesos propios, y es el primero que el sistema detiene si falta memoria: una falla del PPPoE no se lleva el reenvío, el enrutamiento ni la VTY |
+| Cuando se detiene | cierra cada sesión con el suscriptor y con el RADIUS antes de salir |
 
 # El backplane: 128.0.0.0/8
 
@@ -81,14 +102,19 @@ Desde dentro de un contenedor la VTY no puede (ni debe poder) modificar el siste
 | claves SSH de una cuenta; verificar y recargar SSH | `ssh-key` dentro de `user`; `ssh ...` |
 | activar y desactivar SNMP, y sus archivos | `snmp ...`, `snmp-user <nombre>` |
 | resolvedores DNS | `dns server <dirección>`         |
+| el nombre del equipo | `hostname <nombre>`              |
+| las VRFs de Linux y las interfaces dentro de ellas, incluida la de gestión | `vrf` en una interfaz; `system` > `management` > `vrf` |
+| la configuración de la API de gestión | `api ...`                        |
+| iniciar, reiniciar y detener el contenedor del PPPoE, releer el RADIUS y cerrar sesiones | `commit` con `pppoe ...` o `aaa ...`; `clear pppoe session` |
 | el lado Linux de una interfaz del dataplane: activar, desactivar, MTU, descripción | `interface`, `shutdown`, `mtu`, `description` |
 | devolver la ruta predeterminada de gestión después de que una placa cambió de dueño | sucede solo                      |
 | grabar el ajuste de arranque después de cambiar `cpu` o `memory` dentro de `system` | `commit`                         |
 | reiniciar y apagar el equipo | `system reboot`, `system shutdown` |
+| actualizar el equipo y reiniciar el dataplane en segundo plano, cuando lo pide la API o una cuenta con `operator` que no es root | `system upgrade`, `system dataplane restart` |
 
 | Regla | Qué garantiza |
 |-------|---------------|
-| solo actúa para **root** | el servicio lee del kernel quién lo pide, lo que no se puede falsificar; es la misma regla que el equipo ya tenía antes de que existiera el servicio |
+| cada pedido tiene un dueño verificado | el servicio lee del kernel quién lo pide, lo que no se puede falsificar. Un cambio es de **root**; reiniciar, apagar, `system upgrade` y `system dataplane restart` también de quien tiene `operator` (grupo `prisma-operator`); el PPPoE también de quien tiene el rol de administrador (grupo `prisma-admin`). Las preguntas que solo leen, cualquier cuenta las hace |
 | no es una forma de ejecutar comandos | un nombre de cuenta nunca se lee como opción o ruta, `root` se rechaza donde la VTY nunca lo envía, y los archivos van solo a un conjunto fijo de rutas |
 | cada pedido es una línea en el journal | con el comando, quién lo pidió y el resultado; **nunca** la contraseña, cuyo hash pasa por allí |
 | sin el servicio activo | la VTY ejecuta el comando por sí misma, así que el equipo sigue funcionando mientras el servicio se reinicia |

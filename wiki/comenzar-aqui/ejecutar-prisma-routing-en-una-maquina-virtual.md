@@ -56,6 +56,12 @@ La mayoría de las VM no tienen IOMMU virtual. El equipo lo detecta en el arranq
 | qué gana o pierde | la placa solo alcanza la memoria que recibió, así que un defecto en el dataplane no escribe fuera de ella | reenvía igual, sin esa protección |
 | dónde verificarlo | `show hardware` indica, por cada placa aún no entregada, a qué driver la moverá el equipo | lo mismo  |
 
+## Placa física pasada a la VM
+
+Una placa física entregada a la VM por el hipervisor (*PCI passthrough*) se trata como cualquier placa PCI del equipo: el dataplane la reclama con la misma regla y con el nombre que le dio Linux. En una VM sin IOMMU virtual va a `uio_pci_generic`, como una placa virtio; hasta la 0.141.0 una placa física con ese driver no llegaba al dataplane, que arrancaba sin ella, y desde la 0.141.1 reenvía.
+
+`uio_pci_generic` necesita una interrupción INTx legacy, y una placa que solo tiene MSI-X es rechazada por él; el equipo lo dice en el arranque, y lo que habilita `vfio-pci` es activar una IOMMU para la VM. En esa placa vale todo lo que [Dimensionamiento y requisitos](/s/wiki-es/doc/dimensionamiento-y-requisitos-FuEOaBC4vd) dice sobre placas físicas, y es en ella donde una medición de throughput significa algo.
+
 ## Placa agregada con la VM encendida
 
 Una placa que el hipervisor agrega a la VM con el equipo en ejecución reenvía **de inmediato**, sin reiniciar nada:
@@ -78,16 +84,15 @@ AF_XDP cuesta velocidad, no corrección: la placa la lee el driver del kernel. E
 
 ## La MTU que soporta la placa virtual
 
-Toda placa virtual que configura el hipervisor anuncia un máximo, en general 1500. El dataplane, por su cuenta, inicia toda interfaz en 9000, y una placa que no acepta ese valor rechaza el puerto: queda en error y no reenvía nada.
+Toda placa virtual que configura el hipervisor anuncia un máximo, en general 1500. Desde la 0.152.1 el equipo arranca toda interfaz sin `mtu` en **1500**, su valor por defecto, así que una placa virtual común ya acepta el puerto. Una placa que no acepta ni ese valor rechaza el puerto: queda en error y no reenvía nada.
 
 | Qué hace el equipo | Consecuencia |
 |--------------------|--------------|
 | lee en el arranque el máximo de cada placa que va a tomar | el número viene del hipervisor, no de una suposición |
-| hace que **todas** las interfaces comiencen en el **menor** máximo entre las placas tomadas | en una VM con una placa de 1500 junto a una de 9000, la de 9000 también comienza en 1500 |
+| cuando alguna placa tomada tiene un máximo **por debajo de 1500**, hace que **todas** las interfaces arranquen en el **menor** máximo entre las placas tomadas | en una VM con una placa de 1400 junto a una de 9000, la de 9000 también arranca en 1400 |
 | acepta `mtu <n>` en el bloque de la interfaz después | así se sube el puerto que soporta más |
-| no escribe nada cuando todas las placas soportan 9000 o más | queda igual que un equipo físico |
 
-Para transportar tramas mayores a 1500 en una VM, primero hay que aumentar la MTU en la placa virtual, en el hipervisor; el equipo lee el nuevo máximo en el arranque siguiente.
+Para transportar tramas mayores que 1500 en una VM, primero hay que aumentar la MTU en la placa virtual, en el hipervisor, y después con `mtu <n>` en la interfaz; el equipo lee el nuevo máximo de la placa en el arranque siguiente. Un equipo instalado antes de la 0.152.1 sigue en 9000: la actualización escribió `mtu 9000` en sus interfaces.
 
 ## Varias colas en la placa virtual (multiqueue)
 
@@ -109,6 +114,8 @@ El *Shutdown* del hipervisor envía el botón de encendido (ACPI), y el equipo s
 **Hasta la versión 0.139.0 el equipo ignoraba ese botón.** En un equipo con esa versión o anterior, el *Shutdown* del hipervisor no hace nada y el apagado forzado que viene después equivale a desconectar el cable de alimentación: los bloques que el dataplane está reteniendo no se cierran en el log de retención. Actualice el equipo, o apáguelo por la VTY.
 
 :::
+
+**El agente de QEMU viene en el medio.** Desde la 0.156.0 la instalación trae `qemu-guest-agent`. Con el canal del agente habilitado en la VM (`agent: 1` en Proxmox), el hipervisor apaga el equipo a través del agente, congela el disco antes de un backup y muestra las direcciones del equipo en su panel. El agente solo corre cuando ese canal existe. Un equipo instalado con un medio anterior y actualizado con `system upgrade` no lo recibe, porque el paquete de actualización no trae paquetes del sistema: instálelo desde una shell de administrador con `apt-get install qemu-guest-agent`.
 
 Apague o reinicie por la VTY, que indica el costo antes de actuar y cierra los bloques en el camino:
 

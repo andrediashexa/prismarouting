@@ -12,7 +12,7 @@ En los ejemplos, el equipo A es el que debe quedarse con el servicio y el equipo
 
 # 1. Los mismos pools en los dos equipos
 
-Configure los pools de CGNAT **exactamente iguales** en los dos equipos: prefijos internos y externos, `block-size`, `ports`, `policy`, `mode`, `reserve` y las VRF. Son los campos que deciden dónde cae cada suscriptor, y dos equipos que discrepan en ellos fallan **en silencio** — la conmutación pone a los suscriptores en bloques que el otro nunca usó, y ninguno de los dos registra nada anormal.
+Configure los pools de CGNAT **exactamente iguales** en los dos equipos: prefijos internos y externos (escritos o tomados de una `prefix-list`), `block-size`, `ports`, `policy`, `mode`, `reserve` y las VRF — y, en un pool NAT64, `subscriber-length` y `nat64-prefix`. Son los campos que deciden dónde cae cada suscriptor, y dos equipos que discrepan en ellos fallan **en silencio** — la conmutación pone a los suscriptores en bloques que el otro nunca usó, y ninguno de los dos registra nada anormal.
 
 Lo que no afecta el mapeo puede diferir sin problema: timeouts, ALGs, clamp de TCP, listas de bypass, límites de sesión y de tasa, reenvíos de puertos, `block-stride`, alarma de utilización.
 
@@ -69,6 +69,8 @@ Qué cambia cada línea:
 **Prioridades iguales en los dos equipos funcionan, pero quien decide es el direccionamiento**, no usted: la RFC desempata por la dirección mayor. Use prioridades diferentes.
 
 El intervalo de anuncio no es configurable: es el predeterminado de la RFC, un segundo, y debe ser igual en los dos equipos. La toma tarda alrededor de tres segundos y medio.
+
+**Un pool NAT64 en el par necesita también el gateway IPv6.** Una dirección IPv6 en `vrrp <id> address` crea, al lado del router IPv4, el router virtual IPv6 del mismo id, con la misma prioridad, el mismo `track` y el mismo `preempt`. La primera dirección IPv6 debe ser una link-local (por ejemplo `vrrp 1 address fe80::1`, antes de la global) — el `commit check` rechaza un router IPv6 sin ella —, y es a esa link-local adonde los suscriptores IPv6, o el BNG delante de ellos, apuntan el gateway. Su MAC virtual es `00:00:5e:00:02:<id>`. El `track` es por familia: un router IPv4 que sigue una interfaz sin dirección IPv4 nunca la ve activa, y el `commit check` avisa nombrando la interfaz.
 
 
 :::info

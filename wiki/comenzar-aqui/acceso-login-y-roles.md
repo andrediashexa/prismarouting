@@ -54,12 +54,13 @@ Apuntar el shell de login a una aplicación crea el riesgo de un bloqueo total: 
 
 ### La VTY se ejecuta en el plano de gestión
 
-El equipo instalado ejecuta tres contenedores: el dataplane, el enrutamiento y el **plano de gestión**, donde se ejecuta la VTY. Un login cae ahí **como sí mismo** —con el mismo usuario y los mismos grupos que tiene en el sistema—, así que el rol que lee la VTY es el de la cuenta, y una cuenta de solo lectura dentro del contenedor puede exactamente lo que podría fuera de él. Lo que la VTY hace en el sistema —crear cuentas, modificar SSH, SNMP y los resolvedores DNS, ajustar el lado Linux de una interfaz, reiniciar el equipo— se lo pide al sistema, que verifica quién lo pide a través del propio kernel y solo lo ejecuta para `root`. Es la misma regla de cuando la VTY ejecutaba esos comandos por sí misma: cambió dónde se ejecuta el comando, no quién puede.
+El equipo instalado ejecuta en contenedores el dataplane, el enrutamiento, el exportador de registros del CGNAT y el **plano de gestión**, donde se ejecuta la VTY; un equipo con PPPoE configurado ejecuta uno más, el del PPPoE. Un login cae ahí **como sí mismo** —con el mismo usuario y los mismos grupos que tiene en el sistema—, así que el rol que lee la VTY es el de la cuenta, y una cuenta de solo lectura dentro del contenedor puede exactamente lo que podría fuera de él. Lo que la VTY hace en el sistema —crear cuentas, modificar SSH, SNMP y los resolvedores DNS, ajustar el lado Linux de una interfaz, reiniciar el equipo— se lo pide al sistema, que verifica quién lo pide a través del propio kernel y solo lo ejecuta para `root`. Es la misma regla de cuando la VTY ejecutaba esos comandos por sí misma: cambió dónde se ejecuta el comando, no quién puede.
 
 Para el operador no cambia nada en lo que se escribe. Dos consecuencias prácticas:
 
 * **Si el contenedor de gestión no está en ejecución, la VTY se ejecuta directamente en el sistema**, como antes. Un equipo con ese contenedor detenido sigue siendo alcanzable.
 * `install`, `system upgrade` y `system dataplane restart` los ejecuta el sistema, con su propia VTY, en la misma terminal. No necesita hacer nada diferente.
+* Un `system upgrade` recrea el contenedor de gestión al final, y un login que llega en esos segundos **espera** hasta 20 segundos, diciendo una vez que la VTY se está reiniciando por una actualización. Si se acaba el tiempo, vale la tabla del inicio de esta página: `root` y `prisma-admin` caen en una shell con el motivo impreso, y las demás cuentas ven el motivo y la sesión termina.
 
 
 :::info
@@ -171,7 +172,7 @@ Los medios anteriores a la **0.37.0** no instalaban el componente que atiende es
 | Tipo de cambio | Capacidad exigida |
 |----------------|-------------------|
 | Pools, `cgnat inside`/`cgnat outside` en las interfaces, timeouts, límites, bypass, forwards, logging | `prisma-cgnat`    |
-| Todo lo demás: enrutamiento, direcciones y demás ajustes de interfaz, SSH, cuentas, SNMP, DNS, `system` (placas, núcleos, memoria) y la memoria del CGNAT (`nat` > `cgnat` > `memory`), que es un ajuste de la máquina | `prisma-admin`    |
+| Todo lo demás: enrutamiento, direcciones y demás ajustes de interfaz, SSH, cuentas, SNMP, DNS, PPPoE y RADIUS, `system` (placas, núcleos, memoria) y la memoria del CGNAT (`nat` > `cgnat` > `memory`), que es un ajuste de la máquina | `prisma-admin`    |
 | `start shell`, `install` | `prisma-admin`    |
 | `system reboot`, `system shutdown`, `system upgrade <versión>`, `system dataplane restart` | `root` u `operator` (`prisma-operator`), sea cual sea el rol |
 | `system upgrade` sin versión (la consulta) | cualquier cuenta, incluso de solo lectura |

@@ -41,10 +41,12 @@ router bgp 65000
 | `bgp bestpath as-path multipath-relax` |          | treats paths of the same length coming from different ASes as equal |
 | `neighbor <neighbor> ...` |          | a session; the next table |
 | `address-family ipv4 unicast` or `ipv6 unicast` |          | enters the address family; you leave with `exit-address-family` or `exit` |
-| `network` | `<prefix>` | a prefix this box originates; it is only announced if it is in the routing table |
+| `network` | `<prefix> [policy <policy>]` | a prefix this box originates; it is only announced if it is in the routing table |
+| `aggregate-address` | `<prefix> [summary-only] [policy <policy>] [suppress-policy <policy>]` | one route that sums up the more specific ones it covers |
+| `table-policy` | `<policy>` | which of BGP's best routes go to the forwarding table |
 | `redistribute` | `connected`, `static`, `ospf` or `isis` | injects routes from another source into BGP |
 
-At the `address-family` level, `neighbor` (the per-family list, below), `network`, `redistribute` and the exits `exit-address-family` and `exit` are valid.
+At the `address-family` level, `neighbor` (the per-family list, below), `network`, `aggregate-address`, `table-policy`, `vrf-import`, `redistribute` and the exits `exit-address-family` and `exit` are valid. The forms with a policy, and `vrf-import` between VRFs, are in [Routing policy](/s/wiki-en/doc/routing-policy-policy-options-WXZOz2enzp).
 
 # What a neighbor understands
 
@@ -123,6 +125,31 @@ router bgp 65000
 
 When completing `neighbor` with TAB, the box shows the existing neighbors with the remote AS next to them, and marks which names are groups — a group is not a router, and looking for it as if it were costs time.
 
+## Removing a neighbor
+
+`no neighbor <neighbor>` removes the whole neighbor: its statements in each address family first, and `remote-as` and its peer-group membership last, in one commit. A peer group a member still names is refused, with the members: the routing would take the members with the group. The `no` applies in the block it is typed in - the same address in `router bgp 65000` and in `router bgp 65000 vrf red` is two neighbors.
+
+# BGP in a VRF
+
+A customer VRF has its own BGP, in `router bgp <AS> vrf <name>`, with the same neighbors, families and policies as the main block. The VRF must exist in Linux: `vrf <name> table <n>` creates its device on the same table as the `vrf <n>` of the interfaces in it ([Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn)):
+
+```
+configure
+ vrf red table 10
+ interface enp2s0
+  vrf 10
+  exit
+ router bgp 65000 vrf red
+  neighbor 10.10.0.2 remote-as 65010
+  address-family ipv4 unicast
+   neighbor 10.10.0.2 activate
+  exit-address-family
+  exit
+ commit
+```
+
+The local AS is the block's: the same neighbor AS can be eBGP in one block and iBGP in another, and the `maximum-prefix` warning (below) follows that. Routes pass from one VRF to another with `vrf-import`, through a policy; see [Routing policy](/s/wiki-en/doc/routing-policy-policy-options-WXZOz2enzp). Names that begin with `prisma-` belong to the box's own VRFs: `vrf <name> table` refuses them, and no route goes into or out of them by `vrf-import`.
+
 # Routing policy: `policy-options`
 
 The policy is written once, with a name, and applied on each neighbor as `import` (what comes in) or `export` (what goes out). The format is Junos's. Named lists and policies live in `policy-options`:
@@ -161,9 +188,11 @@ Each `term` is evaluated in the order it was typed, and has three parts:
 |------|--------------|
 | `from` | what the route must match: `prefix-list <name>`, `route-filter <network> exact\|orlonger\|longer\|upto /<n>`, `community <name>`, `as-path <name>`, `protocol bgp\|ospf\|isis\|static\|direct\|kernel`, `tag <n>`, `metric <n>`. Several of the same type act as "or"; of different types, as "and". Without `from`, the term matches everything |
 | `set` | what changes in the route: `local-preference <n>`, `community add\|set\|delete <name>`, `as-path-prepend <asn>...`, `metric <n>`, `tag <n>`, `next-hop <address>` |
-| `then` | how the term ends: `accept` or `reject` stop evaluation; `next term`, or no `then`, applies the `set`s and moves on to the next term |
+| `then` | how the term ends: `accept` or `reject` stop evaluation; `next term`, or no `then`, applies the `set`s and moves on to the next term; `next policy` passes the route to the next policy of a chain |
 
-**A route that no term decided is accepted**, in `import` and in `export`, as in Junos. To reject the rest, finish with a term with no `from` and with `then reject`.
+**A route that no term decided is accepted**, in `import` and in `export`, as in Junos. To reject the rest, use `default-action reject` in the policy, or finish with a term with no `from` and with `then reject`.
+
+The tables above are the summary. Every condition and action, policy chains, `default-action` and the other places a policy applies are in [Routing policy](/s/wiki-en/doc/routing-policy-policy-options-WXZOz2enzp).
 
 The policy is applied inside the BGP address family, per neighbor or peer group:
 
@@ -560,4 +589,5 @@ Check by the effect, not by the text: `show bgp <prefix>` on the neighbor should
 # See also
 
 * [Routing, SSH, users and SNMP](/s/wiki-en/doc/routing-ssh-users-and-snmp-jjxcPssV72) — prefix-lists, policies and a pool's public prefix
+* [Routing policy](/s/wiki-en/doc/routing-policy-policy-options-WXZOz2enzp) — everything `policy-options` takes, and where a policy applies
 * [commit, rollback and save](/s/wiki-en/doc/commit-rollback-and-save-HVsz5GElE1) — how a change is applied and undone

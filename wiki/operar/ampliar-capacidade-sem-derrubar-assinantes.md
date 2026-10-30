@@ -12,8 +12,9 @@ O mapeamento é `índice do assinante → (endereço público, bloco de portas)`
 | mudar `block-size` | blocos por endereço mudam: quase todos — ficam parados só os cujo bloco começa na mesma porta |
 | mudar `ports` | igual ao tamanho de bloco |
 | mudar `policy` | `interleaved` e `blocked` dividem o índice de formas diferentes: **todos** |
-| mudar `mode` | determinístico e dinâmico não são o mesmo mapeamento — e esta é a única mudança de mapeamento que o `commit` **não** recusa: a conta só é feita quando o pool em vigor e o novo são os dois determinísticos, então trocar o modo é aplicado sem o aviso abaixo |
+| mudar `mode` | `deterministic` e `bpa` não são o mesmo mapeamento — e esta é a única mudança de mapeamento que o `commit` **não** recusa: a conta só é feita quando o pool em vigor e o novo são os dois determinísticos, então trocar o modo é aplicado sem o aviso abaixo |
 | acrescentar ou remover prefixo **inside** | muda o índice de todo endereço depois dele |
+| trocar a `prefix-list-inside` ou a `prefix-list-outside` do pool, ou mudar uma entrada da lista que ele usa | o mesmo que digitar os prefixos: o que conta é o conjunto de endereços que a lista resolve. Se ele muda, o pool é reconstruído, e num pool determinístico o `commit` faz a conta e pede `commit remap` como acima. `show configuration compare` mostra embaixo de cada pool afetado os conjuntos novos |
 | mudar `reserve` | a capacidade que a fórmula pode usar muda. Com `interleaved` **ninguém se move**: só perdem o bloco os assinantes acima da nova capacidade. Com `blocked` o divisor é a contagem de blocos, e quase todos se movem. Nos dois casos é mudança de capacidade e pede `commit remap` |
 | mudar `vrf` ou `outside-vrf` | **nenhum assinante se move**, e mesmo assim toda sessão do pool termina: a aritmética não muda, então o `commit` não pede `commit remap`, mas o pool é reconstruído |
 | timeouts, ALGs, `filter`, `max-blocks`, `initial-allocation`, `block-stride`, `tcp-mss`, limites por assinante, `utilisation-alarm`, forwards, bypass | **nada** — são ajustes aplicados no lugar, num pool carregando tráfego |
@@ -76,7 +77,7 @@ Num pool dinâmico os blocos são repartidos entre os workers do dataplane, e ca
 
 `show cgnat pool` diz esse número quando ele é menor que o total: uma linha com quantos assinantes o pool atende **seja qual for o endereço deles**, e o motivo — os blocos repartidos entre os workers. Dimensione por ela, não pelo total. A perda é nula quando o seu DHCP entrega endereços internos em sequência a partir do começo da faixa, e pesa em pool pequeno com muitos workers.
 
-O dataplane sabe emprestar um bloco de uma fatia para outra, mas nesta versão isso vem **desligado** e não tem comando na VTY: medido, todo ajuste que empresta cedo o bastante para atender o recusado também empresta o bloco que o próximo assinante do próprio worker ia querer. Se o seu pool dinâmico recusa com blocos livres, a resposta hoje é capacidade — mais endereços públicos ou um segundo pool, pelos caminhos abaixo.
+O dataplane sabe emprestar um bloco de uma fatia para outra, mas isso vem **desligado** e não tem comando na VTY. A demanda que o empréstimo lê é o número de assinantes **distintos** que a fatia recusou nos últimos cinco segundos e que ainda não têm bloco — não a contagem de pacotes recusados. Medido numa bancada com carga desigual entre três workers, ligado ele levou a fatia lotada de 13-15% das sessões sem atendimento para 0,4%; em troca, 7-9% das sessões das fatias que emprestam foram recusadas de início (atendidas depois de 6-9 segundos, na mediana) e cerca de 1% ficou sem atendimento. Numa carga equilibrada isso ainda não foi medido, e por isso continua desligado por padrão. Se o seu pool dinâmico recusa com blocos livres, a resposta hoje é capacidade — mais endereços públicos ou um segundo pool, pelos caminhos abaixo.
 
 # O procedimento que custa uma parada
 

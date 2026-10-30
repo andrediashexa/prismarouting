@@ -5,11 +5,11 @@ What exists and what each thing does. For lookup, not for reading straight throu
 | Page | Covers |
 |------|--------|
 | [prismash VTY — user guide](/s/wiki-en/doc/prismash-vty-user-guide-9xi8OdzKV3) | Modes, prompts and the complete command tree |
-| [What runs on the box](/s/wiki-en/doc/what-runs-on-the-box-8brQyqcFen) | The three containers, the backplane, the system service that executes what the VTY asks for, `start shell` and the kernel |
+| [What runs on the box](/s/wiki-en/doc/what-runs-on-the-box-8brQyqcFen) | The containers, the backplane, the system service that executes what the VTY asks for, `start shell` and the kernel |
 | [Multi-tenant with VRF](/s/wiki-en/doc/multi-tenant-with-vrf-SUKv4RMvfr) | Two customers using the same private range on the same box, each in its own VRF |
 | [Timeouts and the RFC floors](/s/wiki-en/doc/timeouts-and-the-rfc-floors-HmiUW10Fkh) | How long each session lives, the defaults, what breaks below the floor and how long a BPA block stays held |
 
-The VTY reference is subdivided by subject: `show` commands, CGNAT configuration, pool configuration, interface configuration, BGP configuration, the `commit` cycle, and the routing and system part.
+The VTY reference is subdivided by subject: `show` commands, CGNAT configuration, pool configuration, interface configuration, BGP configuration, PPPoE configuration, routing policy, the `commit` cycle, and the routing and system part.
 
 
 :::info

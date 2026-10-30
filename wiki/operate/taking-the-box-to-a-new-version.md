@@ -11,8 +11,8 @@ How to put a new version of Prisma Routing on a box that is already in productio
 | Configuration, accounts, SNMP communities | Kept                | Gone                           |
 | Configuration trail and exporter spill | Kept                | Gone                           |
 | Downtime | Only the dataplane restart, at the time you choose | The whole window, booting from the medium |
-| Published for | Every version, from 0.79.0 | Only the latest full version (those that change the first or second number) |
-| Download size | About 120 MB, with the container images | Hundreds of megabytes          |
+| Published for | Every version, from 0.79.0 | Only the full versions (those that change the first or second number) |
+| Download size | Close to 200 MB, with the container images | Hundreds of megabytes          |
 
 **The package is the normal path.** Reinstallation exists for the new machine and for the case where the new version changes the platform underneath the product. You do not need to guess which it is: the package checks this on its own and **refuses before writing anything**, saying what the box has and what the new version needs.
 
@@ -37,7 +37,7 @@ Three things to know about it:
 
 At the end it says `upgraded to <version>` and reminds you of `save`. What applies to the manual path applies here: `save` before restarting, and the dataplane stays the old one until you choose the time for step 4.
 
-From version 0.148.0, the VTY itself moves to the new version right afterwards, without a reboot: a few seconds after `upgraded to`, the management container is recreated with the new image, the session that did the upgrade drops and the next login is already on the new version. The dataplane and the routing daemons are **not** touched in this step and stay on the previous images until the reboot. Before 0.148.0, the VTY stayed on the previous version until the reboot, even with the box reporting the new version.
+From version 0.148.0, the VTY itself moves to the new version right afterwards, without a reboot: a few seconds after `upgraded to`, the management container is recreated with the new image, the session that did the upgrade drops and the next login is already on the new version. A login made in those seconds waits for the VTY to come back, up to 20 seconds, instead of failing. The container that exports the CGNAT records also moves to the new image at that moment; until it is back, the dataplane itself takes over the sending. The dataplane and the routing daemons are **not** touched in this step and stay on the previous images until the reboot or a `system dataplane restart`. Before 0.148.0, the VTY stayed on the previous version until the reboot, even with the box reporting the new version.
 
 **Images from old versions are deleted.** Each upgrade brings four new images, and before this fix none was deleted: a test box reached 96% of the root filesystem after a series of patches. Now, right after the upgrade and at every boot, the box deletes the `prisma-*` images that no container uses and that are neither from the installed version nor from the version before it — that one stays, as a way back. The boot log (and that of `refresh-the-vty`) says what was deleted and how much space was recovered. Images from other repositories are never touched, and if the box cannot say for certain which version it is, it deletes nothing and says why.
 
@@ -45,7 +45,13 @@ The steps below are the same process by hand, for a box that does not reach the 
 
 
 :::info
-**Since 0.125.0 the package carries the container images**, which is why it is about 120 MB and not a few megabytes. A box that was upgraded instead of installed, and still runs the dataplane and routing as systemd services, **moves to the containers at the next boot**, just like a box installed from the medium. A box that already runs in the containers starts using the new version's images, and no longer those of the previous version.
+**The package carries neither the kernel nor system packages.** It carries the product's files and the container images, and nothing that the Debian underneath installs: a box upgraded by the package keeps the kernel it was installed with. A Debian kernel security update reaches a box only through the medium of a full version. For the same reason, the `qemu-guest-agent` the medium installs since 0.156.0 does not arrive through the package: on an upgraded virtual machine, install it with `apt-get install qemu-guest-agent`, in a shell on the box.
+
+:::
+
+
+:::info
+**Since 0.125.0 the package carries the container images**, which is why it is close to 200 MB and not a few megabytes. A box that was upgraded instead of installed, and still runs the dataplane and routing as systemd services, **moves to the containers at the next boot**, just like a box installed from the medium. A box that already runs in the containers starts using the new version's images, and no longer those of the previous version.
 
 :::
 
@@ -59,7 +65,7 @@ Keep the whole output in the change ticket. It is what says where the box came f
 
 ## 2. Download the new version's package
 
-Each version has its own folder at <https://prismarouting.com.br/releases/>, with the package and its `sha256` side by side. The `latest/` folder always offers the newest upgrade package and, next to it, the newest ISO, each with its `sha256`. The installation medium exists only for full versions: a version that changes only the third number publishes only the upgrade package, and then the ISO in `latest/` is that of the latest full version. On the box itself, replacing `<version>` with the number:
+Each version has its own folder at <https://prismarouting.com.br/releases/>, with the package and its `sha256` side by side. The `latest/` folder always offers the newest upgrade package and, next to it, the newest ISO, each with its `sha256`. The installation medium exists only for full versions: a version that changes only the third number publishes only the upgrade package, and then the ISO in `latest/` is that of the latest full version. That is what the numbers mean: a version that changes only the third number changes only what the package carries; the kernel, VPP, FRR and the medium itself change only in a version that changes the first or the second. On the box itself, replacing `<version>` with the number:
 
 ```
 curl -fO https://prismarouting.com.br/releases/<version>/prisma-routing-<version>-upgrade.tar.gz
@@ -145,9 +151,9 @@ In that case the path is the medium, and it wipes the disk. **Read the whole sec
 :::warning
 **Reinstalling wipes the entire disk, including the log volume.**
 
-That volume holds the configuration trail - what lets you say which pool definition was in effect at a past instant, and without it the answer to a court order about last month is no longer defensible - and the exporter spill, which are records the collector has not yet received. The records themselves are not kept here: the box exports them.
+That volume holds the configuration trail - what lets you say which pool definition was in effect at a past instant, and without it the answer to a court order about last month is no longer defensible - and the exporter spill, which are records the collector has not yet received - and, on a box that is the BNG, the PPPoE session history, which says who held each inside address. The block records themselves are not kept here: the box exports them.
 
-Both die in the reinstallation and **no command in this product brings them back**. A reinstalled box is still answerable for the year of retention that was already running.
+They die in the reinstallation and **no command in this product brings them back**. A reinstalled box is still answerable for the year of retention that was already running.
 
 :::
 
@@ -231,7 +237,7 @@ The record files themselves do not change format: what was written remains reada
 | The configuration in effect | **No.** You need to take it off the box and type it back in |
 | Account passwords and SNMP communities | **No**, and you cannot copy them from the screen: the box masks them when printing the configuration |
 | Rollback revisions | **No**                   |
-| The configuration trail and the exporter spill | **No**                   |
+| The configuration trail, the exporter spill and the PPPoE session history | **No**                   |
 | What has already been exported to an IPFIX collector | **Yes** - it is off the box, and the reinstallation does not reach it |
 | What has already been copied to a remote syslog | **Yes**, for the same reason |
 
@@ -269,7 +275,7 @@ The consequence is that the copy you took **restores no access at all**. After r
 
 ## 3. Check that the records are already off the box
 
-**Dynamic mode.** Allocation events go to the IPFIX collector while the box works, and what has already reached the collector is not affected. What dies is what exists only on the box's volume. If export is stopped or lagging, the gap between the collector and the box is what you will lose.
+**BPA mode.** Allocation events go to the IPFIX collector while the box works, and what has already reached the collector is not affected. What dies is what exists only on the box's volume. If export is stopped or lagging, the gap between the collector and the box is what you will lose.
 
 **Deterministic mode.** There is no allocation to export: the evidence is the algorithm plus the configuration that was in effect, and it is the trail that says which one it was. Check the trail and compare the summary at the top with the copy in your remote syslog:
 
@@ -286,7 +292,7 @@ If there is no remote copy of the trail, **stop here**. It cannot be rebuilt aft
 The procedure is that of [Appliance installation](/s/wiki-en/doc/appliance-installation-gliHrNahhB) and does not change. Three points that are different when the machine is not new:
 
 * **The target disk is the same as before**, with everything on it, and confirming with the word `yes` wipes the entire disk.
-* **The question about how many gigabytes go to the log volume is asked again.** Answer at least the same number as before: answering less shrinks how long the box can keep exporting to an unreachable collector, without anything warning you.
+* **The question about how many gigabytes go to the log volume is asked again.** Answer at least the same number as before: answering less leaves less room for the trail, for the exporter spill and, on a box that is the BNG, for the PPPoE session history, without anything warning you.
 * **If the box had a records mirror on two disks**, the second disk is asked about again and wiped by the same `yes`.
 
 ## 5. Type the configuration back in

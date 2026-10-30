@@ -47,6 +47,8 @@ prisma> install
 
 **Consola serial o monitor, da lo mismo.** El menú de GRUB aparece en el video y en el puerto serial (ttyS0, 115200 8N1), y toda entrada arranca con `console=tty0 console=ttyS0,115200`, las mismas palabras que recibe el equipo instalado. El informe del self-test y una instalación desatendida salen por la serial; el monitor sigue mostrando los mensajes del kernel y la VTY en tty1. Hasta la 0.152.x el medio no tenía ningún `console=`, y una máquina a la que se accedía solo por serial quedaba muda hasta que alguien editara la línea de GRUB a mano.
 
+**En una máquina virtual, el agente del hipervisor ya viene instalado.** Desde la 0.156.0 el medio instala `qemu-guest-agent`, porque la mayoría de los equipos corre como VM en un Proxmox u otro KVM: con el canal del agente habilitado en la VM (`agent: 1` en Proxmox), el hipervisor puede apagar el equipo a través de él, congelar el disco para un backup y mostrar sus direcciones. El agente solo arranca cuando ese canal existe, así que en un servidor físico nada cambia. Un equipo instalado con un medio anterior y llevado a la versión nueva con `system upgrade` **no** lo recibe, porque el paquete de actualización no trae paquetes del sistema: instálelo con `apt-get install qemu-guest-agent` desde una shell de administrador (`start shell`).
+
 El comando `install` existe en la VTY **solo cuando la máquina se está ejecutando desde el medio**. En un appliance ya instalado no está en el árbol de comandos y el instalador se niega a ejecutarse: un comando que sobrescribe el disco no debe quedar a un TAB de distancia de `interface` en un router en producción.
 
 ## Elección del disco
@@ -155,7 +157,7 @@ El autotest de arranque vuelve a leer **el mismo archivo** en cada arranque e in
 | `[warn] ens18 is up with no default route` | tiene dirección, no tiene ruta predeterminada, y no se pidió ningún gateway |
 | `[FAIL] ... has an address and no default route` | **el gateway respondido no tuvo efecto.** La línea nombra el gateway que no entró |
 | `[FAIL] ... has no address` | DHCP sin respuesta, o `ifup` falló |
-| `[FAIL] this box has no card called ens18` | la placa de la instalación ya no está en el equipo. Lista las que están |
+| `[FAIL] management network: this box has no card called ens18` | la placa de la instalación ya no está en el equipo. Lista las que están |
 | `[FAIL] no management network: nothing was ever written for one` | medio hasta la 0.72.0. La línea trae los comandos que lo resuelven desde esa consola |
 | `[info] no management network was asked for at install time` | respondió `none`, y el equipo está realmente solo en la consola |
 | `[warn] no management network was asked for, and this box is on one anyway` | respondió `none`, pero Linux tiene una placa con dirección, y es una placa que el dataplane reclama en el próximo arranque |
@@ -357,7 +359,7 @@ Después del primer arranque sin el medio:
 * la consola muestra el informe del self-test, **sin ninguna línea** `**[FAIL]**`;
 * entre ellas, `binary API registered, so pools can be configured`: sin ella el equipo enruta y responde, pero no se puede crear ningún pool;
 * si respondió una placa de gestión, una línea `managed on <placa>` con la dirección debajo - es por ahí que usted llega al equipo sin volver a la consola; si respondió `none`, la línea `[info] no management network was asked for at install time`;
-* `the dataplane runs in a container on this box` y `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table`: el equipo instalado ejecuta el dataplane, el enrutamiento y el plano de gestión (donde está la VTY) en contenedores, conectados por una red interna en `128.0.0.0/8` que queda en una tabla de rutas propia: las direcciones reales en `128.x` siguen siendo alcanzables, por el equipo y por los suscriptores;
+* `the dataplane runs in a container on this box` y `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table`: el equipo instalado ejecuta en contenedores el dataplane, el enrutamiento, el plano de gestión (donde está la VTY) y el exportador de registros del CGNAT; el plano de gestión habla con el sistema por una red interna en `128.0.0.0/8` que queda en una tabla de rutas propia: las direcciones reales en `128.x` siguen siendo alcanzables, por el equipo y por los suscriptores;
 * `show version` responde con la versión de Prisma Routing, del dataplane y del enrutamiento;
 * usted puede entrar con la contraseña definida durante la instalación.
 

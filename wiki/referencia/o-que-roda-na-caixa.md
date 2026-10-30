@@ -1,6 +1,6 @@
 # O que roda na caixa
 
-As partes de uma caixa instalada — os três containers, a rede interna entre eles, o serviço do sistema que executa o que a VTY pede, e o kernel — com o que cada uma guarda e o que divide com o sistema. Para quem precisa saber onde algo está antes de diagnosticar, ou quer entender o que um comando da VTY realmente toca.
+As partes de uma caixa instalada — os containers, a rede interna entre eles, o serviço do sistema que executa o que a VTY pede, e o kernel — com o que cada uma guarda e o que divide com o sistema. Para quem precisa saber onde algo está antes de diagnosticar, ou quer entender o que um comando da VTY realmente toca.
 
 ```mermaid
 flowchart LR
@@ -14,7 +14,7 @@ flowchart LR
 
 # Os containers
 
-Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como containers, e desde a 0.138 a VTY roda num terceiro. Os três são iniciados juntos, a cada boot, pelo serviço `prisma-routing-containers`.
+Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como containers, desde a 0.138 a VTY roda num terceiro, e desde a 0.149 os registros que vão ao coletor saem de um quarto. Os quatro são iniciados juntos, a cada boot, pelo serviço `prisma-routing-containers`. Um quinto, o do PPPoE, só sobe quando a configuração tem PPPoE.
 
 ## Dataplane
 
@@ -31,22 +31,43 @@ Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como c
 
 |     |     |
 |-----|-----|
-| O que guarda | os daemons do FRR: BGP, OSPF, IS-IS, rotas estáticas |
+| O que guarda | os daemons do FRR: BGP, OSPF, IS-IS, BFD, rotas estáticas |
 | Rede | a do próprio sistema, pelo mesmo motivo: o FRR roteia pelas interfaces que o dataplane espelha no Linux |
-| O que divide com o sistema | `/etc/frr`, a configuração de roteamento, e o diretório dos sockets do FRR |
+| O que divide com o sistema | `/etc/frr`, a configuração de roteamento, e o diretório dos sockets do FRR; e, para o SNMP dos protocolos de roteamento, o socket do agente SNMP e a configuração dele, só para leitura |
 | Reinício | volta sozinho se cair, a menos que alguém o tenha parado |
 
 ## Plano de gerência (a VTY)
 
 |     |     |
 |-----|-----|
-| O que guarda | a VTY `prismash` e os clientes que ela usa para falar com o dataplane e com o FRR. Não roda nenhum daemon |
+| O que guarda | a VTY `prismash` e os clientes que ela usa para falar com o dataplane e com o FRR. Não roda nenhum daemon, a não ser o servidor da API de gerência quando ela está ligada (`api enabled yes`); o sistema a expõe no endereço de gerência e repassa as conexões pelo backplane |
 | Rede | **nenhuma**, além de uma única ligação ao backplane (abaixo), em 128.0.0.2. Não alcança a internet nem a rede de gerência |
 | O que divide com o sistema | a configuração da caixa e as suas revisões (`/etc/prisma-routing`), os sockets do dataplane e do FRR, `/var/log/prisma-routing`, e as contas do sistema, **só para leitura** |
 | O que lê do sistema | placas, barramento PCI, processadores, memória, rotas e o arquivo de ajuste do dataplane, tudo **só para leitura**. Por isso `show hardware`, `show interface` e `show system cpu` respondem ali o mesmo que no sistema |
 | Como você entra | cada login cai ali **como a própria conta**, com o mesmo papel que teria no sistema: uma conta só de leitura continua só de leitura |
 
 `ping`, `traceroute` e `mtr` digitados na VTY saem pelo sistema, não pelo container, porque a rede do container termina no backplane. `install`, `system upgrade` e `system dataplane restart` também rodam no sistema, com a VTY do sistema no seu terminal.
+
+## Registros (log)
+
+|     |     |
+|-----|-----|
+| O que guarda | o envio dos registros de bloco ao coletor: syslog e IPFIX por TCP, com o arquivo de transbordo, a reposição dele e a reconexão, e normalmente também o IPFIX por UDP |
+| Rede | a do próprio sistema: sai com a mesma rota, a mesma origem e a mesma VRF que o dataplane usaria |
+| O que divide com o sistema | o segmento de memória onde o dataplane deixa cada evento, e `/var/log/prisma-routing`, onde ficam os arquivos de transbordo |
+| Limites | memória própria limitada: se um coletor travar, é este container que fica sem memória, nunca o dataplane |
+| Quando para | o dataplane volta a enviar os registros ele mesmo em cerca de um segundo. Um exportador UDP numa VRF, ou numa origem que o container não consegue usar, fica sempre no dataplane; `show cgnat logging` diz quem está enviando e por quê |
+
+## PPPoE
+
+|     |     |
+|-----|-----|
+| O que guarda | a terminação dos assinantes PPPoE e o cliente RADIUS, comandando o PPPoE do dataplane |
+| Quando sobe | só numa caixa com PPPoE configurado; o `commit` que gera a configuração dele o inicia ou reinicia, e uma caixa sem PPPoE nunca o roda |
+| Rede | a do próprio sistema, por onde o RADIUS é alcançado |
+| O que divide com o sistema | o socket da API do dataplane, a configuração que a VTY gerou (só leitura) e `/var/log/prisma-routing` |
+| Limites | memória e processos próprios, e é o primeiro que o sistema encerra se faltar memória: uma falha do PPPoE não leva o encaminhamento, o roteamento nem a VTY junto |
+| Quando para | encerra cada sessão com o assinante e com o RADIUS antes de sair |
 
 # O backplane: 128.0.0.0/8
 
@@ -81,14 +102,19 @@ De dentro de um container a VTY não pode — e não deve poder — mexer no sis
 | chaves SSH de uma conta; conferir e recarregar o SSH | `ssh-key` dentro de `user`; `ssh ...` |
 | ligar e desligar o SNMP, e os arquivos dele | `snmp ...`, `snmp-user <nome>` |
 | resolvedores DNS | `dns server <endereço>`        |
+| o nome da caixa  | `hostname <nome>`              |
+| as VRFs do Linux e as interfaces dentro delas, inclusive a de gerência | `vrf` numa interface; `system` > `management` > `vrf` |
+| as configurações da API de gerência | `api ...`                      |
+| iniciar, reiniciar e parar o container do PPPoE, reler o RADIUS e encerrar sessões | `commit` com `pppoe ...` ou `aaa ...`; `clear pppoe session` |
 | o lado Linux de uma interface do dataplane: ligar, desligar, MTU, descrição | `interface`, `shutdown`, `mtu`, `description` |
 | devolver a rota padrão de gerência depois que uma placa trocou de dono | acontece sozinho               |
 | gravar o ajuste de boot depois de mudar `cpu` ou `memory` dentro de `system` | `commit`                       |
 | reiniciar e desligar a caixa | `system reboot`, `system shutdown` |
+| atualizar a caixa e reiniciar o dataplane em segundo plano, quando quem pede é a API ou uma conta com `operator` que não é root | `system upgrade`, `system dataplane restart` |
 
 | Regra | O que isso garante |
 |-------|--------------------|
-| só age para **root** | o serviço lê do kernel quem está pedindo, o que não se falsifica; é a mesma regra que a caixa já tinha antes de o serviço existir |
+| cada pedido tem um dono conferido | o serviço lê do kernel quem está pedindo, o que não se falsifica. Uma mudança é de **root**; reiniciar, desligar, `system upgrade` e `system dataplane restart` também de quem tem `operator` (grupo `prisma-operator`); o PPPoE também de quem tem o papel de administrador (grupo `prisma-admin`). As perguntas que só leem, qualquer conta faz |
 | não é um jeito de rodar comando | um nome de conta nunca é lido como opção ou caminho, `root` é recusado onde a VTY nunca o envia, e os arquivos vão só para um conjunto fixo de caminhos |
 | cada pedido é uma linha no journal | com o comando, quem pediu e o resultado — **nunca** a senha, cujo hash passa por ali |
 | sem o serviço no ar | a VTY executa o comando ela mesma, então a caixa continua funcionando enquanto o serviço reinicia |

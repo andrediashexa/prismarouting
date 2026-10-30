@@ -467,7 +467,11 @@ Después de un `commit` que aplicó todo, esa advertencia no aparece.
 
 El `--load` **rechaza el archivo completo** si hay una línea que la VTY no logra interpretar, en lugar de aplicar el resto. Esto es deliberado: ejecutándose sin nadie mirando, aplicar un archivo *menos una línea* dejaría diferentes la configuración en disco y la que está en ejecución, y alguien lo descubriría leyendo las dos mucho después.
 
-Hay una línea, y solo una, que el `--load` deja afuera en lugar de rechazar el archivo: el `block-stride` de un pool `deterministic`, que nunca tuvo efecto ahí. El pool arranca como ya funcionaba, el log de arranque dice `note: block-stride <n> dropped from pool <nombre>`, y hasta el próximo `save` el archivo en disco y la configuración en ejecución difieren en esa línea. El rechazo `block-stride applies to bpa pools only`, más arriba, explica por qué.
+Lo que el `--load` **no** rechaza, y por qué:
+
+* **Una placa que el equipo no tiene.** Lo que depende de ella queda esperando, el resto arranca, y `show configuration pending` lista lo que quedó afuera — vea `this box has no interface <nombre>`, más arriba.
+* **El** `**block-stride**` **de un pool** `**deterministic**`, que nunca tuvo efecto ahí. El pool arranca como ya funcionaba, el log de arranque dice `note: block-stride <n> dropped from pool <nombre>`, y hasta el próximo `save` el archivo en disco y la configuración en ejecución difieren en esa línea. El rechazo `block-stride applies to bpa pools only`, más arriba, explica por qué.
+* **Palabras antiguas que cambiaron de nombre.** `mode dynamic` se lee como `mode bpa`, con la nota `note: 'mode dynamic' is now 'mode bpa' in pool <nombre>`, y `radius` dentro de `pppoe` se lee como `aaa` > `radius`; el archivo se vuelve a grabar con la forma nueva. Un pool NAT64 escrito dentro de `cgnat`, al contrario, se rechaza: va en `nat` > `nat64`, y el cambio no es automático.
 
 El rechazo se lee en el arranque, en una consola de 80 columnas, así que se divide en partes que caben: la ruta del archivo y la línea rechazada salen **enteras**, cada una en su propia línea, para que usted pueda copiarlas y buscarlas; el motivo viene en texto corrido debajo.
 

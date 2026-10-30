@@ -36,7 +36,7 @@ Modificar una interfaz exige la capacidad de **administrador**. La excepción es
 | `ipv6 nd nat64` | `[<X:X::X:X/M>]` | coloca el prefijo NAT64 en los anuncios (PREF64, RFC 8781), para el CLAT del suscriptor; sin prefijo, `64:ff9b::/96`; se puede repetir. Vea *El prefijo NAT64 en los anuncios* más abajo |
 | `no ipv6 nd nat64` | `[<X:X::X:X/M>]` | quita ese prefijo de los anuncios, o todos |
 | `urpf`  | `strict\|loose\|off` | descarta paquetes cuyo origen no vuelve por aquí |
-| `vrrp`  | `<1-255> address <A.B.C.D>` | una dirección de servicio que este equipo disputa con el par (RFC 5798); IPv4, sin máscara; se puede repetir |
+| `vrrp`  | `<1-255> address <A.B.C.D\|X:X::X:X>` | una dirección de servicio que este equipo disputa con el par (RFC 5798); IPv4 o IPv6, sin máscara; se puede repetir. Vea *Un par de equipos* más abajo |
 | `vrrp`  | `<1-255> priority <1-254>` | quién se queda con la dirección cuando los dos están bien; gana el mayor |
 | `vrrp`  | `<1-255> track <interface> decrement <1-254>` | cuánto baja la prioridad cuando cae ese otro puerto |
 | `no vrrp` | `<1-255>` | quita el router virtual completo de esta interfaz |
@@ -77,6 +77,8 @@ error: '10.0.0.1/24' is not an IPv6 prefix
 ```
 
 No es un preciosismo. Sin la verificación, la dirección se aceptaría y se configuraría de forma equivocada, en silencio.
+
+La forma del FRR, `ip address <prefijo>`, también se rechaza dentro del bloque, indicando usar `ipv4 address`: esa es la que pone la dirección en el dataplane, y el enrutamiento la ve por el par Linux. `no ip address` se sigue aceptando, para limpiar una línea que ya esté en el enrutamiento.
 
 `no ipv4 address 200.150.1.1/24` elimina **esa** dirección. Las demás se quedan.
 
@@ -185,7 +187,7 @@ Después de eso la subinterfaz existe en el dataplane, lleva la tag y recibe su 
 ```
 prisma> show interface
   Interface                  State  MTU    Address             Linux
-  ens18                      up     1500   10.95.200.198/24    tap4096 ens18
+  ens18                      up     1500   192.0.2.198/24      tap4096 ens18
   ens18.100                  up     1500   100.64.0.1/22       tap4096.100 ens18.100
 ```
 
@@ -287,16 +289,16 @@ Para que la tabla principal lleve la default de los suscriptores y la gestión s
 
 ```
 vrf mgmt table 100
-interface enp6s18
+interface enp1s0
   vrf 100
   exit
 vrf mgmt
- ip route 0.0.0.0/0 10.40.200.1
- ip route 10.95.200.0/24 10.40.200.1
- ipv6 route ::/0 2804:4ed4:1000:6::1
+ ip route 0.0.0.0/0 192.0.2.1
+ ip route 198.51.100.0/24 192.0.2.1
+ ipv6 route ::/0 2001:db8:6::1
  exit
 router static
- 0.0.0.0/0 next-hop 10.40.10.29
+ 0.0.0.0/0 next-hop 203.0.113.254
  exit
 system
  management
@@ -313,7 +315,7 @@ Hasta la 0.152.5, justo después de que la placa entraba en la VRF, su direcció
 
 Hasta la 0.152.6, en un equipo ocupado, quitar la VRF (un `commit confirmed` que expiró, por ejemplo) y volver a ponerla podía dejar la default IPv6 de la VRF fuera de Linux hasta que FRR se reiniciara: zebra se quedaba con la ruta conectada de la placa inactiva. A partir de la 0.152.7 el equipo cambia la placa de VRF sin ninguna dirección en ella, espera a que zebra se ponga al día antes de devolver las direcciones y solo elimina una VRF después de que zebra la suelte. Vale para la gestión y para la VRF de cualquier cliente. Si zebra tarda más de 10 segundos, el commit continúa y lo advierte, y `show log` guarda lo que todavía tenía.
 
-**Placa de gestión que el dataplane no tiene** (desde la 0.155.19). En una máquina virtual la placa de gestión suele ser una virtio que Linux se queda al lado de las placas que toma el dataplane, como la `ens18` con la dirección que el instalador puso en `/etc/network/interfaces.d/prisma-routing`. Entra en la VRF de la misma manera, con `interface ens18` y `vrf 100`: el equipo mueve solo su lado Linux, se lleva las direcciones y la ruta default del instalador, y pone esa default en la tabla de la VRF como el camino de vuelta. Un `commit confirmed` que expira la vuelve a sacar, con la default de vuelta en la tabla principal, y SSH vuelve a responder por ella. Hasta la 0.155.18 ese commit pasaba el `commit check` y fallaba al aplicarse (`the dataplane does not have it`), y con la gestión en la tabla principal la default del instalador le ganaba a la del `router static`: el dataplane se quedaba sin default para los abonados. En una placa así el bloque acepta solo `vrf`; direcciones, MTU y descripción quedan en Linux, y `commit check` las rechaza, como rechaza un nombre que no tienen ni el dataplane ni Linux.
+**Placa de gestión que el dataplane no tiene** (desde la 0.155.19). En una máquina virtual la placa de gestión suele ser una virtio que Linux se queda al lado de las placas que toma el dataplane, como la `ens18` con la dirección que el instalador puso en `/etc/network/interfaces.d/prisma-routing`. Entra en la VRF de la misma manera, con `interface ens18` y `vrf 100`: el equipo mueve solo su lado Linux, se lleva las direcciones y la ruta default del instalador, y pone esa default en la tabla de la VRF como el camino de vuelta. Un `commit confirmed` que expira la vuelve a sacar, con la default de vuelta en la tabla principal, y SSH vuelve a responder por ella. Hasta la 0.155.18 ese commit pasaba el `commit check` y fallaba al aplicarse (`the dataplane does not have it`), y con la gestión en la tabla principal la default del instalador le ganaba a la del `router static`: el dataplane se quedaba sin default para los abonados. En una placa así el bloque acepta solo `vrf`; direcciones, MTU, descripción y protocolos de enrutamiento quedan en Linux, y `commit check` los rechaza, como rechaza un nombre que no tienen ni el dataplane ni Linux y una `vrf` cuya tabla ningún `vrf <nombre> table <n>` crea. Por el mismo camino, una interfaz de Linux puesta en una VRF a mano pasa a formar parte de la configuración: un `rollback` a una revisión sin ella la saca de la VRF.
 
 | Qué | Por dónde va |
 |-----|--------------|
@@ -323,7 +325,7 @@ Hasta la 0.152.6, en un equipo ocupado, quitar la VRF (un `commit confirmed` que
 
 Sin `system` > `management` > `vrf mgmt` la placa queda en la VRF y el equipo **no** responde por ella: los servicios escuchan en la tabla principal, y el snmpd y el sshd que escuchan en la dirección de gestión ni siquiera arrancan. Con él, el equipo activa `tcp_l3mdev_accept`/`udp_l3mdev_accept`, `ip_nonlocal_bind` (IPv4 e IPv6) y `keep_addr_on_down` de IPv6, y coloca dos reglas por familia para su propio tráfico - en el commit y en cada arranque, antes de que arranquen snmpd, sshd y la API. `show system management` muestra lo que está configurado y lo que está vigente en el host. `no vrf` dentro de `management` devuelve todo a la tabla principal. `commit check` rechaza una VRF que la configuración no crea, o sin ninguna interfaz dentro.
 
-Para que el SSH responda solo en la gestión, IPv4 e IPv6, liste sus dos direcciones en `ssh listen-address` (desde la 0.152.5), como en `snmp` y en `api`: `ssh listen-address 10.40.200.166 2804:4ed4:1000:6::166`. Con la gestión en la VRF, el `commit` acepta esas direcciones aunque estén en la VRF, porque `ip_nonlocal_bind` permite que sshd escuche en ellas; sin el `vrf` en `management`, las rechaza.
+Para que el SSH responda solo en la gestión, IPv4 e IPv6, liste sus dos direcciones en `ssh listen-address` (desde la 0.152.5), como en `snmp` y en `api`: `ssh listen-address 192.0.2.10 2001:db8:6::10`. Con la gestión en la VRF, el `commit` acepta esas direcciones aunque estén en la VRF, porque `ip_nonlocal_bind` permite que sshd escuche en ellas; sin el `vrf` en `management`, las rechaza.
 
 ## Estado administrativo
 

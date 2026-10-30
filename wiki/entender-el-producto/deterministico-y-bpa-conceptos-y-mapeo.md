@@ -11,7 +11,7 @@ Los dos le dan a cada suscriptor un **bloque contiguo de puertos**, en lugar de 
 
 BPA es **solo** el modo dinámico. Determinístico no es un tipo de BPA: el paraguas de los dos es *CGNAT por bloque de puertos*, y la elección es entre determinístico y BPA.
 
-El módulo del dataplane que hace las dos cosas se llama `bpa`, y ese nombre aparece en contadores e identificadores internos para los dos modos. Sigue así para no romper scripts ni equipos instalados, pero no significa que un pool determinístico sea BPA. En la VTY, los comandos son `show cgnat ...`.
+El módulo del dataplane que hace las dos cosas se llama `bpa`, y ese nombre aparece en contadores e identificadores internos para los dos modos. Sigue así para no romper scripts ni equipos instalados, pero no significa que un pool determinístico sea BPA. En la VTY, los comandos son `show cgnat ...`, y `show nat64 ...` para mirar solo los pools NAT64.
 
 |     | Determinístico (`mode deterministic`) | BPA (`mode bpa`) |
 |-----|-------------------------------------|----------------|
@@ -25,7 +25,7 @@ El módulo del dataplane que hace las dos cosas se llama `bpa`, y ese nombre apa
 
 
 :::info
-**Un pool BPA sin exportación es un pool sobre el que nadie puede responder.** En BPA el registro exportado es la única prueba de quién estaba detrás de un puerto público. `commit check` y `commit` advierten, nombrando el pool, cuando un pool dinámico — o uno determinístico con `reserve` — no tiene colector configurado. Es una advertencia y no un rechazo, porque un pool armado antes de que exista el colector es una configuración correcta.
+**Un pool BPA sin exportación es un pool sobre el que nadie puede responder.** En BPA el registro exportado es la única prueba de quién estaba detrás de un puerto público. `commit` no rechaza ni advierte sobre un pool sin colector — un pool armado antes de que exista el colector es una configuración correcta —, así que la verificación es suya: `show cgnat logging` dice si la exportación está encendida y hacia dónde va, y el autotest de arranque señala una exportación que la configuración guardada enciende y el dataplane no tiene. Vale lo mismo para un pool determinístico con `reserve`.
 
 :::
 
@@ -100,7 +100,7 @@ Por eso `show cgnat pool` muestra, debajo de la capacidad, el número que el poo
 
 
 :::info
-Existe un mecanismo que presta un bloque libre de un worker a otro, en el ciclo de un segundo en el que el equipo ya expira los bloques ociosos. Funciona, pero **viene desactivado**: en laboratorio, todo ajuste que atiende al suscriptor rechazado también presta un bloque que el siguiente suscriptor del propio worker quería. Hasta que eso se mida con tráfico real, dimensione según el piso.
+Existe un mecanismo que presta un bloque libre de un worker a otro, en el ciclo de un segundo en el que el equipo ya expira los bloques ociosos. Funciona, pero **viene desactivado**, y no se activa desde la VTY. Medido con suscriptores que reintentan por su cuenta, casi elimina los rechazos de la porción que se agotó, a costa de algunos rechazos iniciales en los workers que prestan; con carga uniforme todavía no se midió. Dimensione según el piso.
 
 :::
 
@@ -116,7 +116,7 @@ El tráfico de un suscriptor destinado **al propio equipo** — el gateway, la d
 
 # Qué cambia sin reconstruir el pool
 
-Vea la página de configuración de pool. La regla: **cambia el mapeo → se reconstruye; no cambia → se aplica sin reconstruir**. El mapeo es prefijo, `block-size`, `ports`, `policy`, `mode`, `vrf`, `outside-vrf` y `reserve`; el resto — timeouts, ALGs, límites, MSS, bypass, reenvíos, `max-blocks`, `initial-allocation` — se aplica en un pool con tráfico.
+Vea la página de configuración de pool. La regla: **cambia el mapeo → se reconstruye; no cambia → se aplica sin reconstruir**. El mapeo es prefijo (`prefix-inside` y `prefix-outside`, o lo que resuelven las listas de `prefix-list-inside` y `prefix-list-outside`), `block-size`, `ports`, `policy`, `mode`, `vrf`, `outside-vrf` y `reserve` — y, en un pool NAT64, `subscriber-length` y `nat64-prefix`. Cambiar una prefix-list que un pool usa reconstruye ese pool, igual que cambiar el prefijo escrito. El resto — timeouts, ALGs, límites, MSS, bypass, reenvíos, `max-blocks`, `initial-allocation` — se aplica en un pool con tráfico.
 
 Esto no es una optimización, es corrección. Tirar la base entera de suscriptores para desactivar un ALG, limitar una máquina infectada o darle un puerto de entrada a un cliente no es un cambio que alguien pediría.
 

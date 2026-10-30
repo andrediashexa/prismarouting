@@ -248,26 +248,26 @@ flowchart LR
     T["prisma-routing-tune<br/><i>isolcpus, hugepages, card bind</i>"] -->|Before| C["prisma-routing-containers<br/><i>vpp + frr in containers</i>"]
     C --> H["prisma-routing.service<br/><i>applies the saved config</i>"]
     H --> S["prisma-routing-selftest<br/><i>report on the console</i>"]
-    W["card-watch.timer<br/><i>every 30s</i>"] -.->|if the dataplane gives up| C
+    W["card-watch.timer<br/><i>every 5s</i>"] -.->|if the dataplane gives up| C
 ```
 
 | Service | Function |
 |---------|----------|
-| `prisma-routing-tune` | boot tuning (isolcpus, hugepages); runs at **every** boot, with no sentinel |
-| `prisma-routing-containers` | brings up the dataplane, routing and the management plane (the VTY) as containers |
-| `prisma-routing-doors` | runs on the host what the VTY asks for (accounts, sshd, SNMP, reboot); root only, each request becomes a line in the journal |
-| `prisma-routing-card-watch.timer` | notices a dataplane that Docker gave up restarting, records the reason and gives the card back to the kernel |
+| `prisma-routing-tune` | boot tuning (isolcpus, hugepages); runs at **every** boot, with no sentinel, and again at each `system dataplane restart` |
+| `prisma-routing-containers` | brings up the dataplane, routing, the management plane (the VTY), the CGNAT records exporter and, with PPPoE configured, the PPPoE control plane as containers |
+| `prisma-routing-doors` | runs on the host what the VTY asks for (accounts, sshd, SNMP, reboot), only in the shapes it knows; each request becomes a line in the journal. Changes are root's; upgrade, reboot, shutdown and dataplane restart also belong to whoever has `operator`; questions that only read, to any account |
+| `prisma-routing-card-watch.timer` | every 5 seconds: puts the configuration back on a dataplane Docker started again after a crash, and notices a dataplane that Docker gave up restarting, records the reason and gives the card back to the kernel |
 | `prisma-routing-backplane` | the containers' own internal network, in a separate VRF, which does not leak into the main table |
 | `prisma-routing.service` | applies the saved configuration (`prismash --load`) |
 | `prisma-routing-selftest` | checks and reports on the console |
 
-**The VTY runs in the management container** (`prisma-routing_mgmt_1`). Login lands in it with the user's own user and groups, so each account's role is the same as before. The container has only its own internal network, which reaches the host and nothing beyond it, and reads from the host, read-only, what the VTY needs to know about the box: the cards, the routes, the cores, whether the box is on the installation medium. What acts on the host goes through the host: `ping`, `traceroute` and `mtr` go out through the host's network; `install`, `system upgrade` and `system dataplane restart` run in the host's VTY, in the same terminal; `start shell` opens a shell on the host, and only for `root` and for accounts with the `administrator` role - any other account gets the refusal, and a command it passes through `ssh` is executed by the VTY, with its role, and not by a shell. If the container is not up, the VTY runs on the host, and nobody is locked out. To move the VTY back to the host on a box: `touch /etc/prisma-routing/vty-on-host`.
+**The VTY runs in the management container** (`prisma-routing_mgmt_1`). Login lands in it with the user's own user and groups, so each account's role is the same as before. The container has only its own internal network, which reaches the host and nothing beyond it, and reads from the host, read-only, what the VTY needs to know about the box: the cards, the routes, the cores, whether the box is on the installation medium. What acts on the host goes through the host: `ping`, `traceroute` and `mtr` go out through the host's network; `install`, `system upgrade` and `system dataplane restart` run in the host's VTY, in the same terminal (for an account with `operator` that is not root, the upgrade and the dataplane restart run on the host as a unit of their own, and the VTY shows what it writes); `start shell` opens a shell on the host, and only for `root` and for accounts with the `administrator` role - any other account gets the refusal, and a command it passes through `ssh` is executed by the VTY, with its role, and not by a shell. If the container is not up, the VTY runs on the host, and nobody is locked out. To move the VTY back to the host on a box: `touch /etc/prisma-routing/vty-on-host`.
 
 ```
 docker ps --format "{{.Names}} {{.Status}}"
 ```
 
-On a healthy box, the list shows the three containers — `prisma-routing_vpp_1` (the dataplane), `prisma-routing_frr_1` (routing) and `prisma-routing_mgmt_1` (the VTY) — all `Up`.
+On a healthy box, the list shows `prisma-routing_vpp_1` (the dataplane), `prisma-routing_frr_1` (routing), `prisma-routing_mgmt_1` (the VTY) and `prisma-routing_logger_1` (the exporter of the CGNAT records over TCP, syslog and UDP), all `Up`; with PPPoE configured, also `prisma-routing_bng_1`. Without the `logger` the box keeps recording: the dataplane itself goes back to sending the records, and `show cgnat logging` says who is sending.
 
 Before compose sees the file, the unit does three things, and each one exists because a box that skipped that step came up wrong:
 
@@ -278,7 +278,9 @@ Before compose sees the file, the unit does three things, and each one exists be
 
 ### When the dataplane gave up
 
-The containerized dataplane tries to come up five times. After that Docker gives up, and every 30 seconds the watcher checks: finding the dataplane stopped, it **records why** — the container state, the exit code and the last eighty lines the dataplane wrote — in `/var/log/prisma-routing/why-the-dataplane-stopped`, and only then gives the card back to the kernel, once per boot.
+The containerized dataplane tries to come up five times. After that Docker gives up, and every 5 seconds the watcher checks: finding the dataplane stopped, it **records why** — the container state, the exit code and the last eighty lines the dataplane wrote — in `/var/log/prisma-routing/why-the-dataplane-stopped`, and only then gives the card back to the kernel, once per boot.
+
+The same watcher handles two cases before that one. A dataplane that crashed and that Docker started again comes back with no configuration at all, and the watcher puts the configuration in effect on it, a few seconds later. And a dataplane that exited by itself with status 0, with nobody asking (Docker does not restart that one), is started again, up to five times per boot.
 
 That file is the first thing to read on a box that came up without forwarding. Restarting the box erases the container log, and the file stays precisely because restarting is the first thing anyone does. When it exists, the VTY and the self-test point to it instead of telling you to look at the container log, which on that box is empty.
 
@@ -453,7 +455,7 @@ flowchart TD
 | "whose was this IP:port?" | `show cgnat translation <ip> <port>` |
 | "will the pool fill up?" | `show cgnat top` |
 | "how many sessions, per thread?" | `show cgnat session` |
-| "is the collector receiving?" | `show cgnat logging` |
+| "is the collector receiving?" | `show cgnat logging`, and `show log kind collector` for when it went away and came back |
 | "what happened on the box?" | `show log` |
 | "who committed, and from where?" | `show log source vty` (or `source api`) |
 | "why did the dataplane restart?" | `show log source dataplane`, and the `started by:` line of `show system uptime` |
@@ -477,6 +479,8 @@ flowchart TD
 | "has the configuration trail been tampered with?" | `show cgnat history verify` |
 | "which cards does the box have, and which did it take?" | `show hardware` |
 | "which cores do what?" | `show system cpu` |
+| "is the box's tuning right? what should change?" | `show system tuning` and `show system tuning advice` |
+| "what of the saved configuration is waiting for a card?" | `show configuration pending` |
 | "how busy is each core? is there steal?" | `show system cpu cores` |
 | "how is memory split?" | `show system memory` |
 | "is the LACP aggregate whole?" | `show lacp` |
@@ -501,6 +505,7 @@ flowchart TD
 | BGP session dropped and came back without anyone seeing | `show log kind bgp`: each drop with FRR's reason, and `went down and came back between two readings` when it dropped and came back between two readings |
 | A port that went down and came back too fast for anyone to see | `show log kind link`: `went down and came back between two readings (N time(s))` — the dataplane counts each link drop of the port, and Linux, those of the cards that stayed with it; the drop is recorded even if both readings saw the link up |
 | The module of the management card (the one that stayed with Linux) | `show log kind transceiver`: module inserted, removed, light below the warning, with the card named `(held by Linux)` and source `host`; a virtio card, which has no module, produces no event at all |
+| The box came up and part of the configuration was not applied | a card the saved configuration names was not there at boot: the rest was applied, and `show configuration pending` says what waits for it. `save` is refused while anything is pending; when the card appears, the box applies what was missing, and `clear configuration pending` gives it up |
 | The box was left without cards after a restart | `show log kind gave-up`: the abandoned dataplane, or the `system dataplane restart` that did not finish, and why |
 | The PPPoE subscribers all dropped together | `show log kind exit`: the PPPoE control plane stopped, and why (the code, the signal, a commit); `show log kind start` says who brought it back up |
 | `show system uptime` says `restarted after the boot` | `show log source dataplane` gives the cause: a `system dataplane restart` (by whom), an upgrade, or `unexpected` — nobody asked, and `why-the-dataplane-stopped` usually has the reason |

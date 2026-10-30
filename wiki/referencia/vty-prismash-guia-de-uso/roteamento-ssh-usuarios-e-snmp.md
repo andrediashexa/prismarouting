@@ -37,7 +37,7 @@ Se você digitar só o `router ospf6` e esperar que ele encontre as interfaces s
 | `network` | `<A.B.C.D/M> area <área>` | roda OSPF nas interfaces que esse prefixo cobre |
 | `area`  | `<área> ...` | ajustes de uma área, na sintaxe do FRR |
 | `passive-interface` | `<interface>` | roda OSPF na interface sem mandar hello — o que toda porta voltada a assinante deve ser. O FRR guarda isso como `ip ospf passive` no bloco da interface |
-| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nome>]` | anuncia `0.0.0.0/0` |
+| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <nome>\|policy <política>]` | anuncia `0.0.0.0/0`; com `policy`, enquanto houver uma rota que a política aceita ([Política de roteamento](/s/wiki/doc/politica-de-roteamento-policy-options-DULDDxEALE)) |
 | `export` | `<política>` | exporta para o OSPF o que uma política de `policy-options` aceitar; o que nenhum termo aceita **não** é exportado |
 | `redistribute connected\|static\|bgp\|isis` | `[metric <n>] [metric-type 1\|2] [route-map <nome>]` | injeta rotas de outra origem. `bgp` numa caixa de borda é uma tabela inteira dentro do IGP: dê a ele uma route-map |
 | `auto-cost reference-bandwidth` | `<1-4294967>` | em Mbit/s. Sem isso, todo enlace de 100 Mbit/s para cima custa 1, e numa caixa de 10G não há escolha de caminho |
@@ -74,9 +74,9 @@ Não há `network` nem `export` no OSPFv3: a interface entra pela linha `ipv6 os
 | `set-overload-bit` | `[on-startup <0-86400>]` | diz a todos para não transitarem por esta caixa; ver a drenagem abaixo |
 | `export` | `<política>` | exporta para o IS-IS o que uma política aceitar; o que nenhum termo aceita não é exportado |
 | `redistribute ipv4\|ipv6` | `<origem> level-1\|level-2 [metric <n>] [route-map <nome>]` | injeta rotas de outra origem |
-| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [route-map <nome>]` | anuncia uma rota default |
-| `domain-password` | `clear\|md5 <senha>` | autenticação de nível 2; nunca é mostrada de volta |
-| `area-password` | `clear\|md5 <senha>` | autenticação de nível 1; nunca é mostrada de volta |
+| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] [route-map <nome>\|policy <política>]` | anuncia uma rota default |
+| `domain-password` | `[clear\|md5] <senha>` | autenticação de nível 2; nunca é mostrada de volta |
+| `area-password` | `[clear\|md5] <senha>` | autenticação de nível 1; nunca é mostrada de volta |
 | `log-adjacency-changes` |           | registra cada mudança de adjacência |
 | `lsp-mtu` | `<128-4352>` | o maior LSP que a caixa gera; maior que a menor MTU das interfaces, eles não saem |
 | `lsp-gen-interval` | `<1-120>` | segundos entre regenerações de LSP |
@@ -85,7 +85,7 @@ Não há `network` nem `export` no OSPFv3: a interface entra pela linha `ipv6 os
 
 As declarações de OSPF e IS-IS que vão **na interface** (`ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`) estão em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
 
-`export <política>` recusa uma política que dependa do que só uma rota BGP carrega — comunidade, AS-path, local-preference, prepend, próximo salto —, em vez de ignorá-lo em silêncio. As políticas são escritas em `policy-options`, descrito em [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ); `test policy <política> <prefixo>` diz o que ela faz com uma rota antes de ser aplicada.
+`export <política>` recusa uma política que dependa do que só uma rota BGP carrega — comunidade, AS-path, local-preference, prepend, próximo salto —, em vez de ignorá-lo em silêncio. As políticas são escritas em `policy-options`, descrito em [Política de roteamento](/s/wiki/doc/politica-de-roteamento-policy-options-DULDDxEALE); `test policy <política> <prefixo>` diz o que ela faz com uma rota antes de ser aplicada.
 
 ## Rotas estáticas: o bloco `router static`
 
@@ -136,6 +136,18 @@ error: this next hop is on no connected network: 172.31.99.1
 Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
 
 Repare que a recusa nomeia a rota **no bloco em que ela está** - `router static / 10.55.0.0/16 next-hop ...` - e não como uma linha solta. É assim mesmo quando a rota foi digitada no topo, na grafia do roteamento, `ip route ...`: a caixa mostra onde a rota mora na configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
+
+`**router static**` **é a tabela principal.** As rotas estáticas de uma VRF ficam no bloco `vrf <nome>` do roteamento, na grafia dele - `ip route <prefixo> <próximo-salto>` ou `ipv6 route ...` -, e o bloco fecha com `exit` ou `exit-vrf`:
+
+```
+configure
+ vrf red
+  ip route 10.55.0.0/16 172.31.99.1
+  exit-vrf
+ commit
+```
+
+O `commit check` confere o próximo salto na tabela **daquela VRF**, não na principal: um próximo salto que só existe na principal é recusado ali, e um que só existe na VRF é aceito. Uma VRF que o roteamento ainda não tem ativa - sem o `vrf <nome> table <n>` que cria o dispositivo dela no Linux - não tem tabela contra a qual conferir; a caixa diz que aquelas rotas não foram conferidas, e não recusa.
 
 ## BFD: a queda do vizinho em milissegundos
 
@@ -354,8 +366,9 @@ configure
 | `control-plane`, `buffers` | `system` > `memory` | a memória por papel |
 | `unsupported-sfp allow` | `system` > `hardware` | a placa ixgbe (X520 e família) aceita um módulo SFP+ que a Intel não homologou; `no unsupported-sfp` volta ao padrão, que recusa |
 | `host <endereço> [...]` | `system` > `logging` | manda o registro de eventos da caixa para um syslog; vale **no commit** (veja abaixo) |
+| `vrf <nome>` | `system` > `management` | os serviços da própria caixa passam a viver na VRF de gerência; vale **no commit** (veja abaixo) |
 
-Todas, menos `logging`, valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
+Todas, menos `logging` e `management`, valem a partir do próximo boot ou do próximo início do dataplane: o `commit` grava a escolha e **não reinicia nada**. `cpu` e `memory` estão explicados em [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s), e a escolha da placa em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
 
 ## Módulo SFP+ não homologado numa placa ixgbe
 
@@ -425,6 +438,18 @@ memif1/0: link down, administratively up: the wire or the far end
 
 **Não confunda com a exportação do CGNAT.** `nat` > `cgnat` > `logging syslog` manda os registros de quem usou qual porta pública, para ordem judicial, e continua igual. São duas configurações e dois fluxos separados — um não carrega as linhas do outro — e devem ir para coletores diferentes.
 
+## A gerência numa VRF própria: `system` > `management`
+
+Desde a 0.152.4, a gerência pode morar numa VRF própria, para que a tabela principal fique livre para a default dos assinantes enquanto o SSH, a API e o SNMP continuam alcançáveis pelo gateway da gerência. A placa de gerência entra numa VRF como qualquer interface, com as rotas dela no bloco `vrf <nome>`, e `system` > `management` > `vrf <nome>` faz os serviços da própria caixa irem junto: sem ele, a placa fica na VRF e a caixa **não** responde por ela. Com ele, o SSH, a API e o SNMP respondem nos endereços da VRF, e o que a própria caixa origina - DNS, NTP, downloads do `system upgrade`, notificações SNMP, `system` > `logging` - sai pelas rotas da gerência, a não ser que a tabela principal tenha uma rota específica para o destino. O IPFIX por UDP, que o plano de dados manda, continua saindo pela tabela principal.
+
+Vale no `commit` e de novo a cada boot. O `commit check` recusa uma VRF que a configuração não cria com `vrf <nome> table <n>` e, no commit que a liga, uma VRF sem nenhuma interface. `show system management` mostra a VRF configurada e o que o sistema tem em vigor. O exemplo completo, e o caso da placa de gerência que só o Linux tem (a virtio de uma máquina virtual), estão em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
+
+
+:::warning
+**Use** `**commit confirmed**`**.** Se a sessão que fez o commit perder o acesso, ninguém confirma, e o rollback tira a placa da VRF e devolve a gerência à tabela principal. Tirar a gerência da VRF encerra as sessões SSH abertas por ela; a caixa atende as novas pela tabela principal.
+
+:::
+
 # SSH
 
 ```
@@ -456,11 +481,11 @@ configure
 
 ```
 configure
- ssh listen-address 10.40.200.166 2804:4ed4:1000:6::166
+ ssh listen-address 192.0.2.166 2001:db8:1000:6::166
  commit
 ```
 
-O SSH passa a responder em cada endereço da lista, e só neles. `show running-config` mostra o IPv6 entre colchetes, como o próprio sshd escreve: `ssh listen-address 10.40.200.166 [2804:4ed4:1000:6::166]`.
+O SSH passa a responder em cada endereço da lista, e só neles. `show running-config` mostra o IPv6 entre colchetes, como o próprio sshd escreve: `ssh listen-address 192.0.2.166 [2001:db8:1000:6::166]`.
 
 * **Sem** `**listen-address**` — ou depois de `no ssh listen-address` — o SSH responde em todos os endereços da caixa, **IPv4 e IPv6** (`0.0.0.0 [::]`), que é o padrão do próprio sshd. Até a 0.152.4, qualquer `commit` que mexesse no `ssh` gravava `ListenAddress 0.0.0.0` e o SSH por IPv6 parava de responder.
 * **Um endereço que a caixa não tem é recusado no** `**commit**`, antes de o sshd ser avisado: `error: ssh listen-address 192.0.2.99: not an address of this box`. Um endereço de uma interface que está numa VRF só é aceito quando a gerência está nessa VRF (`system` > `management` > `vrf`), que é o que permite ao sshd escutar nele.
@@ -510,9 +535,11 @@ Os servidores DNS que a caixa consulta, sem editar `/etc/resolv.conf` à mão. A
 configure
  user <nome>
   role administrator|cgnat-operator
+  operator
   ssh-key <tipo> <chave> [comentário]
   password <hash>
   no role
+  no operator
   no ssh-key <chave>
   no password
   exit
@@ -522,6 +549,7 @@ configure
 | Comando | O que faz |
 |---------|-----------|
 | `role administrator\|cgnat-operator` | o que a conta pode mudar; sem papel, somente leitura |
+| `operator` | a conta pode atualizar, reiniciar e desligar a caixa e reiniciar o plano de dados; `no operator` tira |
 | `ssh-key <tipo> <chave> [comentário]` | uma chave pública autorizada, como aparece no `authorized_keys`; pode repetir |
 | `password <hash>` | um hash crypt; texto claro é recusado |
 | `no ssh-key <chave>` | tira uma chave; o começo dela basta |
@@ -546,6 +574,8 @@ openssl passwd -6
 **A configuração é quem decide.** O papel é escrito no bloco do usuário, sai em `show running-config` e sobrevive ao `save` — e o `commit` o materializa nos grupos do sistema, acrescentando os que o papel exige e **retirando** os que ele não exige mais. Uma promoção feita por fora, direto no grupo, é desfeita no commit seguinte: é aqui que ela se escreve.
 
 Além do grupo do papel, toda conta criada aqui entra nos grupos que dão **alcance** — os sockets do dataplane e os do roteamento. Sem eles a conta tem posto e não consegue exercê-lo: todo comando falha por permissão, inclusive os de leitura. É por isso que reaplicar o papel pela VTY conserta uma conta cujas participações saíram do lugar.
+
+**Atualizar, reiniciar, desligar a caixa e reiniciar o plano de dados não vêm de papel nenhum.** Desde a 0.149.26 é o `operator`, ao lado do papel: ele dá exatamente `system upgrade <versão>`, `system reboot`, `system shutdown` e `system dataplane restart`, na VTY e pela API, e nada mais do que é do root. Vale com qualquer papel, inclusive sem papel: uma conta do NOC que só lê a configuração pode ser a que reinicia a caixa. E um administrador sem `operator` é recusado nesses quatro comandos, pelo nome. O `root` já pode tudo isso e não recebe `operator`.
 
 `no role` devolve a conta a somente leitura. Um papel que não existe é recusado com a lista do que existe:
 
@@ -575,6 +605,10 @@ configure
  snmp port <1-65535>
  snmp enterprise-number <1-4294967295>
  snmp community <string>
+ snmp trap-host <endereço> community <string> [inform]
+ no snmp enabled|listen-address|port|enterprise-number
+ no snmp community <string>
+ no snmp trap-host <endereço>
 ```
 
 | Comando | O que define | Padrão |
@@ -583,11 +617,16 @@ configure
 | `snmp listen-address` | um ou mais endereços de escuta, IPv4 e IPv6 | `127.0.0.1` |
 | `snmp port` | porta UDP    | `161`  |
 | `snmp enterprise-number` | o número sob o qual a MIB do Prisma é servida; `no snmp enterprise-number` volta ao do produto | `67033`, o número do Prisma na IANA |
-| `snmp community` | uma comunidade SNMPv2c, somente leitura | nenhuma |
+| `snmp community` | uma comunidade SNMPv2c, somente leitura; pode haver mais de uma | nenhuma |
+| `snmp trap-host` | para onde mandar as notificações: o endereço, a comunidade e, com `inform`, notificação confirmada em vez de trap; um por endereço, e digitar o mesmo endereço de novo substitui | nenhum |
 
 Com o padrão `127.0.0.1`, o agente só responde de dentro da caixa: para o NMS alcançá-lo, `listen-address` precisa ser um endereço que ele alcança.
 
-Para responder em IPv4 e IPv6 ao mesmo tempo, liste os dois endereços na mesma linha, separados por espaço — `snmp listen-address 10.40.200.166 2804:4ed4:1000:6::166`. O `api listen-address` aceita a lista do mesmo jeito. Escutar em `0.0.0.0` ou `::` não é o caminho: abriria o serviço também nas interfaces do dataplane, inclusive as públicas.
+Para responder em IPv4 e IPv6 ao mesmo tempo, liste os dois endereços na mesma linha, separados por espaço — `snmp listen-address 192.0.2.166 2001:db8:1000:6::166`. O `api listen-address` aceita a lista do mesmo jeito. Escutar em `0.0.0.0` ou `::` não é o caminho: abriria o serviço também nas interfaces do dataplane, inclusive as públicas.
+
+`no snmp <ajuste>` volta o ajuste ao padrão da tabela.
+
+O agente responde **SNMPv2c e SNMPv3**, nunca v1: uma comunidade só vale em v2c, que é a versão com os contadores de 64 bits que as interfaces e a MIB do produto usam.
 
 **Ligar o agente sem comunidade e sem usuário v3 é recusado**: seria um agente que ninguém consegue consultar. A comunidade e as senhas dos usuários v3 aparecem como `<set, not shown>` em `show configuration`.
 
@@ -596,6 +635,8 @@ Para responder em IPv4 e IPv6 ao mesmo tempo, liste os dois endereços na mesma 
 A MIB do Prisma é servida sob o número do produto na IANA, **67033**, sem nada a configurar (desde a 0.149.13). `snmp enterprise-number <número>` a serve sob o número da sua organização; veja [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb).
 
 :::
+
+Para o NMS, a caixa entrega os próprios arquivos: `show snmp mib` imprime a PRISMA-ROUTING-MIB já sob o número de empresa da caixa, para carregar no NMS, e `show snmp zabbix-template` imprime um template do Zabbix 7.0 com o mesmo número, para importar - os itens, os gatilhos e um item para cada notificação que a caixa manda.
 
 ## Usuários SNMPv3
 
@@ -621,6 +662,8 @@ prisma# [edit] ip prefix-list <TAB>
 ```
 
 A completação sai da mesma fonte que o `show running-config` responde, então ela não oferece um nome que a caixa não tem.
+
+Três coisas de uma prefix-list são da caixa, por cima da sintaxe do roteamento: uma entrada aceita `description <texto>` no fim, guardada pela caixa porque o roteamento não tem descrição por entrada; `ip prefix-list <lista> insert seq <n> before|after seq <m>` muda uma entrada de lugar, à moda do Junos; e `ip prefix-list <lista> resequence` renumera a lista de 10 em 10. As descrições acompanham as entradas nos dois casos. Para trocar o nome de uma prefix-list, de uma route-map ou de um peer group BGP em todo lugar que o cita, use `rename` no modo de configuração.
 
 
 :::warning
@@ -668,6 +711,8 @@ Isso existe porque a ferramenta que aplica a configuração pode terminar com su
 A caixa conhece essas formas e não reclama delas. Você não precisa mudar como escreve.
 
 :::
+
+Uma linha de route-map ou de prefix-list é tratada com mais rigor. Se o roteamento aceitou a sintaxe e o daemon que aplica a política recusou a linha, o `commit` diz `FRR refused <n> line(s) of your route-maps and lists`, lista as linhas e **volta ao estado anterior**. Uma cláusula que perdeu um `set` ou um `match` continua rodando, fazendo o que ninguém escreveu, por isso a caixa desfaz em vez de só avisar.
 
 Se aparecer uma recusa aqui, a leitura é: **o que esta caixa guarda e o que o FRR está rodando não são a mesma coisa.** `show configuration` mostra a desta caixa; `start shell` e depois `vtysh -c "show running-config"` mostra a do FRR.
 
@@ -863,7 +908,7 @@ Ela vem **desligada**. Para ligar, você precisa de três coisas:
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=prisma clients" -keyout ca.key -out ca.crt
 # o certificado da caixa, com o endereço que o cliente usa
 openssl req -newkey rsa:3072 -nodes -subj "/CN=prisma-api" -keyout server.key -out server.csr
-printf 'subjectAltName=IP:10.40.200.166\n' > server.ext
+printf 'subjectAltName=IP:192.0.2.166\n' > server.ext
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile server.ext -out server.crt
 # o certificado do cliente: o CN é a conta da caixa que ele usa
 openssl req -newkey rsa:3072 -nodes -subj "/CN=webui" -keyout webui.key -out webui.csr
@@ -874,13 +919,13 @@ openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 8
 Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`.
 
 
-2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê. Tudo o que ela muda fica registrado no histórico em nome dela.
+2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê; uma conta com `operator` também atualiza, reinicia e desliga a caixa e reinicia o plano de dados. Tudo o que ela muda fica registrado no histórico em nome dela.
 3. **O endereço.** A API escuta **só na rede de gerência**:
 
 ```
 configure
 api enabled yes
-api listen-address 10.40.200.166
+api listen-address 192.0.2.166
 api port 50051
 commit
 ```

@@ -1044,5 +1044,52 @@ grep -qx -- '--max-time' "$API_ARGS" \
   && ok "with a time limit, so a wiki that hangs does not hang the pull" \
   || bad "api asked curl for no --max-time"
 
+echo "=== two languages, one title: each page gets its own file ==="
+# The PT, ES and EN collections share one name and the path carries none, so
+# "Operar" in PT and in ES - and "Referência"/"Referencia", one slug - were
+# written to ONE file and listed twice in wiki/.ids: four ES pages never
+# reached the mirror, and the publish stopped at the first duplicate
+# (measured 2026-10-30). The collection with the lower id keeps the plain
+# name whatever order the API answers in, and the other gets "-2".
+cp "$STUB/documents.list.json" "$WORK/list.single"
+python3 - "$STUB" <<'PYEOF'
+import json, sys
+stub = sys.argv[1]
+def d(i, parent, title, col, text):
+    return {"id": i, "parentDocumentId": parent, "title": title,
+            "text": text, "collectionId": col,
+            "publishedAt": "2026-09-01T00:00Z",
+            "updatedAt": "2026-09-01T00:00Z"}
+# ES listed first, and with the lower document ids: neither may decide.
+docs = [d("a-es", None, "Operar", "col-es", "es op"),
+        d("b-es", "a-es", "Recetas", "col-es", "es kid"),
+        d("c-es", None, "Referencia", "col-es", "es ref"),
+        d("x-pt", None, "Operar", "col-ast", "pt op"),
+        d("y-pt", "x-pt", "Receitas", "col-ast", "pt kid"),
+        d("z-pt", None, "Referência", "col-ast", "pt ref")]
+json.dump({"data": docs,
+           "pagination": {"offset": 0, "limit": 100, "total": len(docs)}},
+          open(stub + "/documents.list.json", "w"))
+PYEOF
+rm -rf "$WORK/repo/wiki"; mkdir -p "$WORK/repo/wiki"
+cp "$REPO/wiki/README.md" "$WORK/repo/wiki/"
+WIKI_PULL_DISCARD=1 sh "$WORK/repo/tools/wiki-pull.sh" > "$WORK/pull2.log" 2>&1 \
+  || { bad "wiki-pull.sh failed:"; sed 's/^/    /' "$WORK/pull2.log"; }
+W=$WORK/repo/wiki
+dups=$(awk '{print $1}' "$W/.ids" | sort | uniq -d)
+[ -z "$dups" ] && ok "no path is listed twice in wiki/.ids" \
+  || bad "wiki/.ids lists a path twice: $dups"
+for want in "operar/index.md x-pt" "operar/receitas.md y-pt" \
+            "operar-2/index.md a-es" "operar-2/recetas.md b-es" \
+            "referencia.md z-pt" "referencia-2.md c-es"; do
+  grep -qxF "$want" "$W/.ids" && ok "$want" \
+    || bad "wiki/.ids has no '$want':
+$(sed 's/^/    /' "$W/.ids")"
+done
+[ "$(sed -n 3p "$W/operar-2/index.md" 2>/dev/null)" = "es op" ] \
+  && ok "and the ES page's own text is in its file" \
+  || bad "operar-2/index.md does not hold the ES text"
+cp "$WORK/list.single" "$STUB/documents.list.json"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

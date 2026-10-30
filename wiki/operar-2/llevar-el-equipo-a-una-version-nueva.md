@@ -11,8 +11,8 @@ Cómo instalar una versión nueva de Prisma Routing en un equipo que ya está en
 | Configuración, cuentas, comunidades SNMP | Se mantienen                | Desaparecen                     |
 | Trail de configuración y spill del exportador | Se mantienen                | Desaparecen                     |
 | Interrupción | Solo el reinicio del dataplane, y en el horario que usted elija | La ventana entera, con arranque desde el medio |
-| Publicado para | Toda versión, a partir de la 0.79.0 | Solo la última versión completa (las que cambian el primer o el segundo número) |
-| Tamaño de la descarga | Cerca de 120 MB, con las imágenes de los contenedores | Cientos de megabytes            |
+| Publicado para | Toda versión, a partir de la 0.79.0 | Solo las versiones completas (las que cambian el primer o el segundo número) |
+| Tamaño de la descarga | Cerca de 200 MB, con las imágenes de los contenedores | Cientos de megabytes            |
 
 **El paquete es el camino normal.** La reinstalación existe para la máquina nueva y para el caso en que la versión nueva cambia la plataforma debajo del producto. Usted no necesita adivinar cuál es: el paquete lo verifica solo y **rechaza antes de escribir cualquier cosa**, diciendo qué tiene el equipo y qué necesita la versión nueva.
 
@@ -37,7 +37,7 @@ Tres cosas que hay que saber de él:
 
 Al final dice `upgraded to <versión>` y recuerda el `save`. Vale lo mismo que para el camino manual: `save` antes de reiniciar, y el dataplane sigue siendo el antiguo hasta que usted elija la hora del paso 4.
 
-A partir de la versión 0.148.0, la propia VTY pasa a la versión nueva enseguida, sin reinicio: pocos segundos después del `upgraded to`, el contenedor de gestión se recrea con la imagen nueva, la sesión que hizo el upgrade se cae y el próximo login ya es de la versión nueva. El dataplane y los daemons de enrutamiento **no** se tocan en este paso y siguen en las imágenes anteriores hasta el reinicio. Antes de la 0.148.0, la VTY seguía en la versión anterior hasta el reinicio, aunque el equipo indicara la versión nueva.
+A partir de la versión 0.148.0, la propia VTY pasa a la versión nueva enseguida, sin reinicio: pocos segundos después del `upgraded to`, el contenedor de gestión se recrea con la imagen nueva, la sesión que hizo el upgrade se cae y el próximo login ya es de la versión nueva. Un login hecho en esos segundos espera a que vuelva la VTY, hasta 20 segundos, en lugar de fallar. El contenedor que exporta los registros de CGNAT también pasa a la imagen nueva en ese momento; mientras no vuelve, el propio dataplane retoma el envío. El dataplane y los daemons de enrutamiento **no** se tocan en este paso y siguen en las imágenes anteriores hasta el reinicio o un `system dataplane restart`. Antes de la 0.148.0, la VTY seguía en la versión anterior hasta el reinicio, aunque el equipo indicara la versión nueva.
 
 **Las imágenes de las versiones antiguas se borran.** Cada upgrade carga cuatro imágenes nuevas, y antes de esta corrección no se borraba ninguna: un equipo de prueba llegó al 96% de la raíz después de una serie de parches. Ahora, justo después del upgrade y en cada arranque, el equipo borra las imágenes `prisma-*` que ningún contenedor usa y que no son ni de la versión instalada ni de la versión anterior a ella — esta se queda, como camino de vuelta. El log del arranque (y del `refresh-the-vty`) dice qué se borró y cuánto espacio se recuperó. Las imágenes de otros repositorios nunca se tocan, y si el equipo no puede decir con certeza qué versión es, no borra nada y dice por qué.
 
@@ -45,7 +45,13 @@ Los pasos de abajo son el mismo proceso a mano, para un equipo que no alcanza in
 
 
 :::info
-**Desde la 0.125.0 el paquete lleva las imágenes de los contenedores**, por eso tiene cerca de 120 MB y no algunos megabytes. Un equipo que fue actualizado en lugar de instalado, y todavía ejecuta el dataplane y el enrutamiento como servicios de systemd, **pasa a los contenedores en el próximo arranque**, igual que un equipo instalado desde el medio. Un equipo que ya se ejecuta en los contenedores pasa a usar las imágenes de la versión nueva, y ya no las de la versión anterior.
+**El paquete no lleva el kernel ni paquetes del sistema.** Lleva los archivos del producto y las imágenes de los contenedores, y nada de lo que instala el Debian de abajo: un equipo actualizado con el paquete sigue con el kernel con el que fue instalado. Una actualización de seguridad del kernel de Debian llega a un equipo solo por el medio de una versión completa. Por el mismo motivo, el `qemu-guest-agent` que el medio instala desde la 0.156.0 no llega por el paquete: en una máquina virtual actualizada, instálelo con `apt-get install qemu-guest-agent`, en un shell del equipo.
+
+:::
+
+
+:::info
+**Desde la 0.125.0 el paquete lleva las imágenes de los contenedores**, por eso tiene cerca de 200 MB y no algunos megabytes. Un equipo que fue actualizado en lugar de instalado, y todavía ejecuta el dataplane y el enrutamiento como servicios de systemd, **pasa a los contenedores en el próximo arranque**, igual que un equipo instalado desde el medio. Un equipo que ya se ejecuta en los contenedores pasa a usar las imágenes de la versión nueva, y ya no las de la versión anterior.
 
 :::
 
@@ -59,7 +65,7 @@ Guarde la salida entera en el ticket de cambio. Es lo que dice de dónde vino el
 
 ## 2. Descargue el paquete de la versión nueva
 
-Cada versión está en una carpeta propia en <https://prismarouting.com.br/releases/>, con el paquete y su `sha256` lado a lado. La carpeta `latest/` ofrece siempre el paquete de actualización más nuevo y, a su lado, la ISO más nueva, cada uno con su `sha256`. El medio de instalación solo existe para las versiones completas: una versión que cambia solo el tercer número publica únicamente el paquete de actualización, y entonces la ISO en `latest/` es la de la última versión completa. En el propio equipo, reemplazando `<versión>` por el número:
+Cada versión está en una carpeta propia en <https://prismarouting.com.br/releases/>, con el paquete y su `sha256` lado a lado. La carpeta `latest/` ofrece siempre el paquete de actualización más nuevo y, a su lado, la ISO más nueva, cada uno con su `sha256`. El medio de instalación solo existe para las versiones completas: una versión que cambia solo el tercer número publica únicamente el paquete de actualización, y entonces la ISO en `latest/` es la de la última versión completa. Eso es lo que quieren decir los números: una versión que cambia solo el tercer número cambia solo lo que lleva el paquete; el kernel, el VPP, el FRR y el propio medio solo cambian en una versión que cambia el primero o el segundo. En el propio equipo, reemplazando `<versión>` por el número:
 
 ```
 curl -fO https://prismarouting.com.br/releases/<versión>/prisma-routing-<versión>-upgrade.tar.gz
@@ -145,9 +151,9 @@ En ese caso el camino es el medio de instalación, y borra el disco. **Lea la se
 :::warning
 **Reinstalar borra el disco entero, incluido el volumen de log.**
 
-Ese volumen guarda el trail de configuración - lo que permite decir qué definición de pool estaba vigente en un instante pasado, y sin él la respuesta a una orden judicial sobre el mes pasado deja de ser sostenible - y el spill del exportador, que son registros que el colector todavía no recibió. Los registros en sí no quedan aquí: el equipo los exporta.
+Ese volumen guarda el trail de configuración - lo que permite decir qué definición de pool estaba vigente en un instante pasado, y sin él la respuesta a una orden judicial sobre el mes pasado deja de ser sostenible - y el spill del exportador, que son registros que el colector todavía no recibió - y, en un equipo que es el BNG, el historial de sesiones PPPoE, que dice quién tenía cada dirección interna. Los registros de bloque en sí no quedan aquí: el equipo los exporta.
 
-Los dos mueren en la reinstalación y **ningún comando de este producto los trae de vuelta**. Un equipo reinstalado sigue respondiendo por el año de retención que ya corría.
+Mueren en la reinstalación y **ningún comando de este producto los trae de vuelta**. Un equipo reinstalado sigue respondiendo por el año de retención que ya corría.
 
 :::
 
@@ -231,7 +237,7 @@ Los archivos de registro en sí no cambian de formato: lo que estaba escrito sig
 | La configuración vigente | **No.** Tiene que llevarla afuera y escribirla de vuelta |
 | Las contraseñas de las cuentas y las comunidades SNMP | **No**, y no se pueden copiar de la pantalla: el equipo las enmascara al imprimir la configuración |
 | Las revisiones de rollback | **No**                         |
-| El trail de configuración y el spill del exportador | **No**                         |
+| El trail de configuración, el spill del exportador y el historial de sesiones PPPoE | **No**                         |
 | Lo que ya se exportó a un colector IPFIX | **Sí** - está fuera del equipo, y la reinstalación no lo alcanza |
 | Lo que ya se copió a un syslog remoto | **Sí**, por el mismo motivo    |
 
@@ -269,7 +275,7 @@ La consecuencia es que la copia que usted se llevó **no restaura ningún acceso
 
 ## 3. Verifique que los registros ya estén fuera del equipo
 
-**Modo dinámico.** Los eventos de asignación van al colector IPFIX mientras el equipo trabaja, y lo que ya llegó al colector no se ve afectado. Lo que muere es lo que existe solo en el volumen del equipo. Si la exportación está detenida o atrasada, el hueco entre el colector y el equipo es lo que usted va a perder.
+**Modo BPA.** Los eventos de asignación van al colector IPFIX mientras el equipo trabaja, y lo que ya llegó al colector no se ve afectado. Lo que muere es lo que existe solo en el volumen del equipo. Si la exportación está detenida o atrasada, el hueco entre el colector y el equipo es lo que usted va a perder.
 
 **Modo determinístico.** No hay asignación que exportar: la prueba es el algoritmo más la configuración que estaba vigente, y es el trail el que dice cuál era. Verifique el trail y compare el resumen de arriba con la copia en su syslog remoto:
 
@@ -286,7 +292,7 @@ Si no hay copia remota del trail, **deténgase aquí**. No se reconstruye despu�
 El procedimiento es el de [Instalación del appliance](/s/wiki-es/doc/instalacion-del-appliance-MgWUcARKzM) y no cambia. Tres puntos que son diferentes cuando la máquina no es nueva:
 
 * **El disco destino es el mismo de antes**, con todo lo que tiene, y la confirmación con la palabra `yes` borra el disco entero.
-* **La pregunta sobre cuántos gigabytes quedan para el volumen de log vuelve a hacerse.** Responda al menos el mismo número de antes: responder menos reduce cuánto aguanta el equipo exportando hacia un colector inalcanzable, sin que nada lo advierta.
+* **La pregunta sobre cuántos gigabytes quedan para el volumen de log vuelve a hacerse.** Responda al menos el mismo número de antes: responder menos deja menos espacio para el trail, para el spill del exportador y, en un equipo que es el BNG, para el historial de sesiones PPPoE, sin que nada lo advierta.
 * **Si el equipo tenía espejo de registros en dos discos**, el segundo disco se pregunta de nuevo y se borra con el mismo `yes`.
 
 ## 5. Escriba la configuración de vuelta

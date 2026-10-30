@@ -84,7 +84,9 @@ Na outra caixa, os endereços dela e prioridade menor (100, por exemplo). Os ass
 
 **O MAC virtual é o que faz o CPE não precisar saber de nada.** Quem assume o endereço assume o MAC `00:00:5e:00:01:<vrid>` junto e manda um ARP gratuito; o CPE continua mandando para o mesmo MAC e o quadro passa a chegar na outra caixa.
 
-`**track**` **é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: segura o endereço do gateway e não alcança nada. Com `track`, a prioridade cai pelo decremento e a parceira assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da da outra.
+**IPv6, e um pool NAT64 no par.** Um endereço IPv6 sob o mesmo `vrrp <vrid>` — primeiro um link-local, depois o global — cria o roteador virtual IPv6 daquele id ao lado do IPv4, com a mesma prioridade, o mesmo `track` e a mesma preempção. É isso que faz um pool NAT64 trocar de caixa: o gateway dos assinantes IPv6 acompanha a caixa que segura os endereços públicos. O MAC virtual do IPv6 é `00:00:5e:00:02:<vrid>`. O `commit check` recusa um roteador IPv6 sem link-local, e avisa quando um par tem pool NAT64 e nenhum roteador IPv6.
+
+`**track**` **é a falha que o resto não cobre.** Uma caixa com o uplink arrancado continua viva e continua anunciando: segura o endereço do gateway e não alcança nada. Com `track`, a prioridade cai pelo decremento e a parceira assume. Escolha o decremento de forma que a queda leve a prioridade **abaixo** da da outra. Um roteador só enxerga como no ar uma interface rastreada que tenha endereço da família dele: para o roteador IPv6 a caixa habilita IPv6 sozinha na interface rastreada; para o IPv4, a interface rastreada precisa de endereço IPv4, e o `commit check` avisa quando falta.
 
 **O endereço virtual não responde ping.** Quem não é dono do endereço não responde ICMP por ele — é o padrão da RFC 5798 (seção 6.4.3). O monitoramento deve pingar o endereço **próprio** de cada caixa, que é o que diz se aquela caixa está viva; o endereço virtual só diz qual das duas está com ele. Encaminhar **através** dele funciona normalmente.
 
@@ -108,7 +110,9 @@ A verificação de aceitação foi escrita **antes** da implementação, para qu
 | **Dataplane morto** com SIGKILL | Sobrevive, em torno de três segundos |
 | Uma conexão TCP em curso na troca | **Cai**, e uma nova do mesmo assinante pega o mesmo endereço e o mesmo bloco |
 
-A última linha é a promessa desta página dita ao contrário: ninguém deve ler uma execução verde como "as conexões sobreviveram".
+Com um pool NAT64 e um assinante só IPv6, as mesmas três falhas foram medidas: o serviço volta em cerca de 3 a 4 segundos, no mesmo endereço público e no mesmo bloco, e as conexões em curso caem do mesmo jeito.
+
+A última linha da tabela é a promessa desta página dita ao contrário: ninguém deve ler uma execução verde como "as conexões sobreviveram".
 
 O que **não** foi medido aqui: se a placa de rede real avisa que o cabo saiu. A interface de laboratório não avisa, então o laboratório derruba a porta no dataplane também — que é o estado que uma placa com o cabo fora reporta em hardware.
 
@@ -194,11 +198,12 @@ Os que mudam o **mapeamento**. No modo determinístico o endereço público e o 
 
 | Precisam ser iguais nas duas caixas | Podem diferir |
 |-------------------------------------|---------------|
-| `inside`, `outside`                 | `timeout ...` |
+| `prefix-inside`, `prefix-outside`, ou o que `prefix-list-inside` e `prefix-list-outside` resolvem | `timeout ...` |
 | `block-size`, `ports`               | `alg` de cada protocolo, `tcp-mss` |
 | `policy`, `mode`                    | `bypass source`, `bypass destination` |
 | `reserve`                           | `max-sessions`, `max-session-rate` |
 | `vrf`, `outside-vrf`                | `forward ...`, `block-stride`, `max-blocks`, `utilisation-alarm` |
+| `subscriber-length`, `nat64-prefix` (pool NAT64) | `initial-allocation`, `filter` |
 
 A coluna da direita o dataplane altera num pool que está passando tráfego, e nenhum desses ajustes move assinante nenhum. Duas caixas que diferem só ali estão corretas, e avisar sobre elas seria ensinar o operador a ignorar o aviso que importa.
 

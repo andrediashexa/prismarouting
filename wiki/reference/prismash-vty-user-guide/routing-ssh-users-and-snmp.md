@@ -37,7 +37,7 @@ If you type only `router ospf6` and expect it to find the interfaces on its own,
 | `network` | `<A.B.C.D/M> area <area>` | runs OSPF on the interfaces this prefix covers |
 | `area`  | `<area> ...` | settings for an area, in FRR syntax |
 | `passive-interface` | `<interface>` | runs OSPF on the interface without sending hellos — which every subscriber-facing port should be. FRR stores this as `ip ospf passive` in the interface block |
-| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <name>]` | announces `0.0.0.0/0` |
+| `default-information originate` | `[always] [metric <n>] [metric-type 1\|2] [route-map <name>\|policy <policy>]` | announces `0.0.0.0/0`; with `policy`, while a route the policy accepts is present ([Routing policy](/s/wiki-en/doc/routing-policy-policy-options-WXZOz2enzp)) |
 | `export` | `<policy>` | exports into OSPF what a `policy-options` policy accepts; what no term accepts is **not** exported |
 | `redistribute connected\|static\|bgp\|isis` | `[metric <n>] [metric-type 1\|2] [route-map <name>]` | injects routes from another source. `bgp` on an edge box is a whole table inside the IGP: give it a route-map |
 | `auto-cost reference-bandwidth` | `<1-4294967>` | in Mbit/s. Without it, every link from 100 Mbit/s up costs 1, and on a 10G box there is no path choice |
@@ -74,9 +74,9 @@ There is no `network` or `export` in OSPFv3: the interface comes in through the 
 | `set-overload-bit` | `[on-startup <0-86400>]` | tells everyone not to transit through this box; see draining below |
 | `export` | `<policy>` | exports into IS-IS what a policy accepts; what no term accepts is not exported |
 | `redistribute ipv4\|ipv6` | `<source> level-1\|level-2 [metric <n>] [route-map <name>]` | injects routes from another source |
-| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [route-map <name>]` | announces a default route |
-| `domain-password` | `clear\|md5 <password>` | level 2 authentication; never shown back |
-| `area-password` | `clear\|md5 <password>` | level 1 authentication; never shown back |
+| `default-information originate` | `ipv4\|ipv6 level-1\|level-2 [always] [metric <n>] [route-map <name>\|policy <policy>]` | announces a default route |
+| `domain-password` | `[clear\|md5] <password>` | level 2 authentication; never shown back |
+| `area-password` | `[clear\|md5] <password>` | level 1 authentication; never shown back |
 | `log-adjacency-changes` |          | logs each adjacency change |
 | `lsp-mtu` | `<128-4352>` | the largest LSP the box generates; larger than the smallest interface MTU, they do not go out |
 | `lsp-gen-interval` | `<1-120>` | seconds between LSP regenerations |
@@ -85,7 +85,7 @@ There is no `network` or `export` in OSPFv3: the interface comes in through the 
 
 The OSPF and IS-IS statements that go **on the interface** (`ip ospf ...`, `ipv6 ospf6 ...`, `ip router isis`, `isis ...`) are in [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn).
 
-`export <policy>` refuses a policy that depends on what only a BGP route carries — community, AS-path, local-preference, prepend, next hop —, instead of silently ignoring it. Policies are written in `policy-options`, described in [BGP configuration](/s/wiki-en/doc/bgp-configuration-ykey7SaE44); `test policy <policy> <prefix>` says what it does with a route before it is applied.
+`export <policy>` refuses a policy that depends on what only a BGP route carries — community, AS-path, local-preference, prepend, next hop —, instead of silently ignoring it. Policies are written in `policy-options`, described in [Routing policy](/s/wiki-en/doc/routing-policy-policy-options-WXZOz2enzp); `test policy <policy> <prefix>` says what it does with a route before it is applied.
 
 ## Static routes: the `router static` block
 
@@ -136,6 +136,18 @@ error: this next hop is on no connected network: 172.31.99.1
 If accepted, that route would stay in FRR and never reach the forwarding table.
 
 Note that the refusal names the route **in the block it is in** - `router static / 10.55.0.0/16 next-hop ...` - and not as a loose line. It is so even when the route was typed at the top, in the routing spelling, `ip route ...`: the box shows where the route lives in the configuration, which is where you will edit it. A static route inside a VRF has no top-level spelling at all to look for, and that is why the block appears.
+
+`**router static**` **is the main table.** A VRF's static routes go in the routing's `vrf <name>` block, in its own spelling - `ip route <prefix> <next-hop>` or `ipv6 route ...` -, and the block is closed with `exit` or `exit-vrf`:
+
+```
+configure
+ vrf red
+  ip route 10.55.0.0/16 172.31.99.1
+  exit-vrf
+ commit
+```
+
+`commit check` checks the next hop in **that VRF's** table, not the main one: a next hop that exists only in the main table is refused there, and one that exists only in the VRF is accepted. A VRF the routing does not have active yet - without the `vrf <name> table <n>` that creates its Linux device - has no table to check against; the box says those routes were not checked, and does not refuse.
 
 ## BFD: the neighbor's failure in milliseconds
 
@@ -354,8 +366,9 @@ configure
 | `control-plane`, `buffers` | `system` > `memory` | the memory per role |
 | `unsupported-sfp allow` | `system` > `hardware` | the ixgbe card (X520 and family) accepts an SFP+ module Intel has not qualified; `no unsupported-sfp` returns to the default, which refuses |
 | `host <address> [...]` | `system` > `logging` | sends the box's event log to a syslog; takes effect **at commit** (see below) |
+| `vrf <name>` | `system` > `management` | the box's own services move into the management VRF; takes effect **at commit** (see below) |
 
-All of them, except `logging`, take effect from the next boot or the next dataplane start: `commit` saves the choice and **restarts nothing**. `cpu` and `memory` are explained in [Sizing and requirements](/s/wiki-en/doc/sizing-and-requirements-IHPnUSMSom), and the choice of card in [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn).
+All of them, except `logging` and `management`, take effect from the next boot or the next dataplane start: `commit` saves the choice and **restarts nothing**. `cpu` and `memory` are explained in [Sizing and requirements](/s/wiki-en/doc/sizing-and-requirements-IHPnUSMSom), and the choice of card in [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn).
 
 ## Unqualified SFP+ module on an ixgbe card
 
@@ -425,6 +438,18 @@ memif1/0: link down, administratively up: the wire or the far end
 
 **Do not confuse it with the CGNAT export.** `nat` > `cgnat` > `logging syslog` sends the records of who used which public port, for court orders, and stays the same. They are two configurations and two separate streams — neither carries the other's lines — and they should go to different collectors.
 
+## Management in a VRF of its own: `system` > `management`
+
+Since 0.152.4, management can live in a VRF of its own, so that the main table is free for the subscribers' default while SSH, the API and SNMP stay reachable through the management gateway. The management card goes into a VRF like any interface, with its routes in the `vrf <name>` block, and `system` > `management` > `vrf <name>` makes the box's own services follow it: without it, the card is in the VRF and the box does **not** answer on it. With it, SSH, the API and SNMP answer on the VRF's addresses, and what the box itself originates - DNS, NTP, `system upgrade`'s downloads, SNMP notifications, `system` > `logging` - leaves by management's routes, unless the main table has a specific route to the destination. IPFIX over UDP, which the dataplane sends, still leaves through the main table.
+
+It takes effect at `commit` and again at every boot. `commit check` refuses a VRF the configuration does not create with `vrf <name> table <n>` and, in the commit that turns it on, a VRF with no interface in it. `show system management` shows the configured VRF and what the system has in effect. The full example, and the case of a management card only Linux has (a virtual machine's virtio card), are in [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn).
+
+
+:::warning
+**Use** `**commit confirmed**`**.** If the session that committed loses access, nobody confirms, and the rollback takes the card out of the VRF and gives management back to the main table. Taking management out of the VRF ends the SSH sessions opened through it; the box answers new ones on the main table.
+
+:::
+
 # SSH
 
 ```
@@ -456,11 +481,11 @@ configure
 
 ```
 configure
- ssh listen-address 10.40.200.166 2804:4ed4:1000:6::166
+ ssh listen-address 192.0.2.166 2001:db8:1000:6::166
  commit
 ```
 
-SSH then answers on each address in the list, and only on them. `show running-config` shows the IPv6 one in brackets, as sshd itself writes it: `ssh listen-address 10.40.200.166 [2804:4ed4:1000:6::166]`.
+SSH then answers on each address in the list, and only on them. `show running-config` shows the IPv6 one in brackets, as sshd itself writes it: `ssh listen-address 192.0.2.166 [2001:db8:1000:6::166]`.
 
 * **Without** `**listen-address**` — or after `no ssh listen-address` — SSH answers on all of the box's addresses, **IPv4 and IPv6** (`0.0.0.0 [::]`), which is sshd's own default. Up to 0.152.4, any `commit` that touched `ssh` wrote `ListenAddress 0.0.0.0` and SSH over IPv6 stopped answering.
 * **An address the box does not have is refused at** `**commit**`, before sshd is notified: `error: ssh listen-address 192.0.2.99: not an address of this box`. An address of an interface that is in a VRF is only accepted when management is in that VRF (`system` > `management` > `vrf`), which is what allows sshd to listen on it.
@@ -510,9 +535,11 @@ The DNS servers the box queries, without editing `/etc/resolv.conf` by hand. Up 
 configure
  user <name>
   role administrator|cgnat-operator
+  operator
   ssh-key <type> <key> [comment]
   password <hash>
   no role
+  no operator
   no ssh-key <key>
   no password
   exit
@@ -522,6 +549,7 @@ configure
 | Command | What it does |
 |---------|--------------|
 | `role administrator\|cgnat-operator` | what the account can change; without a role, read-only |
+| `operator` | the account may upgrade, reboot and shut down the box and restart the dataplane; `no operator` takes it away |
 | `ssh-key <type> <key> [comment]` | an authorized public key, as it appears in `authorized_keys`; can repeat |
 | `password <hash>` | a crypt hash; clear text is refused |
 | `no ssh-key <key>` | removes a key; its beginning is enough |
@@ -546,6 +574,8 @@ openssl passwd -6
 **The configuration is what decides.** The role is written in the user block, appears in `show running-config` and survives `save` — and `commit` materializes it in the system groups, adding the ones the role requires and **removing** the ones it no longer requires. A promotion made from outside, directly in the group, is undone at the next commit: this is where it is written.
 
 Besides the role's group, every account created here joins the groups that give **reach** — the dataplane sockets and the routing ones. Without them the account has rank and cannot exercise it: every command fails on permissions, including read ones. That is why reapplying the role through the VTY fixes an account whose memberships drifted.
+
+**Upgrading, rebooting, shutting down the box and restarting the dataplane come from no role.** Since 0.149.26 it is `operator`, beside the role: it grants exactly `system upgrade <version>`, `system reboot`, `system shutdown` and `system dataplane restart`, at the VTY and through the API, and nothing else of root's. It goes with any role, or none: a NOC account that only reads the configuration can be the one that reboots the box. And an administrator without `operator` is refused those four commands, by name. `root` can already do all of this and is not given `operator`.
 
 `no role` returns the account to read-only. A role that does not exist is refused with the list of what exists:
 
@@ -575,6 +605,10 @@ configure
  snmp port <1-65535>
  snmp enterprise-number <1-4294967295>
  snmp community <string>
+ snmp trap-host <address> community <string> [inform]
+ no snmp enabled|listen-address|port|enterprise-number
+ no snmp community <string>
+ no snmp trap-host <address>
 ```
 
 | Command | What it defines | Default |
@@ -583,11 +617,16 @@ configure
 | `snmp listen-address` | one or more listen addresses, IPv4 and IPv6 | `127.0.0.1` |
 | `snmp port` | UDP port        | `161`   |
 | `snmp enterprise-number` | the number under which the Prisma MIB is served; `no snmp enterprise-number` returns to the product's | `67033`, Prisma's IANA number |
-| `snmp community` | an SNMPv2c community, read-only | none    |
+| `snmp community` | an SNMPv2c community, read-only; there can be more than one | none    |
+| `snmp trap-host` | where to send notifications: the address, the community and, with `inform`, an acknowledged notification instead of a trap; one per address, and typing the same address again replaces it | none    |
 
 With the default `127.0.0.1`, the agent only answers from inside the box: for the NMS to reach it, `listen-address` must be an address it can reach.
 
-To answer on IPv4 and IPv6 at the same time, list both addresses on the same line, separated by a space — `snmp listen-address 10.40.200.166 2804:4ed4:1000:6::166`. `api listen-address` accepts the list the same way. Listening on `0.0.0.0` or `::` is not the way: it would open the service on the dataplane interfaces too, including the public ones.
+To answer on IPv4 and IPv6 at the same time, list both addresses on the same line, separated by a space — `snmp listen-address 192.0.2.166 2001:db8:1000:6::166`. `api listen-address` accepts the list the same way. Listening on `0.0.0.0` or `::` is not the way: it would open the service on the dataplane interfaces too, including the public ones.
+
+`no snmp <setting>` puts the setting back to the table's default.
+
+The agent answers **SNMPv2c and SNMPv3**, never v1: a community is valid only in v2c, which is the version with the 64-bit counters the interfaces and the product's MIB use.
 
 **Turning on the agent with no community and no v3 user is refused**: it would be an agent nobody can query. The community and the v3 users' passwords appear as `<set, not shown>` in `show configuration`.
 
@@ -596,6 +635,8 @@ To answer on IPv4 and IPv6 at the same time, list both addresses on the same lin
 The Prisma MIB is served under the product's IANA number, **67033**, with nothing to configure (since 0.149.13). `snmp enterprise-number <number>` serves it under your organization's number; see [Monitoring and SNMP](/s/wiki-en/doc/monitoring-and-snmp-GxrrkTSEJT).
 
 :::
+
+For the NMS, the box hands over its own files: `show snmp mib` prints PRISMA-ROUTING-MIB already under the box's enterprise number, to load into the NMS, and `show snmp zabbix-template` prints a Zabbix 7.0 template with the same number, to import - the items, the triggers and an item for each notification the box sends.
 
 ## SNMPv3 users
 
@@ -621,6 +662,8 @@ prisma# [edit] ip prefix-list <TAB>
 ```
 
 Completion comes from the same source `show running-config` answers from, so it does not offer a name the box does not have.
+
+Three things about a prefix-list are the box's, on top of the routing's syntax: an entry takes `description <text>` at the end, kept by the box because the routing has no description per entry; `ip prefix-list <list> insert seq <n> before|after seq <m>` moves an entry, Junos-style; and `ip prefix-list <list> resequence` renumbers the list by 10. The descriptions move with their entries in both. To rename a prefix-list, a route-map or a BGP peer group everywhere it is named, use `rename` in configuration mode.
 
 
 :::warning
@@ -668,6 +711,8 @@ This exists because the tool that applies the configuration can finish successfu
 The box knows these forms and does not complain about them. You do not need to change how you write.
 
 :::
+
+A route-map or prefix-list line is treated more strictly. If the routing accepted the syntax and the daemon that applies the policy refused the line, `commit` says `FRR refused <n> line(s) of your route-maps and lists`, lists the lines and **goes back to the previous state**. A clause that lost a `set` or a `match` keeps running, doing what nobody wrote, so the box undoes the commit instead of only warning.
 
 If a refusal appears here, the reading is: **what this box stores and what FRR is running are not the same thing.** `show configuration` shows this box's; `start shell` and then `vtysh -c "show running-config"` shows FRR's.
 
@@ -863,7 +908,7 @@ It ships **off**. To turn it on, you need three things:
 openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=prisma clients" -keyout ca.key -out ca.crt
 # the box's certificate, with the address the client uses
 openssl req -newkey rsa:3072 -nodes -subj "/CN=prisma-api" -keyout server.key -out server.csr
-printf 'subjectAltName=IP:10.40.200.166\n' > server.ext
+printf 'subjectAltName=IP:192.0.2.166\n' > server.ext
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 825 -extfile server.ext -out server.crt
 # the client certificate: the CN is the box account it uses
 openssl req -newkey rsa:3072 -nodes -subj "/CN=webui" -keyout webui.key -out webui.csr
@@ -874,13 +919,13 @@ openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 8
 On the box go `server.key`, `server.crt` and `ca.crt` named `clients-ca.crt`; the client uses `ca.crt`, `webui.crt` and `webui.key`.
 
 
-2. **The account.** The client certificate says, in the CN field, **which box account** it is. The call has exactly the permissions that account has in the VTY: `prisma-admin` configures everything, `prisma-cgnat` only CGNAT, and any other only reads. Everything it changes is recorded in the history in its name.
+2. **The account.** The client certificate says, in the CN field, **which box account** it is. The call has exactly the permissions that account has in the VTY: `prisma-admin` configures everything, `prisma-cgnat` only CGNAT, and any other only reads; an account with `operator` also upgrades, reboots and shuts down the box and restarts the dataplane. Everything it changes is recorded in the history in its name.
 3. **The address.** The API listens **only on the management network**:
 
 ```
 configure
 api enabled yes
-api listen-address 10.40.200.166
+api listen-address 192.0.2.166
 api port 50051
 commit
 ```

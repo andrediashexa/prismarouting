@@ -47,6 +47,8 @@ prisma> install
 
 **Console serial ou monitor, tanto faz.** O menu do GRUB aparece no vídeo e na porta serial (ttyS0, 115200 8N1), e toda entrada dá boot com `console=tty0 console=ttyS0,115200` - as mesmas palavras que a caixa instalada recebe. O relatório do self-test e uma instalação não assistida saem na serial; o monitor continua mostrando as mensagens do kernel e a VTY em tty1. Até a 0.152.x a mídia não tinha `console=` nenhum, e uma máquina acessada só pela serial ficava muda até alguém editar a linha do GRUB à mão.
 
+**Numa máquina virtual, o agente do hipervisor já vem instalado.** Desde a 0.156.0 a mídia instala o `qemu-guest-agent`, porque a maioria das caixas roda como VM num Proxmox ou outro KVM: com o canal do agente ligado na VM (`agent: 1` no Proxmox), o hipervisor consegue desligar a caixa por ele, congelar o disco para um backup e mostrar os endereços dela. O agente só sobe quando esse canal existe, então num servidor físico nada muda. Uma caixa instalada por mídia anterior e levada à versão nova com `system upgrade` **não** o recebe, porque o pacote de atualização não traz pacotes do sistema: instale com `apt-get install qemu-guest-agent` num shell de administrador (`start shell`).
+
 O comando `install` existe na VTY **somente quando a máquina está rodando a partir do meio**. Em uma appliance já instalada ele não está na árvore de comandos e o instalador se recusa a rodar — um comando que sobrescreve o disco não deve ficar a um TAB de distância de `interface` num roteador em produção.
 
 ## Escolha do disco
@@ -155,7 +157,7 @@ O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que 
 | `[warn] ens18 is up with no default route` | tem endereço, não tem rota padrão, e nenhum gateway foi pedido |
 | `[FAIL] ... has an address and no default route` | **o gateway respondido não valeu.** A linha nomeia o gateway que não entrou |
 | `[FAIL] ... has no address` | DHCP sem resposta, ou o `ifup` falhou |
-| `[FAIL] this box has no card called ens18` | a placa da instalação não está mais na caixa. Lista as que estão |
+| `[FAIL] management network: this box has no card called ens18` | a placa da instalação não está mais na caixa. Lista as que estão |
 | `[FAIL] no management network: nothing was ever written for one` | mídia até a 0.72.0. A linha traz os comandos que resolvem a partir daquele console |
 | `[info] no management network was asked for at install time` | respondeu `none`, e a caixa está mesmo só no console |
 | `[warn] no management network was asked for, and this box is on one anyway` | respondeu `none`, mas o Linux tem placa com endereço — e é placa que o dataplane reivindica no próximo boot |
@@ -357,7 +359,7 @@ Depois do primeiro boot sem a mídia:
 * o console mostra o relatório do self-test, **sem nenhuma linha** `**[FAIL]**`;
 * entre elas, `binary API registered, so pools can be configured` — sem ela a caixa roteia e responde, e nenhum pool pode ser criado;
 * se você respondeu uma placa de gerência, uma linha `managed on <placa>` com o endereço embaixo dela - é por ali que você chega na caixa sem voltar ao console; se respondeu `none`, a linha `[info] no management network was asked for at install time`;
-* `the dataplane runs in a container on this box` e `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table` — a caixa instalada roda o dataplane, o roteamento e o plano de gerência (onde fica a VTY) em containers, ligados por uma rede interna em `128.0.0.0/8` que fica numa tabela de rotas própria: os endereços reais em `128.x` continuam alcançáveis, pela caixa e pelos assinantes;
+* `the dataplane runs in a container on this box` e `backplane: 128.0.0.0/8 in VRF prisma-bp, out of the main table` — a caixa instalada roda em containers o dataplane, o roteamento, o plano de gerência (onde fica a VTY) e o exportador de registros do CGNAT; o plano de gerência fala com o sistema por uma rede interna em `128.0.0.0/8` que fica numa tabela de rotas própria: os endereços reais em `128.x` continuam alcançáveis, pela caixa e pelos assinantes;
 * `show version` responde com a versão do Prisma Routing, do dataplane e do roteamento;
 * você consegue entrar com a senha definida durante a instalação.
 

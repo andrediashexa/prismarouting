@@ -5,7 +5,7 @@ Todo lo necesario para pasar de una máquina sin sistema a un CGNAT traduciendo 
 | Página | Responde |
 |--------|----------|
 | [Dimensionamiento y requisitos](/s/wiki-es/doc/dimensionamiento-y-requisitos-FuEOaBC4vd) | Cuánta máquina, cuántas IP públicas y cuánto log exige su caso |
-| [Ejecutar Prisma Routing en una máquina virtual](/s/wiki-es/doc/ejecutar-prisma-routing-en-una-maquina-virtual-et1W8N6fwr) | Memoria, CPU, placas virtio, páginas de 1 GB, apagar desde la VTY y qué mide una medición en una VM |
+| [Ejecutar Prisma Routing en una máquina virtual](/s/wiki-es/doc/ejecutar-prisma-routing-en-una-maquina-virtual-et1W8N6fwr) | Memoria, CPU, placas virtio, páginas de 1 GB, el agente de QEMU, apagar desde la VTY y qué mide una medición en una VM |
 | [Instalación del appliance](/s/wiki-es/doc/instalacion-del-appliance-MgWUcARKzM) | Cómo instala la ISO, qué pregunta y cómo automatizarlo |
 | [Acceso, login y roles](/s/wiki-es/doc/acceso-login-y-roles-ZiA9s69LH4) | Dónde cae usted al entrar, y quién puede cambiar qué |
 | [Primeros pasos](/s/wiki-es/doc/primeros-pasos-1atRsTUyKZ) | Del disco vacío a suscriptores navegando, en diez pasos |

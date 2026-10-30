@@ -41,10 +41,12 @@ router bgp 65000
 | `bgp bestpath as-path multipath-relax` |           | trata como iguales caminos de la misma longitud que vienen de AS diferentes |
 | `neighbor <vecino> ...` |           | una sesión; la tabla siguiente |
 | `address-family ipv4 unicast` o `ipv6 unicast` |           | entra en la familia de direcciones; se sale con `exit-address-family` o `exit` |
-| `network` | `<prefijo>` | un prefijo que origina este equipo; solo se anuncia si está en la tabla de rutas |
+| `network` | `<prefijo> [policy <política>]` | un prefijo que origina este equipo; solo se anuncia si está en la tabla de rutas |
+| `aggregate-address` | `<prefijo> [summary-only] [policy <política>] [suppress-policy <política>]` | una ruta que resume las más específicas que cubre |
+| `table-policy` | `<política>` | cuáles de las mejores rutas de BGP van a la tabla de reenvío |
 | `redistribute` | `connected`, `static`, `ospf` o `isis` | inyecta en BGP rutas de otro origen |
 
-En el nivel de `address-family` valen `neighbor` (la lista por familia, abajo), `network`, `redistribute` y las salidas `exit-address-family` y `exit`.
+En el nivel de `address-family` valen `neighbor` (la lista por familia, abajo), `network`, `aggregate-address`, `table-policy`, `vrf-import`, `redistribute` y las salidas `exit-address-family` y `exit`. Las formas con política, y el `vrf-import` entre VRFs, están en [Política de enrutamiento](/s/wiki-es/doc/politica-de-enrutamiento-policy-options-QBSNhzhSCN).
 
 # Lo que entiende un vecino
 
@@ -123,6 +125,31 @@ router bgp 65000
 
 Al completar `neighbor` con TAB, el equipo muestra los vecinos que existen con el AS del otro lado al costado, y marca qué nombres son grupos: un grupo no es un router, y buscarlo como si lo fuera cuesta tiempo.
 
+## Quitar un vecino
+
+`no neighbor <vecino>` quita el vecino entero: sus sentencias en cada familia de direcciones primero, y el `remote-as` y la pertenencia a un peer group al final, en un solo commit. Un peer group que algún miembro todavía cita se rechaza, con los miembros: el enrutamiento se llevaría los miembros junto con el grupo. El `no` vale en el bloque en que se escribe - la misma dirección en `router bgp 65000` y en `router bgp 65000 vrf red` son dos vecinos.
+
+# BGP en una VRF
+
+Una VRF de cliente tiene su propio BGP, en `router bgp <AS> vrf <nombre>`, con los mismos vecinos, familias y políticas del bloque principal. La VRF tiene que existir en Linux: `vrf <nombre> table <n>` crea su dispositivo en la misma tabla del `vrf <n>` de las interfaces que están en ella ([Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg)):
+
+```
+configure
+ vrf red table 10
+ interface enp2s0
+  vrf 10
+  exit
+ router bgp 65000 vrf red
+  neighbor 10.10.0.2 remote-as 65010
+  address-family ipv4 unicast
+   neighbor 10.10.0.2 activate
+  exit-address-family
+  exit
+ commit
+```
+
+El AS local es el del bloque: el mismo AS vecino puede ser eBGP en un bloque e iBGP en otro, y el aviso de `maximum-prefix` (abajo) sigue eso. Las rutas pasan de una VRF a otra con `vrf-import`, por una política; vea [Política de enrutamiento](/s/wiki-es/doc/politica-de-enrutamiento-policy-options-QBSNhzhSCN). Los nombres que empiezan por `prisma-` son de las VRFs del propio equipo: `vrf <nombre> table` los rechaza, y ninguna ruta entra en ellas ni sale de ellas por `vrf-import`.
+
 # Política de enrutamiento: `policy-options`
 
 La política se escribe una vez, con nombre, y se aplica en cada vecino como `import` (lo que entra) o `export` (lo que sale). El formato es el de Junos. Las listas con nombre y las políticas quedan en `policy-options`:
@@ -161,9 +188,11 @@ Cada `term` se evalúa en el orden en que se escribió, y tiene tres partes:
 |-------|----------|
 | `from` | lo que la ruta debe cumplir: `prefix-list <nombre>`, `route-filter <red> exact\|orlonger\|longer\|upto /<n>`, `community <nombre>`, `as-path <nombre>`, `protocol bgp\|ospf\|isis\|static\|direct\|kernel`, `tag <n>`, `metric <n>`. Varias del mismo tipo valen como "o"; de tipos diferentes, como "y". Sin `from`, el term coincide con todo |
 | `set` | lo que cambia en la ruta: `local-preference <n>`, `community add\|set\|delete <nombre>`, `as-path-prepend <asn>...`, `metric <n>`, `tag <n>`, `next-hop <dirección>` |
-| `then` | cómo termina el term: `accept` o `reject` detienen la evaluación; `next term`, o ningún `then`, aplica los `set` y sigue al próximo term |
+| `then` | cómo termina el term: `accept` o `reject` detienen la evaluación; `next term`, o ningún `then`, aplica los `set` y sigue al próximo term; `next policy` pasa la ruta a la próxima política de una cadena |
 
-**Una ruta que ningún term decidió se acepta**, en el `import` y en el `export`, como en Junos. Para rechazar el resto, termine con un term sin `from` y con `then reject`.
+**Una ruta que ningún term decidió se acepta**, en el `import` y en el `export`, como en Junos. Para rechazar el resto, use `default-action reject` en la política, o termine con un term sin `from` y con `then reject`.
+
+Las tablas de arriba son el resumen. Todas las condiciones y acciones, las cadenas de políticas, el `default-action` y los otros lugares donde se aplica una política están en [Política de enrutamiento](/s/wiki-es/doc/politica-de-enrutamiento-policy-options-QBSNhzhSCN).
 
 La política se aplica dentro de la familia de direcciones de BGP, por vecino o peer group:
 
@@ -560,4 +589,5 @@ Verifique por el efecto, no por el texto: `show bgp <prefijo>` en el vecino debe
 # Vea también
 
 * [Enrutamiento, SSH, usuarios y SNMP](/s/wiki-es/doc/enrutamiento-ssh-usuarios-y-snmp-aAKbYtvEg3): prefix-lists, políticas y el prefijo público de un pool
+* [Política de enrutamiento](/s/wiki-es/doc/politica-de-enrutamiento-policy-options-QBSNhzhSCN): todo lo que acepta `policy-options`, y dónde se aplica una política
 * [commit, rollback y save](/s/wiki-es/doc/commit-rollback-y-save-6sAWJkXNO3): cómo se aplica y se deshace un cambio

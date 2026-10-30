@@ -66,14 +66,14 @@ This is where you check whether the card exists for Linux. A card that appears n
 
 The dataplane runs in a container. If it cannot come up, the container is restarted a few times and then stops trying. At that point the card had already been taken from Linux to be handed to the dataplane, and the box would be left with no interface at all.
 
-**A card watchdog takes care of that.** Every 30 seconds it checks whether the dataplane container has stopped for good; if it has, it:
+**A card watchdog takes care of that.** Every 5 seconds, starting two minutes after boot, it checks whether the dataplane container has stopped for good; if it has, it:
 
 
 1. writes the reason to `/var/log/prisma-routing/why-the-dataplane-stopped` — the container state, the exit code and the last 80 lines the dataplane wrote;
 2. returns **all** taken cards to the kernel driver;
 3. brings the Linux interfaces up again, so the box becomes reachable again.
 
-It does this once per boot and restarts nothing. In practice, the box has the card back in Linux about two minutes after boot, without a dataplane.
+It gives the cards back once per boot. Before it gets to that, it handles two cases: a dataplane that crashed and that Docker started again gets the configuration in effect from the watchdog, a few seconds later; and a dataplane that exited by itself with status 0, with nobody asking, is started again, up to five times per boot. In practice, a box whose dataplane does not come up has the card back in Linux about two minutes after boot, without a dataplane.
 
 **The file lives in** `**/var/log**`**, not in** `**/run**`**, because everybody's next step is to restart**, and the restart erases the container log. Read it before touching anything. With the dataplane stopped, `show version` points to it:
 
@@ -118,6 +118,8 @@ On a box that takes several cards, a card that could not be handed over is left 
 **An ixgbe card the kernel refused because of the SFP+ module.** The card does not appear in `show hardware`, and the boot journal (`journalctl -b | grep ixgbe`) says `unsupported SFP+ or QSFP module type was detected`. The driver refused the module, not the card. Turn on `unsupported-sfp allow` under `system` > `hardware` and restart the box; see [Routing, SSH, users and SNMP](/s/wiki-en/doc/routing-ssh-users-and-snmp-jjxcPssV72).
 
 **The named card does not exist.** If `show interface` says the configured name received no card, check the name in `show hardware` and name it again (step 6).
+
+**A card the saved configuration uses was not there at boot.** The box does not refuse the whole configuration for it: it applies everything else, leaves out what depends on that card (its block, its sub-interfaces, what names it in routing) and says so on the console. `show configuration pending` shows what is waiting. While anything is pending, `save` is refused, so the file does not lose those lines; when the card appears, the box applies what was missing by itself, and `clear configuration pending` is you giving it up.
 
 # 6. Fix it, and restart the dataplane
 

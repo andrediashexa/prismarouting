@@ -52,7 +52,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 
 | Comando | Argumento | O que define |
 |---------|-----------|--------------|
-| `prefix-inside <prefixo>` | `<A.B.C.D/M\|X:X::X:X/M>` | prefixo interno (os assinantes); pode repetir. Obrigatório: o `commit` recusa um pool sem `prefix-inside` ou sem `prefix-outside`. IPv6 faz do pool um pool NAT64 (veja abaixo) |
+| `prefix-inside <prefixo>` | `<A.B.C.D/M\|X:X::X:X/M>` | prefixo interno (os assinantes); pode repetir. Obrigatório: o `commit` recusa um pool sem `prefix-inside` ou sem `prefix-outside` (ou a `prefix-list-inside`/`prefix-list-outside` daquele lado, abaixo). IPv6 faz do pool um pool NAT64 (veja abaixo) |
 | `prefix-outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
 | `subscriber-length <n>` | `<32-128>` | só NAT64: o tamanho do prefixo IPv6 de **um** assinante — o prefixo delegado, por exemplo `56` |
 | `nat64-prefix <prefixo>` | `<X:X::X:X/M>` | só NAT64: onde ficam os destinos IPv4 (RFC 6052); ausente, vale `64:ff9b::/96` |
@@ -61,7 +61,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 | `policy interleaved` |           | vizinhos em endereços públicos distintos; é o padrão |
 | `policy blocked` |           | vizinhos no mesmo endereço público |
 | `mode deterministic` |           | por fórmula, sem log de alocação: o assinante se acha pela configuração em vigor. É o padrão. Só o bloco entregue da reserva é registrado |
-| `mode bpa` |           | BPA: blocos alocados sob demanda, cada alocação registrada. Sem exportação de logging configurada, `commit check` e `commit` avisam — nesse modo o registro é a única prova de quem usou uma porta |
+| `mode bpa` |           | BPA: blocos alocados sob demanda, cada alocação registrada. Nesse modo o registro é a única prova de quem usou uma porta: configure a exportação (`logging` em `cgnat`). O `commit` não avisa quando falta; quem diz se a caixa exporta é o `show cgnat logging` |
 | `vrf <n>` | `<0-4294967295>` | a VRF cujos assinantes este pool atende; ausente = todas |
 | `outside-vrf <n>` | `<0-4294967295>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava |
 | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
@@ -390,24 +390,28 @@ Dentro do bloco, `no <ajuste>` tira o ajuste. `no ?` lista o que pode ser tirado
 
 ```
 prisma# [edit nat / cgnat / pool residencial] no ?
-  alg                stop choosing for one ALG; the pool takes the device default again
-  block-stride       let the pool place a subscriber's extra blocks wherever it has one free
-  bypass             stop excluding a prefix from translation
-  filter             go back to endpoint-independent filtering
-  forward            remove one inbound port forward
-  initial-allocation a new subscriber starts with one block again
-  inside             remove one inside prefix
-  max-blocks         go back to one block per subscriber
-  max-session-rate   no per-subscriber session rate cap
-  max-sessions       no per-subscriber session cap
-  outside            remove one public prefix
-  outside-vrf        leave translated traffic where it was
-  ports              go back to the device's own port range
-  reserve            give the reserved blocks back to the formula; this too re-maps subscribers
-  tcp-mss            stop clamping the MSS
-  timeout            stop overriding one timeout; the pool inherits the global again
-  utilisation-alarm  stop alarming on block utilisation
-  vrf                serve every VRF again
+  alg                  stop choosing for one ALG; the pool takes the device default again
+  block-stride         let the pool place a subscriber's extra blocks wherever it has one free
+  bypass               stop excluding a prefix from translation
+  filter               go back to endpoint-independent filtering
+  forward              remove one inbound port forward
+  initial-allocation   a new subscriber starts with one block again
+  max-blocks           go back to one block per subscriber
+  max-session-rate     no per-subscriber session rate cap
+  max-sessions         no per-subscriber session cap
+  nat64-prefix         go back to the well-known 64:ff9b::/96
+  outside-vrf          leave translated traffic where it was
+  ports                go back to the device's own port range
+  prefix-inside        remove one subscriber prefix
+  prefix-list-inside   stop taking the subscribers from a prefix-list
+  prefix-list-outside  stop taking the public addresses from a prefix-list
+  prefix-outside       remove one public prefix
+  reserve              give the reserved blocks back to the formula; this too re-maps subscribers
+  subscriber-length    no subscriber length; an IPv6 inside needs one
+  tcp-mss              stop clamping the MSS
+  timeout              stop overriding one timeout; the pool inherits the global again
+  utilisation-alarm    stop alarming on block utilisation
+  vrf                  serve every VRF again
 ```
 
 Tirar um timeout, um ALG ou um limite **não é o mesmo que ajustá-lo para o valor padrão**: o pool volta a **herdar** o global, e a linha desaparece da configuração em vez de aparecer nela com um número dentro. Um `timeout udp 300` global mudado depois passa a valer para o pool de novo.
@@ -468,7 +472,7 @@ error: block-size cannot be removed
     set the value you want instead: block-size <64-32768>
 ```
 
-`policy` e `mode` respondem do mesmo jeito, trocando o nome do campo e o que digitar no lugar: `policy interleaved|blocked` e `mode deterministic|dynamic`.
+`policy` e `mode` respondem do mesmo jeito, trocando o nome do campo e o que digitar no lugar: `policy interleaved|blocked` e `mode deterministic|bpa`.
 
 Para mudar qualquer um dos três, digite o valor que você quer. São campos de mapeamento: a mudança reconstrói o pool e exige `commit remap`.
 

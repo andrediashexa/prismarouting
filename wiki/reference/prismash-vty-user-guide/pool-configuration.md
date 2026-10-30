@@ -52,7 +52,7 @@ Getting this classification wrong hurts both ways: a mapping field treated as in
 
 | Command | Argument | What it defines |
 |---------|----------|-----------------|
-| `prefix-inside <prefix>` | `<A.B.C.D/M\|X:X::X:X/M>` | inside prefix (the subscribers); may repeat. Mandatory: `commit` refuses a pool without `prefix-inside` or without `prefix-outside`. IPv6 makes the pool a NAT64 pool (see below) |
+| `prefix-inside <prefix>` | `<A.B.C.D/M\|X:X::X:X/M>` | inside prefix (the subscribers); may repeat. Mandatory: `commit` refuses a pool without `prefix-inside` or without `prefix-outside` (or that side's `prefix-list-inside`/`prefix-list-outside`, below). IPv6 makes the pool a NAT64 pool (see below) |
 | `prefix-outside <prefix>` | `<A.B.C.D/M>` | public prefix; may repeat |
 | `subscriber-length <n>` | `<32-128>` | NAT64 only: the size of the IPv6 prefix of **one** subscriber — the delegated prefix, for example `56` |
 | `nat64-prefix <prefix>` | `<X:X::X:X/M>` | NAT64 only: where the IPv4 destinations live (RFC 6052); if absent, `64:ff9b::/96` applies |
@@ -61,7 +61,7 @@ Getting this classification wrong hurts both ways: a mapping field treated as in
 | `policy interleaved` |          | neighbors on distinct public addresses; this is the default |
 | `policy blocked` |          | neighbors on the same public address |
 | `mode deterministic` |          | by formula, with no allocation log: the subscriber is found from the configuration in effect. This is the default. Only the block handed out from the reserve is logged |
-| `mode bpa` |          | BPA: blocks allocated on demand, each allocation logged. With no logging export configured, `commit check` and `commit` warn — in this mode the record is the only proof of who used a port |
+| `mode bpa` |          | BPA: blocks allocated on demand, each allocation logged. In this mode the record is the only proof of who used a port: configure the export (`logging` under `cgnat`). `commit` does not warn when it is missing; `show cgnat logging` is what says whether the box exports |
 | `vrf <n>` | `<0-4294967295>` | the VRF whose subscribers this pool serves; absent = all |
 | `outside-vrf <n>` | `<0-4294967295>` | the VRF through which translated traffic leaves; absent = leaves it where it was |
 | `reserve <n>` | `<0-65535>` | blocks of **each** public address kept out of the formula, to give to whoever fills up theirs; `0` = none |
@@ -390,24 +390,28 @@ Inside the block, `no <setting>` removes the setting. `no ?` lists what can be r
 
 ```
 prisma# [edit nat / cgnat / pool residencial] no ?
-  alg                stop choosing for one ALG; the pool takes the device default again
-  block-stride       let the pool place a subscriber's extra blocks wherever it has one free
-  bypass             stop excluding a prefix from translation
-  filter             go back to endpoint-independent filtering
-  forward            remove one inbound port forward
-  initial-allocation a new subscriber starts with one block again
-  inside             remove one inside prefix
-  max-blocks         go back to one block per subscriber
-  max-session-rate   no per-subscriber session rate cap
-  max-sessions       no per-subscriber session cap
-  outside            remove one public prefix
-  outside-vrf        leave translated traffic where it was
-  ports              go back to the device's own port range
-  reserve            give the reserved blocks back to the formula; this too re-maps subscribers
-  tcp-mss            stop clamping the MSS
-  timeout            stop overriding one timeout; the pool inherits the global again
-  utilisation-alarm  stop alarming on block utilisation
-  vrf                serve every VRF again
+  alg                  stop choosing for one ALG; the pool takes the device default again
+  block-stride         let the pool place a subscriber's extra blocks wherever it has one free
+  bypass               stop excluding a prefix from translation
+  filter               go back to endpoint-independent filtering
+  forward              remove one inbound port forward
+  initial-allocation   a new subscriber starts with one block again
+  max-blocks           go back to one block per subscriber
+  max-session-rate     no per-subscriber session rate cap
+  max-sessions         no per-subscriber session cap
+  nat64-prefix         go back to the well-known 64:ff9b::/96
+  outside-vrf          leave translated traffic where it was
+  ports                go back to the device's own port range
+  prefix-inside        remove one subscriber prefix
+  prefix-list-inside   stop taking the subscribers from a prefix-list
+  prefix-list-outside  stop taking the public addresses from a prefix-list
+  prefix-outside       remove one public prefix
+  reserve              give the reserved blocks back to the formula; this too re-maps subscribers
+  subscriber-length    no subscriber length; an IPv6 inside needs one
+  tcp-mss              stop clamping the MSS
+  timeout              stop overriding one timeout; the pool inherits the global again
+  utilisation-alarm    stop alarming on block utilisation
+  vrf                  serve every VRF again
 ```
 
 Removing a timeout, an ALG or a limit **is not the same as setting it to the default value**: the pool goes back to **inheriting** the global one, and the line disappears from the configuration instead of appearing in it with a number. A global `timeout udp 300` changed later applies to the pool again.
@@ -468,7 +472,7 @@ error: block-size cannot be removed
     set the value you want instead: block-size <64-32768>
 ```
 
-`policy` and `mode` answer the same way, swapping the field name and what to type instead: `policy interleaved|blocked` and `mode deterministic|dynamic`.
+`policy` and `mode` answer the same way, swapping the field name and what to type instead: `policy interleaved|blocked` and `mode deterministic|bpa`.
 
 To change any of the three, type the value you want. They are mapping fields: the change rebuilds the pool and requires `commit remap`.
 

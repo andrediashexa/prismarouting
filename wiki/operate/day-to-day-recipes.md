@@ -128,11 +128,19 @@ show cgnat top
 
 It lists the subscribers closest to filling their block, with the ports each one holds (for example `3/512`).
 
+The limits apply to what is created afterwards: the sessions the host already has carry on. To end them at once, without touching the configuration — with an `administrator` or `cgnat-operator` account:
+
+```
+clear cgnat subscriber 100.64.3.19
+```
+
+Every session of that subscriber ends, on every worker, and the box says how many it ended. On a BPA pool the block does not come back at once: it is held for the `block-holddown` and released with its release record in the log, as an ordinary expiry would.
+
 # Growing the pool without dropping everyone
 
 **There is a path that drops no one**, and it is not growing the current pool.
 
-Adding a prefix to `outside` changes the mapping calculation and moves **all** subscribers at the same time. A **second pool**, on the other hand, serving a different slice of the subscriber space, has its own mapping and does not touch the existing one:
+Adding a prefix to `prefix-outside` changes the mapping calculation and moves **all** subscribers at the same time. A **second pool**, on the other hand, serving a different slice of the subscriber space, has its own mapping and does not touch the existing one:
 
 ```
 configure

@@ -248,26 +248,26 @@ flowchart LR
     T["prisma-routing-tune<br/><i>isolcpus, hugepages, bind de la placa</i>"] -->|Before| C["prisma-routing-containers<br/><i>vpp + frr en contenedores</i>"]
     C --> H["prisma-routing.service<br/><i>aplica la config guardada</i>"]
     H --> S["prisma-routing-selftest<br/><i>informe en la consola</i>"]
-    W["card-watch.timer<br/><i>cada 30s</i>"] -.->|si el dataplane se rinde| C
+    W["card-watch.timer<br/><i>cada 5s</i>"] -.->|si el dataplane se rinde| C
 ```
 
 | Servicio | Función |
 |----------|---------|
-| `prisma-routing-tune` | tuning de arranque (isolcpus, hugepages); corre en **cada** arranque, sin centinela |
-| `prisma-routing-containers` | levanta el dataplane, el enrutamiento y el plano de gestión (la VTY) como contenedores |
-| `prisma-routing-doors` | ejecuta en el host lo que pide la VTY (cuentas, sshd, SNMP, reboot); solo para root, cada pedido se convierte en una línea en el journal |
-| `prisma-routing-card-watch.timer` | detecta un dataplane que Docker dejó de intentar reiniciar, anota el motivo y devuelve la placa al kernel |
+| `prisma-routing-tune` | tuning de arranque (isolcpus, hugepages); corre en **cada** arranque, sin centinela, y de nuevo en cada `system dataplane restart` |
+| `prisma-routing-containers` | levanta el dataplane, el enrutamiento, el plano de gestión (la VTY), el exportador de los registros de CGNAT y, con PPPoE configurado, el plano de control del PPPoE como contenedores |
+| `prisma-routing-doors` | ejecuta en el host lo que pide la VTY (cuentas, sshd, SNMP, reboot), solo en las formas que conoce; cada pedido se convierte en una línea en el journal. Los cambios son de root; actualización, reinicio, apagado y reinicio del dataplane también de quien tiene `operator`; las preguntas que solo leen, de cualquier cuenta |
+| `prisma-routing-card-watch.timer` | cada 5 segundos: devuelve la configuración a un dataplane que Docker levantó de nuevo después de una caída, y detecta un dataplane que Docker dejó de intentar reiniciar, anota el motivo y devuelve la placa al kernel |
 | `prisma-routing-backplane` | la red interna propia de los contenedores, en una VRF separada, que no se filtra a la tabla principal |
 | `prisma-routing.service` | aplica la configuración guardada (`prismash --load`) |
 | `prisma-routing-selftest` | verifica e informa en la consola |
 
-**La VTY corre en el contenedor de gestión** (`prisma-routing_mgmt_1`). El login cae en ella con el propio usuario y los propios grupos, así que el rol de cada cuenta es el mismo de antes. El contenedor solo tiene una red interna propia, que alcanza el host y nada más allá de él, y lee del host, en solo lectura, lo que la VTY necesita saber del equipo: las placas, las rutas, los núcleos, si el equipo está en el medio de instalación. Lo que actúa en el host pasa por el host: `ping`, `traceroute` y `mtr` salen por la red del host; `install`, `system upgrade` y `system dataplane restart` corren en la VTY del host, en la misma terminal; `start shell` abre un shell en el host, y solo para `root` y para cuentas con el rol `administrator` - cualquier otra cuenta recibe el rechazo, y un comando que pase por `ssh` lo ejecuta la VTY, con su rol, y no un shell. Si el contenedor no está en línea, la VTY corre en el host, y nadie queda bloqueado afuera. Para volver la VTY al host en un equipo: `touch /etc/prisma-routing/vty-on-host`.
+**La VTY corre en el contenedor de gestión** (`prisma-routing_mgmt_1`). El login cae en ella con el propio usuario y los propios grupos, así que el rol de cada cuenta es el mismo de antes. El contenedor solo tiene una red interna propia, que alcanza el host y nada más allá de él, y lee del host, en solo lectura, lo que la VTY necesita saber del equipo: las placas, las rutas, los núcleos, si el equipo está en el medio de instalación. Lo que actúa en el host pasa por el host: `ping`, `traceroute` y `mtr` salen por la red del host; `install`, `system upgrade` y `system dataplane restart` corren en la VTY del host, en la misma terminal (para una cuenta con `operator` que no es root, la actualización y el reinicio del dataplane corren en el host como una unidad propia, y la VTY muestra lo que ella escribe); `start shell` abre un shell en el host, y solo para `root` y para cuentas con el rol `administrator` - cualquier otra cuenta recibe el rechazo, y un comando que pase por `ssh` lo ejecuta la VTY, con su rol, y no un shell. Si el contenedor no está en línea, la VTY corre en el host, y nadie queda bloqueado afuera. Para volver la VTY al host en un equipo: `touch /etc/prisma-routing/vty-on-host`.
 
 ```
 docker ps --format "{{.Names}} {{.Status}}"
 ```
 
-En un equipo sano, la lista trae los tres contenedores — `prisma-routing_vpp_1` (el dataplane), `prisma-routing_frr_1` (el enrutamiento) y `prisma-routing_mgmt_1` (la VTY) — todos `Up`.
+En un equipo sano, la lista trae `prisma-routing_vpp_1` (el dataplane), `prisma-routing_frr_1` (el enrutamiento), `prisma-routing_mgmt_1` (la VTY) y `prisma-routing_logger_1` (el exportador de los registros de CGNAT por TCP, syslog y UDP), todos `Up`; con PPPoE configurado, también `prisma-routing_bng_1`. Sin el `logger` el equipo sigue registrando: el propio dataplane vuelve a enviar los registros, y `show cgnat logging` dice quién está enviando.
 
 Antes de que compose vea el archivo, la unit hace tres cosas, y cada una existe porque un equipo que se saltó esa etapa arrancó mal:
 
@@ -278,7 +278,9 @@ Antes de que compose vea el archivo, la unit hace tres cosas, y cada una existe 
 
 ### Cuando el dataplane se rindió
 
-El dataplane en contenedor intenta arrancar cinco veces. Después de eso Docker se rinde, y cada 30 segundos el vigilante verifica: si encuentra el dataplane detenido, **anota por qué** — el estado del contenedor, el código de salida y las últimas ochenta líneas que escribió el dataplane — en `/var/log/prisma-routing/why-the-dataplane-stopped`, y solo entonces devuelve la placa al kernel, una vez por arranque.
+El dataplane en contenedor intenta arrancar cinco veces. Después de eso Docker se rinde, y cada 5 segundos el vigilante verifica: si encuentra el dataplane detenido, **anota por qué** — el estado del contenedor, el código de salida y las últimas ochenta líneas que escribió el dataplane — en `/var/log/prisma-routing/why-the-dataplane-stopped`, y solo entonces devuelve la placa al kernel, una vez por arranque.
+
+El mismo vigilante se ocupa de dos casos antes de ese. Un dataplane que se cayó y que Docker levantó de nuevo vuelve sin ninguna configuración, y el vigilante le pone la configuración vigente, algunos segundos después. Y un dataplane que salió solo con status 0, sin que nadie lo mandara (Docker no reinicia ese), se inicia de nuevo, hasta cinco veces por arranque.
 
 Ese archivo es lo primero que hay que leer en un equipo que arrancó sin reenviar. Reiniciar el equipo borra el log del contenedor, y el archivo queda justamente porque reiniciar es lo primero que hace cualquiera. Cuando existe, la VTY y el autotest de arranque apuntan a él en lugar de mandar a consultar el log del contenedor, que en ese equipo está vacío.
 
@@ -453,7 +455,7 @@ flowchart TD
 | "¿de quién era esta IP:puerto?" | `show cgnat translation <ip> <puerto>` |
 | "¿se va a llenar el pool?" | `show cgnat top` |
 | "¿cuántas sesiones, por hilo?" | `show cgnat session` |
-| "¿el colector está recibiendo?" | `show cgnat logging` |
+| "¿el colector está recibiendo?" | `show cgnat logging`, y `show log kind collector` para cuándo desapareció y volvió |
 | "¿qué pasó en el equipo?" | `show log` |
 | "¿quién hizo commit, y desde dónde?" | `show log source vty` (o `source api`) |
 | "¿por qué se reinició el dataplane?" | `show log source dataplane`, y la línea `started by:` de `show system uptime` |
@@ -477,6 +479,8 @@ flowchart TD
 | "¿el trail de configuración fue adulterado?" | `show cgnat history verify` |
 | "¿qué placas tiene el equipo, y cuál tomó?" | `show hardware` |
 | "¿qué núcleos hacen qué?" | `show system cpu` |
+| "¿el ajuste del equipo está bien? ¿qué cambiar?" | `show system tuning` y `show system tuning advice` |
+| "¿qué de la configuración guardada quedó esperando una placa?" | `show configuration pending` |
 | "¿qué tan ocupado está cada núcleo? ¿hay steal?" | `show system cpu cores` |
 | "¿cómo está dividida la memoria?" | `show system memory` |
 | "¿el agregado LACP está completo?" | `show lacp` |
@@ -501,6 +505,7 @@ flowchart TD
 | La sesión BGP se cayó y volvió sin que nadie lo viera | `show log kind bgp`: cada caída con el motivo de FRR, y `went down and came back between two readings` cuando cayó y volvió entre dos lecturas |
 | Puerto que se cayó y volvió demasiado rápido para que alguien lo viera | `show log kind link`: `went down and came back between two readings (N time(s))` — el dataplane cuenta cada caída de link del puerto, y Linux, las de las placas que quedaron con él; la caída se registra aunque las dos lecturas hayan visto el link en pie |
 | El módulo de la placa de gestión (la que quedó con Linux) | `show log kind transceiver`: módulo insertado, retirado, luz por debajo de la advertencia, con la placa nombrada `(held by Linux)` y origen `host`; una placa virtio, que no tiene módulo, no genera ningún evento |
+| El equipo arrancó y parte de la configuración no se aplicó | una placa que la configuración guardada nombra no estaba en el arranque: el resto se aplicó, y `show configuration pending` dice qué espera por ella. `save` se rechaza mientras haya algo pendiente; cuando la placa aparece, el equipo aplica lo que faltaba, y `clear configuration pending` renuncia a ella |
 | El equipo quedó sin placas después de un reinicio | `show log kind gave-up`: el dataplane abandonado, o el `system dataplane restart` que no terminó, y por qué |
 | Todos los suscriptores PPPoE se cayeron juntos | `show log kind exit`: el plano de control PPPoE se detuvo, y por qué (el código, la señal, un commit); `show log kind start` dice quién lo volvió a levantar |
 | `show system uptime` dice `restarted after the boot` | `show log source dataplane` dice la causa: un `system dataplane restart` (de quién), una actualización, o `unexpected` — nadie lo pidió, y `why-the-dataplane-stopped` suele tener el motivo |

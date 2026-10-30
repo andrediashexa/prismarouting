@@ -467,7 +467,11 @@ A `prisma-routing.service` roda `prismash --load /etc/prisma-routing/prisma-rout
 
 O `--load` **recusa o arquivo inteiro** se houver uma linha que a VTY não consiga interpretar, em vez de aplicar o resto. Isso é deliberado: rodando sem ninguém olhando, aplicar um arquivo *menos uma linha* deixaria a configuração em disco e a em execução diferentes, e alguém descobriria isso lendo as duas muito depois.
 
-Há uma linha, e só uma, que o `--load` deixa de fora em vez de recusar o arquivo: o `block-stride` de um pool `deterministic`, que nunca teve efeito ali. O pool sobe como já rodava, o log do boot diz `note: block-stride <n> dropped from pool <nome>`, e até o próximo `save` o arquivo em disco e a configuração em execução diferem por essa linha. A recusa `block-stride applies to bpa pools only`, acima, explica por quê.
+O que o `--load` **não** recusa, e por quê:
+
+* **Uma placa que a caixa não tem.** O que depende dela fica esperando, o resto sobe, e `show configuration pending` lista o que ficou de fora — veja `this box has no interface <nome>`, acima.
+* **O** `**block-stride**` **de um pool** `**deterministic**`, que nunca teve efeito ali. O pool sobe como já rodava, o log do boot diz `note: block-stride <n> dropped from pool <nome>`, e até o próximo `save` o arquivo em disco e a configuração em execução diferem por essa linha. A recusa `block-stride applies to bpa pools only`, acima, explica por quê.
+* **Palavras antigas que mudaram de nome.** `mode dynamic` é lido como `mode bpa`, com a nota `note: 'mode dynamic' is now 'mode bpa' in pool <nome>`, e `radius` dentro de `pppoe` é lido como `aaa` > `radius`; o arquivo é regravado com a forma nova. Um pool NAT64 escrito dentro de `cgnat`, ao contrário, é recusado: ele vai em `nat` > `nat64`, e a mudança não é automática.
 
 A recusa é lida no boot, num console de 80 colunas, então ela é quebrada em partes que cabem: o caminho do arquivo e a linha recusada saem **inteiros**, cada um na sua própria linha, para você conseguir copiar e procurar; o motivo vem em texto corrido embaixo.
 

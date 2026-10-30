@@ -128,11 +128,19 @@ show cgnat top
 
 Ele lista os assinantes mais próximos de encher o bloco, com as portas que cada um segura (por exemplo `3/512`).
 
+Os limites valem para o que for criado depois: as sessões que o host já tem continuam. Para encerrá-las de uma vez, sem mexer na configuração — com uma conta `administrator` ou `cgnat-operator`:
+
+```
+clear cgnat subscriber 100.64.3.19
+```
+
+Todas as sessões daquele assinante terminam, em todos os workers, e a caixa diz quantas encerrou. Num pool BPA o bloco não volta na hora: fica parado pelo `block-holddown` e é liberado com o registro de liberação no log, como numa expiração comum.
+
 # Ampliar o pool sem derrubar todo mundo
 
 **Existe um caminho que não derruba ninguém**, e ele não é crescer o pool atual.
 
-Acrescentar um prefixo em `outside` muda a conta do mapeamento e move **todos** os assinantes ao mesmo tempo. Já um **segundo pool**, servindo uma fatia diferente do espaço de assinantes, tem o próprio mapeamento e não encosta no existente:
+Acrescentar um prefixo em `prefix-outside` muda a conta do mapeamento e move **todos** os assinantes ao mesmo tempo. Já um **segundo pool**, servindo uma fatia diferente do espaço de assinantes, tem o próprio mapeamento e não encosta no existente:
 
 ```
 configure

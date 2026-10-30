@@ -28,7 +28,7 @@ flowchart LR
             DOORS["servicio del host:<br/>cuentas, SSH, SNMP, reboot"]
         end
         VPP["Contenedor del dataplane<br/>VPP / DPDK + CGNAT"]
-        FRR["Contenedor de enrutamiento<br/>FRR: bgpd · ospfd · ospf6d · isisd"]
+        FRR["Contenedor de enrutamiento<br/>FRR: bgpd · ospfd · ospf6d · isisd · bfdd"]
         VTY["Contenedor de gestión<br/>prismash, la VTY única"]
         LOGIN --> VTY
         VPP <-->|"linux_cp"| FRR
@@ -44,8 +44,12 @@ flowchart LR
 * **El enrutamiento** es FRR, que ve cada interfaz del dataplane a través de un par en Linux (`linux_cp`) e instala las rutas en la tabla de reenvío del dataplane.
 * **La gestión** es donde corre `prismash`: la VTY única, que configura CGNAT, interfaces, enrutamiento y el sistema desde la misma interfaz. Cada login entra en ella con su propia cuenta y su propio rol.
 * **El sistema base** se encarga de lo que el contenedor de gestión no puede hacer por sí solo — cuentas, SSH, SNMP, resolvedores, reinicio y apagado. La VTY **solicita** esos cambios a un servicio del host, que solo acepta una lista cerrada de comandos. `start shell`, restringido a administradores, abre un shell **en el sistema base**, no en el contenedor.
+* **Los registros** de bloque que van al colector por TCP, y normalmente también el IPFIX por UDP, salen de un contenedor propio, con memoria limitada, para que un colector lento o la reposición de un archivo de desborde no le cuesten paquetes al dataplane. Sin ese contenedor levantado, el dataplane vuelve a enviarlos él mismo en cerca de un segundo.
+* **El PPPoE**, cuando está configurado, corre en un quinto contenedor, con límites de memoria propios: una falla suya no se lleva el reenvío, el enrutamiento ni la VTY. Un equipo sin PPPoE no lo inicia.
 
-Todo cambio en el dataplane pasa por su API binaria, un proceso por llamada — no por una conexión persistente, y no por la línea de comandos de texto del dataplane, que sale con código cero incluso cuando falla.
+Todo cambio en el dataplane pasa por su API binaria, por una conexión abierta al inicio de cada sesión de la VTY y mantenida mientras dura — no por la línea de comandos de texto del dataplane, que sale con código cero incluso cuando falla.
+
+Además del CGNAT de IPv4, el mismo equipo hace **NAT64** (suscriptores solo IPv6 saliendo por el mismo espacio público, en los mismos bloques de puertos) y puede **terminar suscriptores PPPoE**, autenticados por RADIUS y traducidos por el CGNAT. El monitoreo es por SNMP, y una API gRPC de gestión, apagada por defecto, permite que un sistema externo configure y lea el equipo con las mismas reglas de la VTY.
 
 
 :::info
@@ -64,12 +68,12 @@ El mínimo es **6 GB de RAM** (8 recomendados) y una CPU con **SSE4.2**. Por deb
 | Componente | Estado |
 |------------|--------|
 | Núcleo de mapeo determinístico | Verificado contra el modelo de referencia en Python, mapeo por mapeo, el pool entero |
-| Dataplane (traducción, handoff, modo dinámico, fragmentos, errores ICMP, estado TCP) | Verificado con tráfico inyectado y real |
-| Enrutamiento (BGP, OSPF, IS-IS, política de enrutamiento) | Verificado — las rutas llegan a la FIB de VPP |
+| Dataplane (traducción, handoff, modo BPA, fragmentos, errores ICMP, estado TCP) | Verificado con tráfico inyectado y real |
+| Enrutamiento (BGP, OSPF, IS-IS, BFD, política de enrutamiento) | Verificado — las rutas llegan a la FIB de VPP |
 | Logging IPFIX (UDP y TCP) | Verificado con colector decodificando |
 | VTY (`prismash`) | Candidata, `commit`, `rollback`, roles; cada línea se rechaza donde se escribe, incluidas las de enrutamiento |
 | Appliance (ISO, kernel, contenedores, tuning) | Cada versión que publica ISO se instala en un disco y se reinicia desde él antes de salir, también en una máquina virtual sin páginas de 1 GB; el autotest de arranque reporta listo |
-| **Alta disponibilidad** | **Activo/standby implementado**: VRRP en la interfaz del dataplane; la prueba de aceptación (uplink arrancado, dataplane detenido, dataplane muerto) pasa, con todo suscriptor manteniendo dirección pública y bloque. Las sesiones **no** se sincronizan: las conexiones en curso se caen |
+| **Alta disponibilidad** | **Activo/standby implementado**: VRRP en la interfaz del dataplane, en IPv4 y en IPv6 (un pool NAT64 también cambia de equipo); la prueba de aceptación (uplink arrancado, dataplane detenido, dataplane muerto) pasa, con todo suscriptor manteniendo dirección pública y bloque. Las sesiones **no** se sincronizan: las conexiones en curso se caen |
 | **Throughput** | **Bits por segundo NO medidos** — eso exige una placa que DPDK maneje de forma nativa. Se mide el costo de cada paquete en ciclos de CPU en los nodos de traducción |
 
 El proyecto permanece en `0.x.x` hasta ser declarado listo para producción. Se permiten cambios incompatibles y se anuncian.

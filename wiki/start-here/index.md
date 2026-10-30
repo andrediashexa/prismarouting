@@ -5,7 +5,7 @@ Everything you need to go from a machine with no system to a CGNAT translating t
 | Page | Answers |
 |------|---------|
 | [Sizing and requirements](/s/wiki-en/doc/sizing-and-requirements-IHPnUSMSom) | How much machine, how many public IPs and how much log your case requires |
-| [Running Prisma Routing in a virtual machine](/s/wiki-en/doc/running-prisma-routing-in-a-virtual-machine-B5aywLiukm) | Memory, CPU, virtio cards, 1 GB pages, shutting down from the VTY and what a measurement in a VM actually measures |
+| [Running Prisma Routing in a virtual machine](/s/wiki-en/doc/running-prisma-routing-in-a-virtual-machine-B5aywLiukm) | Memory, CPU, virtio cards, 1 GB pages, the QEMU agent, shutting down from the VTY and what a measurement in a VM actually measures |
 | [Appliance installation](/s/wiki-en/doc/appliance-installation-gliHrNahhB) | How the ISO installs, what it asks and how to automate it |
 | [Access, login and roles](/s/wiki-en/doc/access-login-and-roles-uVm2WUy5xB) | Where you land when you log in, and who can change what |
 | [Getting started](/s/wiki-en/doc/getting-started-WksYlCtcGd) | From an empty disk to subscribers browsing, in ten steps |

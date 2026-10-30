@@ -36,6 +36,8 @@ Um contador só para os três não responderia nenhum deles. É a diferença ent
 
 :::
 
+Num pool BPA existe um caso que nenhum dos três contadores mostra: o assinante que ainda **não tem bloco** e é recusado porque a fatia do worker dele acabou, mesmo com blocos livres na fatia de outro worker. Para ele, `show cgnat subscriber` diz na primeira linha qual é o worker dele e, embaixo, que ele não tem estado vivo — nenhum bloco, nenhuma sessão —, em vez da linha de recusas. `show cgnat blocks` mostra quantos blocos de cada fatia estão em uso. O que o pool garante seja qual for o endereço, e o que fazer quando é isso, está em [Ampliar capacidade sem derrubar assinantes](/s/wiki/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
+
 Para achar quem está mais perto do limite antes de alguém ligar:
 
 ```
@@ -287,7 +289,7 @@ Um mapeamento aberto por um **ALG** em nome de uma conexão de controle — dado
 
 Eles ainda **contam** para o total simultâneo, porque ocupam porta como qualquer coisa: isentos de serem recusados, não de serem contados.
 
-Um limite também **nunca fecha uma sessão que já existe**. Ele limita o que pode ser criado; derrubar mapeamentos anteriores a ele faria de configurar um limite uma parada por conta própria.
+Um limite também **nunca fecha uma sessão que já existe**. Ele limita o que pode ser criado; derrubar mapeamentos anteriores a ele faria de configurar um limite uma parada por conta própria. Para encerrar as sessões de um assinante, `clear cgnat subscriber <ip>` faz isso sem mexer na configuração.
 
 # Como conferir
 

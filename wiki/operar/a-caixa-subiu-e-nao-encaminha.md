@@ -66,14 +66,14 @@ Antes da lista, a tela diz o que o dataplane já tem — uma placa que o datapla
 
 O dataplane roda num container. Se ele não consegue subir, o container é reiniciado algumas vezes e então para de tentar. Nesse ponto a placa já tinha sido tirada do Linux para ser entregue ao dataplane, e a caixa ficaria sem interface nenhuma.
 
-**Um vigia de placa cuida disso.** A cada 30 segundos ele verifica se o container do dataplane parou de vez; se parou, ele:
+**Um vigia de placa cuida disso.** A cada 5 segundos, a partir de dois minutos depois do boot, ele verifica se o container do dataplane parou de vez; se parou, ele:
 
 
 1. grava o motivo em `/var/log/prisma-routing/why-the-dataplane-stopped` — o estado do container, o código de saída e as últimas 80 linhas que o dataplane escreveu;
 2. devolve **todas** as placas tomadas ao driver do kernel;
 3. sobe as interfaces do Linux de novo, para a caixa voltar a ser alcançável.
 
-Ele faz isso uma vez por boot e não reinicia nada. Na prática, a caixa volta a ter a placa no Linux uns dois minutos depois do boot, sem dataplane.
+Ele devolve as placas uma vez por boot. Antes de chegar a isso, ele cuida de dois casos: um dataplane que caiu e que o Docker subiu de novo recebe do vigia a configuração em vigor, alguns segundos depois; e um dataplane que saiu sozinho com status 0, sem ninguém mandar, é iniciado de novo, até cinco vezes por boot. Na prática, uma caixa cujo dataplane não sobe volta a ter a placa no Linux uns dois minutos depois do boot, sem dataplane.
 
 **O arquivo fica em** `**/var/log**`**, e não em** `**/run**`**, porque o próximo passo de todo mundo é reiniciar**, e o reinício apaga o log do container. Leia antes de mexer em qualquer coisa. Com o dataplane parado, `show version` aponta para ele:
 
@@ -118,6 +118,8 @@ Numa caixa que toma várias placas, uma placa que não pôde ser entregue fica d
 **Uma placa ixgbe que o kernel recusou pelo módulo SFP+.** A placa não aparece em `show hardware`, e o journal do boot (`journalctl -b | grep ixgbe`) diz `unsupported SFP+ or QSFP module type was detected`. O driver recusou o módulo, não a placa. Ligue `unsupported-sfp allow` em `system` > `hardware` e reinicie a caixa; veja [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
 
 **A placa nomeada não existe.** Se `show interface` diz que o nome configurado não recebeu placa, confira o nome em `show hardware` e nomeie de novo (passo 6).
+
+**Uma placa que a configuração salva usa não estava lá no boot.** A caixa não recusa a configuração inteira por isso: aplica todo o resto, deixa de fora o que depende daquela placa (o bloco dela, as sub-interfaces, o que a nomeia no roteamento) e diz isso no console. `show configuration pending` mostra o que está esperando. Enquanto houver pendência, `save` é recusado, para o arquivo não perder essas linhas; quando a placa aparece, a caixa aplica o que faltava sozinha, e `clear configuration pending` é você desistindo dela.
 
 # 6. Conserte, e reinicie o dataplane
 
