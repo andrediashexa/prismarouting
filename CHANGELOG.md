@@ -77,6 +77,17 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Five wiki pages for what shipped with none.**
+  ([#620](https://github.com/andrediashexa/hexarouting/issues/620))
+  In PT, EN and ES: NAT64 in operation; PPPoE subscribers on the air, step
+  by step; management in a VRF of its own; the management API for
+  integrators; the box's event log to the NOC's syslog - each checked
+  against `docs/` and the code, linked from its section's index and from
+  the pages that mention the subject. The lab's card names (`ens18`,
+  `ens19` and three more) are out of every example; screens whose columns
+  moved were realigned to what the code prints, and the fake box in
+  `test_doc_commands`/`test_doc_copies` knows the new names.
+
 ### Fixed
 
 ## 0.156.1 - the wiki against the product at 0.156.0
