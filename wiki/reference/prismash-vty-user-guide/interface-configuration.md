@@ -285,6 +285,8 @@ VRFs appear in `show running-config` read from Linux, and the saved file creates
 
 ### Management in its own VRF
 
+The step by step is in [Management in a VRF of its own](/s/wiki-en/doc/management-in-a-vrf-of-its-own-tTlK811qdt).
+
 For the main table to carry the subscribers' default and management to remain reachable through its own gateway, the management card goes into a VRF like any interface, with its routes (both defaults, IPv4 and IPv6, and any other management network) in the routing `vrf` block, and `system` > `management` > `vrf` tells the box that its services live there:
 
 ```

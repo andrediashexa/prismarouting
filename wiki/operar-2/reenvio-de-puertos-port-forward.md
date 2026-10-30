@@ -28,7 +28,7 @@ Es un ajuste **aplicado sin reconstruir**: no tira la sesión de nadie.
 
 También vale en un pool con `filter address-dependent`: el puerto reenviado queda fuera de ese filtrado, porque quien llega por él nunca fue contactado antes por el suscriptor; ese es el propósito del forward.
 
-En un pool NAT64, que está en `nat` > `nat64`, el forward es el mismo y nombra una dirección IPv6 del prefijo del suscriptor (`forward tcp 6200 to 2001:db8:1200:ab00::5 80`): quien llega desde afuera por IPv4 alcanza ese host IPv6.
+En un [pool NAT64](/s/wiki-es/doc/nat64-suscriptores-solo-ipv6-en-el-mismo-espacio-publico-45g9ORUleS), que está en `nat` > `nat64`, el forward es el mismo y nombra una dirección IPv6 del prefijo del suscriptor (`forward tcp 6200 to 2001:db8:1200:ab00::5 80`): quien llega desde afuera por IPv4 alcanza ese host IPv6.
 
 # La dirección pública no la elige usted
 

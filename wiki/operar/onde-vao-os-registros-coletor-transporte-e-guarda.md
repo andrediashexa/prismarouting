@@ -169,3 +169,4 @@ Antes de dar a guarda por montada, faça o teste que importa: com tráfego de as
 * [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — o tamanho do volume de log e o espelho em dois discos
 * [Dimensionamento e requisitos](/s/wiki/doc/dimensionamento-e-requisitos-f42dC4k45s) — o disco da caixa e o volume do log
 * [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb) — acompanhar a caixa pela NMS
+* [Mandar o log de eventos da caixa para o syslog do NOC](/s/wiki/doc/mandar-o-log-de-eventos-da-caixa-para-o-syslog-do-noc-N2uzxgzpZX) — o log de eventos da própria caixa (commits, enlaces, logins) é outro fluxo

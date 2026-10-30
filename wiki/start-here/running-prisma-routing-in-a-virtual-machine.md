@@ -172,3 +172,4 @@ The box on a VM serves to evaluate functionality, configuration and CGNAT behavi
 * [Appliance installation](/s/wiki-en/doc/appliance-installation-gliHrNahhB) — the installation to disk, step by step
 * [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn) — `mtu`, addresses and the `interface` block
 * [Operations and troubleshooting](/s/wiki-en/doc/operations-and-troubleshooting-kql3GmIqmX) — the boot self-test and what it says
+* [Management in a VRF of its own](/s/wiki-en/doc/management-in-a-vrf-of-its-own-tTlK811qdt) — the management card (on a VM, usually virtio) in a VRF of its own, with its own gateway

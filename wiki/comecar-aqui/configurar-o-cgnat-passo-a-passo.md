@@ -447,3 +447,4 @@ Com todos os itens marcados, o assinante sai pela internet com o endereço públ
 * [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — interfaces, timeouts globais e logging
 * [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — abrir porta, limitar um assinante, ampliar o pool
 * [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — quando algo não funcionar
+* [Pôr assinantes PPPoE no ar, passo a passo](/s/wiki/doc/por-assinantes-pppoe-no-ar-passo-a-passo-Y43rTeDSXs) — quando os assinantes chegam por PPPoE e a caixa é o BNG

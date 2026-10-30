@@ -394,6 +394,8 @@ It takes effect from the next boot: the box puts `ixgbe.allow_unsupported_sfp=1`
 
 ## Where the event log goes: `system` > `logging`
 
+The complete task, with how to verify it, is in [Sending the box's event log to the NOC's syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA).
+
 What `show log` shows — commits, restarts with their cause, links, modules, BGP and BFD sessions, pools without blocks, logins — also goes to up to four syslog collectors:
 
 ```
@@ -898,6 +900,8 @@ It **does not refuse** the commit — announcing from another box is a legitimat
 
 From version 0.148.4 the box offers a management API over gRPC (`prisma.v1`), for the web interface and other systems that need to configure and read the box without going through the terminal. It **is not a second way to configure**: each configuration call is the VTY itself at work — `configure`, the lines you would type, `commit check`, `commit`, `commit confirmed`, `rollback` and `save` —, so a refusal through the API is the same refusal as in the VTY, with the same words, and a change made through the API appears in `show running-config`.
 
+For whoever is writing the client — roles, services, limits, health check and the behavior during an upgrade —, see [Management API (gRPC) — for integrators](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn).
+
 It ships **off**. To turn it on, you need three things:
 
 
@@ -962,4 +966,5 @@ And it reads as fields **the screens that were missing**: `show ospf interface` 
 * [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn) — OSPF and IS-IS on the port, MTU, uRPF
 * [BGP configuration](/s/wiki-en/doc/bgp-configuration-ykey7SaE44) — neighbors, `policy-options` and RPKI
 * [Monitoring and SNMP](/s/wiki-en/doc/monitoring-and-snmp-GxrrkTSEJT) — what the SNMP agent answers
+* [Management API (gRPC) — for integrators](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn) — what the API offers an integrator: roles, services, limits and health check
 * [prismash VTY — user guide](/s/wiki-en/doc/prismash-vty-user-guide-9xi8OdzKV3) — the modes and the command tree

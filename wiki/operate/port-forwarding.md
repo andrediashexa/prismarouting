@@ -28,7 +28,7 @@ It is a setting **applied in place**: it does not drop anyone's sessions.
 
 It also works on a pool with `filter address-dependent`: the forwarded port stays outside that filtering, because whoever arrives through it was never contacted by the subscriber before — that is the purpose of the forward.
 
-On a NAT64 pool, which lives under `nat` > `nat64`, the forward is the same and names an IPv6 address of the subscriber's prefix (`forward tcp 6200 to 2001:db8:1200:ab00::5 80`): whoever arrives from outside over IPv4 reaches that IPv6 host.
+On a [NAT64 pool](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV), which lives under `nat` > `nat64`, the forward is the same and names an IPv6 address of the subscriber's prefix (`forward tcp 6200 to 2001:db8:1200:ab00::5 80`): whoever arrives from outside over IPv4 reaches that IPv6 host.
 
 # The public address is not your choice
 

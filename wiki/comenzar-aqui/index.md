@@ -10,6 +10,7 @@ Todo lo necesario para pasar de una máquina sin sistema a un CGNAT traduciendo 
 | [Acceso, login y roles](/s/wiki-es/doc/acceso-login-y-roles-ZiA9s69LH4) | Dónde cae usted al entrar, y quién puede cambiar qué |
 | [Primeros pasos](/s/wiki-es/doc/primeros-pasos-1atRsTUyKZ) | Del disco vacío a suscriptores navegando, en diez pasos |
 | [Configurar el CGNAT paso a paso](/s/wiki-es/doc/configurar-el-cgnat-paso-a-paso-v0ecpO8lbt) | De los dos puertos al primer suscriptor traducido, con la pantalla que muestra el equipo en cada paso |
+| [Poner suscriptores PPPoE en el aire, paso a paso](/s/wiki-es/doc/poner-suscriptores-pppoe-en-el-aire-paso-a-paso-LS7Pm8pSyB) | Del puerto de acceso y la VLAN al primer suscriptor PPPoE autenticado en el RADIUS, con plan de ancho de banda, traducido por el CGNAT y rastreable en el historial |
 
 
 :::info

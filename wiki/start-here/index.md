@@ -10,6 +10,7 @@ Everything you need to go from a machine with no system to a CGNAT translating t
 | [Access, login and roles](/s/wiki-en/doc/access-login-and-roles-uVm2WUy5xB) | Where you land when you log in, and who can change what |
 | [Getting started](/s/wiki-en/doc/getting-started-WksYlCtcGd) | From an empty disk to subscribers browsing, in ten steps |
 | [Configure CGNAT step by step](/s/wiki-en/doc/configure-cgnat-step-by-step-jU9hEJYMch) | From the two ports to the first translated subscriber, with the screen the box shows at each step |
+| [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ) | From the access port and VLAN to the first PPPoE subscriber authenticated against RADIUS, held to a plan, translated by the CGNAT and traceable in the history |
 
 
 :::info

@@ -44,7 +44,7 @@ show cgnat alg
 
 ## Num pool NAT64: só o FTP, e desligado até você pedir
 
-Num pool NAT64 o assinante só tem IPv6 e o servidor só tem IPv4, e o problema do FTP é outro: o cliente IPv6 fala `EPSV` e `EPRT` — não tem outra coisa para falar — e muito servidor IPv4 antigo só entende `PASV` e `PORT`. O login funciona e toda listagem trava. O `alg ftp` de um pool NAT64 é o ALG da RFC 6384, que traduz entre as duas metades:
+Num [pool NAT64](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd) o assinante só tem IPv6 e o servidor só tem IPv4, e o problema do FTP é outro: o cliente IPv6 fala `EPSV` e `EPRT` — não tem outra coisa para falar — e muito servidor IPv4 antigo só entende `PASV` e `PORT`. O login funciona e toda listagem trava. O `alg ftp` de um pool NAT64 é o ALG da RFC 6384, que traduz entre as duas metades:
 
 | O cliente manda | O servidor recebe | O cliente recebe de volta |
 |-----------------|-------------------|---------------------------|

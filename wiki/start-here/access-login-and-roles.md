@@ -110,7 +110,7 @@ Whoever does not have `operator` gets the refusal before anything happens, with 
 
 The version **query** — `system upgrade` without a version, which only says which version the box runs and which is the newest published — changes nothing, so **any account** can run it. It is read by the box's system, because the VTY's network ends at the backplane and does not reach the releases site; up to 0.149.25 this query failed there for everyone.
 
-In the API, `WhoAmI` says `can_operate`, and the accounts read by `GetConfig` carry `operator`.
+In the API, `WhoAmI` says `can_operate`, and the accounts read by `GetConfig` carry `operator`; what each role can call through the API is in [Management API (gRPC) — for integrators](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn).
 
 The capabilities are read from group membership **at the moment the VTY starts**, and never from something the program stores: the answer needs to be the one the system would give, otherwise deprovisioning an account here does not actually deprovision it.
 

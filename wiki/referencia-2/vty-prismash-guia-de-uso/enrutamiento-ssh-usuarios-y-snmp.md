@@ -394,6 +394,8 @@ Vale a partir del próximo arranque: el equipo pone `ixgbe.allow_unsupported_sfp
 
 ## A dónde va el registro de eventos: `system` > `logging`
 
+La tarea completa, con cómo verificarla, está en [Enviar el log de eventos del equipo al syslog del NOC](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb).
+
 Lo que muestra `show log` — commits, reinicios con su causa, enlaces, módulos, sesiones BGP y BFD, pools sin bloques, logins — va también a hasta cuatro colectores syslog:
 
 ```
@@ -898,6 +900,8 @@ La advertencia entiende **cobertura**, no igualdad: anunciar `200.150.0.0/24` cu
 
 A partir de la versión 0.148.4 el equipo ofrece una API de gestión en gRPC (`prisma.v1`), para la interfaz web y otros sistemas que necesiten configurar y leer el equipo sin pasar por la terminal. **No es una segunda forma de configurar**: cada llamada de configuración es la propia VTY trabajando — el `configure`, las líneas que usted escribiría, el `commit check`, el `commit`, el `commit confirmed`, el `rollback` y el `save` —, así que un rechazo por la API es el mismo rechazo de la VTY, con las mismas palabras, y un cambio hecho por la API aparece en `show running-config`.
 
+Para quien va a escribir el cliente — roles, servicios, límites, health check y el comportamiento en una actualización —, vea [API de gestión (gRPC) — para quien integra](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu).
+
 Viene **desactivada**. Para activarla, usted necesita tres cosas:
 
 
@@ -962,4 +966,5 @@ Y lee en campos **las pantallas que faltaban**: `show ospf interface` (cada inte
 * [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg) — OSPF e IS-IS en el puerto, MTU, uRPF
 * [Configuración de BGP](/s/wiki-es/doc/configuracion-de-bgp-s4fDtTXgPx) — vecinos, `policy-options` y RPKI
 * [Monitoreo y SNMP](/s/wiki-es/doc/monitoreo-y-snmp-zQ9bTfrh8z) — lo que responde el agente SNMP
+* [API de gestión (gRPC) — para quien integra](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu) — lo que la API ofrece a quien integra: roles, servicios, límites y health check
 * [VTY prismash — guía de uso](/s/wiki-es/doc/vty-prismash-guia-de-uso-gPIR8ZKwdC) — los modos y el árbol de comandos

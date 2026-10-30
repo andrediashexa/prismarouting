@@ -465,7 +465,7 @@ flowchart TD
 | "did the pool run out?" | `show log kind pool` |
 | "what was already wrong when the box came up?" | `show log` — the `standing at start:` lines of the first reading at boot |
 | "I want to watch events arriving" | `monitor log` (the same filters; Ctrl-C stops) |
-| "are the events reaching my syslog?" | `show system logging` |
+| "are the events reaching my syslog?" | `show system logging` — see [Sending the box's event log to the NOC's syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA) |
 | "who changed the pool, and when?" | `show cgnat history` |
 | "what am I about to apply?" | `show configuration compare` |
 | "what version is this machine?" | `show version` |

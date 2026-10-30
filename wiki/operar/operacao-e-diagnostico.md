@@ -465,7 +465,7 @@ flowchart TD
 | "o pool esgotou?" | `show log kind pool` |
 | "o que já estava errado quando a caixa subiu?" | `show log` — as linhas `standing at start:` da primeira leitura do boot |
 | "quero ver os eventos chegando" | `monitor log` (os mesmos filtros; Ctrl-C para) |
-| "os eventos estão chegando no meu syslog?" | `show system logging` |
+| "os eventos estão chegando no meu syslog?" | `show system logging` — veja [Mandar o log de eventos da caixa para o syslog do NOC](/s/wiki/doc/mandar-o-log-de-eventos-da-caixa-para-o-syslog-do-noc-N2uzxgzpZX) |
 | "quem mudou o pool, e quando?" | `show cgnat history` |
 | "o que estou prestes a aplicar?" | `show configuration compare` |
 | "que versão é essa máquina?" | `show version` |

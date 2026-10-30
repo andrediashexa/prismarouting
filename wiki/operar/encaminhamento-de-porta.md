@@ -28,7 +28,7 @@ show cgnat forward
 
 Vale também num pool com `filter address-dependent`: a porta encaminhada fica fora dessa filtragem, porque quem chega por ela nunca foi contatado antes pelo assinante — é esse o propósito do forward.
 
-Num pool NAT64, que fica em `nat` > `nat64`, o forward é o mesmo e nomeia um endereço IPv6 do prefixo do assinante (`forward tcp 6200 to 2001:db8:1200:ab00::5 80`): quem chega de fora pelo IPv4 alcança aquele host IPv6.
+Num [pool NAT64](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd), que fica em `nat` > `nat64`, o forward é o mesmo e nomeia um endereço IPv6 do prefixo do assinante (`forward tcp 6200 to 2001:db8:1200:ab00::5 80`): quem chega de fora pelo IPv4 alcança aquele host IPv6.
 
 # O endereço público não é escolha sua
 

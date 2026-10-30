@@ -285,6 +285,8 @@ As VRFs aparecem no `show running-config` lidas do Linux, e o arquivo salvo as c
 
 ### A gerência numa VRF própria
 
+O passo a passo está em [Gerência numa VRF própria](/s/wiki/doc/gerencia-numa-vrf-propria-J762fuX62R).
+
 Para a tabela principal levar a default dos assinantes e a gerência continuar acessível pelo gateway dela, a placa de gerência vai para uma VRF como qualquer interface, com as rotas dela (as duas defaults, IPv4 e IPv6, e qualquer outra rede de gerência) no bloco `vrf` do roteamento, e `system` > `management` > `vrf` diz à caixa que os serviços dela moram ali:
 
 ```

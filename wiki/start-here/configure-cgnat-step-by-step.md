@@ -447,3 +447,4 @@ With every item checked, the subscriber goes out to the internet with the pool's
 * [CGNAT configuration](/s/wiki-en/doc/cgnat-configuration-MXpSfxcJsb) — interfaces, global timeouts and logging
 * [Day-to-day recipes](/s/wiki-en/doc/day-to-day-recipes-KCc5cOuBip) — open a port, limit a subscriber, expand the pool
 * [Operations and troubleshooting](/s/wiki-en/doc/operations-and-troubleshooting-kql3GmIqmX) — when something does not work
+* [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ) — when the subscribers arrive over PPPoE and the box is the BNG

@@ -10,6 +10,7 @@ Tudo que é preciso para sair de uma máquina sem sistema e chegar a um CGNAT tr
 | [Acesso, login e papéis](/s/wiki/doc/acesso-login-e-papeis-VcE7gIbI1U) | Onde você cai ao entrar, e quem pode mudar o quê |
 | [Primeiros passos](/s/wiki/doc/primeiros-passos-TAWDdSrYG7) | Do disco vazio até assinantes navegando, em dez passos |
 | [Configurar o CGNAT passo a passo](/s/wiki/doc/configurar-o-cgnat-passo-a-passo-WMfuk8C8Q7) | Das duas portas ao primeiro assinante traduzido, com a tela que a caixa mostra em cada passo |
+| [Pôr assinantes PPPoE no ar, passo a passo](/s/wiki/doc/por-assinantes-pppoe-no-ar-passo-a-passo-Y43rTeDSXs) | Da porta de acesso e da VLAN ao primeiro assinante PPPoE autenticado no RADIUS, com plano de banda, traduzido pelo CGNAT e rastreável no histórico |
 
 
 :::info

@@ -447,3 +447,4 @@ Con todos los ítems marcados, el suscriptor sale a internet con la dirección p
 * [Configuración de CGNAT](/s/wiki-es/doc/configuracion-de-cgnat-WTgNXqphc5) — interfaces, timeouts globales y logging
 * [Recetas del día a día](/s/wiki-es/doc/recetas-del-dia-a-dia-maiZboGbqY) — abrir un puerto, limitar a un suscriptor, ampliar el pool
 * [Operación y diagnóstico](/s/wiki-es/doc/operacion-y-diagnostico-iHMcBJQ91I) — cuando algo no funcione
+* [Poner suscriptores PPPoE en el aire, paso a paso](/s/wiki-es/doc/poner-suscriptores-pppoe-en-el-aire-paso-a-paso-LS7Pm8pSyB) — cuando los suscriptores llegan por PPPoE y el equipo es el BNG

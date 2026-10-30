@@ -1,6 +1,6 @@
 # Configuração de PPPoE
 
-Esta página é a referência do bloco `pppoe` e do bloco `aaa` > `radius`: a caixa termina as sessões PPPoE dos assinantes, autentica cada um no seu RADIUS, limita a banda de cada sessão e traduz o tráfego deles pelo CGNAT, como faz com um assinante atrás de uma interface `inside`. Ela diz o que cada declaração faz, o que a caixa recusa e como ler as sessões.
+Esta página é a referência do bloco `pppoe` e do bloco `aaa` > `radius`: a caixa termina as sessões PPPoE dos assinantes, autentica cada um no seu RADIUS, limita a banda de cada sessão e traduz o tráfego deles pelo CGNAT, como faz com um assinante atrás de uma interface `inside`. Ela diz o que cada declaração faz, o que a caixa recusa e como ler as sessões. Para pôr a caixa no ar como BNG pela primeira vez, na ordem, veja [Pôr assinantes PPPoE no ar, passo a passo](/s/wiki/doc/por-assinantes-pppoe-no-ar-passo-a-passo-Y43rTeDSXs).
 
 ```
 prisma> configure
@@ -308,6 +308,7 @@ QinQ e alta disponibilidade das sessões ainda não existem. Uma sessão é semp
 
 ## Ver também
 
+* [Pôr assinantes PPPoE no ar, passo a passo](/s/wiki/doc/por-assinantes-pppoe-no-ar-passo-a-passo-Y43rTeDSXs) — a primeira vez, na ordem, da porta de acesso ao primeiro assinante
 * [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o pool que traduz as sessões
 * [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — o `prefix-inside` que cobre os endereços das sessões
 * [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — a sub-interface com a VLAN de acesso

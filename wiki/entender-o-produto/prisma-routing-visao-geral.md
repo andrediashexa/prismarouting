@@ -49,7 +49,7 @@ flowchart LR
 
 Toda mudança no dataplane vai pela sua API binária, por uma conexão aberta no início de cada sessão da VTY e mantida enquanto ela dura — não pela linha de comando de texto do dataplane, que sai com código zero mesmo quando falha.
 
-Além do CGNAT de IPv4, a mesma caixa faz **NAT64** (assinantes só IPv6 saindo pelo mesmo espaço público, nos mesmos blocos de portas) e pode **terminar assinantes PPPoE**, autenticados por RADIUS e traduzidos pelo CGNAT. O monitoramento é por SNMP, e uma API gRPC de gerência, desligada por padrão, permite que um sistema externo configure e leia a caixa pelas mesmas regras da VTY.
+Além do CGNAT de IPv4, a mesma caixa faz **[NAT64](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd)** (assinantes só IPv6 saindo pelo mesmo espaço público, nos mesmos blocos de portas) e pode **terminar assinantes PPPoE**, autenticados por RADIUS e traduzidos pelo CGNAT. O monitoramento é por SNMP, e uma [API gRPC de gerência](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs), desligada por padrão, permite que um sistema externo configure e leia a caixa pelas mesmas regras da VTY.
 
 
 :::info

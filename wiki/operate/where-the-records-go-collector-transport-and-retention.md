@@ -169,3 +169,4 @@ Before considering retention set up, run the test that matters: with subscriber 
 * [Appliance installation](/s/wiki-en/doc/appliance-installation-gliHrNahhB) — the log volume size and the two-disk mirror
 * [Sizing and requirements](/s/wiki-en/doc/sizing-and-requirements-IHPnUSMSom) — the box's disk and the log volume
 * [Monitoring and SNMP](/s/wiki-en/doc/monitoring-and-snmp-GxrrkTSEJT) — following the box from the NMS
+* [Sending the box's event log to the NOC's syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA) — the box's own event log (commits, links, logins) is a different stream

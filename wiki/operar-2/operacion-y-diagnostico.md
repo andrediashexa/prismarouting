@@ -465,7 +465,7 @@ flowchart TD
 | "¿se agotó el pool?" | `show log kind pool` |
 | "¿qué ya estaba mal cuando arrancó el equipo?" | `show log` — las líneas `standing at start:` de la primera lectura del arranque |
 | "quiero ver los eventos llegando" | `monitor log` (los mismos filtros; Ctrl-C para detener) |
-| "¿los eventos están llegando a mi syslog?" | `show system logging` |
+| "¿los eventos están llegando a mi syslog?" | `show system logging` — vea [Enviar el log de eventos del equipo al syslog del NOC](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb) |
 | "¿quién cambió el pool, y cuándo?" | `show cgnat history` |
 | "¿qué estoy a punto de aplicar?" | `show configuration compare` |
 | "¿qué versión es esta máquina?" | `show version` |

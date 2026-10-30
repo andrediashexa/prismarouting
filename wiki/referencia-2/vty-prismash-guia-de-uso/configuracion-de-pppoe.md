@@ -1,6 +1,6 @@
 # Configuración de PPPoE
 
-Esta página es la referencia del bloque `pppoe` y del bloque `aaa` > `radius`: el equipo termina las sesiones PPPoE de los suscriptores, autentica a cada uno en su RADIUS, limita el ancho de banda de cada sesión y traduce su tráfico por el CGNAT, como lo hace con un suscriptor detrás de una interfaz `inside`. Indica qué hace cada declaración, qué rechaza el equipo y cómo leer las sesiones.
+Esta página es la referencia del bloque `pppoe` y del bloque `aaa` > `radius`: el equipo termina las sesiones PPPoE de los suscriptores, autentica a cada uno en su RADIUS, limita el ancho de banda de cada sesión y traduce su tráfico por el CGNAT, como lo hace con un suscriptor detrás de una interfaz `inside`. Indica qué hace cada declaración, qué rechaza el equipo y cómo leer las sesiones. Para poner el equipo en el aire como BNG por primera vez, en orden, vea [Poner suscriptores PPPoE en el aire, paso a paso](/s/wiki-es/doc/poner-suscriptores-pppoe-en-el-aire-paso-a-paso-LS7Pm8pSyB).
 
 ```
 prisma> configure
@@ -308,6 +308,7 @@ QinQ y la alta disponibilidad de las sesiones todavía no existen. Una sesión e
 
 ## Ver también
 
+* [Poner suscriptores PPPoE en el aire, paso a paso](/s/wiki-es/doc/poner-suscriptores-pppoe-en-el-aire-paso-a-paso-LS7Pm8pSyB) — la primera vez, en orden, del puerto de acceso al primer suscriptor
 * [Configuración de CGNAT](/s/wiki-es/doc/configuracion-de-cgnat-WTgNXqphc5) — el pool que traduce las sesiones
 * [Configuración de pool](/s/wiki-es/doc/configuracion-de-pool-Y3cACG9QHA) — el `prefix-inside` que cubre las direcciones de las sesiones
 * [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg) — la subinterfaz con la VLAN de acceso

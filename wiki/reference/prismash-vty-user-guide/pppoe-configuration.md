@@ -1,6 +1,6 @@
 # PPPoE configuration
 
-This page is the reference for the `pppoe` block and the `aaa` > `radius` block: the box terminates the subscribers' PPPoE sessions, authenticates each one against your RADIUS, limits the bandwidth of each session and translates their traffic through the CGNAT, as it does with a subscriber behind an `inside` interface. It says what each statement does, what the box refuses and how to read the sessions.
+This page is the reference for the `pppoe` block and the `aaa` > `radius` block: the box terminates the subscribers' PPPoE sessions, authenticates each one against your RADIUS, limits the bandwidth of each session and translates their traffic through the CGNAT, as it does with a subscriber behind an `inside` interface. It says what each statement does, what the box refuses and how to read the sessions. To bring the box up as a BNG for the first time, in order, see [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ).
 
 ```
 prisma> configure
@@ -308,6 +308,7 @@ QinQ and high availability of sessions do not exist yet. A session is always IPv
 
 ## See also
 
+* [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ) — the first time, in order, from the access port to the first subscriber
 * [CGNAT configuration](/s/wiki-en/doc/cgnat-configuration-MXpSfxcJsb) — the pool that translates the sessions
 * [Pool configuration](/s/wiki-en/doc/pool-configuration-wkJ1DcmG2Y) — the `prefix-inside` that covers the session addresses
 * [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn) — the sub-interface with the access VLAN
