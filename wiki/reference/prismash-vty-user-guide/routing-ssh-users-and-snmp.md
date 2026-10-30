@@ -137,7 +137,7 @@ If accepted, that route would stay in FRR and never reach the forwarding table.
 
 Note that the refusal names the route **in the block it is in** - `router static / 10.55.0.0/16 next-hop ...` - and not as a loose line. It is so even when the route was typed at the top, in the routing spelling, `ip route ...`: the box shows where the route lives in the configuration, which is where you will edit it. A static route inside a VRF has no top-level spelling at all to look for, and that is why the block appears.
 
-**`router static` is the main table.** A VRF's static routes go in the routing's `vrf <name>` block, in its own spelling - `ip route <prefix> <next-hop>` or `ipv6 route ...` -, and the block is closed with `exit` or `exit-vrf`:
+`**router static**` **is the main table.** A VRF's static routes go in the routing's `vrf <name>` block, in its own spelling - `ip route <prefix> <next-hop>` or `ipv6 route ...` -, and the block is closed with `exit` or `exit-vrf`:
 
 ```
 configure
@@ -444,6 +444,7 @@ Since 0.152.4, management can live in a VRF of its own, so that the main table i
 
 It takes effect at `commit` and again at every boot. `commit check` refuses a VRF the configuration does not create with `vrf <name> table <n>` and, in the commit that turns it on, a VRF with no interface in it. `show system management` shows the configured VRF and what the system has in effect. The full example, and the case of a management card only Linux has (a virtual machine's virtio card), are in [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn).
 
+
 :::warning
 **Use** `**commit confirmed**`**.** If the session that committed loses access, nobody confirms, and the rollback takes the card out of the VRF and gives management back to the main table. Taking management out of the VRF ends the SSH sessions opened through it; the box answers new ones on the main table.
 
@@ -617,7 +618,7 @@ configure
 | `snmp port` | UDP port        | `161`   |
 | `snmp enterprise-number` | the number under which the Prisma MIB is served; `no snmp enterprise-number` returns to the product's | `67033`, Prisma's IANA number |
 | `snmp community` | an SNMPv2c community, read-only; there can be more than one | none    |
-| `snmp trap-host` | where to send notifications: the address, the community and, with `inform`, an acknowledged notification instead of a trap; one per address, and typing the same address again replaces it | none |
+| `snmp trap-host` | where to send notifications: the address, the community and, with `inform`, an acknowledged notification instead of a trap; one per address, and typing the same address again replaces it | none    |
 
 With the default `127.0.0.1`, the agent only answers from inside the box: for the NMS to reach it, `listen-address` must be an address it can reach.
 

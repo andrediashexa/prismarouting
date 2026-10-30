@@ -102,9 +102,9 @@ Desde dentro de un contenedor la VTY no puede (ni debe poder) modificar el siste
 | claves SSH de una cuenta; verificar y recargar SSH | `ssh-key` dentro de `user`; `ssh ...` |
 | activar y desactivar SNMP, y sus archivos | `snmp ...`, `snmp-user <nombre>` |
 | resolvedores DNS | `dns server <dirección>`         |
-| el nombre del equipo | `hostname <nombre>` |
+| el nombre del equipo | `hostname <nombre>`              |
 | las VRFs de Linux y las interfaces dentro de ellas, incluida la de gestión | `vrf` en una interfaz; `system` > `management` > `vrf` |
-| la configuración de la API de gestión | `api ...` |
+| la configuración de la API de gestión | `api ...`                        |
 | iniciar, reiniciar y detener el contenedor del PPPoE, releer el RADIUS y cerrar sesiones | `commit` con `pppoe ...` o `aaa ...`; `clear pppoe session` |
 | el lado Linux de una interfaz del dataplane: activar, desactivar, MTU, descripción | `interface`, `shutdown`, `mtu`, `description` |
 | devolver la ruta predeterminada de gestión después de que una placa cambió de dueño | sucede solo                      |

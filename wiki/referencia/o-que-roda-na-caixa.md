@@ -102,9 +102,9 @@ De dentro de um container a VTY não pode — e não deve poder — mexer no sis
 | chaves SSH de uma conta; conferir e recarregar o SSH | `ssh-key` dentro de `user`; `ssh ...` |
 | ligar e desligar o SNMP, e os arquivos dele | `snmp ...`, `snmp-user <nome>` |
 | resolvedores DNS | `dns server <endereço>`        |
-| o nome da caixa | `hostname <nome>` |
+| o nome da caixa  | `hostname <nome>`              |
 | as VRFs do Linux e as interfaces dentro delas, inclusive a de gerência | `vrf` numa interface; `system` > `management` > `vrf` |
-| as configurações da API de gerência | `api ...` |
+| as configurações da API de gerência | `api ...`                      |
 | iniciar, reiniciar e parar o container do PPPoE, reler o RADIUS e encerrar sessões | `commit` com `pppoe ...` ou `aaa ...`; `clear pppoe session` |
 | o lado Linux de uma interface do dataplane: ligar, desligar, MTU, descrição | `interface`, `shutdown`, `mtu`, `description` |
 | devolver a rota padrão de gerência depois que uma placa trocou de dono | acontece sozinho               |

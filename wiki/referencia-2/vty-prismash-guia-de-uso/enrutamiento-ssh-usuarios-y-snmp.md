@@ -137,7 +137,7 @@ Si se aceptara, esa ruta quedaría en FRR y nunca llegaría a la tabla de reenv�
 
 Observe que el rechazo nombra la ruta **en el bloque en que está** - `router static / 10.55.0.0/16 next-hop ...` - y no como una línea suelta. Es así incluso cuando la ruta se escribió en el nivel superior, en la grafía del enrutamiento, `ip route ...`: el equipo muestra dónde vive la ruta en la configuración, que es donde usted la va a editar. Una estática dentro de una VRF no tiene ninguna grafía de nivel superior que buscar, y por eso aparece el bloque.
 
-**`router static` es la tabla principal.** Las rutas estáticas de una VRF van en el bloque `vrf <nombre>` del enrutamiento, en su propia grafía - `ip route <prefijo> <próximo-salto>` o `ipv6 route ...` -, y el bloque se cierra con `exit` o `exit-vrf`:
+`**router static**` **es la tabla principal.** Las rutas estáticas de una VRF van en el bloque `vrf <nombre>` del enrutamiento, en su propia grafía - `ip route <prefijo> <próximo-salto>` o `ipv6 route ...` -, y el bloque se cierra con `exit` o `exit-vrf`:
 
 ```
 configure
@@ -444,6 +444,7 @@ Desde la 0.152.4, la gestión puede vivir en una VRF propia, para que la tabla p
 
 Vale en el `commit` y de nuevo en cada arranque. `commit check` rechaza una VRF que la configuración no crea con `vrf <nombre> table <n>` y, en el commit que la activa, una VRF sin ninguna interfaz. `show system management` muestra la VRF configurada y lo que el sistema tiene en vigor. El ejemplo completo, y el caso de la placa de gestión que solo tiene Linux (la virtio de una máquina virtual), están en [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg).
 
+
 :::warning
 **Use** `**commit confirmed**`**.** Si la sesión que hizo el commit pierde el acceso, nadie confirma, y el rollback saca la placa de la VRF y devuelve la gestión a la tabla principal. Sacar la gestión de la VRF termina las sesiones SSH abiertas por ella; el equipo atiende las nuevas por la tabla principal.
 
@@ -617,7 +618,7 @@ configure
 | `snmp port` | puerto UDP | `161`       |
 | `snmp enterprise-number` | el número bajo el cual se sirve la MIB de Prisma; `no snmp enterprise-number` vuelve al del producto | `67033`, el número de Prisma en la IANA |
 | `snmp community` | una comunidad SNMPv2c, de solo lectura; puede haber más de una | ninguna     |
-| `snmp trap-host` | adónde enviar las notificaciones: la dirección, la comunidad y, con `inform`, una notificación confirmada en lugar de un trap; una por dirección, y escribir la misma dirección de nuevo la reemplaza | ninguno |
+| `snmp trap-host` | adónde enviar las notificaciones: la dirección, la comunidad y, con `inform`, una notificación confirmada en lugar de un trap; una por dirección, y escribir la misma dirección de nuevo la reemplaza | ninguno     |
 
 Con el valor por defecto `127.0.0.1`, el agente solo responde desde dentro del equipo: para que el NMS lo alcance, `listen-address` debe ser una dirección que el NMS alcance.
 

@@ -137,7 +137,7 @@ Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
 
 Repare que a recusa nomeia a rota **no bloco em que ela está** - `router static / 10.55.0.0/16 next-hop ...` - e não como uma linha solta. É assim mesmo quando a rota foi digitada no topo, na grafia do roteamento, `ip route ...`: a caixa mostra onde a rota mora na configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
 
-**`router static` é a tabela principal.** As rotas estáticas de uma VRF ficam no bloco `vrf <nome>` do roteamento, na grafia dele - `ip route <prefixo> <próximo-salto>` ou `ipv6 route ...` -, e o bloco fecha com `exit` ou `exit-vrf`:
+`**router static**` **é a tabela principal.** As rotas estáticas de uma VRF ficam no bloco `vrf <nome>` do roteamento, na grafia dele - `ip route <prefixo> <próximo-salto>` ou `ipv6 route ...` -, e o bloco fecha com `exit` ou `exit-vrf`:
 
 ```
 configure
@@ -443,6 +443,7 @@ memif1/0: link down, administratively up: the wire or the far end
 Desde a 0.152.4, a gerência pode morar numa VRF própria, para que a tabela principal fique livre para a default dos assinantes enquanto o SSH, a API e o SNMP continuam alcançáveis pelo gateway da gerência. A placa de gerência entra numa VRF como qualquer interface, com as rotas dela no bloco `vrf <nome>`, e `system` > `management` > `vrf <nome>` faz os serviços da própria caixa irem junto: sem ele, a placa fica na VRF e a caixa **não** responde por ela. Com ele, o SSH, a API e o SNMP respondem nos endereços da VRF, e o que a própria caixa origina - DNS, NTP, downloads do `system upgrade`, notificações SNMP, `system` > `logging` - sai pelas rotas da gerência, a não ser que a tabela principal tenha uma rota específica para o destino. O IPFIX por UDP, que o plano de dados manda, continua saindo pela tabela principal.
 
 Vale no `commit` e de novo a cada boot. O `commit check` recusa uma VRF que a configuração não cria com `vrf <nome> table <n>` e, no commit que a liga, uma VRF sem nenhuma interface. `show system management` mostra a VRF configurada e o que o sistema tem em vigor. O exemplo completo, e o caso da placa de gerência que só o Linux tem (a virtio de uma máquina virtual), estão em [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ).
+
 
 :::warning
 **Use** `**commit confirmed**`**.** Se a sessão que fez o commit perder o acesso, ninguém confirma, e o rollback tira a placa da VRF e devolve a gerência à tabela principal. Tirar a gerência da VRF encerra as sessões SSH abertas por ela; a caixa atende as novas pela tabela principal.

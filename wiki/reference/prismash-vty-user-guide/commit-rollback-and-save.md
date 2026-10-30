@@ -470,7 +470,7 @@ After a `commit` that applied everything, this warning does not appear.
 What `--load` does **not** refuse, and why:
 
 * **A card the box does not have.** What depends on it waits, the rest comes up, and `show configuration pending` lists what was left out — see `this box has no interface <name>`, above.
-* **The `block-stride` of a `deterministic` pool**, which never took effect there. The pool comes up as it was already running, the boot log says `note: block-stride <n> dropped from pool <name>`, and until the next `save` the file on disk and the running configuration differ by that line. The `block-stride applies to bpa pools only` refusal, above, explains why.
+* **The** `**block-stride**` **of a** `**deterministic**` **pool**, which never took effect there. The pool comes up as it was already running, the boot log says `note: block-stride <n> dropped from pool <name>`, and until the next `save` the file on disk and the running configuration differ by that line. The `block-stride applies to bpa pools only` refusal, above, explains why.
 * **Old words that were renamed.** `mode dynamic` is read as `mode bpa`, with the note `note: 'mode dynamic' is now 'mode bpa' in pool <name>`, and `radius` inside `pppoe` is read as `aaa` > `radius`; the file is written back in the new form. A NAT64 pool written inside `cgnat`, on the contrary, is refused: it goes under `nat` > `nat64`, and the move is not automatic.
 
 The refusal is read at boot, on an 80-column console, so it is broken into parts that fit: the file path and the refused line come out **whole**, each on its own line, so you can copy and search for them; the reason comes as running text below.

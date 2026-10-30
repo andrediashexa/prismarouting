@@ -131,7 +131,7 @@ Measured on a 20 Mbit/s plan, the shaper against the policer:
 
 |     | shaper | policer |
 |-----|--------|---------|
-| one TCP connection | 19.3 Mbit/s, 17 retransmissions | 19.7 Mbit/s, 823 retransmissions |
+| one TCP connection | 19\.3 Mbit/s, 17 retransmissions | 19\.7 Mbit/s, 823 retransmissions |
 | ping during that connection | 25 ms  | 12 ms   |
 | four connections sharing the plan | evenly (Jain 0.994) | unevenly (Jain 0.832) |
 | UDP at 40 Mbit/s | the plan gets through, 19.6 | the plan gets through, 20.3 |

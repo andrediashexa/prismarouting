@@ -102,9 +102,9 @@ From inside a container the VTY cannot — and should not be able to — touch t
 | an account's SSH keys; checking and reloading SSH | `ssh-key` inside `user`; `ssh ...` |
 | turning SNMP on and off, and its files | `snmp ...`, `snmp-user <name>` |
 | DNS resolvers         | `dns server <address>`       |
-| the box's name | `hostname <name>` |
+| the box's name        | `hostname <name>`            |
 | the Linux VRFs and the interfaces in them, management's included | `vrf` in an interface; `system` > `management` > `vrf` |
-| the management API's settings | `api ...` |
+| the management API's settings | `api ...`                    |
 | starting, restarting and stopping the PPPoE container, rereading RADIUS and ending sessions | `commit` with `pppoe ...` or `aaa ...`; `clear pppoe session` |
 | the Linux side of a dataplane interface: up, down, MTU, description | `interface`, `shutdown`, `mtu`, `description` |
 | restoring the management default route after a card changed owner | happens on its own           |
