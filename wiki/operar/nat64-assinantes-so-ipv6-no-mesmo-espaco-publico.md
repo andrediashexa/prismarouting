@@ -37,12 +37,13 @@ Você precisa de três coisas definidas:
 | O quê | Exemplo nesta página | Por quê |
 |-------|----------------------|---------|
 | Os prefixos IPv6 dos assinantes e o tamanho que cada um recebe | `2001:db8:1200::/48`, cada assinante um /56 | são o lado de dentro do pool |
-| O prefixo público IPv4 | `203.0.113.0/29` | é o lado de fora, como num pool IPv4 |
-| O prefixo NAT64 (RFC 6052) | `64:ff9b:1::/48` | é para onde o assinante manda o tráfego destinado a IPv4 |
+| O prefixo público IPv4 | `203.0.113.0/29`     | é o lado de fora, como num pool IPv4 |
+| O prefixo NAT64 (RFC 6052) | `64:ff9b:1::/48`     | é para onde o assinante manda o tráfego destinado a IPv4 |
 
 O prefixo NAT64 tem comprimento 32, 40, 48, 56, 64 ou 96. Sem `nat64-prefix`, o pool usa o prefixo bem conhecido `64:ff9b::/96` — e, sob ele, endereços IPv4 que não são globais (privados, compartilhados, loopback, documentação e afins) nunca são alcançados, como manda a RFC 6052.
 
 # Passo a passo
+
 
 1. **Marque a interface dos assinantes como lado de dentro.** É a mesma marcação de um pool IPv4: a tradução NAT64 roda nas interfaces `cgnat inside`, e só enquanto existe um pool NAT64.
 
@@ -55,7 +56,6 @@ O prefixo NAT64 tem comprimento 32, 40, 48, 56, 64 ou 96. Sem `nat64-prefix`, o 
    ```
 
    A interface pública continua com `cgnat outside`, como em qualquer pool.
-
 2. **Crie o pool em** `nat` **>** `nat64`. É um prefixo IPv6 em `prefix-inside` que faz dele um pool NAT64.
 
    ```
@@ -73,7 +73,6 @@ O prefixo NAT64 tem comprimento 32, 40, 48, 56, 64 ou 96. Sem `nat64-prefix`, o 
    ```
 
    A conta de capacidade é a de um pool IPv4: um /48 em /56 são 256 assinantes; 8 endereços públicos, cada um com 63 blocos de 1024 portas (portas 1024 a 65535), dão 504 lugares. Um pool aceita até 2^28 assinantes, e com IPv6 isso é uma recusa que se encontra de verdade: `2001:db8::/32` em /56 cabe; em /64, não.
-
 3. **Dê à rede as duas rotas que o pool precisa.** O prefixo NAT64 precisa chegar a esta caixa pelo lado IPv6, e os prefixos dos assinantes precisam de rota de volta — como os assinantes IPv4 atrás de um BNG.
 
    ```
@@ -84,7 +83,6 @@ O prefixo NAT64 tem comprimento 32, 40, 48, 56, 64 ou 96. Sem `nat64-prefix`, o 
    ```
 
    A rota `blackhole` não prende tráfego nenhum de assinante: a tradução acontece antes da consulta de rota. Ela só dá ao BGP algo para anunciar. Se a caixa tem BGP, anuncie o prefixo NAT64 na família IPv6 (`network 64:ff9b:1::/48` sob `address-family ipv6 unicast`); quando nada o anuncia, o `commit check` avisa, e o aviso já traz as duas linhas que resolvem. O prefixo público IPv4 é anunciado como o de qualquer pool.
-
 4. **Confira e aplique.**
 
    ```
@@ -95,7 +93,6 @@ O prefixo NAT64 tem comprimento 32, 40, 48, 56, 64 ou 96. Sem `nat64-prefix`, o 
    ```
 
    O `commit check` recusa pelo nome o que um pool NAT64 não aceita (veja **Limites**) e o pool escrito no lugar antigo, dentro de `cgnat`.
-
 5. **Anuncie o prefixo NAT64 aos CLATs (PREF64).** Para o 464XLAT, o CLAT do assinante precisa saber o prefixo NAT64, e numa caixa com mais de um pool, ou com um prefixo que não é o bem conhecido, ele não tem como adivinhar. A caixa coloca o prefixo nos anúncios de roteador (opção PREF64, RFC 8781), na interface dos assinantes:
 
    ```
@@ -108,11 +105,12 @@ O prefixo NAT64 tem comprimento 32, 40, 48, 56, 64 ou 96. Sem `nat64-prefix`, o 
    ```
 
    `ipv6 nd nat64` sem prefixo anuncia `64:ff9b::/96`, e a linha pode se repetir, um prefixo por linha. O `commit check` recusa a linha numa interface que não anuncia e recusa um prefixo que nenhum pool NAT64 da caixa traduz — um CLAT que aprendesse esse prefixo mandaria o IPv4 dele para um lugar onde a caixa descarta.
-
 6. **Configure o DNS64 no seu resolvedor, com o mesmo prefixo.** A caixa não é o resolvedor do assinante, então não sintetiza AAAA nem responde `ipv4only.arpa` (RFC 7050). O resolvedor DNS64 que você opera precisa sintetizar com o mesmo prefixo que o pool traduz e que a caixa anuncia; se os dois divergem, os dois métodos de descoberta discordam, e alguns CLATs preferem a resposta do DNS.
+
 
 :::warning
 **Antes de atualizar uma caixa que tem pool NAT64 dentro de** `cgnat`**.** A forma antiga — um pool NAT64 escrito dentro de `nat` > `cgnat` — é recusada no `commit check` e quando o arquivo salvo é carregado, nomeando a forma nova, e nada a move sozinho. Reescreva o pool em `nat` > `nat64` antes da atualização, ou a caixa sobe sem aceitar esse arquivo.
+
 :::
 
 # Os campos do pool
@@ -149,8 +147,10 @@ O logging é o mesmo do CGNAT, configurado em `cgnat`, e segue as mesmas regras 
 
 Os eventos são os mesmos do IPv4: alocação, liberação e bloco esgotado (registrado uma vez por intervalo, por mais pacotes que sejam recusados).
 
+
 :::info
 **Pool determinístico não gera evento de bloco**, como no IPv4: o mapeamento é a fórmula mais a configuração datada na trilha. Para responder a uma ordem judicial sobre um pool determinístico, a trilha é a prova; num pool `mode bpa`, é o registro exportado.
+
 :::
 
 # Consultar e limpar
@@ -190,8 +190,10 @@ interface enp2s0
 
 Medido em laboratório com um assinante só IPv6: o tráfego traduzido voltou entre 2,8 e 4,0 segundos depois de um cabo de uplink puxado, de um dataplane parado e de um dataplane morto, sempre no mesmo endereço público e numa porta do mesmo bloco. As conexões abertas caem, como no IPv4: um fluxo UDP volta numa porta nova do mesmo bloco, uma conexão TCP é reiniciada.
 
+
 :::info
 **Um pool NAT64** `mode bpa` **num par não tem essa medida.** Como num pool BPA IPv4, o mestre novo aloca do zero, então o bloco do assinante — e talvez o endereço — muda numa troca. O passo a passo do par está em [Montar um par ativo/standby](/s/wiki/doc/montar-um-par-ativostandby-CkNb7AvtnG).
+
 :::
 
 # Limites
@@ -232,6 +234,8 @@ Com um endereço público e uma porta que estejam no bloco do assinante, a respo
 
 Do lado do assinante: um CLAT que ouve os anúncios da interface deve aprender o prefixo NAT64 pela opção PREF64, e uma consulta AAAA de um nome só IPv4 ao seu resolvedor deve voltar dentro do mesmo prefixo.
 
+
 :::success
 Pool listado em `show nat64 pool`, o assinante com o bloco certo em `show nat64 subscriber`, a tradução respondendo pelo prefixo dele e o coletor recebendo o registro com o prefixo: seus assinantes só IPv6 estão saindo pelo mesmo espaço público do CGNAT, e cada porta continua respondível.
+
 :::

@@ -27,12 +27,14 @@ flowchart LR
 The configuration is the same for both kinds of card, but what the box does underneath is different, and so is what the interface block accepts:
 
 | The management card is… | Where it shows | What its `interface` block accepts |
-|-------------------------|----------------|------------------------------------|
+|-------------------------|----------------|----------------------------------|
 | **paired by the dataplane** — the box took the card and the management address lives on the Linux pair the dataplane keeps for it (a one-card box, or a card named under `system` > `dataplane`) | in `show interface`, as a dataplane port | `vrf` and the rest of the block, like any interface |
-| **Linux's only** — the card reserved for Linux at installation; on a virtual machine, usually a virtio card beside the cards the dataplane takes | in `show hardware`, under `Reserved for Linux:` | `vrf` only |
+| **Linux's only** — the card reserved for Linux at installation; on a virtual machine, usually a virtio card beside the cards the dataplane takes | in `show hardware`, under `Reserved for Linux:` | `vrf` only                       |
+
 
 :::info
 **A card only Linux has: from 0.155.19.** Up to 0.155.18 the `commit` passed `commit check` and failed at apply (`the dataplane does not have it`). On an older box, upgrade before following this page.
+
 :::
 
 On a card only Linux has, the address, MTU and description stay Linux's — the address stays where the installer put it, in `/etc/network/interfaces.d/prisma-routing` — and `commit check` refuses anything but `vrf` in its block.
@@ -110,8 +112,10 @@ The session you typed `commit confirmed` in usually stays alive across the chang
 
 If nothing reaches the box any more, nobody confirms, and in 10 minutes it undoes everything on its own: the card leaves the VRF, the rules and the kernel settings go, and — on a card only Linux has — the installer's default goes back into the main table. The box answers SSH, the API and SNMP on the main table again. The revert is armed on the box, not in your session: losing the connection does not cancel it — the mechanism is in [commit, rollback and save](/s/wiki-en/doc/commit-rollback-and-save-HVsz5GElE1).
 
+
 :::warning
 **Taking management out of the VRF ends the SSH sessions opened through it.** That holds for a `commit confirmed` that expires and for `no vrf` under `management`. The box answers new connections on the main table.
+
 :::
 
 # 4. Save
@@ -148,8 +152,10 @@ The subscribers' default never carries the box's own traffic: it is exactly the 
 | the log container's syslog and IPFIX over TCP | management, unless the main table has a specific route to the collector — a collector on the subscribers' side is reached by its route in main |
 | IPFIX over UDP sent by the dataplane | **the main table**, always |
 
+
 :::warning
 **IPFIX over UDP does not follow management.** The dataplane builds those packets and sends them through its own forwarding table, never through Linux's rules. A collector reachable only over the management network needs a specific route to it in the main table — or the TCP export. Without that, the translation records do not reach the collector.
+
 :::
 
 A service listening in the main table also answers on a tenant VRF whose Linux side reaches the box's address. Keep that in mind if a tenant VRF has a route to the management network.
@@ -157,6 +163,7 @@ A service listening in the main table also answers on a tenant VRF whose Linux s
 # What survives a reboot
 
 With the configuration saved, every boot puts it all back, in this order:
+
 
 1. before the dataplane, snmpd, sshd and the API start, the box turns on the kernel settings and the rules for its own traffic — they name table 100, not the device, so they do not depend on the VRF existing yet;
 2. loading the configuration makes the VRF `mgmt` and puts the card in it;
@@ -198,6 +205,8 @@ With more than one table the screen separates the VRFs. In the main table the de
 
 **3. Management answers:** from outside, a new SSH session to `192.0.2.10` and another to `2001:db8:6::10`, and an SNMP query to each, if you use SNMP.
 
+
 :::success
 `show system management` with `in effect` matching `configured`, the main table's default pointing at the upstream, and a new SSH session coming in on both management addresses: the subscribers have the main table to themselves, and management has its own path.
+
 :::

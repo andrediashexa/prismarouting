@@ -2,6 +2,7 @@
 
 Para quien quiere ver en el syslog del NOC lo que pasa en el equipo — commits, reinicios y su causa, enlaces, módulos, sesiones BGP y BFD, pools sin bloques, logins — sin tener que entrar en él. Esta página dice qué es ese registro, cómo leerlo en el propio equipo, cómo enviarlo a uno o más colectores syslog y cómo comprobar que está llegando.
 
+
 :::warning
 **Esto no es la exportación de los registros del CGNAT.** Quién usó qué IP pública y puerto, para responder a una orden judicial, sale por `nat` > `cgnat` > `logging` (IPFIX o syslog) y está en [Logging IPFIX y trail de auditoría](/s/wiki-es/doc/logging-ipfix-y-trail-de-auditoria-LHGHuvEHJy) y [Adónde van los registros: colector, transporte y retención](/s/wiki-es/doc/adonde-van-los-registros-colector-transporte-y-retencion-mICkEG4K9V). El log de eventos de esta página **no lleva** ningún registro de conexión: configurar solo `system` > `logging` deja al equipo sin la retención que exige la ley.
 
@@ -20,11 +21,11 @@ flowchart LR
     D["Dataplane<br/>(asignación de bloques CGNAT)"] -->|"nat > cgnat > logging"| C["Colector de la retención legal"]
 ```
 
-| | Log de eventos (esta página) | Registros del CGNAT |
-|---|---|---|
-| Qué dice | lo que le pasó al equipo | quién tenía qué IP pública y puerto |
+|     | Log de eventos (esta página) | Registros del CGNAT |
+|-----|------------------------------|---------------------|
+| Qué dice | lo que le pasó al equipo     | quién tenía qué IP pública y puerto |
 | Para qué sirve | operación, NOC, auditoría interna | responder a una orden judicial, retención de un año |
-| Dónde se configura | `system` > `logging` | `nat` > `cgnat` > `logging` |
+| Dónde se configura | `system` > `logging`         | `nat` > `cgnat` > `logging` |
 | En el propio equipo | `show log`, `monitor log`, `show system logging` | `show cgnat logging`, `monitor cgnat logging` |
 | En el syslog | APP-NAME `prisma-routing`, facility `daemon` (3) | APP-NAME `prisma-cgnat`, facility `local0` (16) si no se indica |
 
@@ -37,33 +38,33 @@ El registro lo escribe quien actúa — la VTY, la API, los scripts del host —
 Cada evento tiene la hora, un **nivel**, un **origen**, un **tipo** y una frase, con quién lo hizo y desde dónde cuando se sabe.
 
 | Nivel | Cuándo |
-|---|---|
+|-------|--------|
 | `error` | una alarma de módulo, el equipo renunciando al dataplane |
 | `warning` | algo que pide atención: enlace caído, sesión BGP saliendo de Established, arranque que nadie pidió, login con contraseña equivocada |
 | `notice` | un cambio normal: commit, enlace de vuelta, sesión arriba, login |
 | `info` | rutina: logout, la cabeza del trail de sesiones PPPoE |
 
 | Origen (`source`) | Quién lo vio |
-|---|---|
-| `vty` | una sesión de la VTY |
-| `api` | la API de gestión |
-| `host` | el host: el arranque, los logins, las placas que tiene Linux, el equipo renunciando al dataplane, el plano de control PPPoE |
-| `dataplane` | los puertos del dataplane, sus módulos, los pools, la exportación de log del CGNAT |
-| `routing` | el FRR: sesiones BGP y BFD |
+|-----------------|--------------|
+| `vty`           | una sesión de la VTY |
+| `api`           | la API de gestión |
+| `host`          | el host: el arranque, los logins, las placas que tiene Linux, el equipo renunciando al dataplane, el plano de control PPPoE |
+| `dataplane`     | los puertos del dataplane, sus módulos, los pools, la exportación de log del CGNAT |
+| `routing`       | el FRR: sesiones BGP y BFD |
 
 | Tipo (`kind`) | Qué es |
-|---|---|
+|-------------|--------|
 | `commit`, `rollback`, `confirm`, `confirm-expired` | la configuración cambió, volvió atrás, se confirmó, o un `commit confirmed` venció y se deshizo |
-| `asked` | un reinicio, actualización, reboot o apagado pedido, y por quién |
+| `asked`     | un reinicio, actualización, reboot o apagado pedido, y por quién |
 | `start`, `boot`, `upgraded` | el dataplane, el enrutamiento o el plano de control PPPoE arrancó, **con la causa**; el equipo arrancó; una actualización terminó |
-| `settings` | la configuración de SNMP, de la API o de `system` > `logging` aplicada o rechazada por un commit |
-| `link` | el enlace de un puerto cayó o volvió, administrativo o no; cayó y volvió entre dos lecturas, con cuántas veces |
+| `settings`  | la configuración de SNMP, de la API o de `system` > `logging` aplicada o rechazada por un commit |
+| `link`      | el enlace de un puerto cayó o volvió, administrativo o no; cayó y volvió entre dos lecturas, con cuántas veces |
 | `transceiver` | módulo insertado, retirado, cambiado; RX o temperatura más allá de un aviso o alarma, y de vuelta |
 | `bgp`, `bfd` | sesión arriba, o caída con el motivo del FRR o el diagnóstico del bfdd |
-| `pool` | pool CGNAT sin bloque libre, y con bloque libre de nuevo |
+| `pool`      | pool CGNAT sin bloque libre, y con bloque libre de nuevo |
 | `collector` | la exportación de los registros del CGNAT perdió o alcanzó su colector |
-| `login` | login, logout, login con contraseña equivocada |
-| `gave-up` | el equipo renunció al dataplane, o un `system dataplane restart` no terminó |
+| `login`     | login, logout, login con contraseña equivocada |
+| `gave-up`   | el equipo renunció al dataplane, o un `system dataplane restart` no terminó |
 | `exit`, `radius`, `trail` | con PPPoE: el plano de control se detuvo, un servidor RADIUS cayó o volvió, la cabeza del trail de sesiones |
 
 Dos reglas evitan que el registro se vuelva ruido. Algo que cae y vuelve sin parar sale cuatro veces en 5 minutos y, desde ahí, una línea por ventana de 5 minutos con la cuenta. Y lo que **ya** estaba mal cuando el vigilante arrancó — un puerto habilitado sin enlace, un módulo más allá del aviso, una sesión configurada que no subió — se dice una vez por arranque, en presente, empezando por `standing at start:`.
@@ -115,17 +116,18 @@ configure
 `host <dirección> [port <n>] [protocol udp|tcp] [severity <nivel>] [source-address <dirección>] [vrf <nombre>]`:
 
 | Opción | Si no se indica | Qué hace por usted |
-|---|---|---|
-| `<dirección>` | — | el colector, IPv4 o IPv6. **Dirección, nunca nombre**: el equipo cuyo DNS cayó es justamente el que más necesita enviar sus eventos |
-| `protocol udp\|tcp` | `udp` | UDP: un datagrama por evento. TCP: un flujo con encuadre por conteo de octetos (RFC 6587), y nada se pierde mientras el colector está fuera (abajo) |
+|--------|-----------------|--------------------|
+| `<dirección>` | —               | el colector, IPv4 o IPv6. **Dirección, nunca nombre**: el equipo cuyo DNS cayó es justamente el que más necesita enviar sus eventos |
+| `protocol udp\|tcp` | `udp`           | UDP: un datagrama por evento. TCP: un flujo con encuadre por conteo de octetos (RFC 6587), y nada se pierde mientras el colector está fuera (abajo) |
 | `port <n>` | 514 en UDP, 601 en TCP | el puerto del colector |
-| `severity error\|warning\|notice\|info` | `info` (todo) | el nivel mínimo enviado: ese y los más graves |
+| `severity error\|warning\|notice\|info` | `info` (todo)   | el nivel mínimo enviado: ese y los más graves |
 | `source-address <dirección>` | la que elija la ruta | la dirección de origen que ve el colector; de la misma familia que el colector |
 | `vrf <nombre>` | las rutas del Linux del equipo | la VRF por donde sale el evento; tiene que ser un `vrf <nombre> table <n>` de la configuración, si no el `commit check` lo rechaza |
 
 Son hasta cuatro destinos, uno por dirección: un segundo `host` para la misma dirección reemplaza al primero, y `no host <dirección>` deja de enviar a él. `show this`, dentro de `logging`, muestra lo configurado.
 
 **Vale en el** `**commit**`**, sin reiniciar nada.** El commit dice cuántos destinos quedaron (`logging: 2 remote syslog destination(s)`), el registro gana un evento `settings`, y el vigilante empieza a enviar en menos de un segundo. Recuerde el `save` para que la configuración sobreviva al arranque.
+
 
 :::info
 **Un destino nuevo empieza desde ahora.** Lo que ya estaba en el registro antes del commit no se envía; para el pasado, use `show log`. Desde ahí, cada destino guarda hasta dónde ya recibió.
@@ -140,6 +142,7 @@ Quien envía es el propio vigilante de eventos, y su cola es el propio registro:
 * **En UDP, el equipo solo sabe que el envío falló si el sistema lo dice** (un puerto inalcanzable respondido, una ruta que no existe). Un colector que simplemente desaparece no se nota, y lo enviado en ese tiempo se pierde.
 
 Para el NOC que necesita la línea de tiempo completa, TCP.
+
 
 :::info
 **Con PPPoE, la cabeza del trail de sesiones sale por aquí, en nivel** `**info**`**.** Es la copia fuera del equipo con la que `show pppoe history verify` compara el trail. Un destino con `severity notice` o más grave no la recibe: deje al menos un colector en `info`.
@@ -195,9 +198,9 @@ Una línea por destino, con la dirección, el puerto, el protocolo y el nivel m�
 ```
 
 | Lo que aparece | Lo que significa |
-|---|---|
-| `ready` | el destino se leyó y todavía no hubo evento de su nivel para enviar |
-| `sending` | el último envío salió bien |
+|----------------|------------------|
+| `ready`        | el destino se leyó y todavía no hubo evento de su nivel para enviar |
+| `sending`      | el último envío salió bien |
 | `not reached: <reason>; tried again every 30 s` | el colector no se alcanzó, con el motivo que dio el sistema (`connection refused`, por ejemplo); en TCP nada de lo que esperaba se pierde |
 | `not forwarding yet: the watcher (prisma-routing-events-watch) has not said` | el vigilante todavía no pasó desde el commit, o está detenido hace más de un minuto |
 | `no remote syslog destination: the record stays on the box ('show log')` | nada configurado en `system` > `logging` |
@@ -209,6 +212,7 @@ prisma> show log kind login last 5
 ```
 
 En el colector, la misma línea, con APP-NAME `prisma-routing` y MSGID `LOGIN`. En el equipo, `show system logging` pasa a `sending` y el contador sube.
+
 
 :::success
 `sending` en `show system logging`, el mismo evento en `show log` y en el colector: el log de eventos del equipo está llegando al NOC.

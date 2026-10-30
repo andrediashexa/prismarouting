@@ -37,12 +37,13 @@ Necesita tres cosas definidas:
 | Qué | Ejemplo en esta página | Por qué |
 |-----|------------------------|---------|
 | Los prefijos IPv6 de los suscriptores y el tamaño que recibe cada uno | `2001:db8:1200::/48`, cada suscriptor un /56 | son el lado de adentro del pool |
-| El prefijo público IPv4 | `203.0.113.0/29` | es el lado de afuera, como en un pool IPv4 |
-| El prefijo NAT64 (RFC 6052) | `64:ff9b:1::/48` | es adonde el suscriptor manda el tráfico destinado a IPv4 |
+| El prefijo público IPv4 | `203.0.113.0/29`       | es el lado de afuera, como en un pool IPv4 |
+| El prefijo NAT64 (RFC 6052) | `64:ff9b:1::/48`       | es adonde el suscriptor manda el tráfico destinado a IPv4 |
 
 El prefijo NAT64 tiene largo 32, 40, 48, 56, 64 o 96. Sin `nat64-prefix`, el pool usa el prefijo bien conocido `64:ff9b::/96` — y, bajo él, las direcciones IPv4 que no son globales (privadas, compartidas, loopback, documentación y similares) nunca se alcanzan, como manda la RFC 6052.
 
 # Paso a paso
+
 
 1. **Marque la interfaz de los suscriptores como lado de adentro.** Es la misma marca que en un pool IPv4: la traducción NAT64 corre en las interfaces `cgnat inside`, y solo mientras existe un pool NAT64.
 
@@ -55,7 +56,6 @@ El prefijo NAT64 tiene largo 32, 40, 48, 56, 64 o 96. Sin `nat64-prefix`, el poo
    ```
 
    La interfaz pública sigue con `cgnat outside`, como en cualquier pool.
-
 2. **Cree el pool en** `nat` **>** `nat64`. Un prefijo IPv6 en `prefix-inside` es lo que lo hace un pool NAT64.
 
    ```
@@ -73,7 +73,6 @@ El prefijo NAT64 tiene largo 32, 40, 48, 56, 64 o 96. Sin `nat64-prefix`, el poo
    ```
 
    La cuenta de capacidad es la de un pool IPv4: un /48 en /56 son 256 suscriptores; 8 direcciones públicas, cada una con 63 bloques de 1024 puertos (puertos 1024 a 65535), dan 504 lugares. Un pool acepta hasta 2^28 suscriptores, y con IPv6 ese es un rechazo que se encuentra de verdad: `2001:db8::/32` en /56 cabe; en /64, no.
-
 3. **Dé a la red las dos rutas que el pool necesita.** El prefijo NAT64 tiene que llegar a este equipo por el lado IPv6, y los prefijos de los suscriptores necesitan ruta de vuelta — como los suscriptores IPv4 detrás de un BNG.
 
    ```
@@ -84,7 +83,6 @@ El prefijo NAT64 tiene largo 32, 40, 48, 56, 64 o 96. Sin `nat64-prefix`, el poo
    ```
 
    La ruta `blackhole` no retiene tráfico de ningún suscriptor: la traducción ocurre antes de la consulta de ruta. Solo le da a BGP algo para anunciar. Si el equipo tiene BGP, anuncie el prefijo NAT64 en la familia IPv6 (`network 64:ff9b:1::/48` bajo `address-family ipv6 unicast`); cuando nada lo anuncia, el `commit check` avisa, y el aviso ya trae las dos líneas que lo resuelven. El prefijo público IPv4 se anuncia como el de cualquier pool.
-
 4. **Verifique y aplique.**
 
    ```
@@ -95,7 +93,6 @@ El prefijo NAT64 tiene largo 32, 40, 48, 56, 64 o 96. Sin `nat64-prefix`, el poo
    ```
 
    El `commit check` rechaza por nombre lo que un pool NAT64 no acepta (vea **Límites**) y el pool escrito en el lugar antiguo, dentro de `cgnat`.
-
 5. **Anuncie el prefijo NAT64 a los CLAT (PREF64).** Para 464XLAT, el CLAT del suscriptor tiene que conocer el prefijo NAT64, y en un equipo con más de un pool, o con un prefijo que no es el bien conocido, no tiene cómo adivinarlo. El equipo pone el prefijo en sus anuncios de router (la opción PREF64, RFC 8781), en la interfaz de los suscriptores:
 
    ```
@@ -108,11 +105,12 @@ El prefijo NAT64 tiene largo 32, 40, 48, 56, 64 o 96. Sin `nat64-prefix`, el poo
    ```
 
    `ipv6 nd nat64` sin prefijo anuncia `64:ff9b::/96`, y la línea puede repetirse, un prefijo por línea. El `commit check` rechaza la línea en una interfaz que no anuncia y rechaza un prefijo que ningún pool NAT64 del equipo traduce — un CLAT que aprendiera ese prefijo mandaría su IPv4 a un lugar donde el equipo descarta.
-
 6. **Configure DNS64 en su resolver, con el mismo prefijo.** El equipo no es el resolver del suscriptor, así que no sintetiza registros AAAA ni responde `ipv4only.arpa` (RFC 7050). El resolver DNS64 que usted opera tiene que sintetizar con el mismo prefijo que el pool traduce y que el equipo anuncia; si los dos difieren, los dos métodos de descubrimiento no coinciden, y algunos CLAT prefieren la respuesta del DNS.
+
 
 :::warning
 **Antes de actualizar un equipo que tiene un pool NAT64 dentro de** `cgnat`**.** La forma antigua — un pool NAT64 escrito dentro de `nat` > `cgnat` — se rechaza en el `commit check` y cuando se carga el archivo guardado, nombrando la forma nueva, y nada la mueve sola. Reescriba el pool en `nat` > `nat64` antes de la actualización, o el equipo arranca sin aceptar ese archivo.
+
 :::
 
 # Los campos del pool
@@ -149,8 +147,10 @@ El logging es el del CGNAT, configurado en `cgnat`, y sigue las mismas reglas �
 
 Los eventos son los de IPv4: asignación, liberación y bloque agotado (registrado una vez por intervalo, por más paquetes que se rechacen).
 
+
 :::info
 **Un pool determinístico no genera eventos de bloque**, como en IPv4: el mapeo es la fórmula más la configuración fechada en el trail. Para responder a una orden judicial sobre un pool determinístico, el trail es la prueba; en un pool `mode bpa`, es el registro exportado.
+
 :::
 
 # Consultar y limpiar
@@ -190,8 +190,10 @@ interface enp2s0
 
 Medido en laboratorio con un suscriptor solo IPv6: el tráfico traducido volvió entre 2,8 y 4,0 segundos después de un cable de uplink desconectado, de un dataplane detenido y de un dataplane matado, siempre en la misma dirección pública y en un puerto del mismo bloque. Las conexiones abiertas se caen, como en IPv4: un flujo UDP vuelve en un puerto nuevo del mismo bloque, una conexión TCP se reinicia.
 
+
 :::info
 **Un pool NAT64** `mode bpa` **en un par no tiene esa medición.** Como en un pool BPA IPv4, el nuevo maestro asigna desde cero, así que el bloque del suscriptor — y tal vez la dirección — cambia en una conmutación. El paso a paso del par está en [Montar un par activo/standby](/s/wiki-es/doc/montar-un-par-activostandby-RHAskyjrZc).
+
 :::
 
 # Límites
@@ -232,6 +234,8 @@ Con una dirección pública y un puerto que estén en el bloque del suscriptor, 
 
 Del lado del suscriptor: un CLAT que escucha los anuncios de la interfaz debe aprender el prefijo NAT64 por la opción PREF64, y una consulta AAAA de un nombre solo IPv4 a su resolver debe volver dentro del mismo prefijo.
 
+
 :::success
 El pool listado en `show nat64 pool`, el suscriptor con el bloque correcto en `show nat64 subscriber`, la traducción respondiendo con su prefijo y el colector recibiendo el registro con el prefijo: sus suscriptores solo IPv6 están saliendo por el mismo espacio público del CGNAT, y cada puerto sigue siendo respondible.
+
 :::

@@ -3,6 +3,7 @@ comecar-aqui/configurar-o-cgnat-passo-a-passo.md da9a32f8-815d-4067-8e7b-b2f49bc
 comecar-aqui/dimensionamento-e-requisitos.md 7acb4e83-a2b1-4564-be73-67d849fb5310
 comecar-aqui/index.md e5729e46-eb19-4823-be7d-bed1072921db
 comecar-aqui/instalacao-da-appliance.md 136335b8-81d0-46f7-8a75-93960cdd92de
+comecar-aqui/por-assinantes-pppoe-no-ar-passo-a-passo.md dbc65f34-1899-42c8-909a-ab3a2000a9a4
 comecar-aqui/primeiros-passos.md 8aac285f-acd8-44b4-bcc1-6d4eba77944d
 comecar-aqui/rodar-o-prisma-routing-numa-maquina-virtual.md 4ae9817a-8b42-4f05-917f-f0bff641d4cb
 comenzar-aqui/acceso-login-y-roles.md 731884f7-553b-4caa-acbf-e17162b5e3d7
@@ -11,6 +12,7 @@ comenzar-aqui/dimensionamiento-y-requisitos.md eb5d40cf-2569-42a1-8277-5b5d5b55d
 comenzar-aqui/ejecutar-prisma-routing-en-una-maquina-virtual.md 3cf4a5b0-5ac9-4a53-bcc2-a6ed19f4b4b5
 comenzar-aqui/index.md ab42a226-4557-4730-97ad-951797f70cc6
 comenzar-aqui/instalacion-del-appliance.md 0e4cad28-a730-4f6f-acb2-5b0264ed8fe2
+comenzar-aqui/poner-suscriptores-pppoe-en-el-aire-paso-a-paso.md e0899b58-c209-442e-be84-877a74fa634b
 comenzar-aqui/primeros-pasos.md 0cbdc67a-7c74-44e5-94a9-0d8ad9ca27fd
 entender-el-producto/alta-disponibilidad.md 1b441aa1-22c9-4ac6-9c3b-3b91c3889b76
 entender-el-producto/deterministico-y-bpa-conceptos-y-mapeo.md 5ab3687a-e8a8-4931-bcf7-e86e8fd99e23
@@ -25,11 +27,14 @@ operar-2/ampliar-la-capacidad-sin-tirar-suscriptores.md 8849e2d0-4737-404b-aa52-
 operar-2/comportamiento-nat-y-compatibilidad.md 89ccd042-92f2-4f07-9cb8-3441141b81d3
 operar-2/cuando-se-llena-el-bloque-de-un-suscriptor.md 9ba37a30-f78f-4a33-bc00-d15fbb5d1bff
 operar-2/el-equipo-arranco-y-no-reenvia.md badb9359-b933-4e99-921f-be814f95acde
+operar-2/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc.md c581285e-b035-4445-b4f0-17c5b3df091c
+operar-2/gestion-en-una-vrf-propia.md 2c7cc89d-d5b8-445a-890e-61abbbe1d536
 operar-2/index.md 3a51d9a5-76fa-4072-832d-62ebca8e0762
 operar-2/llevar-el-equipo-a-una-version-nueva.md 4304b66f-9bc2-4741-9a34-88d3a0e015df
 operar-2/logging-ipfix-y-trail-de-auditoria.md 2e2c386e-ae26-463c-8868-56af8e4bc3f6
 operar-2/monitoreo-y-snmp.md 45290d6d-06f8-48ab-b203-37778377cbea
 operar-2/montar-un-par-activo-standby.md 1de0ac83-28be-4a80-b30a-c7bfad7a4765
+operar-2/nat64-suscriptores-solo-ipv6-en-el-mismo-espacio-publico.md fca4d5c7-eab1-4876-86ee-06e1cd663aab
 operar-2/operacion-y-diagnostico.md 5eb69381-fc10-4823-b40a-6e3f430853af
 operar-2/protocolos-y-alg.md 2114bec1-c120-4867-9853-1a08c75161fa
 operar-2/recetas-del-dia-a-dia.md 4d5c3a17-13da-43c5-af0a-4ca868dd78f1
@@ -39,11 +44,14 @@ operar/a-caixa-subiu-e-nao-encaminha.md 9bed49e3-9a6f-4015-b275-8023e72f18d5
 operar/ampliar-capacidade-sem-derrubar-assinantes.md ef9ae742-1777-4117-842d-ef0c50c0ef99
 operar/comportamento-nat-e-compatibilidade.md 6feeda9a-bb5b-4004-9363-d60225eae88f
 operar/encaminhamento-de-porta.md 19115ee0-c4b0-41a4-ba4f-d016a9da5fe8
+operar/gerencia-numa-vrf-propria.md 4477c576-5e96-4e5c-97de-8c14fd722b81
 operar/index.md 1c2ea293-808d-4c9f-9f58-95efc4c1dc08
 operar/levar-a-caixa-para-uma-versao-nova.md 542d4218-4add-4bf0-82a5-6c12915656ee
 operar/logging-ipfix-e-trilha-de-auditoria.md 0911715d-dda7-44a6-8bdf-d1cbf9865b5f
+operar/mandar-o-log-de-eventos-da-caixa-para-o-syslog-do-noc.md 40a5a14d-52b4-4731-a77f-fd6634bd6116
 operar/monitoramento-e-snmp.md 0b7f3242-83be-408a-a791-1b2ec3d53fa3
 operar/montar-um-par-ativo-standby.md c55c21e6-8561-4ef6-93fc-c7e9ac0b7a86
+operar/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico.md 7f050dbd-4dcf-4a77-88a5-95878e965823
 operar/onde-vao-os-registros-coletor-transporte-e-guarda.md f8e5a46c-327e-4912-8adc-e26a0f2f8d5a
 operar/operacao-e-diagnostico.md 8bd91547-0b27-4264-bc3e-71ff3e350bb0
 operar/protocolos-e-algs.md a188948b-4971-4907-96e8-03991aeea51d
@@ -54,11 +62,14 @@ operate/day-to-day-recipes.md 4fd2ea3a-c324-4f75-87d2-529c8fa3af1e
 operate/expanding-capacity-without-dropping-subscribers.md 1ee6d406-3eb9-4dde-88da-3ff089426c6e
 operate/index.md f3a1e0f2-9956-4dd7-a295-d1e97fabd6a9
 operate/ipfix-logging-and-audit-trail.md dd3af328-45ed-4a51-a991-f6d6da208c5e
+operate/management-in-a-vrf-of-its-own.md 03defc39-05bd-4770-abd3-fa1c999106e8
 operate/monitoring-and-snmp.md 09cde2b1-80ca-42fd-bde1-4c06d9fd9f7c
 operate/nat-behavior-and-compatibility.md 95f70eb9-6002-426b-9c70-e40b2bacdc5f
+operate/nat64-ipv6-only-subscribers-in-the-same-public-space.md 25abb82b-d696-4c4f-808c-5a1dc66a6574
 operate/operations-and-troubleshooting.md f6defbbc-8f81-4b7c-89d2-7bd508f5a613
 operate/port-forwarding.md c7932b9c-6a74-460f-8318-0b5b28b31087
 operate/protocols-and-algs.md abd1aa7b-4195-4723-8589-def14b172311
+operate/sending-the-box-s-event-log-to-the-noc-s-syslog.md babbb867-635f-4c52-adcc-815bdf0882b8
 operate/setting-up-an-active-standby-pair.md 5543a273-c545-4f8e-ba58-6d3c07cd0321
 operate/taking-the-box-to-a-new-version.md c7612768-cff5-4df7-a2e6-98161a9d2f73
 operate/the-box-came-up-and-does-not-forward.md d04cd532-6cdb-4aed-9ed7-35ca5ad4d9af
@@ -66,6 +77,7 @@ operate/urpf-and-spoofed-sources.md c9a6abd6-10a9-4b5b-b9b8-3f01bfcaa14d
 operate/when-a-subscriber-s-block-fills-up.md 67a22a49-6602-4015-ad7d-917eea1aa2e4
 operate/where-the-records-go-collector-transport-and-retention.md ff904b56-e2ce-4a37-b3fe-abcc73177a38
 reference/index.md 8abffab4-ad52-4e61-b253-cd87372914e9
+reference/management-api-grpc-for-integrators.md 5af3cdee-f782-4103-a291-246e4dbea973
 reference/multi-tenant-with-vrf.md d41ec211-966d-47de-afb0-2a687e69326e
 reference/prismash-vty-user-guide/bgp-configuration.md ed3bda71-e023-47a9-836c-aff0cf4af393
 reference/prismash-vty-user-guide/cgnat-configuration.md 096abc19-e10f-4d55-adce-71523f4eaa40
@@ -79,6 +91,7 @@ reference/prismash-vty-user-guide/routing-ssh-users-and-snmp.md a9141f17-ca69-4f
 reference/prismash-vty-user-guide/show-commands.md 5a6aab07-0dbe-4fe1-a356-9e35a5994025
 reference/timeouts-and-the-rfc-floors.md 52ec307f-bbb8-4ef1-ba85-83e7a1f70574
 reference/what-runs-on-the-box.md 7549c9da-aff7-4bc4-a644-0dee7561b0dc
+referencia-2/api-de-gestion-grpc-para-quien-integra.md e07953cf-c339-47fa-9cfe-394382425c27
 referencia-2/index.md 40e5c86a-6c5d-4c93-93b2-7497ea845422
 referencia-2/multi-tenant-con-vrf.md 4c3e1cfc-dc87-43a4-bfff-3b267bd0da53
 referencia-2/que-se-ejecuta-en-el-equipo.md e94f271a-3890-4e04-bc1e-afed2fc38ea4
@@ -93,6 +106,7 @@ referencia-2/vty-prismash-guia-de-uso/configuracion-de-pppoe.md 54695167-4078-47
 referencia-2/vty-prismash-guia-de-uso/enrutamiento-ssh-usuarios-y-snmp.md 6ddf963e-a42a-44a8-a88d-7fc6e5379a58
 referencia-2/vty-prismash-guia-de-uso/index.md c841489f-199f-4251-901b-acdaad10267d
 referencia-2/vty-prismash-guia-de-uso/politica-de-enrutamiento-policy-options.md f876eb15-1b05-475d-8ba0-d848ac26d1fc
+referencia/api-de-gerencia-grpc-para-quem-integra.md c53e3173-9ea8-47d6-97b1-74e7923ab686
 referencia/index.md 4e3d993b-52ab-453b-ad0a-ca3c23c53120
 referencia/multi-tenant-com-vrf.md 6e32b6c8-1bf2-445b-b200-63c4a8b2e87a
 referencia/o-que-roda-na-caixa.md ad04b59b-e107-44a8-a6d1-472b377a3ea8
@@ -109,6 +123,7 @@ referencia/vty-prismash-guia-de-uso/politica-de-roteamento-policy-options.md 1c7
 referencia/vty-prismash-guia-de-uso/roteamento-ssh-usuarios-e-snmp.md 33f47432-7dcc-4a28-a19c-3bbc281871cc
 start-here/access-login-and-roles.md c9cda7dc-ee21-49ae-80af-7f8381399922
 start-here/appliance-installation.md 49d67a01-f95d-4a51-a416-e02b14d031b5
+start-here/bring-pppoe-subscribers-online-step-by-step.md 612cfb63-881e-4870-94f8-f0c39fe4d012
 start-here/configure-cgnat-step-by-step.md 783e4b33-966a-4e68-ab5f-e3922e59bf61
 start-here/getting-started.md 16198b45-d2f5-4794-9646-2809efa25eef
 start-here/index.md 3abba718-79b2-48d3-83b0-846f8c4a1d49

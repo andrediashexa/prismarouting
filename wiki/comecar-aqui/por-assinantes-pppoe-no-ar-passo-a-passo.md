@@ -19,7 +19,7 @@ flowchart LR
 | Endereço da caixa em cada sessão | `100.64.0.1` | um endereço da faixa dos assinantes |
 | Endereços das sessões | `100.64.0.10` a `100.64.3.250` | o que o RADIUS não entregar sai daqui |
 | Pool do CGNAT | `100.64.0.0/22` para `203.0.113.0/28` | um `prefix-inside` que cubra os endereços das sessões |
-| Servidores RADIUS | `192.0.2.10` e `192.0.2.11` | os seus |
+| Servidores RADIUS | `192.0.2.10` e `192.0.2.11` | os seus     |
 | IPv6 (opcional) | WAN de `2001:db8:100::/40`, delegado de `2001:db8:200::/36` | prefixos seus |
 
 # Antes de começar
@@ -112,7 +112,7 @@ Cada servidor autentica e recebe contabilização (portas 1812 e 1813) se você 
 **Failover ou round-robin:**
 
 | `mode` | O que acontece | Quando escolher |
-|--------|----------------|-----------------|
+|------|----------------|-----------------|
 | `failover` (o padrão) | todo pedido vai ao servidor de menor `priority`; se ele não responde, o pedido passa ao seguinte e o mudo fica de fora por `dead-time` segundos | um servidor principal e um reserva |
 | `round-robin` | cada pedido vai ao próximo servidor ativo, em rodízio | servidores equivalentes, para dividir a carga |
 
@@ -240,7 +240,7 @@ prisma> show pppoe summary
 | `control plane` | `running`. `configured, NOT running` é um plano de controle que não subiu: veja `show log kind exit` |
 | `sessions` | quantas sessões estão ativas, começando e terminando |
 | `session trail` | quantas linhas o histórico de sessões já gravou; `NOT written` é sessão pela qual a caixa não consegue responder |
-| `access interfaces` | `enp1s0.100` |
+| `access interfaces` | `enp1s0.100`     |
 | `radius` e uma linha por servidor | o modo, os tempos e cada servidor com seu papel; `failed` ao lado de um servidor que não está respondendo |
 | `rate limit` | de onde vem o plano e o padrão, e embaixo o que aplica cada sentido (shaper ou policer) |
 

@@ -16,10 +16,10 @@ flowchart LR
 |-----|---------------|------------|
 | Puerto de acceso | `enp1s0`, VLAN 100 (`enp1s0.100`) | la placa hacia la OLT o el switch de acceso |
 | Puerto de salida | `enp2s0`, con `198.51.100.2/30` | la placa hacia el upstream |
-| Dirección del equipo en cada sesión | `100.64.0.1` | una dirección del rango de los suscriptores |
+| Dirección del equipo en cada sesión | `100.64.0.1`  | una dirección del rango de los suscriptores |
 | Direcciones de las sesiones | `100.64.0.10` a `100.64.3.250` | lo que el RADIUS no entregue sale de aquí |
 | Pool del CGNAT | `100.64.0.0/22` hacia `203.0.113.0/28` | un `prefix-inside` que cubra las direcciones de las sesiones |
-| Servidores RADIUS | `192.0.2.10` y `192.0.2.11` | los suyos |
+| Servidores RADIUS | `192.0.2.10` y `192.0.2.11` | los suyos  |
 | IPv6 (opcional) | WAN de `2001:db8:100::/40`, delegado de `2001:db8:200::/36` | prefijos suyos |
 
 # Antes de empezar
@@ -112,7 +112,7 @@ Cada servidor autentica y recibe contabilidad (puertos 1812 y 1813) si usted no 
 **Failover o round-robin:**
 
 | `mode` | Qué pasa | Cuándo elegirlo |
-|--------|----------|-----------------|
+|------|----------|-----------------|
 | `failover` (el predeterminado) | toda solicitud va al servidor de menor `priority`; si no responde, la solicitud pasa al siguiente y el que calló queda fuera por `dead-time` segundos | un servidor principal y uno de respaldo |
 | `round-robin` | cada solicitud va al siguiente servidor activo, por turno | servidores equivalentes, para repartir la carga |
 
@@ -240,7 +240,7 @@ prisma> show pppoe summary
 | `control plane` | `running`. `configured, NOT running` es un plano de control que no arrancó: vea `show log kind exit` |
 | `sessions` | cuántas sesiones están activas, empezando y terminando |
 | `session trail` | cuántas líneas lleva grabadas el historial de sesiones; `NOT written` es una sesión por la que el equipo no puede responder |
-| `access interfaces` | `enp1s0.100` |
+| `access interfaces` | `enp1s0.100`   |
 | `radius` y una línea por servidor | el modo, los tiempos y cada servidor con su papel; `failed` al lado de un servidor que no está respondiendo |
 | `rate limit` | de dónde viene el plan y el predeterminado, y debajo qué aplica cada sentido (shaper o policer) |
 

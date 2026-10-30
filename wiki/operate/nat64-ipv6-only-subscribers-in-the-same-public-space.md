@@ -37,12 +37,13 @@ You need three things decided:
 | What | Example on this page | Why |
 |------|----------------------|-----|
 | The subscribers' IPv6 prefixes and the size each one gets | `2001:db8:1200::/48`, each subscriber a /56 | they are the pool's inside |
-| The public IPv4 prefix | `203.0.113.0/29` | it is the outside, as in an IPv4 pool |
-| The NAT64 prefix (RFC 6052) | `64:ff9b:1::/48` | it is where the subscriber sends traffic meant for IPv4 |
+| The public IPv4 prefix | `203.0.113.0/29`     | it is the outside, as in an IPv4 pool |
+| The NAT64 prefix (RFC 6052) | `64:ff9b:1::/48`     | it is where the subscriber sends traffic meant for IPv4 |
 
 The NAT64 prefix is 32, 40, 48, 56, 64 or 96 long. Without `nat64-prefix` the pool uses the well-known prefix `64:ff9b::/96` — and, under it, IPv4 addresses that are not global (private, shared, loopback, documentation and the like) are never reached, as RFC 6052 requires.
 
 # Step by step
+
 
 1. **Mark the subscribers' interface as the inside.** It is the same marking as for an IPv4 pool: the NAT64 translation runs on the `cgnat inside` interfaces, and only while a NAT64 pool exists.
 
@@ -55,7 +56,6 @@ The NAT64 prefix is 32, 40, 48, 56, 64 or 96 long. Without `nat64-prefix` the po
    ```
 
    The public interface keeps `cgnat outside`, as for any pool.
-
 2. **Create the pool under** `nat` **>** `nat64`. An IPv6 prefix in `prefix-inside` is what makes it a NAT64 pool.
 
    ```
@@ -73,7 +73,6 @@ The NAT64 prefix is 32, 40, 48, 56, 64 or 96 long. Without `nat64-prefix` the po
    ```
 
    The capacity sum is an IPv4 pool's: a /48 in /56s is 256 subscribers; 8 public addresses, each with 63 blocks of 1024 ports (ports 1024 to 65535), give 504 places. A pool takes up to 2^28 subscribers, and with IPv6 that is a refusal you really meet: `2001:db8::/32` in /56s fits; in /64s it does not.
-
 3. **Give the network the two routes the pool needs.** The NAT64 prefix has to reach this box on the IPv6 side, and the subscribers' prefixes need a route back — as IPv4 subscribers behind a BNG do.
 
    ```
@@ -84,7 +83,6 @@ The NAT64 prefix is 32, 40, 48, 56, 64 or 96 long. Without `nat64-prefix` the po
    ```
 
    The `blackhole` route catches no subscriber traffic: the translation happens before the route lookup. It only gives BGP something to announce. If the box runs BGP, announce the NAT64 prefix in the IPv6 family (`network 64:ff9b:1::/48` under `address-family ipv6 unicast`); when nothing announces it, `commit check` warns, and the warning already carries the two lines that fix it. The public IPv4 prefix is announced as any pool's is.
-
 4. **Check and apply.**
 
    ```
@@ -95,7 +93,6 @@ The NAT64 prefix is 32, 40, 48, 56, 64 or 96 long. Without `nat64-prefix` the po
    ```
 
    `commit check` refuses by name what a NAT64 pool does not take (see **Limits**) and a pool written in the old place, inside `cgnat`.
-
 5. **Announce the NAT64 prefix to the CLATs (PREF64).** For 464XLAT the subscriber's CLAT has to know the NAT64 prefix, and on a box with more than one pool, or with a prefix that is not the well-known one, it cannot guess it. The box puts the prefix in its router advertisements (the PREF64 option, RFC 8781), on the subscribers' interface:
 
    ```
@@ -108,11 +105,12 @@ The NAT64 prefix is 32, 40, 48, 56, 64 or 96 long. Without `nat64-prefix` the po
    ```
 
    `ipv6 nd nat64` with no prefix announces `64:ff9b::/96`, and the line may repeat, one prefix per line. `commit check` refuses the line on an interface that does not advertise, and refuses a prefix no NAT64 pool on the box translates — a CLAT that learned that prefix would send its IPv4 to a place the box drops.
-
 6. **Configure DNS64 on your resolver, with the same prefix.** The box is not the subscriber's resolver, so it does not synthesize AAAA records nor answer `ipv4only.arpa` (RFC 7050). The DNS64 resolver you run has to synthesize with the same prefix the pool translates and the box announces; if the two differ, the two discovery methods disagree, and some CLATs prefer the DNS answer.
+
 
 :::warning
 **Before upgrading a box that has a NAT64 pool inside** `cgnat`**.** The old form — a NAT64 pool written inside `nat` > `cgnat` — is refused at `commit check` and when the saved file is loaded, naming the new form, and nothing moves it on its own. Rewrite the pool under `nat` > `nat64` before the upgrade, or the box comes up without accepting that file.
+
 :::
 
 # The pool's fields
@@ -149,8 +147,10 @@ The logging is the CGNAT's, configured under `cgnat`, and follows the same rules
 
 The events are the IPv4 ones: allocation, release and block exhausted (recorded once per interval, however many packets are refused).
 
+
 :::info
 **A deterministic pool produces no block events**, as with IPv4: the mapping is the formula plus the dated configuration in the trail. To answer a court order about a deterministic pool, the trail is the proof; for a `mode bpa` pool, it is the exported record.
+
 :::
 
 # Looking up and clearing
@@ -190,8 +190,10 @@ interface enp2s0
 
 Measured in the lab with an IPv6-only subscriber: translated traffic came back between 2.8 and 4.0 seconds after a pulled uplink cable, a stopped dataplane and a killed dataplane, always on the same public address and a port of the same block. Open connections drop, as with IPv4: a UDP flow comes back on a new port of the same block, a TCP connection is reset.
 
+
 :::info
 **A** `mode bpa` **NAT64 pool in a pair has no such measurement.** As with an IPv4 BPA pool, the new master allocates from scratch, so the subscriber's block — and possibly the address — changes across a takeover. The pair's step by step is in [Setting up an active/standby pair](/s/wiki-en/doc/setting-up-an-activestandby-pair-YclNlmh15V).
+
 :::
 
 # Limits
@@ -232,6 +234,8 @@ With a public address and a port inside the subscriber's block, the answer is th
 
 On the subscriber's side: a CLAT listening to the interface's advertisements should learn the NAT64 prefix from the PREF64 option, and an AAAA query for an IPv4-only name to your resolver should come back inside the same prefix.
 
+
 :::success
 The pool listed in `show nat64 pool`, the subscriber with the right block in `show nat64 subscriber`, the translation answering with their prefix and the collector receiving the record with the prefix: your IPv6-only subscribers are leaving through the CGNAT's same public space, and every port is still answerable.
+
 :::

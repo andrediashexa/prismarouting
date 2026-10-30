@@ -27,12 +27,14 @@ flowchart LR
 La configuración es la misma para los dos tipos de placa, pero lo que el equipo hace por debajo es distinto, y lo que acepta el bloque de la interfaz también:
 
 | La placa de gestión es… | Dónde aparece | Qué acepta su bloque `interface` |
-|-------------------------|---------------|----------------------------------|
+|-------------------------|---------------|--------------------------------|
 | **emparejada por el dataplane** — el equipo tomó la placa y la dirección de gestión vive en el par Linux que el dataplane mantiene para ella (equipo de una sola placa, o placa nombrada en `system` > `dataplane`) | en `show interface`, como puerto del dataplane | `vrf` y el resto del bloque, como cualquier interfaz |
-| **solo de Linux** — la placa reservada para Linux en la instalación; en una máquina virtual, normalmente una virtio al lado de las placas que toma el dataplane | en `show hardware`, debajo de `Reserved for Linux:` | solo `vrf` |
+| **solo de Linux** — la placa reservada para Linux en la instalación; en una máquina virtual, normalmente una virtio al lado de las placas que toma el dataplane | en `show hardware`, debajo de `Reserved for Linux:` | solo `vrf`                     |
+
 
 :::info
 **Placa solo de Linux: a partir de la 0.155.19.** Hasta la 0.155.18 el `commit` pasaba el `commit check` y fallaba al aplicar (`the dataplane does not have it`). En un equipo más antiguo, actualice antes de seguir esta página.
+
 :::
 
 En una placa solo de Linux, la dirección, la MTU y la descripción siguen siendo de Linux — la dirección queda donde la puso el instalador, en `/etc/network/interfaces.d/prisma-routing` — y el `commit check` rechaza cualquier cosa además de `vrf` en su bloque.
@@ -110,8 +112,10 @@ La sesión en la que escribió el `commit confirmed` en general sigue viva duran
 
 Si ya nada alcanza al equipo, nadie confirma, y en 10 minutos deshace todo por sí solo: la placa sale de la VRF, las reglas y los ajustes del kernel se van, y — en una placa solo de Linux — la default del instalador vuelve a la tabla principal. El equipo vuelve a responder SSH, API y SNMP por la tabla principal. La vuelta atrás está armada en el equipo, no en su sesión: perder la conexión no la cancela — el mecanismo está en [commit, rollback y save](/s/wiki-es/doc/commit-rollback-y-save-6sAWJkXNO3).
 
+
 :::warning
 **Sacar la gestión de la VRF corta las sesiones SSH abiertas por ella.** Vale para un `commit confirmed` que expira y para `no vrf` dentro de `management`. El equipo atiende las conexiones nuevas por la tabla principal.
+
 :::
 
 # 4. Guarde
@@ -148,8 +152,10 @@ La default de los suscriptores nunca lleva el tráfico del equipo: es justamente
 | syslog e IPFIX por TCP del contenedor de log | la gestión, salvo que la tabla principal tenga una ruta específica hacia el colector — un colector del lado de los suscriptores se alcanza por su ruta en la principal |
 | IPFIX por UDP generado por el dataplane | **la tabla principal**, siempre |
 
+
 :::warning
 **El IPFIX por UDP no sigue a la gestión.** El dataplane arma esos paquetes y los envía por su propia tabla de reenvío, sin pasar por las reglas de Linux. Un colector que solo se alcanza por la red de gestión necesita una ruta específica hacia él en la tabla principal — o el export por TCP. Sin eso los registros de traducción no llegan al colector.
+
 :::
 
 Un servicio que escucha en la tabla principal también atiende en una VRF de cliente cuyo lado Linux alcance la dirección del equipo. Téngalo en cuenta si una VRF de cliente tiene ruta hacia la red de gestión.
@@ -157,6 +163,7 @@ Un servicio que escucha en la tabla principal también atiende en una VRF de cli
 # Qué sobrevive a un reboot
 
 Con la configuración guardada, cada arranque vuelve a poner todo, en este orden:
+
 
 1. antes de que suban el dataplane, el snmpd, el sshd y la API, el equipo activa los ajustes del kernel y las reglas de su propio tráfico — nombran la tabla 100, no el dispositivo, así que no dependen de que la VRF ya exista;
 2. la carga de la configuración crea la VRF `mgmt` y pone la placa en ella;
@@ -198,6 +205,8 @@ Con más de una tabla la pantalla separa las VRF. En la tabla principal la defau
 
 **3. La gestión responde:** desde fuera, una sesión SSH nueva hacia `192.0.2.10` y otra hacia `2001:db8:6::10`, y una consulta SNMP a cada una, si usa SNMP.
 
+
 :::success
 `show system management` con `in effect` igual a `configured`, la default de la tabla principal apuntando al upstream y un SSH nuevo entrando por las dos direcciones de gestión: los suscriptores tienen la tabla principal para ellos solos, y la gestión tiene su propio camino.
+
 :::

@@ -16,7 +16,7 @@ It is **not a second configuration system**. Every configuration call is the VTY
 |-------------|--------------------|
 | NMS, NOC dashboard | typed reads (interfaces, pools, subscribers, BGP, OSPF, IS-IS, BFD, VRRP, transceivers), a stream of counters and events, 24 hours of history and the standard gRPC health check |
 | Portal, web interface | the whole configuration read as fields and written as VTY lines into a candidate, with the same `commit` as the prompt |
-| Automation | candidate, validation, `commit confirmed` and confirmation; the system actions (reboot, upgrade) for an authorized account |
+| Automation  | candidate, validation, `commit confirmed` and confirmation; the system actions (reboot, upgrade) for an authorized account |
 
 ```mermaid
 flowchart LR
@@ -36,12 +36,12 @@ Three things: the certificates on the box's disk, the account the client will be
 
 | Command | Default | What it does |
 |---------|---------|--------------|
-| `api enabled yes` | `no` | serves the API. Without `listen-address`, the commit refuses |
-| `api listen-address <address> [<address> ...]` | none | the management address to listen on; takes a list, IPv4 and IPv6 together, since 0.151.8 |
+| `api enabled yes` | `no`    | serves the API. Without `listen-address`, the commit refuses |
+| `api listen-address <address> [<address> ...]` | none    | the management address to listen on; takes a list, IPv4 and IPv6 together, since 0.151.8 |
 | `api port <1-65535>` | `50051` | the TCP port |
-| `no api enabled` | — | turns it off |
-| `no api listen-address` | — | removes the address |
-| `no api port` | — | back to 50051 |
+| `no api enabled` | —       | turns it off |
+| `no api listen-address` | —       | removes the address |
+| `no api port` | —       | back to 50051 |
 
 ```
 configure
@@ -63,9 +63,9 @@ error: api enabled yes needs 'api listen-address <management address>'
 There is no token or password in the API: **the identity is the client certificate**.
 
 | File on the box, in `/etc/prisma-routing/api/` | What it is |
-|------------------------------------------------|------------|
-| `server.key`, `server.crt` | the box's certificate. The name the client checks must be in it (the `subjectAltName` with the address dialled, or the name the client passes as authority) |
-| `clients-ca.crt` | the CA that signs the client certificates. Only a client presenting a certificate it signed is served |
+|----------------------------------------------|------------|
+| `server.key`, `server.crt`                   | the box's certificate. The name the client checks must be in it (the `subjectAltName` with the address dialled, or the name the client passes as authority) |
+| `clients-ca.crt`                             | the CA that signs the client certificates. Only a client presenting a certificate it signed is served |
 
 The server does not start without the three files, and refuses the handshake of a client with no certificate — the health check included. The CA's key stays **off** the box. The `openssl` commands to create the CA, the box's certificate and a client one are in [Routing, SSH, users and SNMP](/s/wiki-en/doc/routing-ssh-users-and-snmp-jjxcPssV72).
 
@@ -87,7 +87,7 @@ The roles are the VTY's, untranslated. The API never gives an account anything i
 |---------|--------------|--------------------------------|
 | `role administrator` | `prisma-admin` | everything that is configured: routing, CGNAT, interfaces, accounts, system, PPPoE; the interface and routing `clear`s; ending PPPoE sessions |
 | `role cgnat-operator` | `prisma-cgnat` | CGNAT configuration only; ending a CGNAT subscriber's sessions |
-| no role | — | **read-only**: every read, `Show`, telemetry, the routing table, the history, `WhoAmI`. Opens no candidate: `configure` is refused, as at the prompt |
+| no role | —            | **read-only**: every read, `Show`, telemetry, the routing table, the history, `WhoAmI`. Opens no candidate: `configure` is refused, as at the prompt |
 | `operator` (beside any role) | `prisma-operator` | on top of the role: `Reboot`, `Shutdown`, `RestartDataplane` and `Upgrade`. Nothing else of root's |
 
 * An `administrator` does **not** reboot or upgrade the box just for being an administrator: it needs `operator`. A NOC's read-only account **may** have `operator`.
@@ -131,7 +131,7 @@ The rules a client must respect:
 
 * **A candidate is a session.** It lives in a process of the account, like a `configure` in the VTY, until it is closed or goes **30 minutes** unused. After that the call returns `NOT_FOUND` with the reason "expired", and the client opens another. The deadline comes in the replies (`idle_seconds`, `expires_at`); read it, do not assume it.
 * **The commit overrides nobody.** If the running configuration changed after the candidate was opened — another client, an operator at the prompt —, the commit is refused with the difference and the current revision. The client opens a new candidate and applies its lines again.
-* **`commit` applies; `save` writes for the boot.** As at the prompt. `Reboot` and `Shutdown` are refused while something is unsaved or inside a `commit confirmed` window, unless the client forces them.
+* `**commit**` **applies;** `**save**` **writes for the boot.** As at the prompt. `Reboot` and `Shutdown` are refused while something is unsaved or inside a `commit confirmed` window, unless the client forces them.
 * **A partial write names its fields.** In a `SetConfig`, `fields` says what to change; empty means **all**, so an object sent half-filled erases what was not sent. Name the fields.
 * **Secrets are never read.** Passwords, keys, SNMP communities and RADIUS secrets come back only as "set or not"; the lines returned mask the value, as `show running-config` does.
 
@@ -143,15 +143,15 @@ Each typed read uses the same reader as the matching `show`, and most also carry
 
 | What is read | Example calls |
 |--------------|---------------|
-| the box | `GetVersion`, `GetSystem` (memory, each worker's load, CPUs, why the dataplane and the routing last started), `GetHardware`, `GetTuningAdvice` |
-| interfaces | `ListInterfaces`, `ListBundles`, `ListTransceivers` (temperature, optical power and the module's thresholds) |
-| CGNAT | `ListPools`, `GetSubscriber`, `LookupTranslation` (who was behind a public address and port), `ListTop`, `GetDrops`, `ListBlocks`, `GetCgnatMemory`, `GetLogging` |
-| routing | `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListBfdSessions`, `ListVrrp`, `ListPolicies`, `TestPolicy` |
-| PPPoE | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory` |
+| the box      | `GetVersion`, `GetSystem` (memory, each worker's load, CPUs, why the dataplane and the routing last started), `GetHardware`, `GetTuningAdvice` |
+| interfaces   | `ListInterfaces`, `ListBundles`, `ListTransceivers` (temperature, optical power and the module's thresholds) |
+| CGNAT        | `ListPools`, `GetSubscriber`, `LookupTranslation` (who was behind a public address and port), `ListTop`, `GetDrops`, `ListBlocks`, `GetCgnatMemory`, `GetLogging` |
+| routing      | `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListBfdSessions`, `ListVrrp`, `ListPolicies`, `TestPolicy` |
+| PPPoE        | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory` |
 | the event record | `ListEvents` (`show log`, with the same filters) and `WatchEvents`, live |
-| actions | `Clear` (counters, a subscriber's sessions, BGP, OSPF, IS-IS, PPPoE); `Ping`, `Traceroute`, `Mtr`, line by line while they run |
+| actions      | `Clear` (counters, a subscriber's sessions, BGP, OSPF, IS-IS, PPPoE); `Ping`, `Traceroute`, `Mtr`, line by line while they run |
 
-**`Show`, the passthrough.** Any `show`, `ping`, `traceroute` or `mtr`, with the `| include`, `| exclude` and `| count` filters, comes back as text. Read only: a command that does not start with one of those words is refused with `INVALID_ARGUMENT`. `monitor` does not pass (it redraws a terminal, and a call has no terminal); the API's live view is the telemetry. For an NMS, prefer the typed call where there is one: a screen's text may change from one release to the next, the fields do not.
+`**Show**`**, the passthrough.** Any `show`, `ping`, `traceroute` or `mtr`, with the `| include`, `| exclude` and `| count` filters, comes back as text. Read only: a command that does not start with one of those words is refused with `INVALID_ARGUMENT`. `monitor` does not pass (it redraws a terminal, and a call has no terminal); the API's live view is the telemetry. For an NMS, prefer the typed call where there is one: a screen's text may change from one release to the next, the fields do not.
 
 ## Telemetry
 
@@ -179,6 +179,7 @@ The counters are the dataplane's totals, as `show` shows them: the client takes 
 
 The contract only grows within `prisma.v1`: fields, calls and values are **only added**, with numbers never used before; nothing is renumbered or reused. A client built for an older release keeps working against a newer box and simply does not see what it does not know. An incompatible change would be a `prisma.v2` package, served beside `v1`.
 
+
 :::info
 The contract — the `.proto` file of the `prisma.v1` package, plus the standard `grpc.health.v1` — is not published on this wiki: ask for it together with the release your boxes run. The server offers no gRPC reflection, so tools such as `grpcurl` need the file. The configuration's grammar, on the other hand, the box itself answers through `GetSchema`.
 
@@ -194,6 +195,7 @@ The contract — the `.proto` file of the `prisma.v1` package, plus the standard
 | `RestartDataplane` | the reply comes when the restart has finished. While the dataplane is down, the reads that depend on it answer `UNAVAILABLE` and the health check marks `OperationalService` and `TelemetryService` as `NOT_SERVING` |
 | `Reboot`, `Shutdown` | the reply comes before the box goes down |
 
+
 :::warning
 `RestartDataplane` stops forwarding and drops the port block and the sessions of **every** subscriber, as `system dataplane restart` does at the prompt. An automation that calls it needs the same window an operator would ask for.
 
@@ -204,8 +206,8 @@ The contract — the `.proto` file of the `prisma.v1` package, plus the standard
 It is the standard `grpc.health.v1`, so `grpc_health_probe`, any gRPC library's health client or a load balancer work with nothing specific. It needs a client certificate signed by the CA, even one that names no account.
 
 | Service name | `SERVING` when | `NOT_SERVING` when |
-|--------------|----------------|--------------------|
-| `""` (the server), `prisma.v1.ConfigService`, `prisma.v1.RouteService`, `prisma.v1.SessionService`, `prisma.v1.SystemService` | the server is up | — |
+|--------------|--------------|------------------|
+| `""` (the server), `prisma.v1.ConfigService`, `prisma.v1.RouteService`, `prisma.v1.SessionService`, `prisma.v1.SystemService` | the server is up | —                |
 | `prisma.v1.OperationalService`, `prisma.v1.TelemetryService` | the dataplane answers the statistics reads | the dataplane does not answer (stopped, restarting) |
 | `prisma.v1.LogExport` | every configured record destination is delivering | a configured destination has delivered nothing for 60 seconds while having something to send |
 | `prisma.v1.Configuration` | the saved configuration was applied whole at boot | part of it waits for a card the box did not have at boot (`GetPendingConfiguration` says which) |

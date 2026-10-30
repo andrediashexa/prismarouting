@@ -36,12 +36,12 @@ Tres cosas: los certificados en el disco del equipo, la cuenta que va a ser el c
 
 | Comando | Por defecto | Qué hace |
 |---------|-------------|----------|
-| `api enabled yes` | `no` | sirve la API. Sin `listen-address`, el commit la rechaza |
-| `api listen-address <dirección> [<dirección> ...]` | ninguna | la dirección de gestión donde escuchar; acepta una lista, IPv4 e IPv6 juntas, desde la 0.151.8 |
-| `api port <1-65535>` | `50051` | el puerto TCP |
-| `no api enabled` | — | la desactiva |
-| `no api listen-address` | — | quita la dirección |
-| `no api port` | — | vuelve a 50051 |
+| `api enabled yes` | `no`        | sirve la API. Sin `listen-address`, el commit la rechaza |
+| `api listen-address <dirección> [<dirección> ...]` | ninguna     | la dirección de gestión donde escuchar; acepta una lista, IPv4 e IPv6 juntas, desde la 0.151.8 |
+| `api port <1-65535>` | `50051`     | el puerto TCP |
+| `no api enabled` | —           | la desactiva |
+| `no api listen-address` | —           | quita la dirección |
+| `no api port` | —           | vuelve a 50051 |
 
 ```
 configure
@@ -63,9 +63,9 @@ El `listen-address` completa con `?` las direcciones del propio equipo; use las 
 No hay token ni contraseña en la API: **la identidad es el certificado del cliente**.
 
 | Archivo en el equipo, en `/etc/prisma-routing/api/` | Qué es |
-|-----------------------------------------------------|--------|
-| `server.key`, `server.crt` | el certificado del equipo. El nombre que el cliente verifica tiene que estar en él (el `subjectAltName` con la dirección marcada, o el nombre que el cliente pasa como autoridad) |
-| `clients-ca.crt` | la CA que firma los certificados de cliente. Solo se atiende a quien presente un certificado firmado por ella |
+|---------------------------------------------------|--------|
+| `server.key`, `server.crt`                        | el certificado del equipo. El nombre que el cliente verifica tiene que estar en él (el `subjectAltName` con la dirección marcada, o el nombre que el cliente pasa como autoridad) |
+| `clients-ca.crt`                                  | la CA que firma los certificados de cliente. Solo se atiende a quien presente un certificado firmado por ella |
 
 El servidor no arranca sin los tres archivos, y rechaza el handshake de un cliente sin certificado — incluso para el health check. La clave de la CA queda **fuera** del equipo. Los comandos `openssl` para generar la CA, el certificado del equipo y uno de cliente están en [Enrutamiento, SSH, usuarios y SNMP](/s/wiki-es/doc/enrutamiento-ssh-usuarios-y-snmp-aAKbYtvEg3).
 
@@ -85,9 +85,9 @@ Los roles son los de la VTY, sin traducción. La API nunca le da a una cuenta al
 
 | Cuenta | Grupo del sistema | Qué puede por la API |
 |--------|-------------------|----------------------|
-| `role administrator` | `prisma-admin` | todo lo que se configura: enrutamiento, CGNAT, interfaces, cuentas, sistema, PPPoE; los `clear` de interfaz y de enrutamiento; terminar sesiones PPPoE |
-| `role cgnat-operator` | `prisma-cgnat` | solo la configuración de CGNAT; terminar las sesiones de un suscriptor del CGNAT |
-| sin rol | — | **solo lectura**: todas las lecturas, el `Show`, la telemetría, la tabla de rutas, el historial, el `WhoAmI`. No abre candidata: el `configure` se rechaza, como en el prompt |
+| `role administrator` | `prisma-admin`    | todo lo que se configura: enrutamiento, CGNAT, interfaces, cuentas, sistema, PPPoE; los `clear` de interfaz y de enrutamiento; terminar sesiones PPPoE |
+| `role cgnat-operator` | `prisma-cgnat`    | solo la configuración de CGNAT; terminar las sesiones de un suscriptor del CGNAT |
+| sin rol | —                 | **solo lectura**: todas las lecturas, el `Show`, la telemetría, la tabla de rutas, el historial, el `WhoAmI`. No abre candidata: el `configure` se rechaza, como en el prompt |
 | `operator` (junto a cualquier rol) | `prisma-operator` | además del rol: `Reboot`, `Shutdown`, `RestartDataplane` y `Upgrade`. Nada más de lo que es del root |
 
 * Un `administrator` **no** reinicia ni actualiza el equipo solo por ser administrador: necesita `operator`. Una cuenta de solo lectura de un NOC **puede** tener `operator`.
@@ -114,14 +114,14 @@ La configuración **viaja como el texto de la VTY**: una candidata se edita con 
 | Llamada | Qué hace la VTY |
 |---------|-----------------|
 | `OpenCandidate` | `configure` (o a partir de una revisión) |
-| `Edit` | las líneas, escritas en la ruta dada |
+| `Edit`  | las líneas, escritas en la ruta dada |
 | `ShowCandidate`, `Compare` | el texto de la candidata; `show configuration compare` |
 | `Check` | `commit check`. Encontrar un problema no es un error: responder eso es su trabajo |
 | `Commit` | `commit`, con `confirmed <minutos>` y `comment <texto>` opcionales, y el reconocimiento de los avisos que la VTY exige confirmar |
 | `Confirm` | el `commit` dentro de la ventana del `commit confirmed` |
 | `GetPendingConfirm` | la ventana de confirmación que el equipo mantiene: plazo, quién y por qué |
 | `Rollback`, `ListRevisions`, `GetRunning` | `rollback <n>` en la candidata; las revisiones; la configuración vigente |
-| `Save` | `save`: lo que el equipo carga en el próximo arranque |
+| `Save`  | `save`: lo que el equipo carga en el próximo arranque |
 | `GetConfig`, `SetConfig`, `DeleteConfig` | la configuración en campos (interfaces, pools, exportación de registros, rutas estáticas, BGP, OSPF, IS-IS, BFD, sistema, cuentas, PPPoE...). La escritura se convierte en las líneas de la VTY en la candidata y devuelve cuáles fueron |
 | `GetSchema` | la gramática entera, como la conoce el `?` del prompt, versionada por la versión del equipo y por un digest |
 | `ValidateLines` | líneas verificadas por la VTY en una candidata descartable: cada una aceptada o rechazada con el motivo. Nada se aplica |
@@ -131,7 +131,7 @@ Las reglas que un cliente tiene que respetar:
 
 * **Una candidata es una sesión.** Vive en un proceso de la cuenta, como un `configure` en la VTY, hasta que se cierra o pasa **30 minutos** sin uso. Después la llamada vuelve `NOT_FOUND` con el motivo "expirada", y el cliente abre otra. El plazo viene en las respuestas (`idle_seconds`, `expires_at`); léalo, no lo suponga.
 * **El commit no pasa por encima de nadie.** Si la configuración vigente cambió después de abrir la candidata — otro cliente, un operador en el prompt —, el commit se rechaza con la diferencia y la revisión actual. El cliente abre una candidata nueva y aplica las líneas de nuevo.
-* **`commit` aplica; `save` graba para el arranque.** Como en el prompt. `Reboot` y `Shutdown` se rechazan mientras haya algo sin guardar o dentro de una ventana de `commit confirmed`, salvo que el cliente fuerce.
+* `**commit**` **aplica;** `**save**` **graba para el arranque.** Como en el prompt. `Reboot` y `Shutdown` se rechazan mientras haya algo sin guardar o dentro de una ventana de `commit confirmed`, salvo que el cliente fuerce.
 * **Una escritura parcial nombra los campos.** En un `SetConfig`, `fields` dice qué cambiar; vacío quiere decir **todos**, así que un objeto enviado a medias borra lo que no se envió. Nombre los campos.
 * **Los secretos nunca se leen.** Contraseñas, claves, comunidades SNMP y secretos de RADIUS vuelven solo como "definido o no"; las líneas devueltas enmascaran el valor, como el `show running-config`.
 
@@ -143,15 +143,15 @@ Cada lectura tipada usa el mismo lector del `show` correspondiente, y la mayorí
 
 | Qué se lee | Ejemplos de llamada |
 |------------|---------------------|
-| el equipo | `GetVersion`, `GetSystem` (memoria, carga de cada worker, CPUs, por qué el dataplane y el enrutamiento arrancaron por última vez), `GetHardware`, `GetTuningAdvice` |
+| el equipo  | `GetVersion`, `GetSystem` (memoria, carga de cada worker, CPUs, por qué el dataplane y el enrutamiento arrancaron por última vez), `GetHardware`, `GetTuningAdvice` |
 | interfaces | `ListInterfaces`, `ListBundles`, `ListTransceivers` (temperatura, potencia óptica y los umbrales del módulo) |
-| CGNAT | `ListPools`, `GetSubscriber`, `LookupTranslation` (quién estaba detrás de una dirección pública y un puerto), `ListTop`, `GetDrops`, `ListBlocks`, `GetCgnatMemory`, `GetLogging` |
+| CGNAT      | `ListPools`, `GetSubscriber`, `LookupTranslation` (quién estaba detrás de una dirección pública y un puerto), `ListTop`, `GetDrops`, `ListBlocks`, `GetCgnatMemory`, `GetLogging` |
 | enrutamiento | `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListBfdSessions`, `ListVrrp`, `ListPolicies`, `TestPolicy` |
-| PPPoE | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory` |
+| PPPoE      | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory` |
 | el registro de eventos | `ListEvents` (el `show log`, con los mismos filtros) y `WatchEvents`, en vivo |
-| acciones | `Clear` (contadores, sesiones de un suscriptor, BGP, OSPF, IS-IS, PPPoE); `Ping`, `Traceroute`, `Mtr`, línea a línea mientras corren |
+| acciones   | `Clear` (contadores, sesiones de un suscriptor, BGP, OSPF, IS-IS, PPPoE); `Ping`, `Traceroute`, `Mtr`, línea a línea mientras corren |
 
-**`Show`, el paso directo.** Cualquier `show`, `ping`, `traceroute` o `mtr`, con los filtros `| include`, `| exclude` y `| count`, vuelve como texto. Solo lectura: un comando que no empieza por una de esas palabras se rechaza con `INVALID_ARGUMENT`. El `monitor` no pasa (redibuja una terminal, y una llamada no tiene terminal); la vista en vivo de la API es la telemetría. Para un NMS, prefiera la llamada tipada cuando existe: el texto de una pantalla puede cambiar de una versión a otra, los campos no.
+`**Show**`**, el paso directo.** Cualquier `show`, `ping`, `traceroute` o `mtr`, con los filtros `| include`, `| exclude` y `| count`, vuelve como texto. Solo lectura: un comando que no empieza por una de esas palabras se rechaza con `INVALID_ARGUMENT`. El `monitor` no pasa (redibuja una terminal, y una llamada no tiene terminal); la vista en vivo de la API es la telemetría. Para un NMS, prefiera la llamada tipada cuando existe: el texto de una pantalla puede cambiar de una versión a otra, los campos no.
 
 ## Telemetría
 
@@ -179,6 +179,7 @@ Los contadores son los totales del dataplane, como los muestra el `show`: el cli
 
 El contrato solo crece dentro de `prisma.v1`: campos, llamadas y valores **solo se agregan**, con números nunca usados antes; nada se renumera ni se reaprovecha. Un cliente hecho para una versión más antigua sigue funcionando con un equipo más nuevo y simplemente no ve lo que no conoce. Un cambio incompatible sería un paquete `prisma.v2`, servido junto al `v1`.
 
+
 :::info
 El contrato — el archivo `.proto` del paquete `prisma.v1`, más el `grpc.health.v1` estándar — no se publica en esta wiki: pídalo junto con la versión que corren sus equipos. El servidor no ofrece reflexión de gRPC, así que herramientas como `grpcurl` necesitan el archivo. La gramática de la configuración, en cambio, la responde el propio equipo por `GetSchema`.
 
@@ -194,6 +195,7 @@ El contrato — el archivo `.proto` del paquete `prisma.v1`, más el `grpc.healt
 | `RestartDataplane` | la respuesta llega cuando el reinicio terminó. Mientras el dataplane está fuera, las lecturas que dependen de él responden `UNAVAILABLE` y el health check marca `OperationalService` y `TelemetryService` como `NOT_SERVING` |
 | `Reboot`, `Shutdown` | la respuesta llega antes de que el equipo caiga |
 
+
 :::warning
 `RestartDataplane` detiene el reenvío y descarta el bloque de puertos y las sesiones de **todos** los suscriptores, como el `system dataplane restart` en el prompt. Una automatización que lo llama necesita la misma ventana que pediría un operador.
 
@@ -204,8 +206,8 @@ El contrato — el archivo `.proto` del paquete `prisma.v1`, más el `grpc.healt
 Es el `grpc.health.v1` estándar, así que `grpc_health_probe`, el cliente de health de cualquier biblioteca gRPC o un balanceador funcionan sin nada específico. Necesita un certificado de cliente firmado por la CA, aunque no nombre una cuenta.
 
 | Nombre del servicio | `SERVING` cuando | `NOT_SERVING` cuando |
-|---------------------|------------------|----------------------|
-| `""` (el servidor), `prisma.v1.ConfigService`, `prisma.v1.RouteService`, `prisma.v1.SessionService`, `prisma.v1.SystemService` | el servidor está arriba | — |
+|---------------------|----------------|--------------------|
+| `""` (el servidor), `prisma.v1.ConfigService`, `prisma.v1.RouteService`, `prisma.v1.SessionService`, `prisma.v1.SystemService` | el servidor está arriba | —                  |
 | `prisma.v1.OperationalService`, `prisma.v1.TelemetryService` | el dataplane responde a las lecturas de estadística | el dataplane no responde (detenido, reiniciando) |
 | `prisma.v1.LogExport` | todo destino de registros configurado está entregando | un destino configurado no entrega nada hace 60 segundos, teniendo qué enviar |
 | `prisma.v1.Configuration` | la configuración guardada se aplicó entera en el arranque | parte de ella espera una tarjeta que el equipo no tenía en el arranque (`GetPendingConfiguration` dice cuál) |

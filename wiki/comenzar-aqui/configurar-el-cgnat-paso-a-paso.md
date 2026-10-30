@@ -15,7 +15,7 @@ flowchart LR
 |-----|---------------|------------|
 | Red de los suscriptores (detrás del equipo) | `100.64.0.0/22` | lo que entrega su BNG/OLT; `100.64.0.0/10` es el espacio reservado para eso |
 | Direcciones públicas del pool | `203.0.113.0/28` | un prefijo suyo, que **no** está configurado en ninguna interfaz |
-| Puerto de los suscriptores | `enp1s0`       | la placa orientada hacia el BNG |
+| Puerto de los suscriptores | `enp1s0`      | la placa orientada hacia el BNG |
 | Puerto de salida | `enp2s0`, con `198.51.100.2/30` | la placa orientada hacia el upstream |
 
 # Antes de empezar: tres decisiones

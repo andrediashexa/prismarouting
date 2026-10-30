@@ -2,6 +2,7 @@
 
 Para quem quer ver no syslog do NOC o que acontece na caixa — commits, reinícios e a causa deles, enlaces, módulos, sessões BGP e BFD, pools sem bloco, logins — sem precisar entrar nela. Esta página diz o que é esse registro, como lê-lo na própria caixa, como mandá-lo para um ou mais coletores syslog e como conferir que ele está chegando.
 
+
 :::warning
 **Isto não é a exportação dos registros do CGNAT.** Quem usou qual IP público e porta, para responder a um ofício, sai por `nat` > `cgnat` > `logging` (IPFIX ou syslog) e está em [Logging IPFIX e trilha de auditoria](/s/wiki/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) e [Onde vão os registros: coletor, transporte e guarda](/s/wiki/doc/onde-vao-os-registros-coletor-transporte-e-guarda-0IG3JJOswC). O log de eventos desta página **não leva** nenhum registro de conexão: configurar só `system` > `logging` deixa a caixa sem a guarda que a lei pede.
 
@@ -20,11 +21,11 @@ flowchart LR
     D["Dataplane<br/>(alocação de blocos CGNAT)"] -->|"nat > cgnat > logging"| C["Coletor da guarda legal"]
 ```
 
-| | Log de eventos (esta página) | Registros do CGNAT |
-|---|---|---|
-| O que diz | o que aconteceu com a caixa | quem segurava qual IP público e porta |
+|     | Log de eventos (esta página) | Registros do CGNAT |
+|-----|------------------------------|--------------------|
+| O que diz | o que aconteceu com a caixa  | quem segurava qual IP público e porta |
 | Para que serve | operação, NOC, auditoria interna | resposta a ofício, guarda de um ano |
-| Onde se configura | `system` > `logging` | `nat` > `cgnat` > `logging` |
+| Onde se configura | `system` > `logging`         | `nat` > `cgnat` > `logging` |
 | Na própria caixa | `show log`, `monitor log`, `show system logging` | `show cgnat logging`, `monitor cgnat logging` |
 | No syslog | APP-NAME `prisma-routing`, facility `daemon` (3) | APP-NAME `prisma-cgnat`, facility `local0` (16) se nada for dito |
 
@@ -37,33 +38,33 @@ O registro é escrito por quem age — a VTY, a API, os scripts do host — e po
 Cada evento tem a hora, um **nível**, uma **origem**, um **tipo** e uma frase, com quem fez e de onde quando isso é conhecido.
 
 | Nível | Quando |
-|---|---|
+|-------|--------|
 | `error` | um alarme de módulo, a caixa desistindo do dataplane |
 | `warning` | algo que pede atenção: enlace caído, sessão BGP saindo de Established, partida que ninguém pediu, login com senha errada |
 | `notice` | uma mudança normal: commit, enlace de volta, sessão de pé, login |
 | `info` | rotina: logout, a cabeça da trilha de sessões PPPoE |
 
 | Origem (`source`) | Quem viu |
-|---|---|
-| `vty` | uma sessão da VTY |
-| `api` | a API de gerência |
-| `host` | o host: o boot, logins, as placas que o Linux tem, a caixa desistindo do dataplane, o plano de controle PPPoE |
-| `dataplane` | as portas do dataplane, os módulos delas, os pools, a exportação de log do CGNAT |
-| `routing` | o FRR: sessões BGP e BFD |
+|-----------------|----------|
+| `vty`           | uma sessão da VTY |
+| `api`           | a API de gerência |
+| `host`          | o host: o boot, logins, as placas que o Linux tem, a caixa desistindo do dataplane, o plano de controle PPPoE |
+| `dataplane`     | as portas do dataplane, os módulos delas, os pools, a exportação de log do CGNAT |
+| `routing`       | o FRR: sessões BGP e BFD |
 
 | Tipo (`kind`) | O que é |
-|---|---|
+|-------------|---------|
 | `commit`, `rollback`, `confirm`, `confirm-expired` | a configuração mudou, voltou, foi confirmada, ou um `commit confirmed` venceu e foi desfeito |
-| `asked` | um reinício, atualização, reboot ou desligamento pedido, por quem |
+| `asked`     | um reinício, atualização, reboot ou desligamento pedido, por quem |
 | `start`, `boot`, `upgraded` | o dataplane, o roteamento ou o plano de controle PPPoE partiu, **com a causa**; a caixa subiu; uma atualização terminou |
-| `settings` | as configurações de SNMP, da API ou de `system` > `logging` aplicadas ou recusadas por um commit |
-| `link` | enlace de uma porta caiu ou voltou, administrativo ou não; caiu e voltou entre duas leituras, com quantas vezes |
+| `settings`  | as configurações de SNMP, da API ou de `system` > `logging` aplicadas ou recusadas por um commit |
+| `link`      | enlace de uma porta caiu ou voltou, administrativo ou não; caiu e voltou entre duas leituras, com quantas vezes |
 | `transceiver` | módulo inserido, removido, trocado; RX ou temperatura além de um aviso ou alarme, e de volta |
 | `bgp`, `bfd` | sessão de pé, ou caída com o motivo do FRR ou o diagnóstico do bfdd |
-| `pool` | pool CGNAT sem bloco livre, e com bloco livre de novo |
+| `pool`      | pool CGNAT sem bloco livre, e com bloco livre de novo |
 | `collector` | a exportação dos registros do CGNAT perdeu ou alcançou o coletor dela |
-| `login` | login, logout, login com senha errada |
-| `gave-up` | a caixa desistiu do dataplane, ou um `system dataplane restart` não terminou |
+| `login`     | login, logout, login com senha errada |
+| `gave-up`   | a caixa desistiu do dataplane, ou um `system dataplane restart` não terminou |
 | `exit`, `radius`, `trail` | com PPPoE: o plano de controle parou, um servidor RADIUS caiu ou voltou, a cabeça da trilha de sessões |
 
 Duas regras evitam que o registro vire ruído. Uma coisa que fica caindo e voltando sai quatro vezes em 5 minutos e, dali em diante, uma linha por janela de 5 minutos com a contagem. E o que **já** estava errado quando o vigia começou — uma porta ligada sem enlace, um módulo além do aviso, uma sessão configurada que não subiu — é dito uma vez por boot, no presente, começando por `standing at start:`.
@@ -115,17 +116,18 @@ configure
 `host <endereço> [port <n>] [protocol udp|tcp] [severity <nível>] [source-address <endereço>] [vrf <nome>]`:
 
 | Opção | Se nada for dito | O que faz por você |
-|---|---|---|
-| `<endereço>` | — | o coletor, IPv4 ou IPv6. **Endereço, nunca nome**: a caixa cujo DNS caiu é justamente a que mais precisa mandar os eventos |
-| `protocol udp\|tcp` | `udp` | UDP: um datagrama por evento. TCP: um fluxo com enquadramento por contagem de octetos (RFC 6587), e nada se perde enquanto o coletor está fora (abaixo) |
+|-------|------------------|--------------------|
+| `<endereço>` | —                | o coletor, IPv4 ou IPv6. **Endereço, nunca nome**: a caixa cujo DNS caiu é justamente a que mais precisa mandar os eventos |
+| `protocol udp\|tcp` | `udp`            | UDP: um datagrama por evento. TCP: um fluxo com enquadramento por contagem de octetos (RFC 6587), e nada se perde enquanto o coletor está fora (abaixo) |
 | `port <n>` | 514 em UDP, 601 em TCP | a porta do coletor |
-| `severity error\|warning\|notice\|info` | `info` (tudo) | o nível mínimo mandado: aquele e os mais graves |
+| `severity error\|warning\|notice\|info` | `info` (tudo)    | o nível mínimo mandado: aquele e os mais graves |
 | `source-address <endereço>` | o que a rota escolher | o endereço de origem que o coletor vê; da mesma família do coletor |
 | `vrf <nome>` | as rotas do Linux da caixa | a VRF por onde o evento sai; tem de ser um `vrf <nome> table <n>` da configuração, senão o `commit check` recusa |
 
 São até quatro destinos, um por endereço: um segundo `host` para o mesmo endereço substitui o primeiro, e `no host <endereço>` para de mandar para ele. `show this`, dentro de `logging`, mostra o que está configurado.
 
 **Vale no** `**commit**`**, sem reiniciar nada.** O commit diz quantos destinos ficaram (`logging: 2 remote syslog destination(s)`), o registro ganha um evento `settings`, e o vigia passa a mandar em até um segundo. Lembre do `save` para a configuração sobreviver ao boot.
+
 
 :::info
 **Um destino novo começa do agora.** O que já estava no registro antes do commit não é mandado; para o passado, use `show log`. Daí em diante, cada destino guarda até onde já recebeu.
@@ -140,6 +142,7 @@ Quem manda é o próprio vigia de eventos, e a fila dele é o próprio registro:
 * **Em UDP, a caixa só sabe que o envio falhou se o sistema disser** (uma porta inalcançável respondida, uma rota que não existe). Um coletor que simplesmente some não é percebido, e o que foi mandado nesse tempo se perde.
 
 Para o NOC que precisa da linha do tempo inteira, TCP.
+
 
 :::info
 **Com PPPoE, a cabeça da trilha de sessões sai por aqui, em nível** `**info**`**.** É a cópia fora da caixa com que `show pppoe history verify` compara a trilha. Um destino com `severity notice` ou mais grave não a recebe: deixe pelo menos um coletor em `info`.
@@ -195,9 +198,9 @@ Uma linha por destino, com o endereço, a porta, o protocolo e o nível mínimo,
 ```
 
 | O que aparece | O que quer dizer |
-|---|---|
-| `ready` | o destino foi lido e ainda não houve evento do nível dele para mandar |
-| `sending` | o último envio deu certo |
+|---------------|------------------|
+| `ready`       | o destino foi lido e ainda não houve evento do nível dele para mandar |
+| `sending`     | o último envio deu certo |
 | `not reached: <reason>; tried again every 30 s` | o coletor não foi alcançado, com o motivo que o sistema deu (`connection refused`, por exemplo); nada que esperava se perdeu em TCP |
 | `not forwarding yet: the watcher (prisma-routing-events-watch) has not said` | o vigia ainda não passou desde o commit, ou está parado há mais de um minuto |
 | `no remote syslog destination: the record stays on the box ('show log')` | nada configurado em `system` > `logging` |
@@ -209,6 +212,7 @@ prisma> show log kind login last 5
 ```
 
 No coletor, a mesma linha, com APP-NAME `prisma-routing` e MSGID `LOGIN`. Na caixa, `show system logging` passa a `sending` e o contador sobe.
+
 
 :::success
 `sending` no `show system logging`, o mesmo evento no `show log` e no coletor: o registro de eventos da caixa está saindo para o NOC.

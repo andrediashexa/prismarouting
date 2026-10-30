@@ -15,7 +15,7 @@ flowchart LR
 |-------|------------|-------------|
 | Rede dos assinantes (atrás da caixa) | `100.64.0.0/22` | o que o seu BNG/OLT entrega; `100.64.0.0/10` é o espaço reservado para isso |
 | Endereços públicos do pool | `203.0.113.0/28` | um prefixo seu, que **não** está configurado em interface nenhuma |
-| Porta dos assinantes | `enp1s0`    | a placa virada para o BNG |
+| Porta dos assinantes | `enp1s0`   | a placa virada para o BNG |
 | Porta de saída | `enp2s0`, com `198.51.100.2/30` | a placa virada para o upstream |
 
 # Antes de começar: três decisões

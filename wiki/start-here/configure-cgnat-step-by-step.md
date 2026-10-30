@@ -15,7 +15,7 @@ flowchart LR
 |------|----------------|--------------|
 | Subscriber network (behind the box) | `100.64.0.0/22` | whatever your BNG/OLT delivers; `100.64.0.0/10` is the space reserved for this |
 | Pool public addresses | `203.0.113.0/28` | a prefix of yours that is **not** configured on any interface |
-| Subscriber port | `enp1s0`        | the card facing the BNG |
+| Subscriber port | `enp1s0`       | the card facing the BNG |
 | Egress port | `enp2s0`, with `198.51.100.2/30` | the card facing the upstream |
 
 # Before you start: three decisions

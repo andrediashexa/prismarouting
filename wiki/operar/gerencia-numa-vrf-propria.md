@@ -27,12 +27,14 @@ flowchart LR
 A configuração é a mesma para os dois tipos de placa, mas o que a caixa faz por baixo é diferente, e o que o bloco da interface aceita também:
 
 | A placa de gerência é… | Onde ela aparece | O que o bloco `interface` dela aceita |
-|------------------------|------------------|----------------------------------------|
+|------------------------|------------------|-------------------------------------|
 | **pareada pelo dataplane** — a caixa tomou a placa e o endereço de gerência mora no par Linux que o dataplane mantém para ela (caixa de uma placa só, ou placa nomeada em `system` > `dataplane`) | em `show interface`, como porta do dataplane | `vrf` e o resto do bloco, como qualquer interface |
-| **só do Linux** — a placa reservada para o Linux na instalação; numa máquina virtual, normalmente uma virtio ao lado das placas que o dataplane toma | em `show hardware`, embaixo de `Reserved for Linux:` | só `vrf` |
+| **só do Linux** — a placa reservada para o Linux na instalação; numa máquina virtual, normalmente uma virtio ao lado das placas que o dataplane toma | em `show hardware`, embaixo de `Reserved for Linux:` | só `vrf`                            |
+
 
 :::info
 **Placa só do Linux: a partir da 0.155.19.** Até a 0.155.18 o `commit` passava no `commit check` e falhava ao aplicar (`the dataplane does not have it`). Numa caixa mais antiga, atualize antes de seguir esta página.
+
 :::
 
 Numa placa só do Linux, endereço, MTU e descrição continuam sendo do Linux — o endereço fica onde o instalador o pôs, em `/etc/network/interfaces.d/prisma-routing` — e o `commit check` recusa qualquer coisa além de `vrf` no bloco dela.
@@ -110,8 +112,10 @@ A sessão em que você digitou o `commit confirmed` em geral continua viva duran
 
 Se nada mais alcança a caixa, ninguém confirma, e em 10 minutos ela desfaz tudo sozinha: a placa sai da VRF, as regras e os ajustes do kernel saem, e — numa placa só do Linux — a default do instalador volta para a tabela principal. A caixa volta a responder SSH, API e SNMP pela tabela principal. O desfazer está armado na caixa, não na sua sessão: perder a conexão não o cancela — o mecanismo está em [commit, rollback e save](/s/wiki/doc/commit-rollback-e-save-jqCB7kxPuA).
 
+
 :::warning
 **Tirar a gerência da VRF derruba as sessões SSH abertas por ela.** Vale para um `commit confirmed` que expira e para `no vrf` dentro de `management`. A caixa atende as conexões novas pela tabela principal.
+
 :::
 
 # 4. Salve
@@ -148,8 +152,10 @@ A default dos assinantes nunca leva o tráfego da caixa: ela é justamente a rot
 | syslog e IPFIX por TCP do container de log | a gerência, a menos que a tabela principal tenha rota específica para o coletor — um coletor do lado dos assinantes é alcançado pela rota dele na principal |
 | IPFIX por UDP gerado pelo dataplane | **a tabela principal**, sempre |
 
+
 :::warning
 **O IPFIX por UDP não segue a gerência.** O dataplane monta esses pacotes e os manda pela tabela de encaminhamento dele, sem passar pelas regras do Linux. Um coletor que só é alcançável pela rede de gerência precisa de uma rota específica para ele na tabela principal — ou do export por TCP. Sem isso os registros de tradução não chegam ao coletor.
+
 :::
 
 Um serviço que escuta na tabela principal também atende numa VRF de cliente cujo lado Linux alcance o endereço da caixa. Leve isso em conta se uma VRF de cliente tiver rota até a rede de gerência.
@@ -157,6 +163,7 @@ Um serviço que escuta na tabela principal também atende numa VRF de cliente cu
 # O que sobrevive a um reboot
 
 Com a configuração salva, cada boot põe tudo de volta, nesta ordem:
+
 
 1. antes do dataplane, do snmpd, do sshd e da API subirem, a caixa liga os ajustes do kernel e as regras do tráfego dela mesma — eles nomeiam a tabela 100, não o dispositivo, então não dependem de a VRF já existir;
 2. a carga da configuração cria a VRF `mgmt` e põe a placa nela;
@@ -198,6 +205,8 @@ Com mais de uma tabela a tela separa as VRFs. Na tabela principal a default prec
 
 **3. A gerência responde:** de fora, um SSH novo para `192.0.2.10` e outro para `2001:db8:6::10`, e uma consulta SNMP a cada um, se você usa SNMP.
 
+
 :::success
 `show system management` com `in effect` igual ao `configured`, a default da tabela principal apontando para o upstream e SSH novo entrando pelos dois endereços de gerência: os assinantes têm a tabela principal só para eles, e a gerência tem o caminho dela.
+
 :::

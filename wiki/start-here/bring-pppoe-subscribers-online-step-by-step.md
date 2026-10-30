@@ -16,10 +16,10 @@ flowchart LR
 |------|----------------|--------------|
 | Access port | `enp1s0`, VLAN 100 (`enp1s0.100`) | the card facing the OLT or the access switch |
 | Egress port | `enp2s0`, with `198.51.100.2/30` | the card facing the upstream |
-| The box's address on every session | `100.64.0.1` | an address in the subscribers' range |
+| The box's address on every session | `100.64.0.1`   | an address in the subscribers' range |
 | Session addresses | `100.64.0.10` to `100.64.3.250` | whatever RADIUS does not hand out comes from here |
 | CGNAT pool | `100.64.0.0/22` to `203.0.113.0/28` | a `prefix-inside` that covers the session addresses |
-| RADIUS servers | `192.0.2.10` and `192.0.2.11` | yours |
+| RADIUS servers | `192.0.2.10` and `192.0.2.11` | yours        |
 | IPv6 (optional) | WAN from `2001:db8:100::/40`, delegated from `2001:db8:200::/36` | your own prefixes |
 
 # Before you start
@@ -112,7 +112,7 @@ Each server authenticates and receives accounting (ports 1812 and 1813) unless y
 **Failover or round-robin:**
 
 | `mode` | What happens | When to choose it |
-|--------|--------------|-------------------|
+|------|--------------|-------------------|
 | `failover` (the default) | every request goes to the server with the lowest `priority`; if it does not answer, the request moves to the next one and the silent one is left out for `dead-time` seconds | one main server and a backup |
 | `round-robin` | each request goes to the next live server, in turn | equivalent servers, to share the load |
 
@@ -240,7 +240,7 @@ prisma> show pppoe summary
 | `control plane` | `running`. `configured, NOT running` is a control plane that did not come up: see `show log kind exit` |
 | `sessions` | how many sessions are active, starting and finishing |
 | `session trail` | how many entries the session trail has written; `NOT written` is a session the box cannot answer for |
-| `access interfaces` | `enp1s0.100` |
+| `access interfaces` | `enp1s0.100`       |
 | `radius` and a line per server | the mode, the timers and each server with its role; `failed` beside a server that is not answering |
 | `rate limit` | where the plan comes from and the default, and below it what enforces each direction (shaper or policer) |
 

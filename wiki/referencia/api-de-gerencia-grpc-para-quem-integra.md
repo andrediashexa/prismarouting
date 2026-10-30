@@ -16,7 +16,7 @@ Ela **não é um segundo sistema de configuração**. Toda chamada de configura�
 |------------|----------------|
 | NMS, painel de NOC | leituras tipadas (interfaces, pools, assinantes, BGP, OSPF, IS-IS, BFD, VRRP, transceivers), um fluxo de contadores e eventos, 24 horas de histórico e o health check padrão do gRPC |
 | Portal, interface web | a configuração inteira lida em campos e escrita como linhas da VTY num candidato, com o mesmo `commit` do prompt |
-| Automação | candidato, validação, `commit confirmed` e confirmação; as ações de sistema (reiniciar, atualizar) para uma conta autorizada |
+| Automação  | candidato, validação, `commit confirmed` e confirmação; as ações de sistema (reiniciar, atualizar) para uma conta autorizada |
 
 ```mermaid
 flowchart LR
@@ -36,12 +36,12 @@ Três coisas: os certificados no disco da caixa, a conta que o cliente vai ser, 
 
 | Comando | Padrão | O que faz |
 |---------|--------|-----------|
-| `api enabled yes` | `no` | serve a API. Sem `listen-address`, o commit recusa |
+| `api enabled yes` | `no`   | serve a API. Sem `listen-address`, o commit recusa |
 | `api listen-address <endereço> [<endereço> ...]` | nenhum | o endereço de gerência onde escutar; aceita uma lista, IPv4 e IPv6 juntos, desde a 0.151.8 |
 | `api port <1-65535>` | `50051` | a porta TCP |
-| `no api enabled` | — | desliga |
-| `no api listen-address` | — | tira o endereço |
-| `no api port` | — | volta a 50051 |
+| `no api enabled` | —      | desliga   |
+| `no api listen-address` | —      | tira o endereço |
+| `no api port` | —      | volta a 50051 |
 
 ```
 configure
@@ -63,9 +63,9 @@ O `listen-address` completa com `?` os endereços da própria caixa; use os de g
 Não há token nem senha na API: **a identidade é o certificado do cliente**.
 
 | Arquivo na caixa, em `/etc/prisma-routing/api/` | O que é |
-|-------------------------------------------------|---------|
-| `server.key`, `server.crt` | o certificado da caixa. O nome que o cliente confere precisa estar nele (o `subjectAltName` com o endereço discado, ou o nome que o cliente passa como autoridade) |
-| `clients-ca.crt` | a CA que assina os certificados de cliente. Só quem apresentar um certificado assinado por ela é atendido |
+|-----------------------------------------------|---------|
+| `server.key`, `server.crt`                    | o certificado da caixa. O nome que o cliente confere precisa estar nele (o `subjectAltName` com o endereço discado, ou o nome que o cliente passa como autoridade) |
+| `clients-ca.crt`                              | a CA que assina os certificados de cliente. Só quem apresentar um certificado assinado por ela é atendido |
 
 O servidor não sobe sem os três arquivos, e recusa o handshake de um cliente sem certificado — inclusive para o health check. A chave da CA fica **fora** da caixa. Os comandos `openssl` para gerar a CA, o certificado da caixa e um de cliente estão em [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m).
 
@@ -85,9 +85,9 @@ Os papéis são os da VTY, sem tradução. A API nunca dá a uma conta algo que 
 
 | Conta | Grupo do sistema | O que pode pela API |
 |-------|------------------|---------------------|
-| `role administrator` | `prisma-admin` | tudo o que se configura: roteamento, CGNAT, interfaces, contas, sistema, PPPoE; os `clear` de interface e de roteamento; encerrar sessões PPPoE |
-| `role cgnat-operator` | `prisma-cgnat` | só a configuração de CGNAT; encerrar as sessões de um assinante do CGNAT |
-| sem papel | — | **só leitura**: todas as leituras, o `Show`, a telemetria, a tabela de rotas, o histórico, o `WhoAmI`. Não abre candidato: o `configure` é recusado, como no prompt |
+| `role administrator` | `prisma-admin`   | tudo o que se configura: roteamento, CGNAT, interfaces, contas, sistema, PPPoE; os `clear` de interface e de roteamento; encerrar sessões PPPoE |
+| `role cgnat-operator` | `prisma-cgnat`   | só a configuração de CGNAT; encerrar as sessões de um assinante do CGNAT |
+| sem papel | —                | **só leitura**: todas as leituras, o `Show`, a telemetria, a tabela de rotas, o histórico, o `WhoAmI`. Não abre candidato: o `configure` é recusado, como no prompt |
 | `operator` (ao lado de qualquer papel) | `prisma-operator` | além do papel: `Reboot`, `Shutdown`, `RestartDataplane` e `Upgrade`. Nada mais do que é do root |
 
 * Um `administrator` **não** reinicia nem atualiza a caixa só por ser administrador: precisa de `operator`. Uma conta só de leitura de um NOC **pode** ter `operator`.
@@ -114,14 +114,14 @@ A configuração **viaja como o texto da VTY**: um candidato é editado com as l
 | Chamada | O que a VTY faz |
 |---------|-----------------|
 | `OpenCandidate` | `configure` (ou a partir de uma revisão) |
-| `Edit` | as linhas, digitadas no caminho dado |
+| `Edit`  | as linhas, digitadas no caminho dado |
 | `ShowCandidate`, `Compare` | o texto do candidato; `show configuration compare` |
 | `Check` | `commit check`. Achar problema não é erro: responder isso é o trabalho dela |
 | `Commit` | `commit`, com `confirmed <minutos>` e `comment <texto>` opcionais, e o reconhecimento dos avisos que a VTY exige confirmar |
 | `Confirm` | o `commit` dentro da janela do `commit confirmed` |
 | `GetPendingConfirm` | a janela de confirmação que a caixa mantém: prazo, quem e por quê |
 | `Rollback`, `ListRevisions`, `GetRunning` | `rollback <n>` no candidato; as revisões; a configuração em vigor |
-| `Save` | `save`: o que a caixa carrega no próximo boot |
+| `Save`  | `save`: o que a caixa carrega no próximo boot |
 | `GetConfig`, `SetConfig`, `DeleteConfig` | a configuração em campos (interfaces, pools, exportação de registros, rotas estáticas, BGP, OSPF, IS-IS, BFD, sistema, contas, PPPoE...). A escrita vira as linhas da VTY no candidato e devolve quais foram |
 | `GetSchema` | a gramática inteira, como o `?` do prompt a conhece, versionada pela versão da caixa e por um digest |
 | `ValidateLines` | linhas conferidas pela VTY num candidato descartável: cada uma aceita ou recusada com o motivo. Nada é aplicado |
@@ -131,7 +131,7 @@ As regras que um cliente precisa respeitar:
 
 * **Um candidato é uma sessão.** Ele vive num processo da conta, como um `configure` na VTY, até ser fechado ou ficar **30 minutos** sem uso. Depois disso a chamada volta `NOT_FOUND` com o motivo "expirado", e o cliente abre outro. O prazo vem nas respostas (`idle_seconds`, `expires_at`); leia, não suponha.
 * **O commit não passa por cima de ninguém.** Se a configuração em vigor mudou depois que o candidato foi aberto — outro cliente, um operador no prompt —, o commit é recusado com a diferença e a revisão atual. O cliente abre um candidato novo e aplica as linhas de novo.
-* **`commit` aplica; `save` grava para o boot.** Como no prompt. `Reboot` e `Shutdown` são recusados enquanto há algo não salvo ou dentro de uma janela de `commit confirmed`, a menos que o cliente force.
+* `**commit**` **aplica;** `**save**` **grava para o boot.** Como no prompt. `Reboot` e `Shutdown` são recusados enquanto há algo não salvo ou dentro de uma janela de `commit confirmed`, a menos que o cliente force.
 * **Escrita parcial nomeia os campos.** Num `SetConfig`, `fields` diz o que mudar; vazio quer dizer **todos**, então um objeto enviado pela metade apaga o que não foi enviado. Nomeie os campos.
 * **Segredos nunca são lidos.** Senhas, chaves, comunidades SNMP e segredos de RADIUS voltam só como "definido ou não"; as linhas devolvidas mascaram o valor, como o `show running-config`.
 
@@ -143,15 +143,15 @@ Cada leitura tipada usa o mesmo leitor do `show` correspondente, e a maioria tra
 
 | O que se lê | Exemplos de chamada |
 |-------------|---------------------|
-| a caixa | `GetVersion`, `GetSystem` (memória, carga de cada worker, CPUs, por que o dataplane e o roteamento partiram pela última vez), `GetHardware`, `GetTuningAdvice` |
-| interfaces | `ListInterfaces`, `ListBundles`, `ListTransceivers` (temperatura, potência óptica e os limiares do módulo) |
-| CGNAT | `ListPools`, `GetSubscriber`, `LookupTranslation` (quem estava atrás de um endereço público e uma porta), `ListTop`, `GetDrops`, `ListBlocks`, `GetCgnatMemory`, `GetLogging` |
-| roteamento | `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListBfdSessions`, `ListVrrp`, `ListPolicies`, `TestPolicy` |
-| PPPoE | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory` |
+| a caixa     | `GetVersion`, `GetSystem` (memória, carga de cada worker, CPUs, por que o dataplane e o roteamento partiram pela última vez), `GetHardware`, `GetTuningAdvice` |
+| interfaces  | `ListInterfaces`, `ListBundles`, `ListTransceivers` (temperatura, potência óptica e os limiares do módulo) |
+| CGNAT       | `ListPools`, `GetSubscriber`, `LookupTranslation` (quem estava atrás de um endereço público e uma porta), `ListTop`, `GetDrops`, `ListBlocks`, `GetCgnatMemory`, `GetLogging` |
+| roteamento  | `ListBgpNeighbors`, `ListOspfNeighbors`, `ListIsisAdjacencies`, `ListBfdSessions`, `ListVrrp`, `ListPolicies`, `TestPolicy` |
+| PPPoE       | `ListPppoeSessions`, `GetPppoeSession`, `GetPppoeSummary`, `ListPppoeHistory` |
 | o registro de eventos | `ListEvents` (o `show log`, com os mesmos filtros) e `WatchEvents`, ao vivo |
-| ações | `Clear` (contadores, sessões de um assinante, BGP, OSPF, IS-IS, PPPoE); `Ping`, `Traceroute`, `Mtr`, linha a linha enquanto rodam |
+| ações       | `Clear` (contadores, sessões de um assinante, BGP, OSPF, IS-IS, PPPoE); `Ping`, `Traceroute`, `Mtr`, linha a linha enquanto rodam |
 
-**`Show`, o repasse.** Qualquer `show`, `ping`, `traceroute` ou `mtr`, com os filtros `| include`, `| exclude` e `| count`, volta como texto. Só leitura: um comando que não começa por uma dessas palavras é recusado com `INVALID_ARGUMENT`. O `monitor` não passa (ele redesenha um terminal, e uma chamada não tem terminal); a visão ao vivo da API é a telemetria. Para um NMS, prefira a chamada tipada quando ela existe: o texto de uma tela pode mudar de uma versão para outra, os campos não.
+`**Show**`**, o repasse.** Qualquer `show`, `ping`, `traceroute` ou `mtr`, com os filtros `| include`, `| exclude` e `| count`, volta como texto. Só leitura: um comando que não começa por uma dessas palavras é recusado com `INVALID_ARGUMENT`. O `monitor` não passa (ele redesenha um terminal, e uma chamada não tem terminal); a visão ao vivo da API é a telemetria. Para um NMS, prefira a chamada tipada quando ela existe: o texto de uma tela pode mudar de uma versão para outra, os campos não.
 
 ## Telemetria
 
@@ -179,6 +179,7 @@ Os contadores são os totais do dataplane, como o `show` os mostra: o cliente ca
 
 O contrato só cresce dentro de `prisma.v1`: campos, chamadas e valores são **apenas acrescentados**, com números nunca usados antes; nada é renumerado nem reaproveitado. Um cliente feito para uma versão mais antiga continua funcionando numa caixa mais nova e simplesmente não vê o que não conhece. Uma mudança incompatível seria um pacote `prisma.v2`, servido ao lado do `v1`.
 
+
 :::info
 O contrato — o arquivo `.proto` do pacote `prisma.v1`, mais o `grpc.health.v1` padrão — não é publicado nesta wiki: peça-o junto com a versão que as suas caixas rodam. O servidor não oferece reflexão do gRPC, então ferramentas como o `grpcurl` precisam do arquivo. A gramática da configuração, essa, a própria caixa responde por `GetSchema`.
 
@@ -194,6 +195,7 @@ O contrato — o arquivo `.proto` do pacote `prisma.v1`, mais o `grpc.health.v1`
 | `RestartDataplane` | a resposta vem quando o reinício terminou. Enquanto o dataplane está fora, as leituras que dependem dele respondem `UNAVAILABLE` e o health check marca `OperationalService` e `TelemetryService` como `NOT_SERVING` |
 | `Reboot`, `Shutdown` | a resposta vem antes de a caixa cair |
 
+
 :::warning
 `RestartDataplane` para o encaminhamento e descarta o bloco de portas e as sessões de **todos** os assinantes, como o `system dataplane restart` no prompt. Uma automação que chama isso precisa da mesma janela que um operador pediria.
 
@@ -204,8 +206,8 @@ O contrato — o arquivo `.proto` do pacote `prisma.v1`, mais o `grpc.health.v1`
 É o `grpc.health.v1` padrão, então `grpc_health_probe`, o cliente de health de qualquer biblioteca gRPC ou um balanceador funcionam sem nada específico. Precisa de um certificado de cliente assinado pela CA, mesmo que ele não nomeie uma conta.
 
 | Nome do serviço | `SERVING` quando | `NOT_SERVING` quando |
-|-----------------|------------------|----------------------|
-| `""` (o servidor), `prisma.v1.ConfigService`, `prisma.v1.RouteService`, `prisma.v1.SessionService`, `prisma.v1.SystemService` | o servidor está no ar | — |
+|-----------------|----------------|--------------------|
+| `""` (o servidor), `prisma.v1.ConfigService`, `prisma.v1.RouteService`, `prisma.v1.SessionService`, `prisma.v1.SystemService` | o servidor está no ar | —                  |
 | `prisma.v1.OperationalService`, `prisma.v1.TelemetryService` | o dataplane responde às leituras de estatística | o dataplane não responde (parado, reiniciando) |
 | `prisma.v1.LogExport` | todo destino de registros configurado está entregando | um destino configurado não entrega nada há 60 segundos, tendo o que enviar |
 | `prisma.v1.Configuration` | a configuração salva foi aplicada inteira no boot | parte dela espera uma placa que a caixa não tinha no boot (`GetPendingConfiguration` diz qual) |
