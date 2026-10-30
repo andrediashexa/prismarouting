@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.156.1 - the wiki against the product at 0.156.0
+
+### Fixed
+
 * **The wiki against the product at 0.156.0.**
   ([#615](https://github.com/andrediashexa/hexarouting/issues/615))
   Asked for by the maintainer; the last full pass was at 0.138.5. Every
