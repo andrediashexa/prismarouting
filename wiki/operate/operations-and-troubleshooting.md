@@ -92,9 +92,9 @@ If the pair does not exist, there is nowhere for the address to go back to. The 
         linux_cp pair is where the address the box answers on goes back.
         Without one it comes up forwarding and unreachable from anywhere but
         its console.
-        the way back it computed on this boot: ens18 192.0.2.10/24
+        the way back it computed on this boot: enp1s0 192.0.2.10/24
         52:54:00:00:00:01
-        without a pair: ens18
+        without a pair: enp1s0
         give each one an 'interface' block in prismash, and commit:
         the block pairs it under its own name.
 ```
@@ -103,7 +103,7 @@ The management path line is the one that matters first: it is the address the bo
 
 ```
 configure
-interface ens18
+interface enp1s0
  no shutdown
  exit
 commit
@@ -326,13 +326,13 @@ The tuning runs at every boot precisely so that a change in `tune.env` or a NIC 
 The self-test reads, from the running dataplane, how many receive queues each card actually opened, and compares it with what the boot tuning asked for that card:
 
 ```
-  [ ok ] rx queues: 1 of 1 on ens9, as requested (1)
+  [ ok ] rx queues: 1 of 1 on enp6s0, as requested (1)
 ```
 
 `1 of 1` is what the card opened and the maximum it has; the name is the one the dataplane gives the card, which is the name it had in Linux. When what was opened differs from what was asked, the line becomes a warning and says why it matters:
 
 ```
-  [warn] rx queues: 1 of 1 on ens9, 4 requested
+  [warn] rx queues: 1 of 1 on enp6s0, 4 requested
          the tuner asked for one queue per worker, capped at
          what the card reported, and the dataplane opened 1:
          at most 1 worker(s) receive from this card, and the
@@ -344,7 +344,7 @@ The boot tuning sizes the workers by the processor and asks for one queue per wo
 There is a worse case: the driver refuses the card and opens no queue at all, although the dataplane still lists the count it was configured with. The self-test reads the driver state along with the count and treats this as a failure, not as an open queue:
 
 ```
-  [FAIL] rx queues: none opened on ens9
+  [FAIL] rx queues: none opened on enp6s0
         'show hardware-interfaces' marks the card pmd-init-fail, so the
         1 of 1 it lists were configured and never opened:
         the driver refused the port and the card carries no
@@ -465,7 +465,7 @@ flowchart TD
 | "did the pool run out?" | `show log kind pool` |
 | "what was already wrong when the box came up?" | `show log` — the `standing at start:` lines of the first reading at boot |
 | "I want to watch events arriving" | `monitor log` (the same filters; Ctrl-C stops) |
-| "are the events reaching my syslog?" | `show system logging` |
+| "are the events reaching my syslog?" | `show system logging` — see [Sending the box's event log to the NOC's syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA) |
 | "who changed the pool, and when?" | `show cgnat history` |
 | "what am I about to apply?" | `show configuration compare` |
 | "what version is this machine?" | `show version` |

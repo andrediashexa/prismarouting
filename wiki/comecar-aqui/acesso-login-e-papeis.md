@@ -110,7 +110,7 @@ Quem não tem `operator` recebe a recusa antes de qualquer coisa acontecer, com 
 
 A **consulta** de versões — `system upgrade` sem versão, que só diz qual versão a caixa roda e qual é a mais nova publicada — não muda nada, então **qualquer conta** pode fazer. Ela é lida pelo sistema da caixa, porque a rede da VTY termina no backplane e não alcança o site de releases; até a 0.149.25 essa consulta falhava ali para todo mundo.
 
-Na API, `WhoAmI` diz `can_operate`, e as contas lidas por `GetConfig` trazem `operator`.
+Na API, `WhoAmI` diz `can_operate`, e as contas lidas por `GetConfig` trazem `operator`; o que cada papel pode chamar pela API está em [API de gerência (gRPC) — para quem integra](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs).
 
 As capacidades são lidas da participação em grupos **no momento em que a VTY inicia**, e nunca de algo que o programa guarde: a resposta precisa ser a que o sistema daria, senão desprovisionar uma conta aqui não a desprovisiona de fato.
 

@@ -401,7 +401,7 @@ Cada destino recibe **trap**, a menos que indique `inform`: el inform lo confirm
 | una sesión BFD cae o vuelve | `bfdSessDown`, `bfdSessUp` de la BFD-STD-MIB, con el índice de la sesión y el diagnóstico (desde la 0.152.3) |
 | disco, memoria o carga superan el límite | los avisos estándar de net-snmp |
 
-Puerto caído y sesión BGP caída ya eran avisos estándar (`linkDown`/`linkUp` de la IF-MIB y `bgpBackwardTransition` de bgpd), y por eso no recibieron un aviso propio del producto: no llegan dos veces. Login, commit y reinicio **no** tienen aviso: esos están en `show log`, que va a un syslog con `system` > `logging` y se sigue en vivo con `monitor log`.
+Puerto caído y sesión BGP caída ya eran avisos estándar (`linkDown`/`linkUp` de la IF-MIB y `bgpBackwardTransition` de bgpd), y por eso no recibieron un aviso propio del producto: no llegan dos veces. Login, commit y reinicio **no** tienen aviso: esos están en `show log`, que [va a un syslog](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb) con `system` > `logging` y se sigue en vivo con `monitor log`.
 
 **Sesión BFD.** Los avisos son los de la propia BFD-STD-MIB (RFC 7331): `bfdSessDown` (`1.3.6.1.2.1.222.0.2`) cuando la sesión cae y `bfdSessUp` (`.0.1`) cuando vuelve. Cada uno trae `bfdSessDiag` con el índice de la sesión —el mismo de la tabla `bfdSessTable` que sirve el equipo, así que la NMS sabe qué fila consultar— y el diagnóstico: `1` es el tiempo de detección que expiró (el vecino dejó de responder), `3` es el vecino avisando que tiró la sesión. El BFD sigue detectando la caída en milisegundos y retirando las rutas en el acto; el aviso es lo que llega hasta 10 segundos después, porque sale del mismo vigilante que registra la caída en `show log` y que lee bfdd cada 10 segundos. Una sesión que cayó y volvió entre dos lecturas no se pierde: llegan los dos avisos. Cada sesión envía como máximo cuatro avisos en cinco minutos; si queda oscilando, la NMS recibe el estado final en cuanto la ventana lo permite. `bfdNotificationsEnable` responde `true(1)` solo mientras los avisos se están enviando de hecho —con al menos un `snmp trap-host` configurado— y `false(2)` sin destino.
 
@@ -441,7 +441,7 @@ show interface utilization <nombre>         cuánto está pasando por el puerto,
 `show interface utilization` muestrea los contadores del dataplane varias veces y muestra la tasa en bit/s de cada puerto, recibiendo y transmitiendo, con un pequeño gráfico de barras de las muestras de esa ejecución. Por defecto son 5 muestras cada 2 segundos; `interval <segundos>` (0,1 a 60) y `count <n>` (1 a 120) lo cambian, y el nombre del puerto al final limita a uno solo:
 
 ```
-show interface utilization interval 1 count 30 ens19
+show interface utilization interval 1 count 30 enp2s0
 ```
 
 Donde el dataplane informa la velocidad del enlace, las barras y el porcentaje son de la tasa de línea de ese puerto. Donde no la informa —toda interfaz virtual—, las barras se escalan por la muestra más alta de la ejecución, y el pie lo indica en lugar de inventar un porcentaje. Ctrl-C termina el muestreo antes del final y muestra lo que ya se midió. Es la respuesta a *"¿el enlace está lleno?"* sin esperar a que el gráfico de la NMS cierre el intervalo, pero no guarda historial entre una ejecución y otra: el historial es trabajo de la NMS.
@@ -469,3 +469,4 @@ Si el agente no responde nada, verifique primero si el `listen-address` es una d
 * [Cuando se llena el bloque de un suscriptor](/s/wiki-es/doc/cuando-se-llena-el-bloque-de-un-suscriptor-LJuUIMODBQ) — qué hacer cuando `.4.0` y `.5.0` suben
 * [Enrutamiento, SSH, usuarios y SNMP](/s/wiki-es/doc/enrutamiento-ssh-usuarios-y-snmp-aAKbYtvEg3) — la referencia de los comandos `snmp`
 * [Timeouts y los pisos de las RFC](/s/wiki-es/doc/timeouts-y-los-pisos-de-las-rfc-IgDiScQthb) — los valores que expone la RFC 4008
+* [API de gestión (gRPC) — para quien integra](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu) — lecturas tipadas, telemetría y health check para un NMS

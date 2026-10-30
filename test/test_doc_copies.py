@@ -837,7 +837,7 @@ import prismash                                                    # noqa: E402
 #: the ones the documentation's own transcripts use.
 _IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
 GigabitEthernet0/12/0             1      up          9000/0/0/0
-ens18                             6      up          9000/0/0/0
+enp1s0                            6      up          9000/0/0/0
 TenGigabitEthernet0/8/0           4      up          9000/0/0/0
 host-veth-vpp                     5      up          9000/0/0/0
 local0                            0     down            0/0/0/0
@@ -883,8 +883,8 @@ _LISTINGS = {
     # this file caught the DOCS copy alone - the public page would have kept a
     # screen the box stopped printing, and it had already lost `vrrp` and half
     # of what `vrf` says.
-    "prisma# [edit interface ens18] ?":
-        ("configuration", ("interface ens18",), ""),
+    "prisma# [edit interface enp1s0] ?":
+        ("configuration", ("interface enp1s0",), ""),
     # A statement complete as typed, with the optional words that may still
     # follow it and the <Enter> line (#557). Both documents quote it.
     "prisma# [edit router static] 10.77.0.0/16 next-hop 10.9.9.2 ?":

@@ -8,7 +8,7 @@ How to have two Prisma Routing boxes hold the same service address, one active a
 
 :::
 
-In the examples, box A is the one that should hold the service and box B is the standby. `ens18` is the inside port (subscribers) and `ens19` the outside port (upstream); replace them with your boxes' names. The port names do not need to match on both: the pair is matched by the virtual router number and by the address, never by the interface name.
+In the examples, box A is the one that should hold the service and box B is the standby. `enp1s0` is the inside port (subscribers) and `enp2s0` the outside port (upstream); replace them with your boxes' names. The port names do not need to match on both: the pair is matched by the virtual router number and by the address, never by the interface name.
 
 # 1. The same pools on both boxes
 
@@ -26,17 +26,17 @@ On box A, higher priority, and each port tracking (`track`) the other:
 
 ```
 configure
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.3.252/22
   vrrp 1 address 100.64.3.254
   vrrp 1 priority 200
-  vrrp 1 track ens19 decrement 150
+  vrrp 1 track enp2s0 decrement 150
   exit
- interface ens19
+ interface enp2s0
   ipv4 address 198.51.100.2/29
   vrrp 2 address 198.51.100.1
   vrrp 2 priority 200
-  vrrp 2 track ens18 decrement 150
+  vrrp 2 track enp1s0 decrement 150
   exit
 ```
 
@@ -44,15 +44,15 @@ On box B, the **same virtual router numbers and the same service addresses**, wi
 
 ```
 configure
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.3.253/22
   vrrp 1 address 100.64.3.254
-  vrrp 1 track ens19 decrement 150
+  vrrp 1 track enp2s0 decrement 150
   exit
- interface ens19
+ interface enp2s0
   ipv4 address 198.51.100.3/29
   vrrp 2 address 198.51.100.1
-  vrrp 2 track ens18 decrement 150
+  vrrp 2 track enp1s0 decrement 150
   exit
 ```
 
@@ -70,7 +70,7 @@ What each line changes:
 
 The advertisement interval is not configurable: it is the RFC default, one second, and it must be the same on both boxes. Takeover takes about three and a half seconds.
 
-**A NAT64 pool in the pair needs the IPv6 gateway too.** An IPv6 address under `vrrp <id> address` builds, beside the IPv4 router, the IPv6 virtual router of the same id, with the same priority, the same `track` and the same `preempt`. The first IPv6 address must be a link-local one (for example `vrrp 1 address fe80::1`, before the global one) — `commit check` refuses an IPv6 router without it —, and that link-local is what the IPv6 subscribers, or the BNG in front of them, point their gateway at. Its virtual MAC is `00:00:5e:00:02:<id>`. `track` is per family: an IPv4 router tracking an interface with no IPv4 address never sees it up, and `commit check` warns, naming the interface.
+**A** [**NAT64 pool**](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV) **in the pair needs the IPv6 gateway too.** An IPv6 address under `vrrp <id> address` builds, beside the IPv4 router, the IPv6 virtual router of the same id, with the same priority, the same `track` and the same `preempt`. The first IPv6 address must be a link-local one (for example `vrrp 1 address fe80::1`, before the global one) — `commit check` refuses an IPv6 router without it —, and that link-local is what the IPv6 subscribers, or the BNG in front of them, point their gateway at. Its virtual MAC is `00:00:5e:00:02:<id>`. `track` is per family: an IPv4 router tracking an interface with no IPv4 address never sees it up, and `commit check` warns, naming the interface.
 
 
 :::info
@@ -85,7 +85,7 @@ Before `commit`, `commit check` checks the candidate. Two refusals are specific 
 A virtual router with no address:
 
 ```
-error: interface ens18: vrrp 1 has no address
+error: interface enp1s0: vrrp 1 has no address
     a virtual router with nothing to stand for would elect a master that
     answers for nothing
 ```
@@ -93,7 +93,7 @@ error: interface ens18: vrrp 1 has no address
 A `track` pointing to an interface the box does not have:
 
 ```
-error: interface ens18: vrrp 1: no interface ens20
+error: interface enp1s0: vrrp 1: no interface enp5s0
     the dataplane does not have the interface this virtual router was told to
     track
 ```
@@ -105,7 +105,7 @@ And `vrrp` on an interface the box does not have is refused with the same words 
 **Changing a virtual router that already exists costs two elections.** The router is not edited in place: the box deletes it and recreates it. If it holds the service address, the peer takes over during the rebuild and `preempt` hands it back right after. The box warns before applying:
 
 ```
-  changing vrrp 1 on ens18 restarts it: this box stops advertising while it is
+  changing vrrp 1 on enp1s0 restarts it: this box stops advertising while it is
   rebuilt, the peer takes the address, and preempt hands it back - two
   elections, a few seconds apart
 ```
@@ -192,7 +192,7 @@ The warnings that can appear instead:
 Looking at a single port, during a failure:
 
 ```
-show interface ens18
+show interface enp1s0
 ```
 
 On a port with a virtual router, the screen shows the role and each service address with the virtual MAC:
@@ -253,7 +253,7 @@ Do this in a window, before you need the pair:
    show cgnat subscriber <subscriber ip>
    ```
 3. Cause the failure on box A. One at a time, with time to recover between them:
-   * **pull the upstream cable** (`ens19`): proves `track`. Box A should advertise 50 and lose to B;
+   * **pull the upstream cable** (`enp2s0`): proves `track`. Box A should advertise 50 and lose to B;
    * **lower the priority** through the VTY (`vrrp 1 priority 50` and `vrrp 2 priority 50`, `commit`): proves the election;
    * **shut down box A**: proves the loss of the whole box.
 4. On box B, `show cgnat ha` should show `master, holding the address`, and the subscriber should be browsing again within a few seconds. Check `show cgnat subscriber` on B: on a deterministic pool, the same public address and the same block; on a BPA pool, a new block.

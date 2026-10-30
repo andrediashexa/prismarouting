@@ -6,8 +6,8 @@ The example uses a small topology, which you swap for your own numbers:
 
 ```mermaid
 flowchart LR
-    S["Subscriber<br/>100.64.0.5"] -->|"ens18 · inside<br/>100.64.0.1/22"| B["Prisma Routing<br/>pool residencial<br/>203.0.113.0/28"]
-    B -->|"ens19 · outside<br/>198.51.100.2/30"| U["Upstream<br/>198.51.100.1"]
+    S["Subscriber<br/>100.64.0.5"] -->|"enp1s0 · inside<br/>100.64.0.1/22"| B["Prisma Routing<br/>pool residencial<br/>203.0.113.0/28"]
+    B -->|"enp2s0 · outside<br/>198.51.100.2/30"| U["Upstream<br/>198.51.100.1"]
     U --> I["Internet"]
 ```
 
@@ -15,8 +15,8 @@ flowchart LR
 |------|----------------|--------------|
 | Subscriber network (behind the box) | `100.64.0.0/22` | whatever your BNG/OLT delivers; `100.64.0.0/10` is the space reserved for this |
 | Pool public addresses | `203.0.113.0/28` | a prefix of yours that is **not** configured on any interface |
-| Subscriber port | `ens18`        | the card facing the BNG |
-| Egress port | `ens19`, with `198.51.100.2/30` | the card facing the upstream |
+| Subscriber port | `enp1s0`       | the card facing the BNG |
+| Egress port | `enp2s0`, with `198.51.100.2/30` | the card facing the upstream |
 
 # Before you start: three decisions
 
@@ -53,8 +53,8 @@ prisma> show interface terse
 
 ```
   Interface                  Admin  Link   Proto  Local
-  ens18                      down   up     -      -
-  ens19                      down   up     -      -
+  enp1s0                     down   up     -      -
+  enp2s0                     down   up     -      -
 
   2 interface(s) on the dataplane can forward
 ```
@@ -65,16 +65,16 @@ prisma> show interface terse
 
 ```
 prisma> configure
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] description assinantes
-prisma# [edit interface ens18] ipv4 address 100.64.0.1/22
-prisma# [edit interface ens18] no shutdown
-prisma# [edit interface ens18] exit
-prisma# [edit] interface ens19
-prisma# [edit interface ens19] description upstream
-prisma# [edit interface ens19] ipv4 address 198.51.100.2/30
-prisma# [edit interface ens19] no shutdown
-prisma# [edit interface ens19] exit
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] description assinantes
+prisma# [edit interface enp1s0] ipv4 address 100.64.0.1/22
+prisma# [edit interface enp1s0] no shutdown
+prisma# [edit interface enp1s0] exit
+prisma# [edit] interface enp2s0
+prisma# [edit interface enp2s0] description upstream
+prisma# [edit interface enp2s0] ipv4 address 198.51.100.2/30
+prisma# [edit interface enp2s0] no shutdown
+prisma# [edit interface enp2s0] exit
 prisma# [edit] router static
 prisma# [edit router static] 0.0.0.0/0 next-hop 198.51.100.1 description upstream
 prisma# [edit router static] exit
@@ -83,8 +83,8 @@ prisma# [edit] commit
 
 | Line | What for |
 |------|----------|
-| `ipv4 address 100.64.0.1/22` on `ens18` | it is the gateway the subscribers use |
-| `ipv4 address 198.51.100.2/30` on `ens19` | the link to the upstream |
+| `ipv4 address 100.64.0.1/22` on `enp1s0` | it is the gateway the subscribers use |
+| `ipv4 address 198.51.100.2/30` on `enp2s0` | the link to the upstream |
 | `0.0.0.0/0 next-hop 198.51.100.1` | the default route: where translated traffic leaves |
 
 If the subscribers are **not** on a directly connected network, but behind a BNG that talks to the box over a link, also add the return route to them, in the same block: `100.64.0.0/10 next-hop <BNG-address>`.
@@ -98,8 +98,8 @@ prisma> show interface terse
 
 ```
   Interface                  Admin  Link   Proto  Local
-  ens18                      up     up     inet   100.64.0.1/22
-  ens19                      up     up     inet   198.51.100.2/30
+  enp1s0                     up     up     inet   100.64.0.1/22
+  enp2s0                     up     up     inet   198.51.100.2/30
 
   2 interface(s) on the dataplane can forward
 ```
@@ -155,12 +155,12 @@ The CGNAT side is a property of the interface, and it is typed in the interface'
 
 ```
 prisma# [edit nat / cgnat] top
-prisma# [edit] interface ens18
-prisma# [edit interface ens18] cgnat inside
-prisma# [edit interface ens18] exit
-prisma# [edit] interface ens19
-prisma# [edit interface ens19] cgnat outside
-prisma# [edit interface ens19] exit
+prisma# [edit] interface enp1s0
+prisma# [edit interface enp1s0] cgnat inside
+prisma# [edit interface enp1s0] exit
+prisma# [edit] interface enp2s0
+prisma# [edit interface enp2s0] cgnat outside
+prisma# [edit interface enp2s0] exit
 ```
 
 `inside` is the port where the subscribers come in. `outside` is the port where translated traffic leaves.
@@ -185,13 +185,13 @@ prisma# [edit] show configuration compare
 +   exit
 +  exit
 + exit
- interface ens18
+ interface enp1s0
   ipv4 address 100.64.0.1/22
 + cgnat inside
   exit
 ```
 
-And, further down, the same `+ cgnat outside` line in the `ens19` block.
+And, further down, the same `+ cgnat outside` line in the `enp2s0` block.
 
 Everything with `+` is what goes in. Then ask the box to validate, without applying anything:
 
@@ -210,8 +210,8 @@ The second line appears because the default route from step 2 is routing configu
 `commit check` refuses here whatever would not work, and says why. The refusal that shows up most with a new pool is a public address that is also on one of the box's interfaces:
 
 ```
-error: pool 'errado': public address 198.51.100.2 is configured on ens19
-    interface ens19 / ipv4 address 198.51.100.2/30
+error: pool 'errado': public address 198.51.100.2 is configured on enp2s0
+    interface enp2s0 / ipv4 address 198.51.100.2/30
     nat / cgnat / pool errado / prefix-outside 198.51.100.0/30
     cgnat would translate the box's own control-plane traffic on that address:
     bpa-out2in runs before the box decides a packet is for itself, so the BGP
@@ -447,3 +447,4 @@ With every item checked, the subscriber goes out to the internet with the pool's
 * [CGNAT configuration](/s/wiki-en/doc/cgnat-configuration-MXpSfxcJsb) — interfaces, global timeouts and logging
 * [Day-to-day recipes](/s/wiki-en/doc/day-to-day-recipes-KCc5cOuBip) — open a port, limit a subscriber, expand the pool
 * [Operations and troubleshooting](/s/wiki-en/doc/operations-and-troubleshooting-kql3GmIqmX) — when something does not work
+* [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ) — when the subscribers arrive over PPPoE and the box is the BNG

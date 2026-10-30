@@ -40,7 +40,7 @@ Desde a versão 0.117 uma caixa instalada roda o dataplane e o roteamento como c
 
 |     |     |
 |-----|-----|
-| O que guarda | a VTY `prismash` e os clientes que ela usa para falar com o dataplane e com o FRR. Não roda nenhum daemon, a não ser o servidor da API de gerência quando ela está ligada (`api enabled yes`); o sistema a expõe no endereço de gerência e repassa as conexões pelo backplane |
+| O que guarda | a VTY `prismash` e os clientes que ela usa para falar com o dataplane e com o FRR. Não roda nenhum daemon, a não ser o servidor da [API de gerência](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs) quando ela está ligada (`api enabled yes`); o sistema a expõe no endereço de gerência e repassa as conexões pelo backplane |
 | Rede | **nenhuma**, além de uma única ligação ao backplane (abaixo), em 128.0.0.2. Não alcança a internet nem a rede de gerência |
 | O que divide com o sistema | a configuração da caixa e as suas revisões (`/etc/prisma-routing`), os sockets do dataplane e do FRR, `/var/log/prisma-routing`, e as contas do sistema, **só para leitura** |
 | O que lê do sistema | placas, barramento PCI, processadores, memória, rotas e o arquivo de ajuste do dataplane, tudo **só para leitura**. Por isso `show hardware`, `show interface` e `show system cpu` respondem ali o mesmo que no sistema |
@@ -200,3 +200,4 @@ A resposta é a versão do kernel seguida de `-prisma`, por exemplo `6.1.190-pri
 * [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — a mídia que traz o kernel
 * [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — o que o pacote de atualização traz e o que não traz
 * [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — o autoteste de boot
+* [API de gerência (gRPC) — para quem integra](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs) — o servidor da API do lado de quem integra

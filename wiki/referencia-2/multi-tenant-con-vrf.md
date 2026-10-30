@@ -14,11 +14,11 @@ Cada cliente llega por una interfaz propia, y esa interfaz queda en la VRF del c
 
 ```
 configure
- interface ens20
+ interface enp5s0
   vrf 1
   cgnat inside
   exit
- interface ens21
+ interface enp6s0
   vrf 2
   cgnat inside
   exit

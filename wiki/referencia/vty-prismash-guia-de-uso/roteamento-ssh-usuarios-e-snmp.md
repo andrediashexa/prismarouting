@@ -21,7 +21,7 @@ configure
  router ospf6
   ospf6 router-id 10.0.0.1
   exit
- interface ens18
+ interface enp1s0
   ipv6 ospf6 area 0
   exit
  commit
@@ -239,9 +239,9 @@ flowchart LR
 ```
 prisma> show route
   Destination    Next hop    Interface Kind
-  0.0.0.0/0      200.150.0.1 ens19     forward
-  200.150.0.0/24 -           ens19     connected
-  203.0.113.0/24 200.150.0.1 ens19     forward
+  0.0.0.0/0      200.150.0.1 enp2s0    forward
+  200.150.0.0/24 -           enp2s0    connected
+  203.0.113.0/24 200.150.0.1 enp2s0    forward
 
   3 entries carrying traffic
 ```
@@ -393,6 +393,8 @@ configure
 Vale a partir do próximo boot: a caixa põe `ixgbe.allow_unsupported_sfp=1` na linha de comando do kernel, que o driver lê quando carrega. `show system hardware` mostra o que está configurado e o que o boot atual tem. A Intel avisa que um módulo que ela não testou pode ser instável; por isso vem desligado.
 
 ## Para onde vai o registro de eventos: `system` > `logging`
+
+A tarefa completa, com como conferir, está em [Mandar o log de eventos da caixa para o syslog do NOC](/s/wiki/doc/mandar-o-log-de-eventos-da-caixa-para-o-syslog-do-noc-N2uzxgzpZX).
 
 O que o `show log` mostra — commits, reinícios com a causa, enlaces, módulos, sessões BGP e BFD, pools sem bloco, logins — vai também para até quatro coletores syslog:
 
@@ -898,6 +900,8 @@ Ele **não recusa** o commit — anunciar de outro equipamento é um desenho leg
 
 A partir da versão 0.148.4 a caixa oferece uma API de gerência em gRPC (`prisma.v1`), para a interface web e outros sistemas que precisem configurar e ler a caixa sem passar pelo terminal. Ela **não é um segundo jeito de configurar**: cada chamada de configuração é a própria VTY trabalhando — o `configure`, as linhas que você digitaria, o `commit check`, o `commit`, o `commit confirmed`, o `rollback` e o `save` —, então uma recusa pela API é a mesma recusa da VTY, com as mesmas palavras, e uma mudança feita pela API aparece no `show running-config`.
 
+Para quem vai escrever o cliente — papéis, serviços, limites, health check e o comportamento numa atualização —, veja [API de gerência (gRPC) — para quem integra](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs).
+
 Ela vem **desligada**. Para ligar, você precisa de três coisas:
 
 
@@ -962,4 +966,5 @@ O `ping`, o `traceroute` e o `mtr` chegam **linha a linha, enquanto rodam**, cad
 * [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — OSPF e IS-IS na porta, MTU, uRPF
 * [Configuração de BGP](/s/wiki/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, `policy-options` e RPKI
 * [Monitoramento e SNMP](/s/wiki/doc/monitoramento-e-snmp-YGn85RpUAb) — o que o agente SNMP responde
+* [API de gerência (gRPC) — para quem integra](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs) — o que a API oferece a quem integra: papéis, serviços, limites e health check
 * [VTY prismash — guia de uso](/s/wiki/doc/vty-prismash-guia-de-uso-h6sDAK8Dsh) — os modos e a árvore de comandos

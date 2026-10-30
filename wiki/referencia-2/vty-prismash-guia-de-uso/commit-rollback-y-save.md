@@ -338,8 +338,8 @@ Los tres rechazos de un bundle LACP (`interface ae<n>`), cada uno con el nombre 
 
 ```
 error: a bundle member this box does not have: ens29
-error: a port in two bundles: ens19
-error: a bundle member with config of its own: ens19
+error: a port in two bundles: enp2s0
+error: a bundle member with config of its own: enp2s0
 ```
 
 El primero es un `member` con un puerto que el dataplane no tiene, casi siempre un error de tipeo. El segundo es el mismo puerto en dos bundles: un puerto solo puede pertenecer a uno. El tercero es un miembro con dirección o lado de CGNAT propio. Un miembro no reenvía por sí solo, así que esa configuración va en el `ae<n>`, no en el puerto. Quite la configuración del puerto y póngala en el bundle.

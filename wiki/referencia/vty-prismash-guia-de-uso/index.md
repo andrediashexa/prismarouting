@@ -44,7 +44,7 @@ flowchart LR
 | CGNAT | `prisma# [edit nat / cgnat] ` | `cgnat`, dentro de `nat` | `exit`, `up` ou `top` |
 | NAT64 | `prisma# [edit nat / nat64] ` | `nat64`, dentro de `nat` | `exit`, `up` ou `top` |
 | Pool | `prisma# [edit nat / cgnat / pool residencial] ` | `pool <nome>`, dentro de `cgnat` — ou de `nat64`, com `[edit nat / nat64 / pool <nome>]` | `exit` volta para `cgnat` (ou `nat64`); `top` vai ao topo |
-| Interface | `prisma# [edit interface ens18] ` | `interface <nome>` | `exit`, `up` ou `top` |
+| Interface | `prisma# [edit interface enp1s0] ` | `interface <nome>` | `exit`, `up` ou `top` |
 | Usuário | `prisma# [edit user joao] ` | `user <nome>` | `exit`, `up` ou `top` |
 | Usuário SNMP | `prisma# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`, `up` ou `top` |
 | Rotas estáticas | `prisma# [edit router static] ` | `router static` | `exit`, `up` ou `top` |
@@ -118,8 +118,8 @@ E onde a árvore espera um **nome**, os dois completam com o que a caixa realmen
 
 ```
 prisma# [edit] interface ?
-  ens18  interface (up)
-  ens19  interface (up)
+  enp1s0  interface (up)
+  enp2s0  interface (up)
   <interface>, or a name that creates one
 ```
 
@@ -168,20 +168,20 @@ O next-hop de uma rota estática completa com os vizinhos que o dataplane resolv
 Você não precisa digitar a palavra inteira. **Qualquer abreviação que sirva a uma única declaração vale pela declaração inteira** — a caixa completa por você antes de ler a linha:
 
 ```
-prisma# [edit] interf ens18
-prisma# [edit interface ens18] no shut
-prisma# [edit interface ens18] descr uplink da transito
-prisma# [edit interface ens18] mt 9000
+prisma# [edit] interf enp1s0
+prisma# [edit interface enp1s0] no shut
+prisma# [edit interface enp1s0] descr uplink da transito
+prisma# [edit interface enp1s0] mt 9000
 ```
 
-é exatamente o mesmo que `interface ens18`, `no shutdown`, `description uplink da transito` e `mtu 9000`. As palavras que valem são as mesmas que o `?` e o TAB oferecem naquele ponto, então o que a caixa aceita e o que ela oferece nunca discordam.
+é exatamente o mesmo que `interface enp1s0`, `no shutdown`, `description uplink da transito` e `mtu 9000`. As palavras que valem são as mesmas que o `?` e o TAB oferecem naquele ponto, então o que a caixa aceita e o que ela oferece nunca discordam.
 
 **O que fica guardado é sempre a grafia inteira.** `show this`, `show configuration` e o arquivo que o `save` grava nunca mostram `no shut`: `mt 9000` aparece como `mtu 9000`, e uma interface ligada com `no shut` simplesmente deixa de ter a linha `shutdown` - a caixa só escreve `shutdown` quando a interface está desligada. A abreviação existe para os seus dedos, não para o arquivo.
 
 ### Uma abreviação ambígua é recusada, com os candidatos
 
 ```
-prisma# [edit interface ens18] i 1
+prisma# [edit interface enp1s0] i 1
 error: an ambiguous abbreviation
     'i' begins 4 statements here: ip, ipv4, ipv6, isis
     type enough of one to tell them apart, or '?' to read what each does
@@ -437,13 +437,13 @@ Os blocos que têm muitas declarações estão documentados à parte, cada um co
 ## Um nome de interface que não existe é recusado
 
 ```
-error: interface ens9: this box has no such interface
-    it has: ens18, ens19
+error: interface enp2s1: this box has no such interface
+    it has: enp1s0, enp2s0
     (a linux_cp pair answers to both its dataplane name and its Linux one)
     the statement would commit and do nothing
 ```
 
-`interface ens9` — um erro de digitação de `ens19` — commitaria limpo, apareceria na configuração em vigor e não faria nada. A recusa sai no `commit` e no `commit check`, e **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
+`interface enp2s1` — um erro de digitação de `enp2s0` — commitaria limpo, apareceria na configuração em vigor e não faria nada. A recusa sai no `commit` e no `commit check`, e **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
 
 Vale para **qualquer** bloco `interface` com qualquer declaração dentro — endereço, MTU, descrição, lado do CGNAT, VRRP, uma linha do OSPF — e para o `interface <nome> inside|outside` que o nível `cgnat` ainda aceita.
 
@@ -453,7 +453,7 @@ As exceções são os nomes que **criam** uma interface: `interface loop<n>`, `i
 
 
 :::info
-Uma interface do `linux_cp` atende por **mais de um nome** quando o `linux-name` é outro — o do dataplane (`ens18`) e o do Linux (`vppwan0`). Os dois são aceitos, porque os dois são reais e o FRR usa o segundo. Uma placa sem `linux-name` chama-se `ens18` dos dois lados.
+Uma interface do `linux_cp` atende por **mais de um nome** quando o `linux-name` é outro — o do dataplane (`enp1s0`) e o do Linux (`vppwan0`). Os dois são aceitos, porque os dois são reais e o FRR usa o segundo. Uma placa sem `linux-name` chama-se `enp1s0` dos dois lados.
 
 :::
 
@@ -483,7 +483,7 @@ error: not a statement FRR accepts here; nothing staged
 Dentro de um bloco, apenas o que vale ali:
 
 ```
-prisma# [edit interface ens18] ?
+prisma# [edit interface enp1s0] ?
   cgnat        this interface's side of the CGNAT
   description  what this interface is for
   exit         leave the interface
@@ -517,7 +517,7 @@ Os blocos do roteamento que esta VTY modela — `router bgp` e sua família de e
 
 Onde a árvore espera um **nome**, quem responde é a caixa: interfaces vêm do dataplane com o estado, e pools, contas, usuários SNMP, prefix-lists, route-maps, vizinhos e peer groups vêm da **candidata** — completam o que está sendo editado, não só o que já foi commitado.
 
-A completação **ignora maiúsculas e minúsculas** e insere sempre a grafia da máquina: `ENS19` e `Ens19` completam para `ens19`.
+A completação **ignora maiúsculas e minúsculas** e insere sempre a grafia da máquina: `ENS19` e `Ens19` completam para `enp2s0`.
 
 
 :::info
@@ -525,7 +525,7 @@ Uma fonte que não responde — o dataplane fora, por exemplo — não oferece n
 
 :::
 
-O prompt nomeia onde você está, inclusive qual pool ou qual interface: `[edit interface ens19]`. Sem isso, uma declaração digitada um bloco depois do pretendido cai na interface errada, sem aviso.
+O prompt nomeia onde você está, inclusive qual pool ou qual interface: `[edit interface enp2s0]`. Sem isso, uma declaração digitada um bloco depois do pretendido cai na interface errada, sem aviso.
 
 # Ver também
 

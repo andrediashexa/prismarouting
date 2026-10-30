@@ -61,17 +61,17 @@ The boot tuning asks **the card** how many queues it has and what its maximum MT
 
 The MTU is also read and **corrected**. Since 0.152.1 every interface without `mtu` starts at **1500**, the box's default — before it started at VPP's own 9000, and with that `tcp-mss auto` gave 8960 and lowered nothing on a 1500 path. A card that does not accept even the default refuses the device: the port goes into error and forwards nothing. So, when some claimed card has a maximum below 1500, the box makes interfaces start at the **smallest maximum** among the cards it claims. The value applies to all of them: on a box with a 1400 card next to a 9000 one, the 9000 one also starts at 1400, and `mtu <n>` in the interface block raises that port afterwards.
 
-The boot report says what it found, one line per card. On an eight-core machine with a virtual card `ens18` with a maximum of 1500:
+The boot report says what it found, one line per card. On an eight-core machine with a virtual card `enp1s0` with a maximum of 1500:
 
 ```
-# NIC queues, ens18: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
+# NIC queues, enp1s0: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
 # interfaces start at: 1500, this box's default. 'mtu <n>' under
 ```
 
 With a card whose maximum is 1400, its line appears and the paragraph starts at the card's maximum:
 
 ```
-# NIC max MTU, ens18: 1400, below the box's default of 1500
+# NIC max MTU, enp1s0: 1400, below the box's default of 1500
 ```
 
 followed by a paragraph that starts with `# interfaces start at: 1400` and says why that value applies to all cards.
@@ -87,13 +87,13 @@ followed by a paragraph that starts with `# interfaces start at: 1400` and says 
 A card with queues to spare gets a short line, and a card that handles the default does **not** get any MTU line:
 
 ```
-# NIC queues, ens18: 8, enough for 7 worker(s)
+# NIC queues, enp1s0: 8, enough for 7 worker(s)
 ```
 
 And when the box cannot read the card's queues, it **says so**, because that is exactly the state the defect lived in:
 
 ```
-# NIC queues, ens18: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
+# NIC queues, enp1s0: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
 ```
 
 In that case it goes back to asking for one queue per worker, which is the number that used to fail. A box about to refuse its own card cannot look the same as a healthy box.

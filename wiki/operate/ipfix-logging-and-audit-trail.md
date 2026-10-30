@@ -291,7 +291,7 @@ No other screen on this box carries identity. Its presence in the log is the rea
 
 The **UDP** exporter did not change: it keeps the seven RFC 8158 fields and no identity.
 
-**IPv6-only subscriber, from a NAT64 pool:** what names it is the `Delegated-IPv6-Prefix` (RFC 4818 attribute 123), the prefix the BNG delegated. The record carries the name of the delegation that **covers** the subscriber's prefix: a /56 delegated to each customer of a pool cut into /56s, or a /48 that covers all of a company's /56s. A delegation longer than the subscriber — a /60 inside a /56 — covers only part of it, and the record says `unknown`. A new delegation replaces any other it overlaps: the delegated prefix now belongs to that customer, and the old entry is a `Stop` that did not arrive.
+**IPv6-only subscriber, from a** [**NAT64 pool**](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV)**:** what names it is the `Delegated-IPv6-Prefix` (RFC 4818 attribute 123), the prefix the BNG delegated. The record carries the name of the delegation that **covers** the subscriber's prefix: a /56 delegated to each customer of a pool cut into /56s, or a /48 that covers all of a company's /56s. A delegation longer than the subscriber — a /60 inside a /56 — covers only part of it, and the record says `unknown`. A new delegation replaces any other it overlaps: the delegated prefix now belongs to that customer, and the old entry is a `Stop` that did not arrive.
 
 **When the box itself is the BNG** (PPPoE), it records who held each inside address itself: the session history, `show pppoe history`, written at the start and the end of each session, whether or not RADIUS answers, hash-chained like the configuration trail and kept on the same log volume. The inside address and the instant of a block record lead to the subscriber with `show pppoe history address <address> at <time>`; see [PPPoE configuration](/s/wiki-en/doc/pppoe-configuration-XpY0C0K81I).
 
@@ -381,7 +381,7 @@ Fixed in **0.35.0**. A log already collected over TCP can be repaired if the box
 
 :::
 
-**A NAT64 pool subscriber** has its own template, because IPFIX has no field that is "an IPv4 or IPv6 address". It is the same table with the IPv6 address in place of the IPv4 one, as section 4.6.10 of RFC 8158 prescribes — plus the prefix length, which the RFC does not list and this box needs: the subscriber is the delegated prefix, and the address alone would name a /128 of it.
+**A** [**NAT64 pool**](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV) **subscriber** has its own template, because IPFIX has no field that is "an IPv4 or IPv6 address". It is the same table with the IPv6 address in place of the IPv4 one, as section 4.6.10 of RFC 8158 prescribes — plus the prefix length, which the RFC does not list and this box needs: the subscriber is the delegated prefix, and the address alone would name a /128 of it.
 
 | IE  | Name | Bits | Content |
 |----:|------|-----:|---------|
@@ -541,3 +541,4 @@ Entries written before the chain existed remain readable and are reported as **n
 * [Day-to-day recipes](/s/wiki-en/doc/day-to-day-recipes-KCc5cOuBip) — the runbook for answering a court order
 * [Port forwarding](/s/wiki-en/doc/port-forwarding-uB5xjjtTNS) — the block pinned by a forward, and why it is an allocation
 * [Taking the box to a new version](/s/wiki-en/doc/taking-the-box-to-a-new-version-spJOdnrvOD) — what the log volume keeps, and what a reinstallation wipes
+* [Sending the box's event log to the NOC's syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA) — the box's own event log (commits, links, logins) is a different stream

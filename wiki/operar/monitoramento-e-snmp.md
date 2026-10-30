@@ -401,7 +401,7 @@ Cada destino recebe **trap**, a não ser que diga `inform` — o inform é confi
 | uma sessão BFD cai ou volta | `bfdSessDown`, `bfdSessUp` da BFD-STD-MIB, com o índice da sessão e o diagnóstico (desde a 0.152.3) |
 | disco, memória ou carga passam do limite | os avisos padrão do net-snmp |
 
-Porta caída e sessão BGP caída já eram avisos padrão (`linkDown`/`linkUp` da IF-MIB e `bgpBackwardTransition` do bgpd), e por isso não ganharam um aviso próprio do produto: não chegam duas vezes. Login, commit e reinício **não** têm aviso: esses estão no `show log`, que vai para um syslog com `system` > `logging` e é acompanhado ao vivo com `monitor log`.
+Porta caída e sessão BGP caída já eram avisos padrão (`linkDown`/`linkUp` da IF-MIB e `bgpBackwardTransition` do bgpd), e por isso não ganharam um aviso próprio do produto: não chegam duas vezes. Login, commit e reinício **não** têm aviso: esses estão no `show log`, que [vai para um syslog](/s/wiki/doc/mandar-o-log-de-eventos-da-caixa-para-o-syslog-do-noc-N2uzxgzpZX) com `system` > `logging` e é acompanhado ao vivo com `monitor log`.
 
 **Sessão BFD.** Os avisos são os da própria BFD-STD-MIB (RFC 7331): `bfdSessDown` (`1.3.6.1.2.1.222.0.2`) quando a sessão cai e `bfdSessUp` (`.0.1`) quando volta. Cada um traz `bfdSessDiag` com o índice da sessão — o mesmo da tabela `bfdSessTable` que a caixa serve, então a NMS sabe qual linha consultar — e o diagnóstico: `1` é o tempo de detecção que estourou (o vizinho parou de responder), `3` é o vizinho avisando que derrubou a sessão. O BFD continua detectando a queda em milissegundos e tirando as rotas na hora; o aviso é que chega até 10 segundos depois, porque sai do mesmo vigia que registra a queda no `show log` e que lê o bfdd a cada 10 segundos. Uma sessão que caiu e voltou entre duas leituras não se perde: chegam os dois avisos. Cada sessão manda no máximo quatro avisos em cinco minutos; se ela ficar oscilando, a NMS recebe o estado final assim que a janela permite. `bfdNotificationsEnable` responde `true(1)` só enquanto os avisos estão sendo enviados de fato — com pelo menos um `snmp trap-host` configurado — e `false(2)` sem destino.
 
@@ -441,7 +441,7 @@ show interface utilization <nome>           quanto está passando na porta, agor
 `show interface utilization` amostra os contadores do dataplane várias vezes e mostra a taxa em bit/s de cada porta, recebendo e transmitindo, com um pequeno gráfico de barras das amostras daquela execução. Por padrão são 5 amostras a cada 2 segundos; `interval <segundos>` (0,1 a 60) e `count <n>` (1 a 120) mudam isso, e o nome da porta no fim limita a uma só:
 
 ```
-show interface utilization interval 1 count 30 ens19
+show interface utilization interval 1 count 30 enp2s0
 ```
 
 Onde o dataplane informa a velocidade do enlace, as barras e a porcentagem são da taxa de linha daquela porta. Onde não informa — toda interface virtual —, as barras são escaladas pela amostra mais alta da execução, e o rodapé diz isso em vez de inventar uma porcentagem. Ctrl-C encerra a amostragem antes do fim e mostra o que já foi medido. É a resposta para *"o enlace está cheio?"* sem esperar o gráfico da NMS fechar o intervalo — mas não guarda histórico entre uma execução e outra: histórico é trabalho da NMS.
@@ -469,3 +469,4 @@ Se o agente responde nada, verifique primeiro se o `listen-address` é um endere
 * [Quando o bloco de um assinante enche](/s/wiki/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) — o que fazer quando `.4.0` e `.5.0` sobem
 * [Roteamento, SSH, usuários e SNMP](/s/wiki/doc/roteamento-ssh-usuarios-e-snmp-LoibxwFM5m) — a referência dos comandos `snmp`
 * [Timeouts e os pisos das RFCs](/s/wiki/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) — os valores que a RFC 4008 expõe
+* [API de gerência (gRPC) — para quem integra](/s/wiki/doc/api-de-gerencia-grpc-para-quem-integra-TCbE6aUHgs) — leituras tipadas, telemetria e health check para um NMS

@@ -68,9 +68,9 @@ Y esto es lo primero que hay que establecer cuando alguien llama diciendo que el
 
 ```
 prisma> show route
-  Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       ens19        forward
-  200.150.0.0/24       connected         ens19        connected
+  Destination    Next hop    Interface Kind
+  0.0.0.0/0      200.150.0.1 enp2s0    forward
+  200.150.0.0/24 -           enp2s0    connected
 
   2 entries carrying traffic
 ```
@@ -88,15 +88,15 @@ Cuando el tráfico no pasa y la ruta parece correcta, `show route verbose` es el
 ```
 prisma> show interface
   Interface                  State  MTU    Address             Linux
-  ens18                      up     9000   203.0.113.1/24      tap0 ens18
-  ens19                      up     1500   -                   -
+  enp1s0                     up     9000   203.0.113.1/24      tap0 enp1s0
+  enp2s0                     up     1500   -                   -
 
   2 interface(s) on the dataplane can forward
 ```
 
 Responde por el **dataplane**, con estado, MTU, direcciones y el par del `linux_cp`. Esto último porque es el nombre que usan el FRR y el `ip`, y quien transita entre las dos herramientas necesita los dos lado a lado.
 
-**La placa aparece con el nombre que le daba Linux.** El equipo reclama las placas solo y bautiza cada una, en el dataplane, con el nombre que tenía en Linux: la `ens18` sigue siendo `ens18`, y así aparece aquí, en el prompt y en el enrutamiento. Una placa con bloque `interface` entra en Linux con ese mismo nombre, y es el que muestra la columna **Linux**, al lado del `tap` interno que usa el par - `linux-name` solo hace falta para elegir otro. Un puerto cuyo nombre tiene barras es una placa que nadie nombró; el enrutamiento rechaza nombres de más de 16 caracteres, y el `commit` lo dice antes de intentarlo.
+**La placa aparece con el nombre que le daba Linux.** El equipo reclama las placas solo y bautiza cada una, en el dataplane, con el nombre que tenía en Linux: la `enp1s0` sigue siendo `enp1s0`, y así aparece aquí, en el prompt y en el enrutamiento. Una placa con bloque `interface` entra en Linux con ese mismo nombre, y es el que muestra la columna **Linux**, al lado del `tap` interno que usa el par - `linux-name` solo hace falta para elegir otro. Un puerto cuyo nombre tiene barras es una placa que nadie nombró; el enrutamiento rechaza nombres de más de 16 caracteres, y el `commit` lo dice antes de intentarlo.
 
 
 :::warning
@@ -121,11 +121,11 @@ Una línea por interfaz, con **dos** columnas de estado:
 ```
 prisma> show interface terse
   Interface                  Admin  Link   Proto  Local
-  ens18                      up     up     inet   203.0.113.1/24
-  ens19                      up     down   -      -
+  enp1s0                     up     up     inet   203.0.113.1/24
+  enp2s0                     up     down   -      -
 
   2 interface(s) on the dataplane can forward
-  ens19: configured up, link down - that is the wire or the far end, not this configuration
+  enp2s0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
 | `Admin` | `Link` | Qué es |
@@ -145,8 +145,8 @@ Una dirección por línea: una interfaz con IPv4 e IPv6 aparece en dos líneas, 
 ```
 prisma> show interface description
   Interface                  Admin  Link   Description
-  ens18                      up     up     ASSINANTES PON-3
-  ens19                      up     down   TRANSITO Vivo AS26599
+  enp1s0                     up     up     ASSINANTES PON-3
+  enp2s0                     up     down   TRANSITO Vivo AS26599
 
   2 of 2 interface(s) described
 ```
@@ -168,12 +168,12 @@ prisma> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
-  ens19                      675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
-  ens18                        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp1s0                       8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp2s0                     675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
 
   bars are each interface's share of its own line rate
-    ens19                     12.4% of 10.00 Gbit/s
-    ens18                      0.8% of 1.00 Gbit/s
+    enp1s0                     0.8% of 1.00 Gbit/s
+    enp2s0                    12.4% of 10.00 Gbit/s
 ```
 
 | Argumento | Efecto |
@@ -244,8 +244,8 @@ show interface <nombre> transceiver
 El módulo que está en la jaula del puerto (SFP, SFP+, QSFP): quién lo fabricó, cuál es, y — cuando tiene diagnóstico (DDM) — la temperatura, la tensión, la corriente del láser y las potencias de TX y RX, cada una al lado de los límites de alarma y de advertencia **que graba el propio módulo** y diciendo si superó alguno. Es la misma lectura que da el `display transceiver ... verbose` del switch del otro lado, y es la que se compara con ella:
 
 ```
-prisma> show interface ens18 transceiver
-  ens18: SFP/SFP+/SFP28, LC connector, 1310 nm
+prisma> show interface enp1s0 transceiver
+  enp1s0: SFP/SFP+/SFP28, LC connector, 1310 nm
     vendor      Rei do SFP (OUI 00:90:65)
     part        RSMPP8510GL-03D  revision 2.1
     serial      FP23H150378  date 2023-08-15
@@ -276,11 +276,11 @@ prisma> show interface ens18 transceiver
 **En el** `**show interface**`, aparecen dos notas debajo de la lista cuando corresponden — notas, no errores: el puerto reenvía, y la nota dice dónde mirar.
 
 ```
-  ens18: rx power -19.00 dBm, below its low warning (-18.01 dBm)
-    'show interface ens18 transceiver' has the module's levels
-  ens18: 0.58% of received frames failed their CRC (60,674 of 10,460,674) since
-    the counters started: look at the fibre, the connectors and the modules at
-    both ends; 'show interface ens18 transceiver' has this end's
+  enp1s0: rx power -19.00 dBm, below its low warning (-18.01 dBm)
+    'show interface enp1s0 transceiver' has the module's levels
+  enp1s0: 0.58% of received frames failed their CRC (60,674 of 10,460,674)
+    since the counters started: look at the fibre, the connectors and the
+    modules at both ends; 'show interface enp1s0 transceiver' has this end's
 ```
 
 La primera, cuando la potencia de RX de un módulo superó una de sus advertencias. La segunda, cuando los errores de CRC de un puerto superan el **0,01%** de las tramas recibidas desde que empezaron los contadores (y son al menos diez, para que un enlace que tuvo media docena al levantar no lo diga para siempre). Una óptica y una fibra limpias no cuentan ningún error — la tasa de error especificada de un enlace de 10G es de 1 bit en 10¹², algunas tramas por día —, así que una tasa de ese tamaño es fibra, conector o módulo. El puerto que motivó esto contaba 0,58%: 58 veces por encima.
@@ -410,8 +410,8 @@ Siempre, y antes de la lista. Una placa que el **dataplane ya tomó** desaparece
 
 ```
 prisma> show hardware
-  the dataplane holds ens19. A NIC VPP owns is no longer listed by Linux, so it
-  is not in the list below.
+  the dataplane holds enp2s0. A NIC VPP owns is no longer listed by Linux, so
+  it is not in the list below.
 ```
 
 Cuando el dataplane no tiene ninguna interfaz, la línea es el **mismo diagnóstico** que dan el `show interface` y el autotest de arranque, leído de las mismas fuentes: dos diagnósticos del mismo hecho que discrepan entre sí son peores que uno.
@@ -442,7 +442,7 @@ Observe que `policy` y `mode` aparecen sin que usted los haya escrito. No es la 
 
 Dentro de un pool, el bloque sale como se escribe ahí: `pool residential` y los campos. En `cgnat`, `show this` muestra lo que tiene el nivel; en `nat`, el bloque entero; en `system` y en los niveles debajo de él, lo que tiene ese nivel. `show configuration` y `show running-config`, que muestran el equipo entero, traen el CGNAT como el bloque `nat` > `cgnat` — pools y ajustes globales, en el orden en que se escribe —, el lado de CGNAT de cada interfaz (`cgnat inside` o `cgnat outside`) dentro del bloque de la propia interfaz, y las rutas estáticas en un bloque `router static`. Es también como graba el `save`, así que copiar la pantalla a un archivo y cargarlo de vuelta funciona.
 
-El prompt nombra dónde está usted, incluso qué pool o qué interfaz — `[edit interface ens19]` — para que la próxima declaración no caiga en el bloque equivocado.
+El prompt nombra dónde está usted, incluso qué pool o qué interfaz — `[edit interface enp2s0]` — para que la próxima declaración no caiga en el bloque equivocado.
 
 ## Lo que el equipo verificó, y lo que solo pasó de largo
 
@@ -615,7 +615,7 @@ Quien los verifica todos es el **autotest de arranque**, una vez por arranque, c
 | `show system cpu cores` | cada CPU lógica, una por línea: socket, núcleo, nodo NUMA, hermanos de HT, el plano al que sirve en este arranque (plano de control, hilo principal, worker N o ninguno) y cuán ocupada está, con el steal aparte, medido en un segundo. Una CPU donde un hilo del VPP hace polling marca `polling` — aparece cerca del 100% ocupada sin importar lo que reenvíe — y, en un worker, el busy del propio VPP al lado, que es la carga real |
 | `show system memory` | la RAM por rol: lo configurado y lo vigente |
 | `show system hardware` | los ajustes de los drivers de las placas (módulos SFP+ no listados por `ixgbe`): lo configurado, que vale a partir del próximo arranque, y lo que tiene este arranque |
-| `show system management` | en qué VRF está la gestión del equipo: lo configurado y lo que el host tiene vigente — las reglas, los servicios que atienden en esa VRF y las interfaces en ella |
+| `show system management` | en qué VRF está la gestión del equipo: lo configurado y lo que el host tiene vigente — las reglas, los servicios que atienden en esa VRF y las interfaces en ella; el paso a paso está en [Gestión en una VRF propia](/s/wiki-es/doc/gestion-en-una-vrf-propia-ibjQgO0n3X) |
 | `show system tuning advice [seconds <1-60>] [host-topology]` | el ajuste de este equipo juzgado por lo que tiene y mide en una ventana de algunos segundos (5 por defecto): cada hallazgo con la medida, el límite y el porqué, y qué cambiar, en el equipo y — en una máquina virtual — en el host. No cambia nada |
 | `show system logging` | adónde va el registro de eventos del equipo: cada destino syslog configurado en `system` > `logging` y si el vigilante está logrando entregar (`sending`, `not reached: <motivo>`), con cuántos eventos ya envió |
 | `show system uptime` | desde cuándo están arriba el equipo, el dataplane (VPP) y el enrutamiento (FRR), el motivo del último arranque cuando se registró (`system reboot by <cuenta>`; si no, `not recorded`) y cuándo se instaló la versión. Un dataplane más nuevo que el equipo aparece como `restarted after the boot`, y desde la 0.151.14 la línea `started by:` dice **por qué**, como lo registró el equipo: el arranque, un `system dataplane restart`, una actualización, o `nothing recorded: unexpected` cuando nada en el equipo lo pidió |
@@ -693,7 +693,7 @@ Lo que registra hoy:
 | `start` y `exit` del plano de control PPPoE (`component` `bng`): cada arranque con la causa, cada salida con el código o la señal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
 | `radius`: un servidor RADIUS que el plano de control PPPoE dio por caído, y de vuelta | `RADIUS server 192.0.2.10 failed: it did not answer, and accel-ppp uses the others for its dead-time` |
 
-Un puerto que se cae y vuelve una y otra vez no llena el registro: cuatro cambios en 5 minutos salen uno por uno; a partir de ahí se cuentan, y sale una línea por ventana de 5 minutos — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. Una ráfaga de contraseñas equivocadas desde la misma dirección, igual. En el primer minuto después de que arranca el dataplane o el FRR, nada de esto se compara: el reinicio ya es un evento, y los puertos que vuelven son el reinicio. Los logins vienen de `/var/log/wtmp` y `/var/log/btmp`, los registros que ya escriben el sshd y el login(1); el módulo de una placa que está con Linux (la de gestión) todavía no se vigila.
+Un puerto que se cae y vuelve una y otra vez no llena el registro: cuatro cambios en 5 minutos salen uno por uno; a partir de ahí se cuentan, y sale una línea por ventana de 5 minutos — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. Una ráfaga de contraseñas equivocadas desde la misma dirección, igual. En el primer minuto después de que arranca el dataplane o el FRR, nada de esto se compara: el reinicio ya es un evento, y los puertos que vuelven son el reinicio. Los logins vienen de `/var/log/wtmp` y `/var/log/btmp`, los registros que ya escriben el sshd y el login(1); las placas que quedan con Linux (la de gestión, un puerto sobrante) también se vigilan — su enlace y su módulo, cuando lo hay — y aparecen como `interface <placa> (held by Linux)`, origen `host`.
 
 **Lo que ya estaba mal cuando arrancó el vigilante (desde la 0.152.2).** El vigilante registra cambios, así que una condición que ya existía cuando subió nunca se decía — fue el caso de un puerto con el RX por debajo de la advertencia antes de que el vigilante se ejecutara por primera vez. Ahora la primera lectura de cada arranque también dice lo que **está** mal, una vez, en presente: un puerto activado y sin enlace, un módulo más allá de una advertencia o alarma, una sesión BGP o BFD configurada que no está arriba, un pool sin bloques que rechaza, un colector de la exportación CGNAT no alcanzado.
 
@@ -714,7 +714,7 @@ prisma> monitor log kind bgp last 5
 
 `severity`, `source` y `kind` eligen qué se sigue; `last` y `since` qué se muestra antes. Sin ninguno de los dos, empieza ahora. `seconds <n>` se detiene solo después de ese tiempo. Un evento que llega después de su propia hora — el arranque del dataplane, que el host registra cuando lo ve; un login, con la hora del wtmp — aparece cuando llega, con su hora.
 
-**Enviar a un syslog:** `**system**` **>** `**logging**`**.** El registro va a hasta cuatro colectores syslog (RFC 5424, UDP o TCP), cada uno con su nivel mínimo; quien envía es el propio vigilante, a partir del `events.log`, que sirve de cola: un colector TCP que se cayó recibe lo que esperó cuando vuelve, sin perder y sin repetir. Vea la configuración en [Enrutamiento, SSH, usuarios y SNMP](/s/wiki-es/doc/enrutamiento-ssh-usuarios-y-snmp-aAKbYtvEg3). **No es la exportación de registros del CGNAT** (`nat` > `cgnat` > `logging`), que es el registro de quién usó qué puerto público, para órdenes judiciales: son dos configuraciones y dos flujos separados, y deben ir a colectores diferentes.
+**Enviar a un syslog:** `**system**` **>** `**logging**`**.** El registro va a hasta cuatro colectores syslog (RFC 5424, UDP o TCP), cada uno con su nivel mínimo; quien envía es el propio vigilante, a partir del `events.log`, que sirve de cola: un colector TCP que se cayó recibe lo que esperó cuando vuelve, sin perder y sin repetir. Vea la configuración en [Enrutamiento, SSH, usuarios y SNMP](/s/wiki-es/doc/enrutamiento-ssh-usuarios-y-snmp-aAKbYtvEg3) y el paso a paso en [Enviar el log de eventos del equipo al syslog del NOC](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb). **No es la exportación de registros del CGNAT** (`nat` > `cgnat` > `logging`), que es el registro de quién usó qué puerto público, para órdenes judiciales: son dos configuraciones y dos flujos separados, y deben ir a colectores diferentes.
 
 El `show logging` sigue siendo el del FRR: la configuración de log de cada daemon de enrutamiento.
 

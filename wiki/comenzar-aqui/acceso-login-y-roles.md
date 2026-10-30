@@ -110,7 +110,7 @@ Quien no tiene `operator` recibe el rechazo antes de que ocurra nada, con el mot
 
 La **consulta** de versiones —`system upgrade` sin versión, que solo dice qué versión ejecuta el equipo y cuál es la más reciente publicada— no cambia nada, así que **cualquier cuenta** puede hacerla. La lee el sistema del equipo, porque la red de la VTY termina en el backplane y no alcanza el sitio de releases; hasta la 0.149.25 esa consulta fallaba ahí para todos.
 
-En la API, `WhoAmI` indica `can_operate`, y las cuentas leídas por `GetConfig` incluyen `operator`.
+En la API, `WhoAmI` indica `can_operate`, y las cuentas leídas por `GetConfig` incluyen `operator`; lo que cada rol puede llamar por la API está en [API de gestión (gRPC) — para quien integra](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu).
 
 Las capacidades se leen de la pertenencia a grupos **en el momento en que la VTY inicia**, y nunca de algo que el programa guarde: la respuesta debe ser la que daría el sistema; de lo contrario, dar de baja una cuenta aquí no la da de baja de verdad.
 

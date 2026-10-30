@@ -169,3 +169,4 @@ Antes de dar la retención por montada, haga la prueba que importa: con tráfico
 * [Instalación del appliance](/s/wiki-es/doc/instalacion-del-appliance-MgWUcARKzM) — el tamaño del volumen de log y el espejo en dos discos
 * [Dimensionamiento y requisitos](/s/wiki-es/doc/dimensionamiento-y-requisitos-FuEOaBC4vd) — el disco del equipo y el volumen del log
 * [Monitoreo y SNMP](/s/wiki-es/doc/monitoreo-y-snmp-zQ9bTfrh8z) — seguir el equipo desde la NMS
+* [Enviar el log de eventos del equipo al syslog del NOC](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb) — el log de eventos del propio equipo (commits, enlaces, logins) es otro flujo

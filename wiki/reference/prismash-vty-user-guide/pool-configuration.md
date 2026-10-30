@@ -523,10 +523,10 @@ configure
     exit
    exit
   exit
- interface ens18
+ interface enp1s0
   cgnat inside
   exit
- interface ens19
+ interface enp2s0
   cgnat outside
   exit
  show configuration compare
@@ -542,3 +542,4 @@ The fields inside the pool are the same as always. What changed is the path to i
 
 * [Day-to-day recipes](/s/wiki-en/doc/day-to-day-recipes-KCc5cOuBip) — these fields applied to real tasks
 * [Deterministic and BPA — concepts and mapping](/s/wiki-en/doc/deterministic-and-bpa-concepts-and-mapping-NMOHVImQiU) — why some fields drop sessions
+* [NAT64 — IPv6-only subscribers in the same public space](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV) — the NAT64 pool put into service: routes, PREF64, DNS64, records and the pair

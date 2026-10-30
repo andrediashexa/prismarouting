@@ -62,19 +62,19 @@ Active/standby with VRRP on both sides — public and inside —, **without** se
 On each box, one virtual router per side, with the same `vrid` on both boxes and a different priority:
 
 ```
-interface ens18
+interface enp1s0
  ipv4 address 100.64.3.252/22
  cgnat inside
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp2s0 decrement 150
  exit
-interface ens19
+interface enp2s0
  ipv4 address 200.150.0.11/24
  cgnat outside
  vrrp 2 address 200.150.0.254
  vrrp 2 priority 200
- vrrp 2 track ens18 decrement 150
+ vrrp 2 track enp1s0 decrement 150
  exit
 ```
 
@@ -143,7 +143,7 @@ Two findings, and both are configuration errors with no symptom until the day it
 * **the same priority on both boxes.** RFC 5798 breaks the tie by the higher source address, so the pair works and who keeps the service is decided by something nobody wrote. The first failover lands wherever the addressing puts it.
 * **a** `**vrid**` **that only one of the boxes holds.** There is no standby for that address: the box that holds it is alone. A different virtual address under the same `vrid` is this same finding twice, once for each box.
 
-The comparison is by `**vrid**` **and by address**, never by interface name: the two boxes hold an address under a `vrid`, and what the port is called on each side is each one's business — `ens18` here may be `ens19` there and the pair is right.
+The comparison is by `**vrid**` **and by address**, never by interface name: the two boxes hold an address under a `vrid`, and what the port is called on each side is each one's business — `enp1s0` here may be `enp2s0` there and the pair is right.
 
 When the two diverge:
 
@@ -154,7 +154,7 @@ prisma> show cgnat ha
     pools                residencial
 
   role
-    ens18 vrrp 1   master, holding the address
+    enp1s0 vrrp 1   master, holding the address
       address(es)        100.64.3.254
       virtual mac        00:00:5e:00:01:01
       priority           200

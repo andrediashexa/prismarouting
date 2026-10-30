@@ -40,7 +40,7 @@ Since version 0.117 an installed box runs the dataplane and routing as container
 
 |     |     |
 |-----|-----|
-| What it holds | the `prismash` VTY and the clients it uses to talk to the dataplane and to FRR. It runs no daemon, except the management API server when the API is on (`api enabled yes`); the system exposes it on the management address and passes the connections on over the backplane |
+| What it holds | the `prismash` VTY and the clients it uses to talk to the dataplane and to FRR. It runs no daemon, except the [management API](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn) server when the API is on (`api enabled yes`); the system exposes it on the management address and passes the connections on over the backplane |
 | Network | **none**, other than a single link to the backplane (below), at 128.0.0.2. It does not reach the internet or the management network |
 | What it shares with the system | the box configuration and its revisions (`/etc/prisma-routing`), the dataplane and FRR sockets, `/var/log/prisma-routing`, and the system accounts, **read-only** |
 | What it reads from the system | cards, PCI bus, processors, memory, routes and the dataplane tuning file, all **read-only**. That is why `show hardware`, `show interface` and `show system cpu` answer there the same as on the system |
@@ -200,3 +200,4 @@ The answer is the kernel version followed by `-prisma`, for example `6.1.190-pri
 * [Appliance installation](/s/wiki-en/doc/appliance-installation-gliHrNahhB) — the medium that carries the kernel
 * [Taking the box to a new version](/s/wiki-en/doc/taking-the-box-to-a-new-version-spJOdnrvOD) — what the upgrade package carries and what it does not
 * [Operations and troubleshooting](/s/wiki-en/doc/operations-and-troubleshooting-kql3GmIqmX) — the boot self-test
+* [Management API (gRPC) — for integrators](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn) — the API server from the integrator's side

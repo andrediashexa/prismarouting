@@ -27,6 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.156.2 - wiki pages for what shipped with none
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.1). No message, field or number changes. The public wiki gains a page for integrators of this API (#620); it describes the contract as it is and changes nothing a client sees. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.156.1 - the wiki against the product at 0.156.0
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.0). No message, field or number changes. The release carries the public wiki's audit (#615) and a fix to the tool that mirrors it; nothing an API client reads changes. A patch release: the API is down only for the usual upgrade window.

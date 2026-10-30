@@ -6,6 +6,7 @@ Qué existe y qué hace cada cosa. Es para consulta, no para lectura corrida: ve
 |--------|-------|
 | [VTY prismash — guía de uso](/s/wiki-es/doc/vty-prismash-guia-de-uso-gPIR8ZKwdC) | Modos, prompts y el árbol de comandos completo |
 | [Qué se ejecuta en el equipo](/s/wiki-es/doc/que-se-ejecuta-en-el-equipo-CKrjZRwjfW) | Los contenedores, el backplane, el servicio del sistema que ejecuta lo que la VTY pide, el `start shell` y el kernel |
+| [API de gestión (gRPC) — para quien integra](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu) | Qué ofrece la API gRPC a un NMS, portal o automatización: activarla, certificados y cuentas, roles, servicios, commit, telemetría, health check y el comportamiento en una actualización |
 | [Multi-tenant con VRF](/s/wiki-es/doc/multi-tenant-con-vrf-VtS5k4vFue) | Dos clientes que usan el mismo rango privado en el mismo equipo, cada uno en su VRF |
 | [Timeouts y los pisos de las RFC](/s/wiki-es/doc/timeouts-y-los-pisos-de-las-rfc-IgDiScQthb) | Cuánto vive cada sesión, los valores predeterminados, qué se rompe por debajo del mínimo y cuánto tiempo queda retenido un bloque BPA |
 

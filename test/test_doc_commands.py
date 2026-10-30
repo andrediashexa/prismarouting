@@ -72,12 +72,18 @@ DOC_ROOTS = (os.path.join(REPO, "wiki"),
 
 # Interfaces for the fake dataplane, so a command naming one is walked against
 # a box that has it rather than against a box with no interfaces at all. Both
-# shapes: the cards an installed box names after their Linux netdevs, ens18
-# and ens19, which is what the wiki's transcripts show since #389, and VPP's
-# own spelling for a device nobody named, which docs/routing.md still shows.
+# shapes: the cards an installed box names after their Linux netdevs, enp1s0
+# to enp4s0, which is what the wiki's transcripts show (generic names: the
+# lab's own card names stay off the public wiki), ens18 and ens19, which the
+# repository's own docs/ still show, and VPP's own spelling for
+# a device nobody named, which docs/routing.md still shows.
 IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
-ens18                             6      up          9000/0/0/0
-ens19                             7      up          1500/0/0/0
+ens18                             10     up          9000/0/0/0
+ens19                             11     up          1500/0/0/0
+enp1s0                            6      up          9000/0/0/0
+enp2s0                            7      up          1500/0/0/0
+enp3s0                            8      up          9000/0/0/0
+enp4s0                            9      up          1500/0/0/0
 GigabitEthernet0/12/0             1      up          9000/0/0/0
 TenGigabitEthernet0/0/0           2      up          9000/0/0/0
 TenGigabitEthernet0/0/1           3      up          9000/0/0/0

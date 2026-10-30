@@ -1,6 +1,6 @@
 # PPPoE configuration
 
-This page is the reference for the `pppoe` block and the `aaa` > `radius` block: the box terminates the subscribers' PPPoE sessions, authenticates each one against your RADIUS, limits the bandwidth of each session and translates their traffic through the CGNAT, as it does with a subscriber behind an `inside` interface. It says what each statement does, what the box refuses and how to read the sessions.
+This page is the reference for the `pppoe` block and the `aaa` > `radius` block: the box terminates the subscribers' PPPoE sessions, authenticates each one against your RADIUS, limits the bandwidth of each session and translates their traffic through the CGNAT, as it does with a subscriber behind an `inside` interface. It says what each statement does, what the box refuses and how to read the sessions. To bring the box up as a BNG for the first time, in order, see [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ).
 
 ```
 prisma> configure
@@ -11,7 +11,7 @@ prisma# [edit aaa / radius] server 192.0.2.11 secret <secret> priority 2
 prisma# [edit aaa / radius] exit
 prisma# [edit aaa] exit
 prisma# [edit] pppoe
-prisma# [edit pppoe] interface ens19
+prisma# [edit pppoe] interface enp2s0
 prisma# [edit pppoe] gateway 100.64.0.1
 prisma# [edit pppoe] address-pool 100.64.0.10-100.64.3.250
 prisma# [edit pppoe] dns 8.8.8.8
@@ -239,7 +239,7 @@ The time is the one from `show log`: an ISO time with `Z` (the block log's, copi
 prisma> show pppoe history address 100.64.0.11 at 2026-10-13T02:51:00Z
 maria.souza held 100.64.0.11
   from 2026-10-13T02:49:02.789Z  to still held
-  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on ens19.100
+  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on enp2s0.100
 ```
 
 On a **dynamic** pool, the block belongs to whoever has it now: `show cgnat translation` answers only for now and refuses `at`. For a past instant, the `BLOCK-ALLOC` line of the block log whose range contains the port gives the inside address and the time, and `show pppoe history address <address> at <time>` gives the subscriber.
@@ -308,6 +308,7 @@ QinQ and high availability of sessions do not exist yet. A session is always IPv
 
 ## See also
 
+* [Bring PPPoE subscribers online, step by step](/s/wiki-en/doc/bring-pppoe-subscribers-online-step-by-step-c0J39qphvJ) — the first time, in order, from the access port to the first subscriber
 * [CGNAT configuration](/s/wiki-en/doc/cgnat-configuration-MXpSfxcJsb) — the pool that translates the sessions
 * [Pool configuration](/s/wiki-en/doc/pool-configuration-wkJ1DcmG2Y) — the `prefix-inside` that covers the session addresses
 * [Interface configuration](/s/wiki-en/doc/interface-configuration-1Pq7NRieCn) — the sub-interface with the access VLAN

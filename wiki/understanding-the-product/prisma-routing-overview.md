@@ -49,7 +49,7 @@ flowchart LR
 
 Every change to the dataplane goes through its binary API, over a connection opened at the start of each VTY session and kept while it lasts — not through the dataplane's text command line, which exits with code zero even when it fails.
 
-Besides IPv4 CGNAT, the same box does **NAT64** (IPv6-only subscribers leaving through the same public space, in the same port blocks) and can **terminate PPPoE subscribers**, authenticated by RADIUS and translated by the CGNAT. Monitoring is over SNMP, and a gRPC management API, off by default, lets an external system configure and read the box by the same rules as the VTY.
+Besides IPv4 CGNAT, the same box does [**NAT64**](/s/wiki-en/doc/nat64-ipv6-only-subscribers-in-the-same-public-space-ryyEIrqWdV) (IPv6-only subscribers leaving through the same public space, in the same port blocks) and can **terminate PPPoE subscribers**, authenticated by RADIUS and translated by the CGNAT. Monitoring is over SNMP, and a [gRPC management API](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn), off by default, lets an external system configure and read the box by the same rules as the VTY.
 
 
 :::info

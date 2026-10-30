@@ -1,6 +1,6 @@
 # Configuração de PPPoE
 
-Esta página é a referência do bloco `pppoe` e do bloco `aaa` > `radius`: a caixa termina as sessões PPPoE dos assinantes, autentica cada um no seu RADIUS, limita a banda de cada sessão e traduz o tráfego deles pelo CGNAT, como faz com um assinante atrás de uma interface `inside`. Ela diz o que cada declaração faz, o que a caixa recusa e como ler as sessões.
+Esta página é a referência do bloco `pppoe` e do bloco `aaa` > `radius`: a caixa termina as sessões PPPoE dos assinantes, autentica cada um no seu RADIUS, limita a banda de cada sessão e traduz o tráfego deles pelo CGNAT, como faz com um assinante atrás de uma interface `inside`. Ela diz o que cada declaração faz, o que a caixa recusa e como ler as sessões. Para pôr a caixa no ar como BNG pela primeira vez, na ordem, veja [Pôr assinantes PPPoE no ar, passo a passo](/s/wiki/doc/por-assinantes-pppoe-no-ar-passo-a-passo-Y43rTeDSXs).
 
 ```
 prisma> configure
@@ -11,7 +11,7 @@ prisma# [edit aaa / radius] server 192.0.2.11 secret <segredo> priority 2
 prisma# [edit aaa / radius] exit
 prisma# [edit aaa] exit
 prisma# [edit] pppoe
-prisma# [edit pppoe] interface ens19
+prisma# [edit pppoe] interface enp2s0
 prisma# [edit pppoe] gateway 100.64.0.1
 prisma# [edit pppoe] address-pool 100.64.0.10-100.64.3.250
 prisma# [edit pppoe] dns 8.8.8.8
@@ -239,7 +239,7 @@ A hora é a do `show log`: um horário ISO com `Z` (o do log de blocos, copiado 
 prisma> show pppoe history address 100.64.0.11 at 2026-10-13T02:51:00Z
 maria.souza held 100.64.0.11
   from 2026-10-13T02:49:02.789Z  to still held
-  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on ens19.100
+  session 7f3a0c1e00000005  mac 02:aa:00:00:00:05  on enp2s0.100
 ```
 
 Num pool **dinâmico**, o bloco pertence a quem o tem agora: o `show cgnat translation` responde só pelo agora e recusa o `at`. Para um instante passado, a linha `BLOCK-ALLOC` do log de blocos cuja faixa contém a porta dá o endereço interno e a hora, e o `show pppoe history address <endereço> at <hora>` dá o assinante.
@@ -308,6 +308,7 @@ QinQ e alta disponibilidade das sessões ainda não existem. Uma sessão é semp
 
 ## Ver também
 
+* [Pôr assinantes PPPoE no ar, passo a passo](/s/wiki/doc/por-assinantes-pppoe-no-ar-passo-a-passo-Y43rTeDSXs) — a primeira vez, na ordem, da porta de acesso ao primeiro assinante
 * [Configuração de CGNAT](/s/wiki/doc/configuracao-de-cgnat-EIWRFS6OnJ) — o pool que traduz as sessões
 * [Configuração de pool](/s/wiki/doc/configuracao-de-pool-btyS572Ih6) — o `prefix-inside` que cobre os endereços das sessões
 * [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — a sub-interface com a VLAN de acesso

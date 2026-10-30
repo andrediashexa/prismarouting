@@ -68,9 +68,9 @@ And this is the first thing to establish when someone calls saying the port forw
 
 ```
 prisma> show route
-  Destination          Next hop          Interface    Kind
-  0.0.0.0/0            200.150.0.1       ens19        forward
-  200.150.0.0/24       connected         ens19        connected
+  Destination    Next hop    Interface Kind
+  0.0.0.0/0      200.150.0.1 enp2s0    forward
+  200.150.0.0/24 -           enp2s0    connected
 
   2 entries carrying traffic
 ```
@@ -88,15 +88,15 @@ When traffic does not pass and the route looks right, `show route verbose` is th
 ```
 prisma> show interface
   Interface                  State  MTU    Address             Linux
-  ens18                      up     9000   203.0.113.1/24      tap0 ens18
-  ens19                      up     1500   -                   -
+  enp1s0                     up     9000   203.0.113.1/24      tap0 enp1s0
+  enp2s0                     up     1500   -                   -
 
   2 interface(s) on the dataplane can forward
 ```
 
 It answers from the **dataplane**, with state, MTU, addresses and the `linux_cp` pair. The latter because it is the name FRR and `ip` use, and whoever moves between the two tools needs both side by side.
 
-**The card shows up with the name Linux gave it.** The box claims the cards on its own and names each one, in the dataplane, with the name it had in Linux: `ens18` remains `ens18`, and that is how it shows up here, at the prompt and in routing. A card with an `interface` block enters Linux with that same name, and that is what the **Linux** column shows, next to the internal `tap` the pair uses - `linux-name` is only needed to choose a different one. A port whose name has slashes is a card no one named; routing refuses names longer than 16 characters, and `commit` says so before trying.
+**The card shows up with the name Linux gave it.** The box claims the cards on its own and names each one, in the dataplane, with the name it had in Linux: `enp1s0` remains `enp1s0`, and that is how it shows up here, at the prompt and in routing. A card with an `interface` block enters Linux with that same name, and that is what the **Linux** column shows, next to the internal `tap` the pair uses - `linux-name` is only needed to choose a different one. A port whose name has slashes is a card no one named; routing refuses names longer than 16 characters, and `commit` says so before trying.
 
 
 :::warning
@@ -121,11 +121,11 @@ One line per interface, with **two** state columns:
 ```
 prisma> show interface terse
   Interface                  Admin  Link   Proto  Local
-  ens18                      up     up     inet   203.0.113.1/24
-  ens19                      up     down   -      -
+  enp1s0                     up     up     inet   203.0.113.1/24
+  enp2s0                     up     down   -      -
 
   2 interface(s) on the dataplane can forward
-  ens19: configured up, link down - that is the wire or the far end, not this configuration
+  enp2s0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
 | `Admin` | `Link` | What it is |
@@ -145,8 +145,8 @@ One address per line: an interface with IPv4 and IPv6 appears on two lines, with
 ```
 prisma> show interface description
   Interface                  Admin  Link   Description
-  ens18                      up     up     ASSINANTES PON-3
-  ens19                      up     down   TRANSITO Vivo AS26599
+  enp1s0                     up     up     ASSINANTES PON-3
+  enp2s0                     up     down   TRANSITO Vivo AS26599
 
   2 of 2 interface(s) described
 ```
@@ -168,12 +168,12 @@ prisma> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
-  ens19                      675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
-  ens18                        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp1s0                       8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  enp2s0                     675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
 
   bars are each interface's share of its own line rate
-    ens19                     12.4% of 10.00 Gbit/s
-    ens18                      0.8% of 1.00 Gbit/s
+    enp1s0                     0.8% of 1.00 Gbit/s
+    enp2s0                    12.4% of 10.00 Gbit/s
 ```
 
 | Argument | Effect |
@@ -244,8 +244,8 @@ show interface <name> transceiver
 The module that is in the port's cage (SFP, SFP+, QSFP): who made it, what it is, and — when it has diagnostics (DDM) — the temperature, voltage, laser bias current and TX and RX power, each next to the alarm and warning thresholds **that the module itself stores** and saying whether it has crossed any. It is the same reading that `display transceiver ... verbose` on the switch at the other end gives, and it is the one you compare it with:
 
 ```
-prisma> show interface ens18 transceiver
-  ens18: SFP/SFP+/SFP28, LC connector, 1310 nm
+prisma> show interface enp1s0 transceiver
+  enp1s0: SFP/SFP+/SFP28, LC connector, 1310 nm
     vendor      Rei do SFP (OUI 00:90:65)
     part        RSMPP8510GL-03D  revision 2.1
     serial      FP23H150378  date 2023-08-15
@@ -276,11 +276,11 @@ prisma> show interface ens18 transceiver
 **In** `**show interface**`, two notes appear below the list when they apply — notes, not errors: the port forwards, and the note says where to look.
 
 ```
-  ens18: rx power -19.00 dBm, below its low warning (-18.01 dBm)
-    'show interface ens18 transceiver' has the module's levels
-  ens18: 0.58% of received frames failed their CRC (60,674 of 10,460,674) since
-    the counters started: look at the fibre, the connectors and the modules at
-    both ends; 'show interface ens18 transceiver' has this end's
+  enp1s0: rx power -19.00 dBm, below its low warning (-18.01 dBm)
+    'show interface enp1s0 transceiver' has the module's levels
+  enp1s0: 0.58% of received frames failed their CRC (60,674 of 10,460,674)
+    since the counters started: look at the fibre, the connectors and the
+    modules at both ends; 'show interface enp1s0 transceiver' has this end's
 ```
 
 The first, when a module's RX power has crossed one of its warnings. The second, when a port's CRC errors exceed **0.01%** of the frames received since the counters started (and are at least ten, so that a link that picked up half a dozen when coming up does not say so forever). Clean optics and fiber count no errors at all — the specified error rate of a 10G link is 1 bit in 10¹², a few frames a day —, so a rate of that size is fiber, connector or module. The port that prompted this was counting 0.58%: 58 times above.
@@ -410,8 +410,8 @@ Always, and before the list. A card the **dataplane has already taken** disappea
 
 ```
 prisma> show hardware
-  the dataplane holds ens19. A NIC VPP owns is no longer listed by Linux, so it
-  is not in the list below.
+  the dataplane holds enp2s0. A NIC VPP owns is no longer listed by Linux, so
+  it is not in the list below.
 ```
 
 When the dataplane has no interface at all, the line is the **same diagnosis** that `show interface` and the boot self-test give, read from the same sources: two diagnoses of the same fact that disagree with each other are worse than one.
@@ -442,7 +442,7 @@ Note that `policy` and `mode` appear without you having typed them. It is not th
 
 Inside a pool, the block comes out the way it is typed there: `pool residential` and the fields. Under `cgnat`, `show this` shows what the level has; under `nat`, the whole block; under `system` and the levels below it, what that level has. `show configuration` and `show running-config`, which show the whole box, carry CGNAT as the `nat` > `cgnat` block — pools and global settings, in the order they are typed —, the CGNAT side of each interface (`cgnat inside` or `cgnat outside`) inside the interface's own block, and static routes in a `router static` block. It is also how `save` writes it, so copying the screen to a file and loading it back works.
 
-The prompt names where you are, including which pool or which interface — `[edit interface ens19]` — so that the next statement does not land in the wrong block.
+The prompt names where you are, including which pool or which interface — `[edit interface enp2s0]` — so that the next statement does not land in the wrong block.
 
 ## What the box checked, and what it merely passed on
 
@@ -615,7 +615,7 @@ What checks all of them is the **boot self-test**, once per boot, against the li
 | `show system cpu cores` | each logical CPU, one per line: socket, core, NUMA node, HT siblings, the plane it serves at this boot (control plane, main thread, worker N or none) and how busy it is, with steal separately, measured over one second. A CPU where a VPP thread polls is marked `polling` — it appears close to 100% busy no matter what it forwards — and, on a worker, VPP's own busy alongside, which is the real load |
 | `show system memory` | RAM per role: the configured and what is in effect |
 | `show system hardware` | the card drivers' settings (SFP+ modules `ixgbe` does not list): the configured, which applies from the next boot, and what this boot has |
-| `show system management` | which VRF the box's management is in: the configured and what the host has in effect — the rules, the services that answer in that VRF and the interfaces in it |
+| `show system management` | which VRF the box's management is in: the configured and what the host has in effect — the rules, the services that answer in that VRF and the interfaces in it; the step by step is in [Management in a VRF of its own](/s/wiki-en/doc/management-in-a-vrf-of-its-own-tTlK811qdt) |
 | `show system tuning advice [seconds <1-60>] [host-topology]` | this box's tuning judged from what it has and measures over a window of a few seconds (5 by default): each finding with the measurement, the threshold and why, and what to change, on the box and — on a virtual machine — on the host. Changes nothing |
 | `show system logging` | where the box's event log goes: each syslog destination configured in `system` > `logging` and whether the watcher is managing to deliver (`sending`, `not reached: <reason>`), with how many events it has sent |
 | `show system uptime` | since when the box, the dataplane (VPP) and routing (FRR) have been up, the reason for the last boot when it was recorded (`system reboot by <account>`; otherwise `not recorded`) and when the version was installed. A dataplane newer than the box appears as `restarted after the boot`, and since 0.151.14 the `started by:` line says **why**, as the box recorded it: the boot, a `system dataplane restart`, an upgrade, or `nothing recorded: unexpected` when nothing on the box asked for it |
@@ -693,7 +693,7 @@ What it records today:
 | `start` and `exit` of the PPPoE control plane (`component` `bng`): each start with the cause, each exit with the code or signal | `the PPPoE control plane (prisma-bng) exited with code 1: accel-pppd was killed by signal 9 (KILL)` |
 | `radius`: a RADIUS server the PPPoE control plane marked as down, and back | `RADIUS server 192.0.2.10 failed: it did not answer, and accel-ppp uses the others for its dead-time` |
 
-A port that keeps going down and coming back does not fill the log: four changes in 5 minutes come out one by one; from then on they are counted, and one line comes out per 5-minute window — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. A burst of wrong passwords from the same address, likewise. In the first minute after the dataplane or FRR starts, none of this is compared: the restart is already an event, and the ports coming back are the restart. Logins come from `/var/log/wtmp` and `/var/log/btmp`, the records sshd and login(1) already write; the module of a card that is with Linux (the management one) is not yet watched.
+A port that keeps going down and coming back does not fill the log: four changes in 5 minutes come out one by one; from then on they are counted, and one line comes out per 5-minute window — `interface X flapped 37 times in 5 min, not each recorded; it is now link up`. A burst of wrong passwords from the same address, likewise. In the first minute after the dataplane or FRR starts, none of this is compared: the restart is already an event, and the ports coming back are the restart. Logins come from `/var/log/wtmp` and `/var/log/btmp`, the records sshd and login(1) already write; the cards Linux holds (the management one, a spare port) are watched too - their link and their module, when there is one - and appear as `interface <card> (held by Linux)`, source `host`.
 
 **What was already wrong when the watcher started (since 0.152.2).** The watcher records changes, so a condition that already existed when it came up was never stated — that was the case of a port with RX below the warning before the watcher ran for the first time. Now the first reading of each boot also says what **is** wrong, once, in the present tense: a port that is up with no link, a module beyond a warning or alarm, a configured BGP or BFD session that is not up, a pool with no blocks refusing, a CGNAT export collector not reached.
 
@@ -714,7 +714,7 @@ prisma> monitor log kind bgp last 5
 
 `severity`, `source` and `kind` choose what is followed; `last` and `since` what is shown beforehand. With neither of the two, it starts now. `seconds <n>` stops by itself after that long. An event that arrives after its own time — the dataplane start, which the host records when it sees it; a login, with the wtmp time — appears when it arrives, with its time.
 
-**Sending to a syslog:** `**system**` **>** `**logging**`**.** The log goes to up to four syslog collectors (RFC 5424, UDP or TCP), each with its minimum level; what sends is the watcher itself, from `events.log`, which serves as a queue: a TCP collector that went down receives what waited when it comes back, without losing and without repeating. See the configuration in [Routing, SSH, users and SNMP](/s/wiki-en/doc/routing-ssh-users-and-snmp-jjxcPssV72). **It is not the CGNAT record export** (`nat` > `cgnat` > `logging`), which is the record of who used which public port, for court orders: they are two configurations and two separate flows, and should go to different collectors.
+**Sending to a syslog:** `**system**` **>** `**logging**`**.** The log goes to up to four syslog collectors (RFC 5424, UDP or TCP), each with its minimum level; what sends is the watcher itself, from `events.log`, which serves as a queue: a TCP collector that went down receives what waited when it comes back, without losing and without repeating. See the configuration in [Routing, SSH, users and SNMP](/s/wiki-en/doc/routing-ssh-users-and-snmp-jjxcPssV72) and the step by step in [Sending the box's event log to the NOC's syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA). **It is not the CGNAT record export** (`nat` > `cgnat` > `logging`), which is the record of who used which public port, for court orders: they are two configurations and two separate flows, and should go to different collectors.
 
 `show logging` is still FRR's: the log configuration of each routing daemon.
 

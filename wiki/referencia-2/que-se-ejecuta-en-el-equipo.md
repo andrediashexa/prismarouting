@@ -40,7 +40,7 @@ Desde la versión 0.117 un equipo instalado ejecuta el dataplane y el enrutamien
 
 |     |     |
 |-----|-----|
-| Qué almacena | la VTY `prismash` y los clientes que usa para hablar con el dataplane y con FRR. No ejecuta ningún daemon, salvo el servidor de la API de gestión cuando está encendida (`api enabled yes`); el sistema la expone en la dirección de gestión y pasa las conexiones por el backplane |
+| Qué almacena | la VTY `prismash` y los clientes que usa para hablar con el dataplane y con FRR. No ejecuta ningún daemon, salvo el servidor de la [API de gestión](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu) cuando está encendida (`api enabled yes`); el sistema la expone en la dirección de gestión y pasa las conexiones por el backplane |
 | Red | **ninguna**, además de un único enlace al backplane (abajo), en 128.0.0.2. No alcanza internet ni la red de gestión |
 | Qué comparte con el sistema | la configuración del equipo y sus revisiones (`/etc/prisma-routing`), los sockets del dataplane y de FRR, `/var/log/prisma-routing`, y las cuentas del sistema, **solo para lectura** |
 | Qué lee del sistema | placas, bus PCI, procesadores, memoria, rutas y el archivo de ajuste del dataplane, todo **solo para lectura**. Por eso `show hardware`, `show interface` y `show system cpu` responden allí lo mismo que en el sistema |
@@ -200,3 +200,4 @@ La respuesta es la versión del kernel seguida de `-prisma`, por ejemplo `6.1.19
 * [Instalación del appliance](/s/wiki-es/doc/instalacion-del-appliance-MgWUcARKzM): el medio que trae el kernel
 * [Llevar el equipo a una versión nueva](/s/wiki-es/doc/llevar-el-equipo-a-una-version-nueva-m1PIajBXEF): qué trae y qué no trae el paquete de actualización
 * [Operación y diagnóstico](/s/wiki-es/doc/operacion-y-diagnostico-iHMcBJQ91I): el autotest de arranque
+* [API de gestión (gRPC) — para quien integra](/s/wiki-es/doc/api-de-gestion-grpc-para-quien-integra-rPfqyevXTu): el servidor de la API del lado de quien integra

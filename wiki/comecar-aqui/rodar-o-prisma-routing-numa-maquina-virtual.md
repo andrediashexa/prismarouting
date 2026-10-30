@@ -172,3 +172,4 @@ A caixa numa VM serve para avaliar funcionalidade, configuração e comportament
 * [Instalação da appliance](/s/wiki/doc/instalacao-da-appliance-06NmxvBDb5) — a instalação em disco, passo a passo
 * [Configuração de interface](/s/wiki/doc/configuracao-de-interface-j1q58jKWTQ) — `mtu`, endereços e o bloco `interface`
 * [Operação e diagnóstico](/s/wiki/doc/operacao-e-diagnostico-A4fcKDVwZt) — o autoteste de boot e o que ele diz
+* [Gerência numa VRF própria](/s/wiki/doc/gerencia-numa-vrf-propria-J762fuX62R) — a placa de gerência (numa VM, em geral virtio) numa VRF própria, com o gateway dela

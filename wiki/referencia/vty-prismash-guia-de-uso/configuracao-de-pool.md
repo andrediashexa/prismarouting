@@ -523,10 +523,10 @@ configure
     exit
    exit
   exit
- interface ens18
+ interface enp1s0
   cgnat inside
   exit
- interface ens19
+ interface enp2s0
   cgnat outside
   exit
  show configuration compare
@@ -542,3 +542,4 @@ Os campos de dentro do pool são os mesmos de sempre. O que mudou foi o caminho 
 
 * [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — estes campos aplicados a tarefas reais
 * [Determinístico e BPA — conceitos e mapeamento](/s/wiki/doc/deterministico-e-bpa-conceitos-e-mapeamento-uh9nF6sRaa) — por que alguns campos derrubam sessão
+* [NAT64 — assinantes só IPv6 no mesmo espaço público](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd) — o pool NAT64 posto no ar: rotas, PREF64, DNS64, registros e o par

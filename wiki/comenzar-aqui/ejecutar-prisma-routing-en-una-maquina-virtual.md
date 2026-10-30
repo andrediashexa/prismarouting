@@ -172,3 +172,4 @@ El equipo en una VM sirve para evaluar la funcionalidad, la configuración y el 
 * [Instalación del appliance](/s/wiki-es/doc/instalacion-del-appliance-MgWUcARKzM): la instalación en disco, paso a paso
 * [Configuración de interfaz](/s/wiki-es/doc/configuracion-de-interfaz-5s5Ar68nsg): `mtu`, direcciones y el bloque `interface`
 * [Operación y diagnóstico](/s/wiki-es/doc/operacion-y-diagnostico-iHMcBJQ91I): el autotest de arranque y lo que indica
+* [Gestión en una VRF propia](/s/wiki-es/doc/gestion-en-una-vrf-propia-ibjQgO0n3X): la placa de gestión (en una VM, en general virtio) en una VRF propia, con su gateway

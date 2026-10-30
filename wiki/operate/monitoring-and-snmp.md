@@ -401,7 +401,7 @@ Each destination receives a **trap**, unless it says `inform` — an inform is a
 | a BFD session goes down or comes back | `bfdSessDown`, `bfdSessUp` from the BFD-STD-MIB, with the session index and the diagnostic (since 0.152.3) |
 | disk, memory or load cross their threshold | the standard net-snmp notifications |
 
-A port going down and a BGP session going down were already standard notifications (`linkDown`/`linkUp` from the IF-MIB and `bgpBackwardTransition` from bgpd), and that is why they did not get a product notification of their own: they do not arrive twice. Login, commit and restart do **not** have notifications: those are in `show log`, which goes to a syslog with `system` > `logging` and is followed live with `monitor log`.
+A port going down and a BGP session going down were already standard notifications (`linkDown`/`linkUp` from the IF-MIB and `bgpBackwardTransition` from bgpd), and that is why they did not get a product notification of their own: they do not arrive twice. Login, commit and restart do **not** have notifications: those are in `show log`, which [goes to a syslog](/s/wiki-en/doc/sending-the-boxs-event-log-to-the-nocs-syslog-ZSBceClGhA) with `system` > `logging` and is followed live with `monitor log`.
 
 **BFD session.** The notifications are the BFD-STD-MIB's own (RFC 7331): `bfdSessDown` (`1.3.6.1.2.1.222.0.2`) when the session goes down and `bfdSessUp` (`.0.1`) when it comes back. Each one carries `bfdSessDiag` with the session index — the same as in the `bfdSessTable` the box serves, so the NMS knows which row to query — and the diagnostic: `1` is the detection time expiring (the neighbor stopped answering), `3` is the neighbor signaling that it tore the session down. BFD still detects the failure in milliseconds and withdraws the routes immediately; it is the notification that arrives up to 10 seconds later, because it comes from the same watcher that records the failure in `show log` and that reads bfdd every 10 seconds. A session that went down and came back between two reads is not lost: both notifications arrive. Each session sends at most four notifications in five minutes; if it keeps flapping, the NMS receives the final state as soon as the window allows. `bfdNotificationsEnable` answers `true(1)` only while notifications are actually being sent — with at least one `snmp trap-host` configured — and `false(2)` with no destination.
 
@@ -441,7 +441,7 @@ show interface utilization <name>           how much is going through the port, 
 `show interface utilization` samples the dataplane counters several times and shows the rate in bit/s of each port, receiving and transmitting, with a small bar chart of that run's samples. By default it is 5 samples every 2 seconds; `interval <seconds>` (0.1 to 60) and `count <n>` (1 to 120) change that, and the port name at the end limits it to a single one:
 
 ```
-show interface utilization interval 1 count 30 ens19
+show interface utilization interval 1 count 30 enp2s0
 ```
 
 Where the dataplane reports the link speed, the bars and the percentage are of that port's line rate. Where it does not — every virtual interface —, the bars are scaled by the run's highest sample, and the footer says so instead of making up a percentage. Ctrl-C ends the sampling before the end and shows what has already been measured. It is the answer to *"is the link full?"* without waiting for the NMS graph to close the interval — but it keeps no history between one run and another: history is the NMS's job.
@@ -469,3 +469,4 @@ If the agent answers nothing, first check whether `listen-address` is an address
 * [When a subscriber's block fills up](/s/wiki-en/doc/when-a-subscribers-block-fills-up-NvSSgpWda1) — what to do when `.4.0` and `.5.0` go up
 * [Routing, SSH, users and SNMP](/s/wiki-en/doc/routing-ssh-users-and-snmp-jjxcPssV72) — the reference for the `snmp` commands
 * [Timeouts and the RFC floors](/s/wiki-en/doc/timeouts-and-the-rfc-floors-HmiUW10Fkh) — the values RFC 4008 exposes
+* [Management API (gRPC) — for integrators](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn) — typed reads, telemetry and health check for an NMS

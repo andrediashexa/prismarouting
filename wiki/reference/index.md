@@ -6,6 +6,7 @@ What exists and what each thing does. For lookup, not for reading straight throu
 |------|--------|
 | [prismash VTY — user guide](/s/wiki-en/doc/prismash-vty-user-guide-9xi8OdzKV3) | Modes, prompts and the complete command tree |
 | [What runs on the box](/s/wiki-en/doc/what-runs-on-the-box-8brQyqcFen) | The containers, the backplane, the system service that executes what the VTY asks for, `start shell` and the kernel |
+| [Management API (gRPC) — for integrators](/s/wiki-en/doc/management-api-grpc-for-integrators-I09RqhUqBn) | What the gRPC API offers an NMS, a portal or an automation: turning it on, certificates and accounts, roles, services, commit, telemetry, health check and behaviour during an upgrade |
 | [Multi-tenant with VRF](/s/wiki-en/doc/multi-tenant-with-vrf-SUKv4RMvfr) | Two customers using the same private range on the same box, each in its own VRF |
 | [Timeouts and the RFC floors](/s/wiki-en/doc/timeouts-and-the-rfc-floors-HmiUW10Fkh) | How long each session lives, the defaults, what breaks below the floor and how long a BPA block stays held |
 

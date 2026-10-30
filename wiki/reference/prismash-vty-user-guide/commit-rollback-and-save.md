@@ -338,8 +338,8 @@ The three refusals of an LACP bundle (`interface ae<n>`), each with the port nam
 
 ```
 error: a bundle member this box does not have: ens29
-error: a port in two bundles: ens19
-error: a bundle member with config of its own: ens19
+error: a port in two bundles: enp2s0
+error: a bundle member with config of its own: enp2s0
 ```
 
 The first is a `member` with a port the dataplane does not have, almost always a typo. The second is the same port in two bundles: a port can belong to only one. The third is a member with its own address or CGNAT side. A member stops forwarding on its own, so that configuration goes on the `ae<n>`, not on the port. Remove the configuration from the port and put it on the bundle.

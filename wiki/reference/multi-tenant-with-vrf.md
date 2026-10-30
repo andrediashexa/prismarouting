@@ -14,11 +14,11 @@ Each customer arrives through an interface of its own, and that interface sits i
 
 ```
 configure
- interface ens20
+ interface enp5s0
   vrf 1
   cgnat inside
   exit
- interface ens21
+ interface enp6s0
   vrf 2
   cgnat inside
   exit

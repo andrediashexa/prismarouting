@@ -92,9 +92,9 @@ Si el par no existe, no hay adónde volver la dirección. El equipo arranca reen
         linux_cp pair is where the address the box answers on goes back.
         Without one it comes up forwarding and unreachable from anywhere but
         its console.
-        the way back it computed on this boot: ens18 192.0.2.10/24
+        the way back it computed on this boot: enp1s0 192.0.2.10/24
         52:54:00:00:00:01
-        without a pair: ens18
+        without a pair: enp1s0
         give each one an 'interface' block in prismash, and commit:
         the block pairs it under its own name.
 ```
@@ -103,7 +103,7 @@ La línea del camino de gestión es la que interesa primero: es la dirección qu
 
 ```
 configure
-interface ens18
+interface enp1s0
  no shutdown
  exit
 commit
@@ -326,13 +326,13 @@ El tuning corre en cada arranque justamente para que un cambio en `tune.env` o u
 El autotest de arranque lee, del dataplane en ejecución, cuántas colas de recepción abrió realmente cada placa, y lo compara con lo que el ajuste de arranque pidió para esa placa:
 
 ```
-  [ ok ] rx queues: 1 of 1 on ens9, as requested (1)
+  [ ok ] rx queues: 1 of 1 on enp6s0, as requested (1)
 ```
 
 `1 of 1` es lo que la placa abrió y el máximo que tiene; el nombre es el que el dataplane le da a la placa, que es el nombre que tenía en Linux. Cuando lo abierto difiere de lo pedido, la línea se convierte en advertencia y dice por qué importa:
 
 ```
-  [warn] rx queues: 1 of 1 on ens9, 4 requested
+  [warn] rx queues: 1 of 1 on enp6s0, 4 requested
          the tuner asked for one queue per worker, capped at
          what the card reported, and the dataplane opened 1:
          at most 1 worker(s) receive from this card, and the
@@ -344,7 +344,7 @@ El ajuste de arranque dimensiona los workers según el procesador y pide una col
 Hay un caso peor: el driver rechaza la placa y no abre ninguna cola, aunque el dataplane todavía liste la cantidad con la que fue configurada. El autotest lee el estado del driver junto con la cantidad y lo trata como falla, no como cola abierta:
 
 ```
-  [FAIL] rx queues: none opened on ens9
+  [FAIL] rx queues: none opened on enp6s0
         'show hardware-interfaces' marks the card pmd-init-fail, so the
         1 of 1 it lists were configured and never opened:
         the driver refused the port and the card carries no
@@ -465,7 +465,7 @@ flowchart TD
 | "¿se agotó el pool?" | `show log kind pool` |
 | "¿qué ya estaba mal cuando arrancó el equipo?" | `show log` — las líneas `standing at start:` de la primera lectura del arranque |
 | "quiero ver los eventos llegando" | `monitor log` (los mismos filtros; Ctrl-C para detener) |
-| "¿los eventos están llegando a mi syslog?" | `show system logging` |
+| "¿los eventos están llegando a mi syslog?" | `show system logging` — vea [Enviar el log de eventos del equipo al syslog del NOC](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb) |
 | "¿quién cambió el pool, y cuándo?" | `show cgnat history` |
 | "¿qué estoy a punto de aplicar?" | `show configuration compare` |
 | "¿qué versión es esta máquina?" | `show version` |

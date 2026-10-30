@@ -291,7 +291,7 @@ Ninguna otra pantalla de este equipo lleva identidad. Su presencia en el log es 
 
 El exportador **UDP** no cambió: sigue con los siete campos de la RFC 8158 y sin identidad.
 
-**Suscriptor solo IPv6, de un pool NAT64:** quien lo nombra es el `Delegated-IPv6-Prefix` (atributo 123 de la RFC 4818), el prefijo que delegó el BNG. El registro lleva el nombre de la delegación que **cubre** el prefijo del suscriptor: un /56 delegado a cada cliente de un pool cortado en /56, o un /48 que cubre todos los /56 de una empresa. Una delegación más larga que el suscriptor — un /60 dentro de un /56 — cubre solo parte de él, y el registro dice `unknown`. Una delegación nueva sustituye a cualquier otra con la que se superponga: el prefijo delegado ahora es de ese cliente, y la entrada antigua es un `Stop` que no llegó.
+**Suscriptor solo IPv6, de un** [**pool NAT64**](/s/wiki-es/doc/nat64-suscriptores-solo-ipv6-en-el-mismo-espacio-publico-45g9ORUleS)**:** quien lo nombra es el `Delegated-IPv6-Prefix` (atributo 123 de la RFC 4818), el prefijo que delegó el BNG. El registro lleva el nombre de la delegación que **cubre** el prefijo del suscriptor: un /56 delegado a cada cliente de un pool cortado en /56, o un /48 que cubre todos los /56 de una empresa. Una delegación más larga que el suscriptor — un /60 dentro de un /56 — cubre solo parte de él, y el registro dice `unknown`. Una delegación nueva sustituye a cualquier otra con la que se superponga: el prefijo delegado ahora es de ese cliente, y la entrada antigua es un `Stop` que no llegó.
 
 **Cuando el propio equipo es el BNG** (PPPoE), quién tenía cada dirección interna lo registra él mismo: el historial de sesiones, `show pppoe history`, escrito al inicio y al fin de cada sesión, responda o no el RADIUS, encadenado por hashes como el trail de configuración y guardado en el mismo volumen de log. La dirección interna y el instante de un registro de bloque llevan al suscriptor con `show pppoe history address <dirección> at <hora>`; vea *Configuración de PPPoE*.
 
@@ -381,7 +381,7 @@ Corregido en la **0.35.0**. Un log ya recolectado por TCP puede repararse si se 
 
 :::
 
-**Un suscriptor de un pool NAT64** tiene un template propio, porque IPFIX no tiene un campo que sea "una dirección IPv4 o IPv6". Es la misma tabla con la dirección IPv6 en lugar de la IPv4, como indica la sección 4.6.10 de la RFC 8158 — más el tamaño del prefijo, que la RFC no lista y este equipo necesita: el suscriptor es el prefijo delegado, y solo la dirección nombraría un /128 de él.
+**Un suscriptor de un** [**pool NAT64**](/s/wiki-es/doc/nat64-suscriptores-solo-ipv6-en-el-mismo-espacio-publico-45g9ORUleS) tiene un template propio, porque IPFIX no tiene un campo que sea "una dirección IPv4 o IPv6". Es la misma tabla con la dirección IPv6 en lugar de la IPv4, como indica la sección 4.6.10 de la RFC 8158 — más el tamaño del prefijo, que la RFC no lista y este equipo necesita: el suscriptor es el prefijo delegado, y solo la dirección nombraría un /128 de él.
 
 | IE  | Nombre | Bits | Contenido |
 |----:|--------|-----:|-----------|
@@ -541,3 +541,4 @@ Las entradas escritas antes de que existiera la cadena siguen siendo legibles y 
 * [Recetas del día a día](/s/wiki-es/doc/recetas-del-dia-a-dia-maiZboGbqY) — el procedimiento para atender una orden judicial
 * [Reenvío de puertos (port forward)](/s/wiki-es/doc/reenvio-de-puertos-port-forward-Px7qrbVWaq) — el bloque retenido por un forward, y por qué es una asignación
 * [Llevar el equipo a una versión nueva](/s/wiki-es/doc/llevar-el-equipo-a-una-version-nueva-m1PIajBXEF) — qué guarda el volumen de log, y qué borra una reinstalación
+* [Enviar el log de eventos del equipo al syslog del NOC](/s/wiki-es/doc/enviar-el-log-de-eventos-del-equipo-al-syslog-del-noc-CUCA15bcYb) — el log de eventos del propio equipo (commits, enlaces, logins) es otro flujo

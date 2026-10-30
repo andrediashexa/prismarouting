@@ -291,7 +291,7 @@ Nenhuma outra tela desta caixa carrega identidade. A presença dela no log é a 
 
 O exportador **UDP** não mudou: ele continua com os sete campos da RFC 8158 e sem identidade.
 
-**Assinante só IPv6, de um pool NAT64:** quem o nomeia é o `Delegated-IPv6-Prefix` (atributo 123 da RFC 4818), o prefixo que o BNG delegou. O registro leva o nome da delegação que **cobre** o prefixo do assinante: um /56 delegado a cada cliente de um pool cortado em /56, ou um /48 que cobre todos os /56 de uma empresa. Uma delegação mais longa que o assinante — um /60 dentro de um /56 — cobre só parte dele, e o registro diz `unknown`. Uma delegação nova substitui qualquer outra que ela sobreponha: o prefixo delegado agora é daquele cliente, e a entrada antiga é um `Stop` que não chegou.
+**Assinante só IPv6, de um** [**pool NAT64**](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd)**:** quem o nomeia é o `Delegated-IPv6-Prefix` (atributo 123 da RFC 4818), o prefixo que o BNG delegou. O registro leva o nome da delegação que **cobre** o prefixo do assinante: um /56 delegado a cada cliente de um pool cortado em /56, ou um /48 que cobre todos os /56 de uma empresa. Uma delegação mais longa que o assinante — um /60 dentro de um /56 — cobre só parte dele, e o registro diz `unknown`. Uma delegação nova substitui qualquer outra que ela sobreponha: o prefixo delegado agora é daquele cliente, e a entrada antiga é um `Stop` que não chegou.
 
 **Quando a própria caixa é o BNG** (PPPoE), quem segurava cada endereço interno é ela mesma que registra: o histórico de sessões, `show pppoe history`, escrito no início e no fim de cada sessão, com ou sem resposta do RADIUS, encadeado por hashes como a trilha de configuração e guardado no mesmo volume de log. O endereço interno e o instante de um registro de bloco levam ao assinante com `show pppoe history address <endereço> at <hora>`; veja [Configuração de PPPoE](/s/wiki/doc/configuracao-de-pppoe-bfl7lzpl2O).
 
@@ -381,7 +381,7 @@ Corrigido na **0.35.0**. Um log já coletado por TCP pode ser reparado se a hora
 
 :::
 
-**Assinante de um pool NAT64** tem um template próprio, porque o IPFIX não tem campo que seja "um endereço IPv4 ou IPv6". É a mesma tabela com o endereço IPv6 no lugar do IPv4, como manda a seção 4.6.10 da RFC 8158 — mais o tamanho do prefixo, que a RFC não lista e esta caixa precisa: o assinante é o prefixo delegado, e só o endereço nomearia um /128 dele.
+**Assinante de um** [**pool NAT64**](/s/wiki/doc/nat64-assinantes-so-ipv6-no-mesmo-espaco-publico-4Se191EJRd) tem um template próprio, porque o IPFIX não tem campo que seja "um endereço IPv4 ou IPv6". É a mesma tabela com o endereço IPv6 no lugar do IPv4, como manda a seção 4.6.10 da RFC 8158 — mais o tamanho do prefixo, que a RFC não lista e esta caixa precisa: o assinante é o prefixo delegado, e só o endereço nomearia um /128 dele.
 
 | IE  | Nome | Bits | Conteúdo |
 |----:|------|-----:|----------|
@@ -541,3 +541,4 @@ Entradas escritas antes da corrente existir continuam legíveis e são reportada
 * [Receitas do dia a dia](/s/wiki/doc/receitas-do-dia-a-dia-IcocgdbXW2) — o roteiro para atender uma ordem judicial
 * [Encaminhamento de porta](/s/wiki/doc/encaminhamento-de-porta-epIZfdmzU3) — o bloco preso por um forward, e por que ele é uma alocação
 * [Levar a caixa para uma versão nova](/s/wiki/doc/levar-a-caixa-para-uma-versao-nova-C09kO2kU8X) — o que o volume de log guarda, e o que uma reinstalação apaga
+* [Mandar o log de eventos da caixa para o syslog do NOC](/s/wiki/doc/mandar-o-log-de-eventos-da-caixa-para-o-syslog-do-noc-N2uzxgzpZX) — o log de eventos da própria caixa (commits, enlaces, logins) é outro fluxo

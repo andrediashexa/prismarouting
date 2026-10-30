@@ -61,17 +61,17 @@ El ajuste de arranque le pregunta **a la placa** cuántas colas tiene y cuál es
 
 La MTU también se lee y se **corrige**. Desde la 0.152.1 toda interfaz sin `mtu` comienza en **1500**, el valor predeterminado del equipo; antes comenzaba en los 9000 del propio VPP, y con eso el `tcp-mss auto` daba 8960 y no rebajaba nada en un camino de 1500. Una placa que no acepta ni siquiera el valor predeterminado rechaza el dispositivo: el puerto queda en error y no reenvía nada. Por eso, cuando alguna placa reclamada tiene un máximo por debajo de 1500, el equipo hace que las interfaces comiencen en el **menor máximo** entre las placas que reclama. El valor vale para todas: en un equipo con una placa de 1400 junto a una de 9000, la de 9000 también comienza en 1400, y `mtu <n>` en el bloque de la interfaz sube ese puerto después.
 
-El informe de arranque indica lo que encontró, una línea por placa. En una máquina de ocho núcleos con una placa virtual `ens18` de máximo 1500:
+El informe de arranque indica lo que encontró, una línea por placa. En una máquina de ocho núcleos con una placa virtual `enp1s0` de máximo 1500:
 
 ```
-# NIC queues, ens18: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
+# NIC queues, enp1s0: 1, and this box has 7 worker(s). Capped at 1: only that many workers receive packets, so expect a fraction of the forwarding this CPU could do.
 # interfaces start at: 1500, this box's default. 'mtu <n>' under
 ```
 
 Con una placa de máximo 1400, aparece su línea y el párrafo comienza en el máximo de la placa:
 
 ```
-# NIC max MTU, ens18: 1400, below the box's default of 1500
+# NIC max MTU, enp1s0: 1400, below the box's default of 1500
 ```
 
 seguida de un párrafo que comienza con `# interfaces start at: 1400` y explica por qué ese valor vale para todas las placas.
@@ -87,13 +87,13 @@ seguida de un párrafo que comienza con `# interfaces start at: 1400` y explica 
 Una placa con colas de sobra recibe una línea corta, y una placa que soporta el valor predeterminado **no** recibe ninguna línea de MTU:
 
 ```
-# NIC queues, ens18: 8, enough for 7 worker(s)
+# NIC queues, enp1s0: 8, enough for 7 worker(s)
 ```
 
 Y cuando el equipo no logra leer las colas de la placa, **lo dice**, porque es exactamente ese el estado en el que vivía el defecto:
 
 ```
-# NIC queues, ens18: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
+# NIC queues, enp1s0: could not be read, so this asks for 7, one per worker. A card with fewer will refuse the device.
 ```
 
 En ese caso vuelve a pedir una cola por worker, que es el número que fallaba. Un equipo a punto de rechazar su propia placa no puede tener la misma cara que un equipo sano.
