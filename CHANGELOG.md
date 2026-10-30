@@ -77,6 +77,12 @@ version has a chance of seeing it.
 
 ### Added
 
+### Fixed
+
+## 0.156.2 - wiki pages for what shipped with none
+
+### Added
+
 * **Five wiki pages for what shipped with none.**
   ([#620](https://github.com/andrediashexa/hexarouting/issues/620))
   In PT, EN and ES: NAT64 in operation; PPPoE subscribers on the air, step
@@ -87,8 +93,6 @@ version has a chance of seeing it.
   `ens19` and three more) are out of every example; screens whose columns
   moved were realigned to what the code prints, and the fake box in
   `test_doc_commands`/`test_doc_copies` knows the new names.
-
-### Fixed
 
 ## 0.156.1 - the wiki against the product at 0.156.0
 
