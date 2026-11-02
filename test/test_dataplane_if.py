@@ -914,7 +914,9 @@ with tempfile.TemporaryDirectory() as tmp:
     said = " ".join(sh.waiting_note(sh.host_nics(), ["ens18"]))
     check("ens19" in said and "ens18" not in said,
           f"the card the dataplane has not got, and only that one: {said!r}")
-    check("reboot" in said,
+    # Not 'system reboot': the restart (#453) runs the tuner again, which
+    # reads the cards afresh, so it is the thing that hands one over.
+    check("'system dataplane restart'" in said,
           f"and what hands it over: {said!r}")
     check("allowlist" in said or "list naming the cards" in said,
           f"and why nothing else can: {said!r}")

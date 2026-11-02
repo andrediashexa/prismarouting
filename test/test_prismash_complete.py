@@ -3000,6 +3000,22 @@ check("could not be asked" in flat(_none_deaf)
       and "read alike here" in flat(_none_deaf),
       f"a box whose dataplane could not be asked is not told the two cases "
       f"read alike, so the empty list reads as an answer: {_none_deaf}")
+# AND WHERE TO LOOK IS THIS BOX'S (#618). It always said `systemctl status
+# vpp`, and on an installed box the dataplane runs in a container: vpp.service
+# is a unit nobody started, which reads "inactive (dead)" and looks like the
+# answer. The screen takes dataplane_journal_advice(), the one every other
+# screen takes. Mutation shown red: the literal 'systemctl status vpp' put
+# back.
+_unit_was = prismash.dataplane_unit
+try:
+    prismash.dataplane_unit = lambda: prismash.DATAPLANE_UNIT_CONTAINERS
+    _none_deaf_iso = show_hw([], dp_rc=1)
+finally:
+    prismash.dataplane_unit = _unit_was
+check("systemctl status prisma-routing-containers" in flat(_none_deaf_iso)
+      and "systemctl status vpp" not in flat(_none_deaf_iso),
+      f"an installed box whose dataplane could not be asked is sent to "
+      f"vpp.service, which nothing started there: {_none_deaf_iso}")
 check("the dataplane owns them" not in flat(_none_deaf)
       and "has none either" not in flat(_none_deaf),
       f"a box that could not ask the dataplane anything is told what it "
@@ -4532,6 +4548,7 @@ check(_staged == "ip route 200.150.0.0/24 blackhole",
       f"the VTY stages a static route in FRR's spelling: {_staged!r}")
 check(not _ann(BGP + ["  redistribute static", _staged]),
       "and what the VTY stages is what this check reads")
+
 # The scope. `redistribute static` under OSPF puts nothing into BGP - measured
 # above - so it must neither announce the prefix nor blind the check. Reading
 # the word wherever it appeared did the second, and went silent on the

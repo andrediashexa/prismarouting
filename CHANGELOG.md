@@ -94,6 +94,22 @@ version has a chance of seeing it.
   (`logging.conf`, PPPoE's three, the MTU pin's note) and the typed-API
   help for a VRF device and a box-owned VRF; the API server's start refusal
   says what it needs instead of pointing at `docs/api.md`.
+* **`show hardware` sends an installed box to the dataplane's real unit,
+  and a card added at runtime to `system dataplane restart`.**
+  ([#618](https://github.com/andrediashexa/hexarouting/issues/618))
+  With no PCI card visible and a dataplane that could not be asked, the
+  screen always said `systemctl status vpp`; on an installed box the
+  dataplane runs in a container and that unit, which nothing started, reads
+  "inactive (dead)". It now gives the advice every other screen gives for
+  this box's install (`systemctl status prisma-routing-containers` and the
+  container's log, or the file the box wrote when the dataplane gave up).
+  And a card Linux has and the dataplane does not was said to need `system
+  reboot`, by `show hardware`, the refusal at the prompt and the boot
+  self-test, while `system dataplane restart`'s help said it takes added
+  cards. The help was right: the restart hands every card back and runs
+  `prisma-routing-tune` again, which reads the PCI cards afresh and writes
+  the allowlist the dataplane starts with. The three messages now name
+  `system dataplane restart`; they were written before the restart existed.
 
 ## 0.156.5 - commit check refuses what a PPPoE commit refuses
 

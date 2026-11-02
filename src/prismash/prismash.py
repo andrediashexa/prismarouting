@@ -13412,9 +13412,9 @@ class Shell:
                             "this card",
                             "the box has it and Linux still does; the "
                             "dataplane claims a card when it starts, and the "
-                            "cards it claims are computed on that boot",
-                            "'show hardware' lists it, and 'system reboot' "
-                            "is what hands it over")
+                            "cards it claims are computed on that start",
+                            "'show hardware' lists it, and 'system dataplane "
+                            "restart' is what hands it over")
                         ok = False
                         continue
                     self.err(f"interface {name}: this box has no such "
@@ -24088,12 +24088,13 @@ class Shell:
             return []
         return ["The dataplane does not hold " + ", ".join(waiting)
                 + " yet: a card is claimed when the dataplane starts, and "
-                  "the cards it claims are computed on that boot.",
-                "Until this box is rebooted the dataplane cannot be given "
-                "one: it is started with an allowlist naming the cards it had "
-                "at boot, so a card added since is outside the process "
+                  "the cards it claims are computed on that start.",
+                "Until the dataplane starts again it cannot be given one: it "
+                "is started with an allowlist naming the cards the box had "
+                "then, so a card added since is outside the process "
                 "entirely.",
-                "'system reboot' does it, and says what it costs first."]
+                "'system dataplane restart' does it without a reboot, and "
+                "says what it costs first."]
 
     def one_nic_note(self):
         """
@@ -24434,8 +24435,9 @@ class Shell:
                             "card it had taken would be missing from this "
                             "reading too, so a box that handed every card "
                             "over and a box that never had one read alike "
-                            "here: 'systemctl status vpp' says which this "
-                            "is.", indent="  ")
+                            "here, until the dataplane answers again: "
+                            + dataplane_journal_advice() + ".",
+                            indent="  ")
             else:
                 print_prose("no PCI NIC is visible to Linux on this box, and "
                             "the dataplane has none either, so there is no "

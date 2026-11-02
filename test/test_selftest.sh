@@ -2583,7 +2583,8 @@ else
   bad "a card Linux holds and the dataplane does not is reported nowhere: "\
 "$(printf '%s\n' "$OUTPUT" | grep -i 'card this box\|dataplane NIC' || echo '<nothing>')"
 fi
-if said_across "outside it until this box reboots"; then
+if said_across "outside it until it starts again" \
+   && said_across "'system dataplane restart' hands it over"; then
   ok "and it says why, and what to do about it"
 else
   bad "it named the card and not what becomes of it: "\

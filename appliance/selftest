@@ -1349,8 +1349,9 @@ elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
       say_list "         " "$_waiting"
       say "         the dataplane claims its cards when it starts, and it is"
       say "         started with a list naming the ones it had then - so a"
-      say "         card added since is outside it until this box reboots."
-      say "         'show hardware' lists it; 'system reboot' hands it over."
+      say "         card added since is outside it until it starts again."
+      say "         'show hardware' lists it; 'system dataplane restart'"
+      say "         hands it over, without a reboot."
     fi
     # AND WHICH CARD LINUX KEPT, if any. The reserve is the management network
     # the installer recorded, and an operator looking at a box with three
