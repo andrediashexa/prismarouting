@@ -27,10 +27,10 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.156.6 - documents that agree with the product
+## 0.156.3 - documents that agree with the product
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.2). No message, field or number changes.
-* **`LookupTranslation`'s `text` says `BPA` where it said `DYNAMIC`** (#619): the screen's second row for a block allocated on demand is now `pool <name>, block <n>, BPA`, as every other screen has said since 0.151.1. `source` is `SOURCE_BPA` as before, and that field, not the text, is what a client should read: a box upgraded to 0.156.6 whose dataplane has not been restarted still prints `DYNAMIC`, and the server reads both. A patch release: the API is down only for the usual upgrade window.
+* **`LookupTranslation`'s `text` says `BPA` where it said `DYNAMIC`** (#619): the screen's second row for a block allocated on demand is now `pool <name>, block <n>, BPA`, as every other screen has said since 0.151.1. `source` is `SOURCE_BPA` as before, and that field, not the text, is what a client should read: a box upgraded to 0.156.3 whose dataplane has not been restarted still prints `DYNAMIC`, and the server reads both. A patch release: the API is down only for the usual upgrade window.
 
 ## 0.156.2 - wiki pages for what shipped with none
 
