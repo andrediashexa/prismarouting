@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.156.6 - VTY advice an operator can follow
+
+### Fixed
+
 * **The VTY's refusals say what happened, not which issue did it.**
   ([#617](https://github.com/andrediashexa/hexarouting/issues/617))
   `radius` under `pppoe` said RADIUS moved "since #607"; it now says RADIUS
