@@ -447,7 +447,7 @@ error: interface enp2s1: this box has no such interface
 
 It applies to **any** `interface` block with any statement inside — address, MTU, description, CGNAT side, VRRP, an OSPF line — and to the `interface <name> inside|outside` that the `cgnat` level still accepts.
 
-A card that Linux has and the dataplane has not yet taken gets a different refusal, because the reason is different: `the dataplane does not hold this card`. The card appears in `show hardware`, and the dataplane only takes cards when it starts — `system reboot` is what hands it over.
+A card that Linux has and the dataplane has not yet taken gets a different refusal, because the reason is different: `the dataplane does not hold this card`. The card appears in `show hardware`, and the dataplane only takes cards when it starts — `system dataplane restart` is what hands it over, without rebooting the box.
 
 The exceptions are the names that **create** an interface: `interface loop<n>`, `interface ae<n>` and `interface <parent>.<tag>`, whose parent must exist. They are on the interface configuration page.
 

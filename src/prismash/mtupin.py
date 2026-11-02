@@ -252,7 +252,7 @@ def kept_text(previous_stamp, names):
     """What MTU_KEPT_FILE says to whoever opens it."""
     return (
         f"# Written once by the upgrade onto 0.152.1 from "
-        f"{previous_stamp.strip()} (#592).\n"
+        f"{previous_stamp.strip()}.\n"
         "#\n"
         "# This box was installed when an interface with no `mtu` statement\n"
         "# came up at VPP's 9000; from 0.152.1 such an interface comes up at\n"

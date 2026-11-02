@@ -2661,8 +2661,8 @@ _HAND_FOLDED = [
     "    subscribers behind it would be translated to an address the internet",
     "    cannot route back to",
     "    announce it from another box, or originate it here with",
-    "    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28'",
-    "    under the BGP address family"]
+    "    '200.150.0.16/28 next-hop blackhole' under 'router static', and",
+    "    'network 200.150.0.16/28' under the BGP address family"]
 check(not driven_match(_HAND_FOLDED) and not attribute(_HAND_FOLDED),
       "a screen hand-folded where the box writes the row whole is accepted")
 _bent = folded(_HAND_FOLDED)

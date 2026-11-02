@@ -521,23 +521,33 @@ rule, and says what hands them over:
 
 ```
   The dataplane does not hold ens19 yet: a card is claimed when the dataplane
-  starts, and the cards it claims are computed on that boot.
-  Until this box is rebooted the dataplane cannot be given one: it is started
-  with an allowlist naming the cards it had at boot, so a card added since is
+  starts, and the cards it claims are computed on that start.
+  Until the dataplane starts again it cannot be given one: it is started with
+  an allowlist naming the cards the box had then, so a card added since is
   outside the process entirely.
-  'system reboot' does it, and says what it costs first.
+  'system dataplane restart' does it without a reboot, and says what it costs
+  first.
 ```
 
-**There is no live path, and that is a decision rather than an omission.** The
-tuner writes one `dev` stanza per claimed card into `startup.conf` and VPP is
-started with an EAL allowlist naming exactly those, so a card that appeared
-afterwards is not merely unclaimed — it is outside the process, and nothing the
-VTY can send reaches it. Taking it in means restarting the dataplane, which
-stops forwarding for every subscriber on the box.
+**There is no path that leaves the dataplane running, and that is a decision
+rather than an omission.** The tuner writes one `dev` stanza per claimed card
+into `startup.conf` and VPP is started with an EAL allowlist naming exactly
+those, so a card that appeared afterwards is not merely unclaimed — it is
+outside the process, and nothing the VTY can send reaches it. Taking it in
+means starting the dataplane again, which stops forwarding for every
+subscriber on the box. `system dataplane restart`
+([#453](https://github.com/andrediashexa/hexarouting/issues/453)) does that
+without a reboot: `prisma-hot-card restart-dataplane` hands every card back to
+its kernel driver and restarts `prisma-routing-tune.service`, which reads the
+PCI cards afresh and writes the allowlist again, so a card added since the
+boot is claimed by the same rule as at boot. Until then a hotplugged card
+forwards through AF_XDP, when the hotplug could attach it. These messages said
+`system reboot` until [#618](https://github.com/andrediashexa/hexarouting/issues/618):
+they were written for #405, before #453 gave the restart that job.
 [#336](https://github.com/andrediashexa/hexarouting/issues/336) decided that
-binding happens at boot and only at boot, and that decision holds here: a box
-that moved a card to a userspace driver by itself, on a timer, would be a box
-that can lose the card it is reached over while nobody is watching.
+the binding is the operator's decision, and that holds here: a box that moved
+a card to a userspace driver by itself, on a timer, would be a box that can
+lose the card it is reached over while nobody is watching.
 
 **The count is the box's, not Linux's list**
 ([#605](https://github.com/andrediashexa/hexarouting/issues/605)). A card the
@@ -559,8 +569,9 @@ exists:
 ```
 error: interface ens19: the dataplane does not hold this card
     the box has it and Linux still does; the dataplane claims a card when it
-    starts, and the cards it claims are computed on that boot
-    'show hardware' lists it, and 'system reboot' is what hands it over
+    starts, and the cards it claims are computed on that start
+    'show hardware' lists it, and 'system dataplane restart' is what hands it
+    over
 ```
 
 and the boot self-test says it too, as a **warning** — the box forwards, its
@@ -572,8 +583,9 @@ doing nothing:
          ens19
          the dataplane claims its cards when it starts, and it is
          started with a list naming the ones it had then - so a
-         card added since is outside it until this box reboots.
-         'show hardware' lists it; 'system reboot' hands it over.
+         card added since is outside it until it starts again.
+         'show hardware' lists it; 'system dataplane restart'
+         hands it over, without a reboot.
 ```
 
 Three screens, one sentence, because an operator reads whichever one they were
@@ -836,7 +848,11 @@ Whether the dataplane could be **asked** changes the sentence, because it
 changes what can be concluded. With the dataplane unreachable a card it had
 taken is missing from this reading too, so a box that handed every card over
 and a box that never had one read alike - and the screen says so, and names
-`systemctl status vpp` as what tells them apart.
+where the reason the dataplane is silent is written on this box: the same
+advice `dataplane_journal_advice()` gives every screen, so an installed box,
+whose dataplane runs in a container, is not sent to `systemctl status vpp`
+(a unit nobody started there, which reads "inactive (dead)") -
+[#618](https://github.com/andrediashexa/hexarouting/issues/618).
 
 "Nothing to show" and "nothing is wrong" look identical on a screen, and this
 screen is read on a box that forwards nothing. The check that the empty case
@@ -3993,7 +4009,7 @@ separated" is not a conclusion this supports.
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
+    '200.150.0.16/28 next-hop blackhole' under 'router static', and 'network 200.150.0.16/28' under the BGP address family
 ```
 
 Three rows under the verdict and none of them folded: this is `commit`'s

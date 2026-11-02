@@ -1070,7 +1070,7 @@ def proxmox_hookscript(roles, pin=None):
         groups.setdefault(c, []).append(v)
     out = ["#!/bin/sh",
            "# Proxmox hookscript for the Prisma Routing VM, from `show system",
-           "# tuning advice` (#596): each vCPU thread pinned to one host CPU.",
+           "# tuning advice`: each vCPU thread pinned to one host CPU.",
            "# This box's layout, and where each role goes:"]
     for v, r in roles.items():
         out.append(f"#   vCPU {v:<3} {_role_name(r):<18} -> {val[v]}")

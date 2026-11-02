@@ -233,7 +233,7 @@ def destinations(status=None, path=None):
 
 def conf_text(dests):
     """logging.conf's text for `dests`."""
-    return ("# Written by prismash: system > logging (#588). Edit through "
+    return ("# Written by prismash: system > logging. Edit through "
             "the VTY.\n" + "".join(host_words(d) + "\n" for d in dests))
 
 

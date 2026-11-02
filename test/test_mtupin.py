@@ -241,7 +241,7 @@ check(len(mtupin.event_text(_many)) <= events.TEXT_MAX
 check("no interface needed" in mtupin.event_text([]),
       "an upgrade that pinned nothing still says what it did")
 check(mtupin.kept_text("0.151.17 (x)\n", ["a"]).startswith(
-      "# Written once by the upgrade onto 0.152.1 from 0.151.17 (x) (#592)"),
+      "# Written once by the upgrade onto 0.152.1 from 0.151.17 (x)."),
       "kept_text names the release the box came from")
 _f = os.path.join(_root, "rw.conf")
 with open(_f, "w") as fh:

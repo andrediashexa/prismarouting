@@ -8428,7 +8428,35 @@ def prefix6_covers(outer, inner):
     return o.version == i.version == 6 and i.subnet_of(o)
 
 
-def pool_announce_findings(routing, pools):
+def blackhole_advice(pfx, table="", vrf_devices=None, family="the BGP"):
+    """
+    The row that tells an operator how to originate `pfx` here: a blackhole
+    route for BGP to announce, and the `network` that announces it - in
+    statements the VTY takes as printed (#623).
+
+    It said FRR's `ip route <pfx> blackhole`, which `router static` refuses:
+    the one statement there is `<prefix> next-hop <next-hop>` (#436). In the
+    main table that is the form given. A VRF's static routes are not in
+    `router static` at all - it is the main table - but in FRR's own `vrf
+    <name>` block, which takes FRR's spelling and nothing else, so for a
+    pool whose public side is a VRF (`table`, a pool's `vrf`/`outside-vrf`)
+    the advice names that block, by the name `vrf <name> table <id>` gave
+    the table when there is one.
+    """
+    if not table or str(table) == "0":
+        return (f"'{pfx} next-hop blackhole' under 'router static', and "
+                f"'network {pfx}' under {family} address family")
+    name = next((n for n, t in sorted((vrf_devices or {}).items())
+                 if str(t) == str(table)), None)
+    family_word = "ipv6" if ":" in pfx else "ip"
+    where = f"'vrf {name}'" if name else f"the 'vrf' of table {table}"
+    bgp = (f"'router bgp <asn> vrf {name}'" if name
+           else "that VRF's 'router bgp'")
+    return (f"'{family_word} route {pfx} blackhole' under {where}, and "
+            f"'network {pfx}' under {bgp}")
+
+
+def pool_announce_findings(routing, pools, vrf_devices=None):
     """
     Pools whose public prefix nothing in this configuration would advertise.
 
@@ -8492,8 +8520,9 @@ def pool_announce_findings(routing, pools):
                     ["its IPv6 subscribers reach IPv4 by sending to it, and "
                      "nothing routes it here",
                      "announce it from another box, or originate it here with",
-                     f"'ipv6 route {pfx6} blackhole' and 'network {pfx6}' "
-                     "under the BGP IPv6 address family"]))
+                     # The subscribers' side: the pool's own VRF.
+                     blackhole_advice(pfx6, getattr(pool, "vrf", ""),
+                                      vrf_devices, "the BGP IPv6")]))
         # What the pool translates to, a prefix-list's included (#589).
         for pfx in getattr(pool, "eff_outside", pool.outside) or ():
             if any(routes.covers_prefix(a, pfx) for a in announced):
@@ -8509,8 +8538,9 @@ def pool_announce_findings(routing, pools):
                 ["subscribers behind it would be translated to an address "
                  "the internet cannot route back to",
                  "announce it from another box, or originate it here with",
-                 f"'ip route {pfx} blackhole' and 'network {pfx}' under the "
-                 "BGP address family"]))
+                 # The side translated traffic leaves by.
+                 blackhole_advice(pfx, getattr(pool, "outside_vrf", "")
+                                  or getattr(pool, "vrf", ""), vrf_devices)]))
     return out
 
 
@@ -12867,7 +12897,7 @@ class Shell:
                             f"{tag['inner']}, and VPP's ethernet input reads "
                             "three or more tags as two, so a QinQ "
                             "sub-interface on this box cannot be made to "
-                            "refuse them (#136)")
+                            "refuse them")
         else:
             r = self.api_call("create_vlan_subif",
                               {"sw_if_index": idx, "vlan_id": tag["outer"]})
@@ -13412,9 +13442,9 @@ class Shell:
                             "this card",
                             "the box has it and Linux still does; the "
                             "dataplane claims a card when it starts, and the "
-                            "cards it claims are computed on that boot",
-                            "'show hardware' lists it, and 'system reboot' "
-                            "is what hands it over")
+                            "cards it claims are computed on that start",
+                            "'show hardware' lists it, and 'system dataplane "
+                            "restart' is what hands it over")
                         ok = False
                         continue
                     self.err(f"interface {name}: this box has no such "
@@ -14218,7 +14248,8 @@ class Shell:
             # is. Reported and never refused - pool_announce_findings() says
             # why, and the reason is measured rather than argued.
             for sev, subject, why, advice in pool_announce_findings(
-                    target.routing, target.pools):
+                    target.routing, target.pools,
+                    getattr(target, "vrf_devices", None)):
                 print(f"{sev}: {subject}: {why}")
                 for line in advice:
                     print("    " + line)
@@ -21052,7 +21083,7 @@ class Shell:
                 # #573: `bpa` is the on-demand mode's word; the old one is
                 # refused at the prompt, naming the new.
                 if w[1] == "dynamic":
-                    raise ValueError("mode dynamic is now 'mode bpa' (#573)")
+                    raise ValueError("mode dynamic is now 'mode bpa'")
                 if w[1] not in Pool.MODE_WORDS:
                     raise ValueError("mode must be deterministic or bpa")
                 p.mode = Pool.MODE_WORDS[w[1]]
@@ -21681,7 +21712,7 @@ class Shell:
                 print_prose(f"called inverted, by a reject term: what "
                             f"{name} accepts here the caller rejects, and "
                             f"what it rejects goes on to the caller's next "
-                            f"term (#542)", "      ")
+                            f"term", "      ")
             if sec["rows"] is None:
                 print_prose(f"no counter: {sec['daemon']} reports no such "
                             f"route-map - it is not running, or FRR did "
@@ -24088,12 +24119,13 @@ class Shell:
             return []
         return ["The dataplane does not hold " + ", ".join(waiting)
                 + " yet: a card is claimed when the dataplane starts, and "
-                  "the cards it claims are computed on that boot.",
-                "Until this box is rebooted the dataplane cannot be given "
-                "one: it is started with an allowlist naming the cards it had "
-                "at boot, so a card added since is outside the process "
+                  "the cards it claims are computed on that start.",
+                "Until the dataplane starts again it cannot be given one: it "
+                "is started with an allowlist naming the cards the box had "
+                "then, so a card added since is outside the process "
                 "entirely.",
-                "'system reboot' does it, and says what it costs first."]
+                "'system dataplane restart' does it without a reboot, and "
+                "says what it costs first."]
 
     def one_nic_note(self):
         """
@@ -24434,8 +24466,9 @@ class Shell:
                             "card it had taken would be missing from this "
                             "reading too, so a box that handed every card "
                             "over and a box that never had one read alike "
-                            "here: 'systemctl status vpp' says which this "
-                            "is.", indent="  ")
+                            "here, until the dataplane answers again: "
+                            + dataplane_journal_advice() + ".",
+                            indent="  ")
             else:
                 print_prose("no PCI NIC is visible to Linux on this box, and "
                             "the dataplane has none either, so there is no "
@@ -28626,7 +28659,7 @@ class Shell:
         # and the file is written with it once applied - said, with the
         # secret blanked as every screen blanks it.
         for lineno, text, now in target.moved:
-            print(f"note: line {lineno} is now under 'aaa radius' (#607)")
+            print(f"note: line {lineno} is now under 'aaa radius'")
             print(f"    {path}")
             print(f"    {pppoe_mod.redact([text])[0]}")
             print(f"    {aaa_mod.redact([now])[0]}")
@@ -28839,7 +28872,7 @@ class Shell:
             # fold wherever the console ends (#363).
             print(f"note: 'mode dynamic' is now 'mode bpa' in pool {name}")
         if migrated:
-            print_prose("the file is rewritten with it once applied (#573)",
+            print_prose("the file is rewritten with it once applied",
                         indent="    ")
 
         applied = self.apply(target)
@@ -28865,7 +28898,7 @@ class Shell:
         if applied and not pppoe_mod.is_empty(target.pppoe) \
                 and pppoe_mod.file_format() != pppoe_mod.FORMAT:
             print("note: PPPoE's files are from an older release; written "
-                  "again (#607)")
+                  "again")
             self.apply_pppoe(target, refresh=True)
         if applied:
             if (migrated or target.moved) and from_file:

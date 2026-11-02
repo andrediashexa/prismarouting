@@ -79,6 +79,49 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The VTY's refusals say what happened, not which issue did it.**
+  ([#617](https://github.com/andrediashexa/hexarouting/issues/617))
+  `radius` under `pppoe` said RADIUS moved "since #607"; it now says RADIUS
+  is no longer configured under `pppoe` but under `aaa` > `radius`, and how
+  to type it there. The `session-limit` refusal named "docs/bng.md 0.4"; it
+  now says what the limit is for: every session is an interface in the
+  dataplane, and no dataplane was seen holding more than 100000. A sweep
+  of every other string an operator reads took the issue numbers out of
+  `commit`'s QinQ warning, the `show route-map` hits of an inverted call,
+  `mode dynamic`'s refusal, the load's notes on a migrated file and on
+  PPPoE's files, the reserved-VRF refusal, the Proxmox hookscript `show
+  system tuning advice` prints, the headers of the files the box generates
+  (`logging.conf`, PPPoE's three, the MTU pin's note) and the typed-API
+  help for a VRF device and a box-owned VRF; the API server's start refusal
+  says what it needs instead of pointing at `docs/api.md`.
+* **`show hardware` sends an installed box to the dataplane's real unit,
+  and a card added at runtime to `system dataplane restart`.**
+  ([#618](https://github.com/andrediashexa/hexarouting/issues/618))
+  With no PCI card visible and a dataplane that could not be asked, the
+  screen always said `systemctl status vpp`; on an installed box the
+  dataplane runs in a container and that unit, which nothing started, reads
+  "inactive (dead)". It now gives the advice every other screen gives for
+  this box's install (`systemctl status prisma-routing-containers` and the
+  container's log, or the file the box wrote when the dataplane gave up).
+  And a card Linux has and the dataplane does not was said to need `system
+  reboot`, by `show hardware`, the refusal at the prompt and the boot
+  self-test, while `system dataplane restart`'s help said it takes added
+  cards. The help was right: the restart hands every card back and runs
+  `prisma-routing-tune` again, which reads the PCI cards afresh and writes
+  the allowlist the dataplane starts with. The three messages now name
+  `system dataplane restart`; they were written before the restart existed.
+* **`commit check`'s advice for an unannounced pool prefix is typed as
+  printed.** ([#623](https://github.com/andrediashexa/hexarouting/issues/623))
+  For a pool's outside prefix or a NAT64 prefix that nothing in BGP
+  announces, the warning suggested FRR's `ip route <pfx> blackhole` /
+  `ipv6 route <pfx> blackhole`, which `router static` refuses. It now says
+  `'<pfx> next-hop blackhole' under 'router static'`; for a pool whose
+  public side (or, for the NAT64 prefix, whose subscribers' side) is a VRF,
+  `'ip route <pfx> blackhole' under 'vrf <name>'` and the `network` under
+  that VRF's `router bgp`, since `router static` is the main table only. A
+  test feeds each quoted statement back to the grammar it names and checks
+  that the warning then goes quiet.
+
 ## 0.156.5 - commit check refuses what a PPPoE commit refuses
 
 ### Fixed

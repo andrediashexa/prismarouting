@@ -3000,6 +3000,22 @@ check("could not be asked" in flat(_none_deaf)
       and "read alike here" in flat(_none_deaf),
       f"a box whose dataplane could not be asked is not told the two cases "
       f"read alike, so the empty list reads as an answer: {_none_deaf}")
+# AND WHERE TO LOOK IS THIS BOX'S (#618). It always said `systemctl status
+# vpp`, and on an installed box the dataplane runs in a container: vpp.service
+# is a unit nobody started, which reads "inactive (dead)" and looks like the
+# answer. The screen takes dataplane_journal_advice(), the one every other
+# screen takes. Mutation shown red: the literal 'systemctl status vpp' put
+# back.
+_unit_was = prismash.dataplane_unit
+try:
+    prismash.dataplane_unit = lambda: prismash.DATAPLANE_UNIT_CONTAINERS
+    _none_deaf_iso = show_hw([], dp_rc=1)
+finally:
+    prismash.dataplane_unit = _unit_was
+check("systemctl status prisma-routing-containers" in flat(_none_deaf_iso)
+      and "systemctl status vpp" not in flat(_none_deaf_iso),
+      f"an installed box whose dataplane could not be asked is sent to "
+      f"vpp.service, which nothing started there: {_none_deaf_iso}")
 check("the dataplane owns them" not in flat(_none_deaf)
       and "has none either" not in flat(_none_deaf),
       f"a box that could not ask the dataplane anything is told what it "
@@ -4429,7 +4445,8 @@ v4_only = ["router bgp 65000", " address-family ipv4 unicast",
            "  network 200.150.0.16/28", " exit-address-family"]
 f = pool_announce_findings(v4_only, {"v6": n64})
 check(len(f) == 1 and "64:ff9b:1::/48" in f[0][2]
-      and "ipv6 route 64:ff9b:1::/48 blackhole" in f[0][3][2],
+      and "'64:ff9b:1::/48 next-hop blackhole' under 'router static'"
+      in f[0][3][2],
       f"an unannounced NAT64 prefix is said, with the lines that fix it: {f}")
 both = v4_only + [" address-family ipv6 unicast", "  network 64:ff9b::/32",
                   " exit-address-family"]
@@ -4532,6 +4549,86 @@ check(_staged == "ip route 200.150.0.0/24 blackhole",
       f"the VTY stages a static route in FRR's spelling: {_staged!r}")
 check(not _ann(BGP + ["  redistribute static", _staged]),
       "and what the VTY stages is what this check reads")
+
+# THE ADVICE, TYPED AS PRINTED (#623). It said FRR's `ipv6 route <pfx>
+# blackhole`, which `router static` refuses - its one statement is `<prefix>
+# next-hop <next-hop>`. Each quoted statement of the advice row is fed back
+# to the grammar it names: the route into `router static` (staged, nothing
+# printed), the `network` into BGP's address family (read by the tree), and
+# the result must silence the warning it came from. Mutation shown red: the
+# old 'ipv6 route ... blackhole' row put back, which `router static` refuses.
+def _bh_quoted(row):
+    """The statements between single quotes in an advice row."""
+    return re.findall(r"'([^']+)'", row)
+
+
+_n64 = _pool("v6", ("200.150.0.16/28",), inside="2001:db8:1200::/40")
+_n64.subscriber_length = 56
+_n64.nat64_prefix = "64:ff9b:1::/48"
+for _fam, _pools, _af in (
+        ("IPv4", {"clientes": _pool("clientes", ("200.150.0.16/28",))},
+         "address-family ipv4 unicast"),
+        ("IPv6", {"v6": _n64}, "address-family ipv6 unicast")):
+    _found = [f for f in pool_announce_findings(BGP, _pools)
+              if ("::" in f[2]) == (_fam == "IPv6")]
+    _bh_row = _found[0][3][2] if _found else ""
+    _q = _bh_quoted(_bh_row)
+    check(len(_q) == 3 and _q[1] == "router static"
+          and _q[2].startswith("network "),
+          f"{_fam}: the advice names the route, its block and the network: "
+          f"{_bh_row!r}")
+    if len(_q) != 3:
+        continue
+    _sh = prismash.Shell()
+    _sh.frr_ctx = ["router static"]
+    _bh_out = io.StringIO()
+    with contextlib.redirect_stdout(_bh_out), contextlib.redirect_stderr(_bh_out):
+        _bh_typed = _sh.hierarchy_rewrite(_q[0])
+    _pfx = _q[2].split()[1]
+    _ip = "ipv6" if _fam == "IPv6" else "ip"
+    check(_bh_typed == f"{_ip} route {_pfx} blackhole" and not _bh_out.getvalue(),
+          f"{_fam}: '{_q[0]}' typed inside 'router static' is taken: "
+          f"{_bh_typed!r} {_bh_out.getvalue()!r}")
+    check(prismash.statement_checked(_q[2], ["router bgp 65000", _af]),
+          f"{_fam}: '{_q[2]}' is a statement of BGP's {_af}")
+    _routing = BGP + ([" exit-address-family", " " + _af] if _fam == "IPv6"
+                      else []) + ["  " + _q[2], _bh_typed]
+    _left = [f for f in pool_announce_findings(_routing, _pools)
+             if ("::" in f[2]) == (_fam == "IPv6")]
+    check(not _left,
+          f"{_fam}: and the advice followed silences the warning: {_left}")
+# The old row, to show the feed-back test has teeth: refused in the block.
+_sh = prismash.Shell()
+_sh.frr_ctx = ["router static"]
+_bh_out = io.StringIO()
+with contextlib.redirect_stdout(_bh_out), contextlib.redirect_stderr(_bh_out):
+    _bh_typed = _sh.hierarchy_rewrite("ipv6 route 64:ff9b:1::/48 blackhole")
+check(_bh_typed == "" and "error" in _bh_out.getvalue(),
+      f"FRR's spelling is refused inside 'router static', which is why the "
+      f"advice may not print it: {_bh_typed!r} {_bh_out.getvalue()!r}")
+
+# A POOL IN A VRF is not `router static`'s - that is the main table - but
+# FRR's `vrf <name>` block's, which takes FRR's spelling (docs/routing.md,
+# #580): the advice names that block by the VRF device's name, and the VTY
+# hands the route to FRR there unchanged rather than refusing it.
+_vp = _pool("tenant", ("200.150.0.16/28",))
+_vp.outside_vrf = "10"
+_vrow = pool_announce_findings(BGP, {"tenant": _vp}, {"red": 10})[0][3][2]
+check(_bh_quoted(_vrow) == ["ip route 200.150.0.16/28 blackhole", "vrf red",
+                         "network 200.150.0.16/28",
+                         "router bgp <asn> vrf red"],
+      f"a pool whose public side is VRF red is told the VRF's form: {_vrow!r}")
+_sh = prismash.Shell()
+_sh.frr_ctx = ["vrf red"]
+check(_sh.hierarchy_rewrite("ip route 200.150.0.16/28 blackhole")
+      == "ip route 200.150.0.16/28 blackhole",
+      "and inside 'vrf red' the VTY passes that route on as typed")
+check("table 10" in pool_announce_findings(
+          BGP, {"tenant": _vp}, {})[0][3][2],
+      "a table no VRF device names is named by its number")
+check(prismash.blackhole_advice("200.150.0.16/28", "0").startswith(
+          "'200.150.0.16/28 next-hop blackhole' under 'router static'"),
+      "blackhole_advice: table 0 is the main table")
 # The scope. `redistribute static` under OSPF puts nothing into BGP - measured
 # above - so it must neither announce the prefix nor blind the check. Reading
 # the word wherever it appeared did the second, and went silent on the

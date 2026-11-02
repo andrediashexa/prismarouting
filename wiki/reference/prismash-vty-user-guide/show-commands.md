@@ -416,7 +416,7 @@ prisma> show hardware
 
 When the dataplane has no interface at all, the line is the **same diagnosis** that `show interface` and the boot self-test give, read from the same sources: two diagnoses of the same fact that disagree with each other are worse than one.
 
-And a box where Linux sees no PCI card at all gets a sentence, not an empty table. The sentence separates the three cases, which look the same in a table: the dataplane already has all the cards (the line above says which), the dataplane could not be queried (and then `systemctl status vpp` says which of the two it is), or there is no card anywhere. A virtio card in a virtual machine has a PCI address and works: if it does not appear here, it is not in Linux either.
+And a box where Linux sees no PCI card at all gets a sentence, not an empty table. The sentence separates the three cases, which look the same in a table: the dataplane already has all the cards (the line above says which), the dataplane could not be queried (and then the sentence says where this box writes why the dataplane is silent: on an installed box, `systemctl status prisma-routing-containers` and the dataplane container's log), or there is no card anywhere. A virtio card in a virtual machine has a PCI address and works: if it does not appear here, it is not in Linux either.
 
 *"There is nothing to show"* and *"there is nothing wrong"* look the same on a screen, and this screen is read on a box that is forwarding nothing.
 

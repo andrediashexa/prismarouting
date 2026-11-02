@@ -2147,7 +2147,7 @@ BOX_OWNED = (
     ("service integrated-vtysh-config",
      "FRR's one-file configuration mode, which the box's FRR runs in"),
     ("vrf prisma-<name>",
-     "a VRF of the box's own (prisma-bp is the containers' backplane, #447); "
+     "a VRF of the box's own (prisma-bp is the containers' backplane); "
      "the VTY never makes, removes or edits one"),
     ("exit-vrf", "closes the box's own VRF block above it"),
 )
@@ -3090,7 +3090,7 @@ def _negations(node):
 EXTRA_STATEMENTS = {
     "config": [(["vrf <name>", "table"], "<1-4294967295>",
                 "a VRF device on the host, on the table its interfaces' "
-                "`vrf <n>` use (#540)", True),
+                "`vrf <n>` use", True),
                # A route-map's header is how its block is entered: the
                # route-map mode's own path, a statement at this level too.
                (["route-map <name>"], "permit|deny <1-65535>",

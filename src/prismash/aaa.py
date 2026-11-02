@@ -118,9 +118,10 @@ SAYS = ("under 'radius': server, mode, timeout, retries, dead-time, "
         "rate-profile")
 LEVELS_SAY = "under 'aaa' there is 'radius'"
 #: Where 0.154.0's statements went, said at the prompt where they are typed.
-MOVED_SAYS = ("RADIUS is configured under 'aaa' > 'radius' since #607: "
-              "enter 'aaa', then 'radius', and type 'server <address> "
-              "secret <secret>' there; PPPoE uses those servers")
+MOVED_SAYS = ("RADIUS is no longer configured under 'pppoe' but under "
+              "'aaa' > 'radius': enter 'aaa', then 'radius', and type "
+              "'server <address> secret <secret>' there; PPPoE uses those "
+              "servers")
 
 
 def empty():

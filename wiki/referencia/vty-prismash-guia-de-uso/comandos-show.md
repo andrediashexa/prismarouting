@@ -416,7 +416,7 @@ prisma> show hardware
 
 Quando o dataplane não tem interface nenhuma, a linha é o **mesmo diagnóstico** que o `show interface` e o autoteste de boot dão, lido das mesmas fontes: dois diagnósticos do mesmo fato que discordam entre si são piores que um.
 
-E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não uma tabela vazia. A frase separa os três casos, que têm a mesma cara numa tabela: o dataplane já tem todas as placas (a linha de cima diz quais), o dataplane não pôde ser consultado (e aí `systemctl status vpp` diz qual dos dois é), ou não há placa nenhuma em lugar nenhum. Uma placa virtio numa máquina virtual tem endereço PCI e serve: se ela não aparece aqui, também não está no Linux.
+E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não uma tabela vazia. A frase separa os três casos, que têm a mesma cara numa tabela: o dataplane já tem todas as placas (a linha de cima diz quais), o dataplane não pôde ser consultado (e aí a frase diz onde esta caixa escreve por que o dataplane está calado: numa caixa instalada, `systemctl status prisma-routing-containers` e o log do contêiner do dataplane), ou não há placa nenhuma em lugar nenhum. Uma placa virtio numa máquina virtual tem endereço PCI e serve: se ela não aparece aqui, também não está no Linux.
 
 *"Não há nada a mostrar"* e *"não há nada errado"* têm a mesma aparência numa tela, e esta tela é lida numa caixa que não encaminha nada.
 

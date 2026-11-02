@@ -879,7 +879,7 @@ Este rechazo ocurre **antes** de que la línea llegue al enrutamiento. Es a prop
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
+    '200.150.0.16/28 next-hop blackhole' under 'router static', and 'network 200.150.0.16/28' under the BGP address family
 ```
 
 Las dos últimas líneas son la parte accionable: la advertencia no solo dice que falta el anuncio, dice las dos líneas que lo resuelven cuando es aquí donde se quiere anunciar.
