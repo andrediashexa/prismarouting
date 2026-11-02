@@ -394,7 +394,7 @@ One row per pool; the index is the dataplane's pool index plus one.
 | Column | Object | Type | What it is |
 |---|---|---|---|
 | 2 | `prPoolName` | string | the pool's name |
-| 3 | `prPoolMode` | integer | deterministic(1), dynamic(2) |
+| 3 | `prPoolMode` | integer | deterministic(1), dynamic(2): dynamic is a `mode bpa` pool. The MIB keeps the dataplane's word, as the configuration trail does; renaming an enumeration would break every NMS that maps it |
 | 4 | `prPoolBlockSize` | Gauge32 | ports in a block |
 | 5 | `prPoolInsideAddresses` | Gauge32 | subscriber addresses in its ranges |
 | 6 | `prPoolOutsideAddresses` | Gauge32 | public addresses |
@@ -441,8 +441,9 @@ records (5), sent (6), spilled (7), dropped (8) and connects (9).
 `prSystemRelease` (`.1.12.1.0`) is the release installed;
 `prSystemDataplaneBuild` (`.1.12.2.0`) the build of the plugin the running
 dataplane loaded; `prSystemDataplaneCurrent` (`.1.12.3.0`, TruthValue) whether
-they are the same. It is false after an upgrade until the next reboot, which
-is a box forwarding with the old build and refusing any commit that needs the
+they are the same. It is false after an upgrade until the next reboot or
+`system dataplane restart`, either of which loads the new build: until then
+the box forwards with the old build and refuses any commit that needs the
 new one. `prSystemDataplaneUptime` (`.1.12.4.0`, TimeTicks, 0.148.7, #534) is
 how long the dataplane has run by VPP's own clock (`show clock`): younger than
 `hrSystemUptime` when the dataplane restarted without the box, which the
@@ -798,7 +799,7 @@ password, and it is not an account: asked from outside, it answers
 | `prPoolSubscribers` approaching `prPoolGuaranteed` | the pool is near what it can promise |
 | `prLogTransportEnabled` true and `prLogTransportConnected` false | connection records going to the spill file |
 | `prLogTransportDropped` or `prLogIpfixDropped` rising | records lost: a gap in the compliance log |
-| `prSystemDataplaneCurrent` false | an upgrade waiting for a reboot |
+| `prSystemDataplaneCurrent` false | an upgrade waiting for a reboot or a dataplane restart |
 | `bgpPeerState` not 6, `ospfNbrState` not 8, `ospfv3NbrState` not 8, `isisISAdjState` not 3 | a routing session down |
 | `dskErrorFlag` 1 on `/var/log/prisma-routing` | the retention log's filesystem filling |
 | `inetCidrRouteNumber` falling sharply | a session dropped and took its routes |

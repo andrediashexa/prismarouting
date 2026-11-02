@@ -111,6 +111,9 @@ carried, applied to the other two.
 | `PRISMA_CONTROL_PLANE_MEMORY_GB` | whole GB, 1 or more, or empty for a quarter of the RAM | empty | a quarter of the RAM, at least 2 |
 | `PRISMA_BUFFERS_PER_NUMA` | digits, or empty for 16384 per worker | empty | 16384 per worker |
 | `PRISMA_CGNAT_WORKERS` | digits, 1 or more, or empty for every worker | empty | every worker receives and translates |
+| `PRISMA_ALLOW_UNSUPPORTED_SFP` | `allow` or `refuse`, or empty for refuse; written by `system` > `hardware` > `unsupported-sfp` | empty | refuse: ixgbe takes only the SFP+ modules it lists |
+| `PRISMA_MANAGEMENT_VRF` | the management VRF's name, or empty; written by `system` > `management` > `vrf` | empty | used only to name the VRF in the boot's report |
+| `PRISMA_MANAGEMENT_TABLE` | that VRF's table, 1 to 4294967295 and not 253-255, or empty; written by the same commit | empty | management in the main table |
 
 **A refusal says what the box does accept**, with what each value would do, not
 only that this one was wrong: it is read on a serial console by somebody who
@@ -512,8 +515,8 @@ place, from the other end: the dataplane is out of the kernel's selection, and
 the largest resident process on a box in trouble is `bgpd` itself, which is
 what the kernel will choose without being told to.
 
-**Sizing, then, rather than bounding.** 4 GB is the floor for a box that does
-not carry a full table. A box that does needs the 1.37 GB above to sit inside
+**Sizing, then, rather than bounding.** 6 GB is the floor for a box that does
+not carry a full table (see "Memory requirement"). A box that does needs the 1.37 GB above to sit inside
 `max(2, RAM/4)` GB with the kernel and the page cache beside it, so **16 GB**
 is the sensible floor for a full-table deployment and 8 GB is already tight.
 
@@ -821,7 +824,7 @@ are not that were each rejected on their own arithmetic:
 
 | Option | Cost |
 |---|---|
-| Size it from `PRISMA_SUBSCRIBERS` | Wrong units. A CGNAT subscriber is a translation, not an interface: 200,000 of them share a handful of ports. The shipped default would ask for roughly 540 MB of segment for interfaces that never appear, on a box whose RAM floor is 4 GB |
+| Size it from `PRISMA_SUBSCRIBERS` | Wrong units. A CGNAT subscriber is a translation, not an interface: 200,000 of them share a handful of ports. The shipped default would ask for roughly 540 MB of segment for interfaces that never appear, on a box whose RAM floor is 6 GB |
 | Size it from a constant — 256 MB, 1 GB | A number nobody can justify, which is exactly what `main-heap-size` stopped being when it started reading the reserved pages. It is also not free: the segment is what the operator's RAM is not |
 | Add a `PRISMA_INTERFACES` to `tune.env` | A knob whose correct value the operator cannot know before the box is configured, on a product that today creates interfaces from a configuration the tuner never reads. A refusal path, a document and a wiki page for a number that would be guessed |
 | Leave it to VPP and say nothing | The status quo, and the reason the report was filed: the box meets the limit as a `SIGABRT` |
@@ -2912,8 +2915,8 @@ changes nothing. With a version it:
 
 1. downloads the package and its `sha256` from `PRISMA_RELEASES_URL`, which
    defaults to the public directory and can point a box at a mirror. The
-   package is about 120 MB since 0.125.0, because it carries the container
-   images (#427), so it is written to disk as it arrives rather than held in
+   package carries the container images since 0.125.0 (#427) - about 120 MB
+   then, 189 MB by 0.153.2 (measured below) - so it is written to disk as it arrives rather than held in
    the VTY's memory;
 2. computes the sum as it downloads and **refuses a mismatch before anything
    is unpacked** - after downloading the whole package once more, from the
@@ -2970,8 +2973,10 @@ before 0.153.3 a file received it a block at a time.
 
 The version the box runs, and any older one, are refused. Going back has costs
 of its own (#436 changed a spelling an older release does not read), and it
-stays the hand-run path. The gate is `system reboot`'s: an administrator, and
-in practice root, because the upgrade writes the product's files. Ctrl-C does
+stays the hand-run path. The gate is `system reboot`'s: root, or a member of
+`prisma-operator` whatever its role (#563, since 0.149.26) - the upgrade
+writes the product's files, so it runs behind the host's door, not in the
+VTY's own account. Ctrl-C does
 nothing while `upgrade` runs, for the reason it does nothing during a commit
 (#441).
 
@@ -3463,11 +3468,16 @@ default.
 
 ### The management plane: the VTY in a container of its own
 
-The third step (#448, phase C). An installed box runs a third container,
+The third step (#448, phase C). An installed box runs four containers -
+the dataplane, FRR, this one and the log container (#550) - and a fifth,
+`prisma-bng`, once PPPoE is configured. This one is
 `prisma-routing_mgmt_1`, from the `prisma-mgmt` image. The image is built on
 the dataplane's own image, so `vppctl`, `vat2` and this tree's plugin API
 are the same build as the VPP they talk to. It adds FRR's clients at the
-pinned version and prismash. The container runs no daemon.
+pinned version and prismash. Its own process is `sleep infinity`: the VTY
+is started in it per login, and when the API is on,
+`prisma-routing-api.service` runs the API server in it too (`docker exec`,
+listening on the backplane address below).
 
 **Its network is the backplane and nothing else.** It has no docker network,
 which would put routes in the main table and rules in iptables.

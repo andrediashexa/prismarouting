@@ -12,7 +12,8 @@
 Software router with built-in CGNAT by **port block**: deterministic (the block
 is a formula, and no log is needed) or **BPA** (*bulk port allocation*, blocks
 allocated on demand in steps, and logged). VPP/DPDK dataplane, FRR control plane, IPFIX logging
-per RFC 8158, single VTY. Targets 100 Gbps+ and 200k+ subscribers, shipped as
+per RFC 8158, single VTY. PPPoE subscribers can be terminated on the box
+itself, against RADIUS ([docs/bng.md](docs/bng.md)). Targets 100 Gbps+ and 200k+ subscribers, shipped as
 an installable Debian appliance. Called HexaRouting until 0.76.1; the rename
 was a clean break, so the paths, the units and the `prismash` command carry
 the new name and nothing migrates from the old one
@@ -42,7 +43,7 @@ make release-gate      # build the installation medium from a tag and boot it
 
 | | |
 |---|---|
-| **What** | An IPv4 software router whose CGNAT allocates a contiguous **port block** per subscriber instead of logging every flow. |
+| **What** | A software router, IPv4 and IPv6, whose CGNAT allocates a contiguous **port block** per subscriber instead of logging every flow. |
 | **Why** | Brazilian regulation (Marco Civil, Law 12.965/2014) requires one year of connection records to be kept. Per-flow NAT logging produces terabytes of them; a port block reduces this to one record per block under BPA — or to **zero** in deterministic mode, where the proof is the algorithm and the dated configuration instead. The box **exports** the records and keeps none: whoever retains them for the year is the collector. |
 | **Who** | ISPs deploying CGNAT. The product is installed per provider, not multi-tenant. |
 | **When** | Deployed when public IPv4 runs out and subscribers must share addresses. |
@@ -82,7 +83,7 @@ docs/logging.md        BPA log export over IPFIX (RFC 8158)
 docs/appliance.md      boot tuning, systemd, install, ISO
 docs/roadmap.md        what a CGNAT still needs, and why each item matters
 docs/ha.md             high availability: what is built and measured, and what is still a plan
-docs/bng.md            BNG analysis: what VPP gives and what it would cost (NOT implemented)
+docs/bng.md            BNG: PPPoE subscribers on the box (phase 1 shipped) and the study behind it
 docs/wiki-audit.md     the brief for auditing the wiki against this repository
 PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
 wiki/                  mirror of the wiki; tools/wiki-status.sh says what is unpublished

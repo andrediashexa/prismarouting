@@ -805,10 +805,11 @@ monitor's: `subscriber`, `public_address` with `port`, `event`, `pool`,
 `PERMISSION_DENIED` with the monitor's own words.
 
 **The box.** `SystemService` is the VTY's `system` statements, with the
-VTY's permissions - today root's: the host's door for a reboot, an upgrade
-or a dataplane restart opens to uid 0 only (#212 records why no other
-account is granted it), so an administrator that is not root is refused
-with `REASON_PERMISSION` there as at the prompt.
+VTY's permissions: the host's door for a reboot, a shutdown, an upgrade or a
+dataplane restart opens to root and to the members of `prisma-operator`,
+whatever their role (#563, since 0.149.26) - `WhoAmI`'s `can_operate`. Any
+other account, an administrator included, is refused with
+`REASON_PERMISSION` there as at the prompt.
 
 * `Reboot` and `Shutdown` refuse with `FAILED_PRECONDITION` and
   `REASON_UNSAVED` while the running configuration differs from what the
@@ -879,7 +880,9 @@ restart and upgrade are measured on one.
   one naming a box account.
 * **The account is the client certificate's Common Name.** It MUST be an
   account on the box; it gets the roles the VTY login gives it (`prisma-admin`
-  configures everything, `prisma-cgnat` the CGNAT, anyone else reads), and the
+  configures everything, `prisma-cgnat` the CGNAT, anyone else reads; a
+  member of `prisma-operator` may also reboot, shut down, upgrade and
+  restart the dataplane, whatever its role), and the
   configuration trail records it as the author. An account without the role
   is refused exactly as the VTY refuses it.
 * **The management network only.** `api listen-address` is the management
@@ -902,7 +905,7 @@ openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=prisma clients" 
   -keyout ca.key -out ca.crt
 # The box's server certificate, with the address the client dials.
 openssl req -newkey rsa:3072 -nodes -subj "/CN=prisma-api" -keyout server.key -out server.csr
-printf 'subjectAltName=IP:10.40.200.166\n' > server.ext
+printf 'subjectAltName=IP:192.0.2.10\n' > server.ext
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
   -days 825 -extfile server.ext -out server.crt
 # The backend's client certificate: CN is the box account it acts as.
@@ -920,7 +923,7 @@ configures). Then, in the VTY:
 ```
 configure
 api enabled yes
-api listen-address 10.40.200.166
+api listen-address 192.0.2.10
 api port 50051
 commit
 ```
@@ -961,7 +964,7 @@ let tls = ClientTlsConfig::new()
     .ca_certificate(Certificate::from_pem(std::fs::read("ca.crt")?))
     .identity(Identity::from_pem(std::fs::read("webui.crt")?, std::fs::read("webui.key")?))
     .domain_name("prisma-api");
-let channel = Channel::from_static("https://10.40.200.166:50051")
+let channel = Channel::from_static("https://192.0.2.10:50051")
     .tls_config(tls)?
     .connect()
     .await?;
@@ -979,26 +982,26 @@ or `subjectAltName` MUST carry the address dialled. The refusal detail is
 ```sh
 grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   -import-path proto -proto prisma/v1/prisma.proto \
-  10.40.200.166:50051 prisma.v1.OperationalService/GetVersion
+  192.0.2.10:50051 prisma.v1.OperationalService/GetVersion
 grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   -import-path proto -proto prisma/v1/prisma.proto \
   -d '{"command": "show cgnat pool"}' \
-  10.40.200.166:50051 prisma.v1.OperationalService/Show
+  192.0.2.10:50051 prisma.v1.OperationalService/Show
 grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   -import-path proto -proto prisma/v1/prisma.proto \
   -d '{"policy": "UP", "prefix": "203.0.113.0/24", "attach_point": "import",
        "attributes": {"neighbor": "10.0.0.2", "community": "65001:10"}}' \
-  10.40.200.166:50051 prisma.v1.OperationalService/TestPolicy
+  192.0.2.10:50051 prisma.v1.OperationalService/TestPolicy
 grpcurl -cacert ca.crt -cert webui.crt -key webui.key -authority prisma-api \
   -import-path proto -proto prisma/v1/prisma.proto \
   -d '{"vrf": "default", "protocol": "bgp", "page_size": 1000}' \
-  10.40.200.166:50051 prisma.v1.RouteService/ListRoutes
+  192.0.2.10:50051 prisma.v1.RouteService/ListRoutes
 ```
 
 The health check is gRPC's own, so a stock client works with the same
 certificate - `grpc_health_probe -tls -tls-ca-cert ca.crt -tls-client-cert
 webui.crt -tls-client-key webui.key -tls-server-name prisma-api -addr
-10.40.200.166:50051`, or tonic's `tonic-health` client. Its contract is
+192.0.2.10:50051`, or tonic's `tonic-health` client. Its contract is
 [`api/health/v1/health.proto`](../api/health/v1/health.proto), gRPC's
 `grpc.health.v1` field for field; a client using a health crate does not need
 it.

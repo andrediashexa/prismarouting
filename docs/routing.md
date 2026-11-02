@@ -729,7 +729,7 @@ than returning success:
 ```
 error: the card this box is reached on was handed over and nothing took it
     Linux no longer has ens18 and no interface the dataplane holds has
-    52:54:00:00:00:01, so there is no pair for 10.95.200.198/24 to go on
+    52:54:00:00:00:01, so there is no pair for 192.0.2.10/24 to go on
 ```
 
 Read from `/sys/class/net` by MAC, because the Linux name is the one thing that
@@ -1186,16 +1186,16 @@ session and a packet across the leak come back.
 
 ```
 vrf mgmt table 100
-interface enp6s18
+interface enp1s0
   vrf 100
   exit
 vrf mgmt
- ip route 0.0.0.0/0 10.40.200.1
- ip route 10.95.200.0/24 10.40.200.1
- ipv6 route ::/0 2804:4ed4:1000:6::1
+ ip route 0.0.0.0/0 192.0.2.1
+ ip route 198.51.100.0/24 192.0.2.1
+ ipv6 route ::/0 2001:db8:6::1
  exit
 router static
- 0.0.0.0/0 next-hop 10.40.10.29
+ 0.0.0.0/0 next-hop 203.0.113.254
  exit
 system
  management
@@ -1206,13 +1206,13 @@ system
 
 The management card goes into a VRF like any other interface (the device and
 the `vrf 100` above), and its routes with it, in FRR's `vrf mgmt` block: both
-families' defaults and any other management network, such as .166's
-10.95.200.0/24. `router static` is the main table only (FRR's top-level `ip
-route`); a VRF's static routes are written in its `vrf <name>` block, closed
-by `exit` or FRR's `exit-vrf`. The main table's default is then free for the
-subscribers': on 10.40.200.166 that is 10.40.10.29 on VLAN 801, while SSH, the
-API and SNMP stay on 10.40.200.166 and 2804:4ed4:1000:6::166 behind the
-management gateways
+families' defaults and any other network the box is managed from, such as
+the NOC's 198.51.100.0/24 here. `router static` is the main table only (FRR's
+top-level `ip route`); a VRF's static routes are written in its `vrf <name>`
+block, closed by `exit` or FRR's `exit-vrf`. The main table's default is then
+free for the subscribers' - the upstream at 203.0.113.254 here - while SSH,
+the API and SNMP stay on the management addresses, 192.0.2.10 and
+2001:db8:6::10, behind the management gateways
 ([#580](https://github.com/andrediashexa/hexarouting/issues/580)).
 
 `system` > `management` > `vrf mgmt` is what makes the box's own services
@@ -1225,8 +1225,8 @@ Five kernel settings, set at the commit and at every boot:
 | Setting | Why |
 |---|---|
 | `net.ipv4.tcp_l3mdev_accept`, `udp_l3mdev_accept` = 1 | a main-table listener answers a connection that arrives on a VRF, IPv4 and IPv6; a TCP reply follows its connection's VRF |
-| `net.ipv4.ip_nonlocal_bind`, `net.ipv6.ip_nonlocal_bind` = 1 | a listener that NAMES the management address can bind it. Once the card is in the VRF its address is local in the VRF's table, not the main one, and `bind()` answers EADDRNOTAVAIL: measured on Debian's 6.1, snmpd 5.9.3 on `snmp listen-address 10.40.200.166 2804:...::166` exited with "Error opening specified endpoint", and sshd with a ListenAddress the same. The API's socket says `FreeBind=yes` already |
-| `net.ipv6.conf.all.keep_addr_on_down` = 1 | the card's IPv6 address survives its move into the VRF. Enslaving a device cycles it, and IPv6 drops its addresses on the way down: measured, 10.40.200.166/24 stayed and the IPv6 address was gone, while the dataplane still had it. Only ever turned on: the move back out is the same cycle |
+| `net.ipv4.ip_nonlocal_bind`, `net.ipv6.ip_nonlocal_bind` = 1 | a listener that NAMES the management address can bind it. Once the card is in the VRF its address is local in the VRF's table, not the main one, and `bind()` answers EADDRNOTAVAIL: measured on Debian's 6.1, snmpd 5.9.3 on `snmp listen-address 192.0.2.10 2001:db8:6::10` exited with "Error opening specified endpoint", and sshd with a ListenAddress the same. The API's socket says `FreeBind=yes` already |
+| `net.ipv6.conf.all.keep_addr_on_down` = 1 | the card's IPv6 address survives its move into the VRF. Enslaving a device cycles it, and IPv6 drops its addresses on the way down: measured, the IPv4 address (192.0.2.10/24 here) stayed and the IPv6 address was gone, while the dataplane still had it. Only ever turned on: the move back out is the same cycle |
 
 Listening in the main table was chosen over binding each service into the
 VRF: no unit changes, and a service started before the commit answers after
@@ -1314,7 +1314,7 @@ the commit and is named), BEFORE any interface moves between tables. The name
 and the table go to `tune.env`, and `apply-tuning` puts the same set in at
 every boot, before the dataplane, snmpd, sshd and the API's socket start and
 before the VRF device exists - a rule names a table, not a device. So snmpd
-binds 10.40.200.166 at boot before any interface has it, which is what #591
+binds the management address at boot before any interface has it, which is what #591
 had to retry around; the retry after the interfaces stays, and with management
 in a VRF it is not needed. `prismash --load` puts the set in again, for a boot
 whose tuner did not run.
@@ -1377,7 +1377,7 @@ in effect:
   the box's own        by table 100, after main without its default
   listeners            answer on a VRF, and may bind its addresses
   IPv6 addresses       kept when a card moves between VRFs
-  interfaces in it     vppmg0
+  interfaces in it     enp1s0
 ```
 
 **A commit that breaks reachability.** Use `commit confirmed 10`. If the
