@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.156.5 - commit check refuses what a PPPoE commit refuses
+
+### Fixed
+
 * **PPPoE: an address-pool no CGNAT pool covers was accepted, and `commit
   check` passed what `commit` refused.**
   ([#622](https://github.com/andrediashexa/hexarouting/issues/622))
