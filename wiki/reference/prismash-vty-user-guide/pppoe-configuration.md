@@ -178,7 +178,9 @@ With `dynamic-authorization`, your RADIUS (or IXC) can, without the subscriber d
 
 A CoA-Request with an attribute the box does not apply (a `Mikrotik-Rate-Limit`, a `Filter-Id`), a rate above 10 Gbit/s, a malformed rate `Cisco-AVPair` or a `sub-qos-policy` without `rate-profile` is refused in full with CoA-NAK, and nothing changes. A request from an address that is not a `client`, or with the wrong secret, gets no answer at all.
 
-Each session's address comes from RADIUS (`Framed-IP-Address`) when it sends one, and from `address-pool` when it does not. For the CGNAT to translate the sessions, the addresses they receive must be in a pool's `prefix-inside`, like those of any subscriber.
+Each session's address comes from RADIUS (`Framed-IP-Address`) when it sends one, and from `address-pool` when it does not. For the CGNAT to translate the sessions, the addresses they receive must be in a pool's `prefix-inside` (a pool with no `vrf`, or `vrf 0`), like those of any subscriber; a session whose address no pool covers gets connected and has everything it sends dropped. `commit` checks each `address-pool` against the pools; `Framed-IP-Address` values it cannot see. Public addresses meant to leave untranslated go in a `deny` of the pool's `prefix-list-inside`.
+
+`commit check` refuses everything in the table below too, before anything is applied.
 
 ## What commit refuses
 
@@ -196,6 +198,8 @@ Each session's address comes from RADIUS (`Framed-IP-Address`) when it sends one
 | a sub-interface without `vlan <id>` in its block | there would be no tag to answer on |
 | two access interfaces with the same VLAN | both would be the same port |
 | an interface the dataplane does not have | nothing to answer on it |
+| an `address-pool` with any part outside every CGNAT pool's `prefix-inside` (and outside every `deny` of a `prefix-list-inside`), or a CGNAT change that leaves it so | those subscribers would connect and have all their traffic dropped |
+| `dynamic-authorization listen` on an address the box does not have, or on an interface in a VRF other than management's | the listener would not open, and Disconnect and CoA would go unanswered with nothing on screen |
 | a secret with a space, comma, quotes or `#` (refused as soon as it is typed) | it would break the generated configuration |
 
 ## The RADIUS secrets

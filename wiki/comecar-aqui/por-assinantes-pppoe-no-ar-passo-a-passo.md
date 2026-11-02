@@ -88,7 +88,7 @@ O pool é um pool de CGNAT como qualquer outro: a escolha entre determinístico 
 
 
 :::info
-**Um endereço de sessão fora de qualquer** `**prefix-inside**` **não é traduzido.** Nada no `commit` compara o `address-pool` do PPPoE (nem os `Framed-IP-Address` do seu RADIUS) com os pools do CGNAT: confira você que toda faixa que uma sessão pode receber está dentro de um `prefix-inside`.
+**Todo** `**address-pool**` **dentro de um** `**prefix-inside**`**.** Uma sessão cujo endereço nenhum pool do CGNAT cobre conecta e recebe endereço, mas tudo o que ela envia é descartado (a caixa conta como `no pool for source address`). Por isso o `commit` (e o `commit check`) recusa um `address-pool` com qualquer parte fora de todo `prefix-inside`, dizendo qual faixa ficou de fora; tirar ou encolher o pool que a cobria é recusado do mesmo jeito. Só contam pools sem `vrf`, ou com `vrf 0`: as sessões ficam na tabela principal. Assinantes com endereço **público** que devem sair sem tradução são permitidos por um `prefix-list-inside` cujo `deny` cobre esses endereços. Os `Framed-IP-Address` do seu RADIUS o `commit` não enxerga: mantenha-os você dentro de um `prefix-inside` (ou de um `deny`).
 
 :::
 
@@ -200,7 +200,7 @@ prisma# [edit aaa / radius] dynamic-authorization client 192.0.2.10 secret <segr
 prisma# [edit aaa / radius] top
 ```
 
-A porta é a 3799 se você não der outra (`port <n>` no fim do `listen`). Um pedido de um endereço que não é `client`, ou com o segredo errado, não recebe resposta. Com isso:
+O endereço do `listen` precisa ser um que a caixa tem, fora de qualquer VRF que não seja a da gerência: o plano de controle PPPoE só o pega quando inicia e, se não conseguir, Disconnect e CoA ficam sem resposta sem nada na tela. Por isso o `commit` recusa `listen` num endereço que a caixa não tem (`not on this box`) ou numa interface de outra VRF (`in vrf <nome>`). A porta é a 3799 se você não der outra (`port <n>` no fim do `listen`). Um pedido de um endereço que não é `client`, ou com o segredo errado, não recebe resposta. Com isso:
 
 | Pedido | Efeito |
 |--------|--------|
@@ -221,7 +221,7 @@ prisma# [edit] exit
 prisma> save
 ```
 
-No `compare`, tudo com `+` é o que entra, com os segredos em branco. O `commit` confere o bloco antes de aplicar e recusa, dizendo por quê, o que não daria certo: sem `interface` ou sem `gateway`, ninguém para autenticar, ninguém para dar endereço, interfaces de acesso em duas placas, uma sub-interface sem `vlan`, uma interface que o dataplane não tem. Aceito, ele imprime uma linha `pppoe:` dizendo o que o plano de controle PPPoE fez; uma mudança que só releu o RADIUS termina em `no session dropped`.
+No `compare`, tudo com `+` é o que entra, com os segredos em branco. O `commit` confere o bloco antes de aplicar e recusa, dizendo por quê, o que não daria certo: sem `interface` ou sem `gateway`, ninguém para autenticar, ninguém para dar endereço, interfaces de acesso em duas placas, uma sub-interface sem `vlan`, uma interface que o dataplane não tem, um `address-pool` fora de todo pool do CGNAT, um `dynamic-authorization listen` num endereço que a caixa não tem. O `commit check` diz exatamente o mesmo antes de aplicar qualquer coisa, então dá para rodá-lo primeiro na janela de manutenção. Aceito, ele imprime uma linha `pppoe:` dizendo o que o plano de controle PPPoE fez; uma mudança que só releu o RADIUS termina em `no session dropped`.
 
 `commit` faz valer agora; `save` grava em disco. Sem o `save`, tudo some no próximo boot.
 

@@ -79,6 +79,38 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **PPPoE: an address-pool no CGNAT pool covers was accepted, and `commit
+  check` passed what `commit` refused.**
+  ([#622](https://github.com/andrediashexa/hexarouting/issues/622))
+  Three findings, each read in the code before it was decided:
+
+  * The `pppoe` and `aaa` refusals were asked only by the apply, which
+    `_apply()` reaches after the CGNAT, the interfaces and the system
+    settings are written: `commit check` returned before them and said
+    "configuration check succeeds" about a block with no gateway, and
+    `commit` refused the same block with the rest of the change already in
+    force. They are now one function the check and the apply both ask, so
+    `commit check`, the API's staged-edit check, `rollback` and `--load`
+    say them before anything is written. At boot a refusal is a warning and
+    the rest of the file is applied - before, PPPoE's refusal ended the
+    apply where PPPoE sits, with sshd and the routing after it.
+  * An `address-pool` range no CGNAT pool covers is **refused**, the range
+    not covered named. Not the warning the issue expected: every session is
+    attached to `bpa-in2out`, which drops a source no pool claims ("no pool
+    for source address"), so those subscribers got a session, an address
+    and no traffic. Public addresses routed untranslated - public /32s to
+    PPPoE customers - stay possible, as they already were, through a pool's
+    `prefix-list-inside` deny, which counts as covered. Only pools serving
+    VRF 0 or every VRF count: accel-ppp puts every session in VRF 0.
+    Removing or shrinking the covering pool is refused the same way. A
+    RADIUS Framed-IP-Address cannot be checked at commit; docs/bng.md says
+    the same rule holds for it.
+  * `dynamic-authorization listen` on an address the box does not hold, or
+    holds in a VRF management is not in, is refused at commit. accel-ppp
+    binds it once at start and, when that fails, logs one line in its own
+    log and runs on: every Disconnect and CoA went unanswered and nothing
+    said why.
+
 ## 0.156.4 - the API refuses a root certificate unless told to
 
 ### Fixed
