@@ -1694,6 +1694,11 @@ for _i in 1 2 3 4 5 6 7 8 9 10; do
 done
 GEN=$(sh tools/gen-api.sh /tmp/apistubs 2>&1 && echo generated)
 echo "  stubs: $GEN"
+# Root's certificate is refused unless the box says otherwise (#621): this
+# section's reads go as root, so the box says so, at the prompt. Measured on
+# 0.156.5 without it: 32 checks red, every one UNAUTHENTICATED.
+PR_YES=$($HX -c configure -c "api permit-root yes" -c commit 2>&1)
+printf '%s\n' "$PR_YES" | tail -2 | sed 's/^/  api permit-root yes: /'
 sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50557 \
   --dir $C/box --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver.log 2>&1 &
 _n=0; until grep -q "prisma.v1 on" /tmp/apiserver.log || [ $_n -ge 30 ]; do
