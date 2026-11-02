@@ -1793,7 +1793,10 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
     /* Dynamic, or a deterministic pool's RESERVE: the answer is about now,
      * and saying otherwise would be a wrong answer to a court order given
      * with full confidence. The reserve is held by the same allocator in an
-     * index space of its own, so the same question finds its holder. */
+     * index space of its own, so the same question finds its holder.
+     * BPA and not DYNAMIC (#619): #573 made `bpa` the word an operator
+     * reads for the on-demand mode, and this screen was the one left saying
+     * the old one. Only the audit trail keeps "dynamic". */
     {
       u32 ti = 0, w, nw, found = 0;
 
@@ -1824,7 +1827,7 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			   src == BPA_XLT_RESERVE ? "reserve block" : "block",
 			   block_idx,
 			   src == BPA_XLT_RESERVE ? "DETERMINISTIC RESERVE"
-						  : "DYNAMIC");
+						  : "BPA");
 	}
       else
 	{
@@ -1836,7 +1839,7 @@ bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			   src == BPA_XLT_RESERVE ? "reserve block" : "block",
 			   block_idx,
 			   src == BPA_XLT_RESERVE ? "DETERMINISTIC RESERVE"
-						  : "DYNAMIC");
+						  : "BPA");
 	}
       vlib_cli_output (
 	vm, "  this answers for NOW ONLY. The block belonged to somebody else "

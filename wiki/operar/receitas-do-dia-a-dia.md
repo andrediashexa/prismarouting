@@ -16,11 +16,11 @@ show cgnat translation 203.0.113.7 4200
 flowchart TD
     T["show cgnat translation"] --> Q{"A resposta diz…"}
     Q -->|"FORMULA / past or present"| A["Modo determinístico.<br/>Vale para o passado:<br/>a conta é a mesma de sempre.<br/>Junte a trilha de configuração."]
-    Q -->|"DYNAMIC / NOW ONLY"| B["Modo dinâmico.<br/>Vale só para AGORA.<br/>A prova do passado está<br/>nos registros IPFIX do coletor."]
+    Q -->|"BPA / NOW ONLY"| B["Modo BPA.<br/>Vale só para AGORA.<br/>A prova do passado está<br/>nos registros IPFIX do coletor."]
 ```
 
 * `**FORMULA**` **+** `**past or present**` — a resposta veio da aritmética, que é estável. Ela responde por um instante passado **desde que você comprove qual configuração estava em vigor**. Junte a saída de `show cgnat history` referente à data.
-* `**DYNAMIC**` **+** `**NOW ONLY**` — o bloco foi alocado sob demanda. Essa resposta descreve o presente e **não** é evidência sobre o passado. O que responde pelo passado são os registros IPFIX que foram para o coletor.
+* `**BPA**` **+** `**NOW ONLY**` — o bloco foi alocado sob demanda (um dataplane anterior à 0.156.6 imprime `DYNAMIC` aqui). Essa resposta descreve o presente e **não** é evidência sobre o passado. O que responde pelo passado são os registros IPFIX que foram para o coletor.
 * `**DETERMINISTIC RESERVE**` **+** `**NOW ONLY**` — a porta é de um bloco da reserva de um pool determinístico, que a fórmula não atribui a ninguém. A caixa diz quem segura esse bloco agora, se alguém segura; pelo passado respondem os registros que foram para o coletor, como no dinâmico.
 
 O comando é explícito nessa diferença de propósito: as duas fontes não valem a mesma coisa, e confundir uma com a outra é o tipo de erro que só aparece no tribunal.

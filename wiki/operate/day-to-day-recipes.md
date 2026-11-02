@@ -16,11 +16,11 @@ show cgnat translation 203.0.113.7 4200
 flowchart TD
     T["show cgnat translation"] --> Q{"The answer says…"}
     Q -->|"FORMULA / past or present"| A["Deterministic mode.<br/>Valid for the past:<br/>the calculation is the same as always.<br/>Attach the configuration trail."]
-    Q -->|"DYNAMIC / NOW ONLY"| B["Dynamic mode.<br/>Valid only for NOW.<br/>The evidence for the past is<br/>in the collector's IPFIX records."]
+    Q -->|"BPA / NOW ONLY"| B["BPA mode.<br/>Valid only for NOW.<br/>The evidence for the past is<br/>in the collector's IPFIX records."]
 ```
 
 * `**FORMULA**` **+** `**past or present**` — the answer came from arithmetic, which is stable. It answers for a past instant **as long as you prove which configuration was in effect**. Attach the output of `show cgnat history` for that date.
-* `**DYNAMIC**` **+** `**NOW ONLY**` — the block was allocated on demand. This answer describes the present and is **not** evidence about the past. What answers for the past are the IPFIX records that went to the collector.
+* `**BPA**` **+** `**NOW ONLY**` — the block was allocated on demand (a dataplane from before 0.156.6 prints `DYNAMIC` here). This answer describes the present and is **not** evidence about the past. What answers for the past are the IPFIX records that went to the collector.
 * `**DETERMINISTIC RESERVE**` **+** `**NOW ONLY**` — the port belongs to a reserve block of a deterministic pool, which the formula does not assign to anyone. The box says who holds that block now, if anyone does; for the past, the records that went to the collector answer, as in dynamic mode.
 
 The command is explicit about this difference on purpose: the two sources are not worth the same, and confusing one with the other is the kind of mistake that only shows up in court.

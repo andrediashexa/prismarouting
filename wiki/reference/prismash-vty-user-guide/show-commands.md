@@ -797,7 +797,7 @@ This is the command that answers a court order, and its answer **says how much i
 flowchart TD
     T["show cgnat translation<br/>&lt;public-ip&gt; &lt;port&gt;"] --> Q{"The answer carries…"}
     Q -->|"FORMULA<br/>past or present"| A["Deterministic.<br/>The calculation is stable, so it holds<br/>for a past instant —<br/>together with show cgnat history."]
-    Q -->|"DYNAMIC or DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, or a reserve block.<br/>Describes NOW.<br/>The past is in the IPFIX<br/>records that went to the collector."]
+    Q -->|"BPA or DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, or a reserve block.<br/>Describes NOW.<br/>The past is in the IPFIX<br/>records that went to the collector."]
 ```
 
 An answer for a BPA or reserve block **never** states `FORMULA`. That refusal is deliberate: treating an on-demand allocation as if it were stable arithmetic would be presenting as evidence something that does not support the claim.
@@ -808,7 +808,7 @@ An answer for a BPA or reserve block **never** states `FORMULA`. That refusal is
 |---------|------------------------|
 | `show cgnat subscriber <ip>` | the public address, the port range and `sessions N` |
 | `show cgnat subscriber` for an IP outside the pools | `not inside any configured pool` — it is an answer, not an error |
-| `show cgnat translation` | the subscriber, plus `FORMULA`/`past or present`, or `DYNAMIC` (or `DETERMINISTIC RESERVE`)/`NOW ONLY` |
+| `show cgnat translation` | the subscriber, plus `FORMULA`/`past or present`, or `BPA` (or `DETERMINISTIC RESERVE`)/`NOW ONLY` |
 | `show cgnat top` | the most loaded subscribers, with the ports they hold (e.g. `3/512`) |
 | `show cgnat drops` | a *packets that did not get through* section with the reason, for example `no pool for source address` |
 
