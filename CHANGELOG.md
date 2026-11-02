@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.156.3 - documents that agree with the product
+
+### Fixed
+
 * **`show cgnat translation` says `BPA` for a block allocated on demand, not
   `DYNAMIC`.** ([#619](https://github.com/andrediashexa/hexarouting/issues/619))
   0.151.1 made `bpa` the word every screen uses for the on-demand mode, and
