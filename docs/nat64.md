@@ -184,7 +184,9 @@ a clash, never translated to the first.
 any pool, and its NAT64 prefix on the IPv6 side - subscribers reach IPv4 by
 sending to it. `commit check` warns when BGP is configured and nothing
 announces the NAT64 prefix in the IPv6 family, with the two lines that do:
-`ipv6 route <prefix> blackhole` and `network <prefix>`. The blackhole
+`<prefix> next-hop blackhole` under `router static` and `network <prefix>`
+(FRR's `ipv6 route <prefix> blackhole` in the `vrf <name>` block for a pool
+in a VRF, which `router static` does not reach; #623). The blackhole
 catches nothing a pool takes - the translation runs on `ip6-unicast` before
 the lookup, which `lab/nat64.sh` measures. The subscribers' own inside
 prefix needs a route back, as IPv4 subscribers behind a BNG do.

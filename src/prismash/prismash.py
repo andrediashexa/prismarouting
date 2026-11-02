@@ -8428,7 +8428,35 @@ def prefix6_covers(outer, inner):
     return o.version == i.version == 6 and i.subnet_of(o)
 
 
-def pool_announce_findings(routing, pools):
+def blackhole_advice(pfx, table="", vrf_devices=None, family="the BGP"):
+    """
+    The row that tells an operator how to originate `pfx` here: a blackhole
+    route for BGP to announce, and the `network` that announces it - in
+    statements the VTY takes as printed (#623).
+
+    It said FRR's `ip route <pfx> blackhole`, which `router static` refuses:
+    the one statement there is `<prefix> next-hop <next-hop>` (#436). In the
+    main table that is the form given. A VRF's static routes are not in
+    `router static` at all - it is the main table - but in FRR's own `vrf
+    <name>` block, which takes FRR's spelling and nothing else, so for a
+    pool whose public side is a VRF (`table`, a pool's `vrf`/`outside-vrf`)
+    the advice names that block, by the name `vrf <name> table <id>` gave
+    the table when there is one.
+    """
+    if not table or str(table) == "0":
+        return (f"'{pfx} next-hop blackhole' under 'router static', and "
+                f"'network {pfx}' under {family} address family")
+    name = next((n for n, t in sorted((vrf_devices or {}).items())
+                 if str(t) == str(table)), None)
+    family_word = "ipv6" if ":" in pfx else "ip"
+    where = f"'vrf {name}'" if name else f"the 'vrf' of table {table}"
+    bgp = (f"'router bgp <asn> vrf {name}'" if name
+           else "that VRF's 'router bgp'")
+    return (f"'{family_word} route {pfx} blackhole' under {where}, and "
+            f"'network {pfx}' under {bgp}")
+
+
+def pool_announce_findings(routing, pools, vrf_devices=None):
     """
     Pools whose public prefix nothing in this configuration would advertise.
 
@@ -8492,8 +8520,9 @@ def pool_announce_findings(routing, pools):
                     ["its IPv6 subscribers reach IPv4 by sending to it, and "
                      "nothing routes it here",
                      "announce it from another box, or originate it here with",
-                     f"'ipv6 route {pfx6} blackhole' and 'network {pfx6}' "
-                     "under the BGP IPv6 address family"]))
+                     # The subscribers' side: the pool's own VRF.
+                     blackhole_advice(pfx6, getattr(pool, "vrf", ""),
+                                      vrf_devices, "the BGP IPv6")]))
         # What the pool translates to, a prefix-list's included (#589).
         for pfx in getattr(pool, "eff_outside", pool.outside) or ():
             if any(routes.covers_prefix(a, pfx) for a in announced):
@@ -8509,8 +8538,9 @@ def pool_announce_findings(routing, pools):
                 ["subscribers behind it would be translated to an address "
                  "the internet cannot route back to",
                  "announce it from another box, or originate it here with",
-                 f"'ip route {pfx} blackhole' and 'network {pfx}' under the "
-                 "BGP address family"]))
+                 # The side translated traffic leaves by.
+                 blackhole_advice(pfx, getattr(pool, "outside_vrf", "")
+                                  or getattr(pool, "vrf", ""), vrf_devices)]))
     return out
 
 
@@ -14218,7 +14248,8 @@ class Shell:
             # is. Reported and never refused - pool_announce_findings() says
             # why, and the reason is measured rather than argued.
             for sev, subject, why, advice in pool_announce_findings(
-                    target.routing, target.pools):
+                    target.routing, target.pools,
+                    getattr(target, "vrf_devices", None)):
                 print(f"{sev}: {subject}: {why}")
                 for line in advice:
                     print("    " + line)

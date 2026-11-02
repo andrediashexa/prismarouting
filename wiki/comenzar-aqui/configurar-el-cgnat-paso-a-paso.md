@@ -277,10 +277,10 @@ Si olvida esta parte y el equipo tiene BGP, el `commit check` lo advierte, y la 
 warning: pool 'dinamico': nothing here announces 203.0.113.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 203.0.113.16/28 blackhole' and 'network 203.0.113.16/28' under the BGP address family
+    '203.0.113.16/28 next-hop blackhole' under 'router static', and 'network 203.0.113.16/28' under the BGP address family
 ```
 
-La línea `ip route ... blackhole` que sugiere la advertencia también se acepta, escrita fuera de cualquier bloque: se convierte en la misma ruta de `router static`. Esta advertencia no rechaza el commit, porque anunciar el pool desde otro equipo es un diseño válido.
+La ruta que sugiere la advertencia es una ruta de `router static` como la de arriba, y se escribe allí tal como la imprime. Esta advertencia no rechaza el commit, porque anunciar el pool desde otro equipo es un diseño válido.
 
 Sin el `maximum-prefix`, el `commit` también lo advierte, y con razón: un vecino que filtre la tabla completa llena la memoria del equipo.
 

@@ -277,10 +277,10 @@ If you forget this part and the box has BGP, `commit check` warns you, and the w
 warning: pool 'dinamico': nothing here announces 203.0.113.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 203.0.113.16/28 blackhole' and 'network 203.0.113.16/28' under the BGP address family
+    '203.0.113.16/28 next-hop blackhole' under 'router static', and 'network 203.0.113.16/28' under the BGP address family
 ```
 
-The `ip route ... blackhole` line the warning suggests is also accepted, typed outside any block: it becomes the same route as in `router static`. This warning does not refuse the commit, because announcing the pool from another device is a valid design.
+The route the warning suggests is a `router static` route like the one above, and it is typed there as it is printed. This warning does not refuse the commit, because announcing the pool from another device is a valid design.
 
 Without `maximum-prefix`, `commit` also warns, and rightly so: a neighbor that leaks the full table fills the box's memory.
 

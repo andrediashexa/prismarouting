@@ -4009,7 +4009,7 @@ separated" is not a conclusion this supports.
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
+    '200.150.0.16/28 next-hop blackhole' under 'router static', and 'network 200.150.0.16/28' under the BGP address family
 ```
 
 Three rows under the verdict and none of them folded: this is `commit`'s

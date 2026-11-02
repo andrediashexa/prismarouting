@@ -879,7 +879,7 @@ Essa recusa acontece **antes** de a linha chegar ao roteamento. É de propósito
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
+    '200.150.0.16/28 next-hop blackhole' under 'router static', and 'network 200.150.0.16/28' under the BGP address family
 ```
 
 As duas últimas linhas são a parte acionável: o aviso não só diz que falta anúncio, diz as duas linhas que resolvem quando é aqui que se quer anunciar.

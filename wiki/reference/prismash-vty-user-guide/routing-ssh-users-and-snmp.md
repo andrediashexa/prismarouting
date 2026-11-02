@@ -879,7 +879,7 @@ This refusal happens **before** the line reaches routing. It is on purpose: refu
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
     subscribers behind it would be translated to an address the internet cannot route back to
     announce it from another box, or originate it here with
-    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
+    '200.150.0.16/28 next-hop blackhole' under 'router static', and 'network 200.150.0.16/28' under the BGP address family
 ```
 
 The last two lines are the actionable part: the warning not only says an announcement is missing, it gives the two lines that fix it when this is where you want to announce.

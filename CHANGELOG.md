@@ -110,6 +110,17 @@ version has a chance of seeing it.
   `prisma-routing-tune` again, which reads the PCI cards afresh and writes
   the allowlist the dataplane starts with. The three messages now name
   `system dataplane restart`; they were written before the restart existed.
+* **`commit check`'s advice for an unannounced pool prefix is typed as
+  printed.** ([#623](https://github.com/andrediashexa/hexarouting/issues/623))
+  For a pool's outside prefix or a NAT64 prefix that nothing in BGP
+  announces, the warning suggested FRR's `ip route <pfx> blackhole` /
+  `ipv6 route <pfx> blackhole`, which `router static` refuses. It now says
+  `'<pfx> next-hop blackhole' under 'router static'`; for a pool whose
+  public side (or, for the NAT64 prefix, whose subscribers' side) is a VRF,
+  `'ip route <pfx> blackhole' under 'vrf <name>'` and the `network` under
+  that VRF's `router bgp`, since `router static` is the main table only. A
+  test feeds each quoted statement back to the grammar it names and checks
+  that the warning then goes quiet.
 
 ## 0.156.5 - commit check refuses what a PPPoE commit refuses
 
