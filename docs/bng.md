@@ -159,7 +159,7 @@ the block can meet - no access interface, no gateway, nobody to authenticate
 against, an interface the dataplane lacks, interfaces on two cards, a session
 limit the box cannot hold, the `aaa` block's own - is asked by the commit's
 check, before anything is written, and so by `commit check`, by the API's
-staged-edit check, by `rollback` and by `--load`. Until 0.156.4 only the
+staged-edit check, by `rollback` and by `--load`. Until 0.156.5 only the
 apply asked them, after the CGNAT and the interfaces had been written:
 `commit check` passed a block with no gateway that `commit` then refused.
 At boot each is a warning, and the rest of the saved file is applied.
