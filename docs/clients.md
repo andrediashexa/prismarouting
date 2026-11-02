@@ -27,9 +27,9 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
-## 0.156.5 - VTY advice an operator can follow
+## 0.156.6 - VTY advice an operator can follow
 
-* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.4). No message, field or number changes.
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.5). No message, field or number changes.
 * **Texts a client may show changed wording; none changed meaning** (#617). Refusals and notes no longer name an issue number or a repository file: `radius` under `pppoe` (a `SetConfig`/`Commit` error) now reads "RADIUS is no longer configured under 'pppoe' but under 'aaa' > 'radius': ..."; a `session-limit` above 100000 reads "... is more than was measured working, 100000: every session is an interface in the dataplane, and no dataplane was seen holding more"; `mode dynamic` reads "mode dynamic is now 'mode bpa'"; the reserved-VRF refusal says "prisma-bp is the backplane the box's containers use". In the typed schema, the box-owned `vrf prisma-<name>` reason and the `vrf <name> table` help lose their "#447"/"#540"; `GetTuningAdvice`'s `proxmox_hookscript` loses "(#596)" from its header comment. A client that matches on these strings (it should not) must match the new ones.
 * **The commit check warning for an unannounced pool prefix** (#623), in the commit and check output (`CommitResponse.output`): its last advice row was `'ip route <pfx> blackhole' and 'network <pfx>' under the BGP address family` and is now `'<pfx> next-hop blackhole' under 'router static', and 'network <pfx>' under the BGP address family` (`... the BGP IPv6 address family` for a NAT64 prefix); a pool in a VRF gets `'ip route <pfx> blackhole' under 'vrf <name>', and 'network <pfx>' under 'router bgp <asn> vrf <name>'`. Severity, subject and the first two rows are unchanged.
 
