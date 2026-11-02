@@ -39,7 +39,7 @@ Three things: the certificates on the box's disk, the account the client will be
 | `api enabled yes` | `no`    | serves the API. Without `listen-address`, the commit refuses |
 | `api listen-address <address> [<address> ...]` | none    | the management address to listen on; takes a list, IPv4 and IPv6 together, since 0.151.8 |
 | `api port <1-65535>` | `50051` | the TCP port |
-| `api permit-root yes` | `no`    | serves a certificate naming root; since 0.156.3, without it root is refused (see "The account", below) |
+| `api permit-root yes` | `no`    | serves a certificate naming root; since 0.156.4, without it root is refused (see "The account", below) |
 | `no api enabled` | —       | turns it off |
 | `no api listen-address` | —       | removes the address |
 | `no api port` | —       | back to 50051 |
@@ -78,8 +78,8 @@ The client certificate's **Common Name (CN)** is the name of an account on the b
 | Situation | What happens |
 |-----------|--------------|
 | a CN that is not a valid account name, or more than one CN | the call is refused with `UNAUTHENTICATED` |
-| a CN that is no account on this box | refused up front with `UNAUTHENTICATED`, saying the CN names no account on the box (since 0.156.3; before, the call came back `UNAVAILABLE`, as if the box were at fault) |
-| the CN `root`, or any account with uid 0 | refused with `UNAUTHENTICATED`, saying it is served only with `api permit-root yes` (since 0.156.3) |
+| a CN that is no account on this box | refused up front with `UNAUTHENTICATED`, saying the CN names no account on the box (since 0.156.4; before, the call came back `UNAVAILABLE`, as if the box were at fault) |
+| the CN `root`, or any account with uid 0 | refused with `UNAUTHENTICATED`, saying it is served only with `api permit-root yes` (since 0.156.4) |
 | a role or `operator` given to or taken from the account | it holds from the next call; a candidate opened before the change reads as expired, so no commit runs with rights the account no longer has |
 | a system that must lose access | the box consults no revocation list: the certificate holds as long as the CA signed it and it has not expired. To cut it off, remove the account from the box, or take its role away to leave it read-only |
 

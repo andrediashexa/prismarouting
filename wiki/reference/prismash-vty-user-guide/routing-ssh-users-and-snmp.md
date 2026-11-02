@@ -923,7 +923,7 @@ openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 8
 On the box go `server.key`, `server.crt` and `ca.crt` named `clients-ca.crt`; the client uses `ca.crt`, `webui.crt` and `webui.key`.
 
 
-2. **The account.** The client certificate says, in the CN field, **which box account** it is. The call has exactly the permissions that account has in the VTY: `prisma-admin` configures everything, `prisma-cgnat` only CGNAT, and any other only reads; an account with `operator` also upgrades, reboots and shuts down the box and restarts the dataplane. Everything it changes is recorded in the history in its name. A CN that is no account on the box is refused. **Root is refused** since 0.156.3, unless `api permit-root yes` is configured: create an account for the system, with `role administrator` if it configures everything, rather than using root.
+2. **The account.** The client certificate says, in the CN field, **which box account** it is. The call has exactly the permissions that account has in the VTY: `prisma-admin` configures everything, `prisma-cgnat` only CGNAT, and any other only reads; an account with `operator` also upgrades, reboots and shuts down the box and restarts the dataplane. Everything it changes is recorded in the history in its name. A CN that is no account on the box is refused. **Root is refused** since 0.156.4, unless `api permit-root yes` is configured: create an account for the system, with `role administrator` if it configures everything, rather than using root.
 3. **The address.** The API listens **only on the management network**:
 
 ```

@@ -890,9 +890,9 @@ restart and upgrade are measured on one.
   is refused exactly as the VTY refuses it.
 * **A Common Name that is no account on the box is refused up front**, on
   every call, with `UNAUTHENTICATED` and "certificate CN `<name>` names no
-  account on this box" - before 0.156.3 it reached a session that could not
+  account on this box" - before 0.156.4 it reached a session that could not
   start and was answered `UNAVAILABLE`, as if the box were at fault.
-* **Root is refused unless `api permit-root yes`** (0.156.3), with
+* **Root is refused unless `api permit-root yes`** (0.156.4), with
   `UNAUTHENTICATED` and "the client certificate names root (uid 0), refused
   unless 'api permit-root yes'". By uid, not by name: an alias of root is
   refused as root is. The VTY lets nobody act as root by name - root cannot

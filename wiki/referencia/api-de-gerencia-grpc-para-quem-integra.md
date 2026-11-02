@@ -39,7 +39,7 @@ Três coisas: os certificados no disco da caixa, a conta que o cliente vai ser, 
 | `api enabled yes` | `no`   | serve a API. Sem `listen-address`, o commit recusa |
 | `api listen-address <endereço> [<endereço> ...]` | nenhum | o endereço de gerência onde escutar; aceita uma lista, IPv4 e IPv6 juntos, desde a 0.151.8 |
 | `api port <1-65535>` | `50051` | a porta TCP |
-| `api permit-root yes` | `no`   | atende um certificado que nomeia o root; desde a 0.156.3, sem isso ele é recusado (veja "A conta", abaixo) |
+| `api permit-root yes` | `no`   | atende um certificado que nomeia o root; desde a 0.156.4, sem isso ele é recusado (veja "A conta", abaixo) |
 | `no api enabled` | —      | desliga   |
 | `no api listen-address` | —      | tira o endereço |
 | `no api port` | —      | volta a 50051 |
@@ -78,8 +78,8 @@ O **Common Name (CN)** do certificado do cliente é o nome de uma conta da caixa
 | Situação | O que acontece |
 |----------|----------------|
 | CN que não é um nome de conta válido, ou mais de um CN | a chamada é recusada com `UNAUTHENTICATED` |
-| CN que não é uma conta desta caixa | recusada logo de entrada com `UNAUTHENTICATED`, dizendo que o CN não nomeia nenhuma conta da caixa (desde a 0.156.3; antes, a chamada voltava `UNAVAILABLE`, como se a caixa estivesse com problema) |
-| CN `root`, ou qualquer conta com uid 0 | recusada com `UNAUTHENTICATED`, dizendo que só passa com `api permit-root yes` (desde a 0.156.3) |
+| CN que não é uma conta desta caixa | recusada logo de entrada com `UNAUTHENTICATED`, dizendo que o CN não nomeia nenhuma conta da caixa (desde a 0.156.4; antes, a chamada voltava `UNAVAILABLE`, como se a caixa estivesse com problema) |
+| CN `root`, ou qualquer conta com uid 0 | recusada com `UNAUTHENTICATED`, dizendo que só passa com `api permit-root yes` (desde a 0.156.4) |
 | papel ou `operator` dado ou tirado da conta | vale já na chamada seguinte; um candidato aberto antes da mudança passa a ler como expirado, para nenhum commit rodar com direitos que a conta não tem mais |
 | um sistema que deve perder o acesso | a caixa não consulta lista de revogação: o certificado vale enquanto a CA o assinar e não expirar. Para cortar, remova a conta da caixa, ou tire o papel dela para deixá-la só de leitura |
 

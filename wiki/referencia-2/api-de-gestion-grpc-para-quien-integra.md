@@ -39,7 +39,7 @@ Tres cosas: los certificados en el disco del equipo, la cuenta que va a ser el c
 | `api enabled yes` | `no`        | sirve la API. Sin `listen-address`, el commit la rechaza |
 | `api listen-address <dirección> [<dirección> ...]` | ninguna     | la dirección de gestión donde escuchar; acepta una lista, IPv4 e IPv6 juntas, desde la 0.151.8 |
 | `api port <1-65535>` | `50051`     | el puerto TCP |
-| `api permit-root yes` | `no`        | atiende un certificado que nombra a root; desde la 0.156.3, sin esto root se rechaza (vea "La cuenta", más abajo) |
+| `api permit-root yes` | `no`        | atiende un certificado que nombra a root; desde la 0.156.4, sin esto root se rechaza (vea "La cuenta", más abajo) |
 | `no api enabled` | —           | la desactiva |
 | `no api listen-address` | —           | quita la dirección |
 | `no api port` | —           | vuelve a 50051 |
@@ -78,8 +78,8 @@ El **Common Name (CN)** del certificado del cliente es el nombre de una cuenta d
 | Situación | Qué pasa |
 |-----------|----------|
 | un CN que no es un nombre de cuenta válido, o más de un CN | la llamada se rechaza con `UNAUTHENTICATED` |
-| un CN que no es una cuenta de este equipo | se rechaza de entrada con `UNAUTHENTICATED`, diciendo que el CN no nombra ninguna cuenta del equipo (desde la 0.156.3; antes, la llamada volvía `UNAVAILABLE`, como si el equipo tuviera un problema) |
-| el CN `root`, o cualquier cuenta con uid 0 | se rechaza con `UNAUTHENTICATED`, diciendo que solo pasa con `api permit-root yes` (desde la 0.156.3) |
+| un CN que no es una cuenta de este equipo | se rechaza de entrada con `UNAUTHENTICATED`, diciendo que el CN no nombra ninguna cuenta del equipo (desde la 0.156.4; antes, la llamada volvía `UNAVAILABLE`, como si el equipo tuviera un problema) |
+| el CN `root`, o cualquier cuenta con uid 0 | se rechaza con `UNAUTHENTICATED`, diciendo que solo pasa con `api permit-root yes` (desde la 0.156.4) |
 | un rol u `operator` dado o quitado a la cuenta | vale desde la llamada siguiente; una candidata abierta antes del cambio pasa a leerse como expirada, para que ningún commit corra con derechos que la cuenta ya no tiene |
 | un sistema que debe perder el acceso | el equipo no consulta lista de revocación: el certificado vale mientras la CA lo haya firmado y no haya expirado. Para cortarlo, elimine la cuenta del equipo, o quítele el rol para dejarla de solo lectura |
 
