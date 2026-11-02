@@ -79,6 +79,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The VTY's refusals say what happened, not which issue did it.**
+  ([#617](https://github.com/andrediashexa/hexarouting/issues/617))
+  `radius` under `pppoe` said RADIUS moved "since #607"; it now says RADIUS
+  is no longer configured under `pppoe` but under `aaa` > `radius`, and how
+  to type it there. The `session-limit` refusal named "docs/bng.md 0.4"; it
+  now says what the limit is for: every session is an interface in the
+  dataplane, and no dataplane was seen holding more than 100000. A sweep
+  of every other string an operator reads took the issue numbers out of
+  `commit`'s QinQ warning, the `show route-map` hits of an inverted call,
+  `mode dynamic`'s refusal, the load's notes on a migrated file and on
+  PPPoE's files, the reserved-VRF refusal, the Proxmox hookscript `show
+  system tuning advice` prints, the headers of the files the box generates
+  (`logging.conf`, PPPoE's three, the MTU pin's note) and the typed-API
+  help for a VRF device and a box-owned VRF; the API server's start refusal
+  says what it needs instead of pointing at `docs/api.md`.
+
 ## 0.156.5 - commit check refuses what a PPPoE commit refuses
 
 ### Fixed

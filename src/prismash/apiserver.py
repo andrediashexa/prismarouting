@@ -5184,7 +5184,8 @@ def main(argv):
     missing = [p for p in files.values() if not os.path.exists(p)]
     if missing:
         print(f"apiserver: missing {', '.join(missing)}: the API serves mutual TLS "
-              "only; see docs/api.md", file=sys.stderr)
+              "only, and starts once the box's server key and certificate "
+              "and the CA that signs its clients are there", file=sys.stderr)
         return 2
     creds = grpc.ssl_server_credentials(
         [(open(files["server.key"], "rb").read(), open(files["server.crt"], "rb").read())],

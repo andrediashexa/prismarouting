@@ -3649,8 +3649,8 @@ def vrf_device_error(name, table):
                 "would be a second VRF answering to it")
     if name.startswith(VRF_RESERVED_PREFIX):
         return (f"vrf {name}: {VRF_RESERVED_PREFIX}* is the box's own",
-                "prisma-bp is the containers' backplane (#447); a VRF of the "
-                "operator's takes another name")
+                "prisma-bp is the backplane the box's containers use; a VRF "
+                "of the operator's takes another name")
     if not is_number(str(table)) or not (
             IFACE_VRF_MIN <= int(table) <= IFACE_VRF_MAX):
         return (f"vrf {name}: table {table} is not a table",

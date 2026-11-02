@@ -12867,7 +12867,7 @@ class Shell:
                             f"{tag['inner']}, and VPP's ethernet input reads "
                             "three or more tags as two, so a QinQ "
                             "sub-interface on this box cannot be made to "
-                            "refuse them (#136)")
+                            "refuse them")
         else:
             r = self.api_call("create_vlan_subif",
                               {"sw_if_index": idx, "vlan_id": tag["outer"]})
@@ -21052,7 +21052,7 @@ class Shell:
                 # #573: `bpa` is the on-demand mode's word; the old one is
                 # refused at the prompt, naming the new.
                 if w[1] == "dynamic":
-                    raise ValueError("mode dynamic is now 'mode bpa' (#573)")
+                    raise ValueError("mode dynamic is now 'mode bpa'")
                 if w[1] not in Pool.MODE_WORDS:
                     raise ValueError("mode must be deterministic or bpa")
                 p.mode = Pool.MODE_WORDS[w[1]]
@@ -21681,7 +21681,7 @@ class Shell:
                 print_prose(f"called inverted, by a reject term: what "
                             f"{name} accepts here the caller rejects, and "
                             f"what it rejects goes on to the caller's next "
-                            f"term (#542)", "      ")
+                            f"term", "      ")
             if sec["rows"] is None:
                 print_prose(f"no counter: {sec['daemon']} reports no such "
                             f"route-map - it is not running, or FRR did "
@@ -28626,7 +28626,7 @@ class Shell:
         # and the file is written with it once applied - said, with the
         # secret blanked as every screen blanks it.
         for lineno, text, now in target.moved:
-            print(f"note: line {lineno} is now under 'aaa radius' (#607)")
+            print(f"note: line {lineno} is now under 'aaa radius'")
             print(f"    {path}")
             print(f"    {pppoe_mod.redact([text])[0]}")
             print(f"    {aaa_mod.redact([now])[0]}")
@@ -28839,7 +28839,7 @@ class Shell:
             # fold wherever the console ends (#363).
             print(f"note: 'mode dynamic' is now 'mode bpa' in pool {name}")
         if migrated:
-            print_prose("the file is rewritten with it once applied (#573)",
+            print_prose("the file is rewritten with it once applied",
                         indent="    ")
 
         applied = self.apply(target)
@@ -28865,7 +28865,7 @@ class Shell:
         if applied and not pppoe_mod.is_empty(target.pppoe) \
                 and pppoe_mod.file_format() != pppoe_mod.FORMAT:
             print("note: PPPoE's files are from an older release; written "
-                  "again (#607)")
+                  "again")
             self.apply_pppoe(target, refresh=True)
         if applied:
             if (migrated or target.moved) and from_file:
