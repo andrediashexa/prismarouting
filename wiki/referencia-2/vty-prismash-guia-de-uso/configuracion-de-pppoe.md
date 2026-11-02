@@ -178,7 +178,9 @@ Con `dynamic-authorization`, su RADIUS (o el IXC) puede, sin que el suscriptor v
 
 Un CoA-Request con un atributo que el equipo no aplica (un `Mikrotik-Rate-Limit`, un `Filter-Id`), una tasa por encima de 10 Gbit/s, un `Cisco-AVPair` de tasa mal formado o un `sub-qos-policy` sin `rate-profile` se rechaza entero con CoA-NAK, y nada cambia. Una solicitud desde una dirección que no es `client`, o con el secreto equivocado, no recibe ninguna respuesta.
 
-La dirección de cada sesión viene del RADIUS (`Framed-IP-Address`) cuando este envía una, y del `address-pool` cuando no. Para que el CGNAT traduzca las sesiones, las direcciones que reciben tienen que estar en el `prefix-inside` de un pool, como las de cualquier suscriptor.
+La dirección de cada sesión viene del RADIUS (`Framed-IP-Address`) cuando este envía una, y del `address-pool` cuando no. Para que el CGNAT traduzca las sesiones, las direcciones que reciben tienen que estar en el `prefix-inside` de un pool (un pool sin `vrf`, o con `vrf 0`), como las de cualquier suscriptor; una sesión cuya dirección ningún pool cubre se conecta y tiene todo lo que envía descartado. El `commit` revisa cada `address-pool` contra los pools; los `Framed-IP-Address` no los ve. Las direcciones públicas que deben salir sin traducción van en un `deny` del `prefix-list-inside` del pool.
+
+El `commit check` rechaza también todo lo que está en la tabla de abajo, antes de aplicar nada.
 
 ## Qué rechaza el commit
 
@@ -196,6 +198,8 @@ La dirección de cada sesión viene del RADIUS (`Framed-IP-Address`) cuando este
 | una subinterfaz sin `vlan <id>` en su bloque | no habría etiqueta en la que atender |
 | dos interfaces de acceso con la misma VLAN | las dos serían el mismo puerto |
 | una interfaz que el dataplane no tiene | nada que atender en ella |
+| un `address-pool` con cualquier parte fuera del `prefix-inside` de todo pool del CGNAT (y fuera de todo `deny` de un `prefix-list-inside`), o un cambio en el CGNAT que lo deje así | esos suscriptores se conectarían y tendrían todo su tráfico descartado |
+| `dynamic-authorization listen` en una dirección que el equipo no tiene, o en una interfaz de una VRF que no es la de gestión | el receptor no se abriría, y Disconnect y CoA quedarían sin respuesta sin nada en pantalla |
 | un secreto con espacio, coma, comillas o `#` (rechazado ya al escribirlo) | rompería la configuración generada |
 
 ## Los secretos del RADIUS

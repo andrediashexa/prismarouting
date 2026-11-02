@@ -27,6 +27,11 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.156.5 - commit check refuses what a PPPoE commit refuses
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.4). No message, field or number changes.
+* **Behaviour:** the `pppoe` and `aaa` refusals (no gateway, no access interface, an interface the dataplane lacks, a session limit the box cannot hold, a listener with no client, and the rest) are now said by the commit check, so a `Commit` with `check` - and the check SetConfig runs on a staged edit - returns them as FAILED_PRECONDITION with the VTY's words, where before it passed and only the commit refused. Each is `error: pppoe: not applied` (or `error: aaa radius: not applied`) followed by the reason, as the commit already printed. Two refusals are new (#622): a PPPoE `address_pools` range that no CGNAT pool serving VRF 0 or every VRF covers - by its prefix-inside, or by a prefix-list-inside deny that routes it untranslated - is refused, the range not covered named; and a `dynamic_authorization_listen` address the host does not hold, or holds in a VRF management is not in, is refused as `error: dynamic-authorization listen <address>: not on this box` (or `: in vrf <name>`). Removing or shrinking the CGNAT pool that covered an address-pool is refused the same way. A client that wrote an uncovered PPPoE pool before has a box that loads it and warns; the next change to `pppoe`, `aaa` or a CGNAT pool is refused until the pool is covered. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.156.4 - the API refuses a root certificate unless told to
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.3). No message, field or number changes.

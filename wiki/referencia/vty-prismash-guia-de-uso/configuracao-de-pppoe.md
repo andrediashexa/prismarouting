@@ -178,7 +178,9 @@ Com `dynamic-authorization`, o seu RADIUS (ou o IXC) pode, sem o assinante disca
 
 Um CoA-Request com um atributo que a caixa não aplica (um `Mikrotik-Rate-Limit`, um `Filter-Id`), uma taxa acima de 10 Gbit/s, um `Cisco-AVPair` de taxa mal formado ou um `sub-qos-policy` sem `rate-profile` é recusado inteiro com CoA-NAK, e nada muda. Um pedido de um endereço que não é `client`, ou com o segredo errado, não recebe resposta nenhuma.
 
-O endereço de cada sessão vem do RADIUS (`Framed-IP-Address`) quando ele manda um, e do `address-pool` quando não. Para o CGNAT traduzir as sessões, os endereços que elas recebem têm de estar no `prefix-inside` de um pool, como os de qualquer assinante.
+O endereço de cada sessão vem do RADIUS (`Framed-IP-Address`) quando ele manda um, e do `address-pool` quando não. Para o CGNAT traduzir as sessões, os endereços que elas recebem têm de estar no `prefix-inside` de um pool (um pool sem `vrf`, ou com `vrf 0`), como os de qualquer assinante; uma sessão cujo endereço nenhum pool cobre conecta e tem tudo o que envia descartado. O `commit` confere cada `address-pool` contra os pools; os `Framed-IP-Address` ele não enxerga. Endereços públicos que devem sair sem tradução vão num `deny` do `prefix-list-inside` do pool.
+
+O `commit check` recusa também tudo o que está na tabela abaixo, antes de aplicar qualquer coisa.
 
 ## O que o commit recusa
 
@@ -196,6 +198,8 @@ O endereço de cada sessão vem do RADIUS (`Framed-IP-Address`) quando ele manda
 | uma sub-interface sem `vlan <id>` no bloco dela | não haveria tag para atender |
 | duas interfaces de acesso com a mesma VLAN | as duas seriam a mesma porta |
 | uma interface que o dataplane não tem | nada para atender nela |
+| um `address-pool` com qualquer parte fora do `prefix-inside` de todo pool do CGNAT (e fora de todo `deny` de um `prefix-list-inside`), ou uma mudança no CGNAT que o deixe assim | esses assinantes conectariam e teriam todo o tráfego descartado |
+| `dynamic-authorization listen` num endereço que a caixa não tem, ou numa interface de uma VRF que não é a da gerência | o receptor não abriria, e Disconnect e CoA ficariam sem resposta sem nada na tela |
 | um segredo com espaço, vírgula, aspas ou `#` (recusado já na hora em que se digita) | quebraria a configuração gerada |
 
 ## Os segredos do RADIUS

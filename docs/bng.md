@@ -154,6 +154,40 @@ prisma# [edit] commit
 RADIUS has been its own hierarchy, `aaa` > `radius`, since #607 (0.6 below);
 0.154.0 held it inside `pppoe`.
 
+**What the commit checks, and `commit check` with it** (#622). Every refusal
+the block can meet - no access interface, no gateway, nobody to authenticate
+against, an interface the dataplane lacks, interfaces on two cards, a session
+limit the box cannot hold, the `aaa` block's own - is asked by the commit's
+check, before anything is written, and so by `commit check`, by the API's
+staged-edit check, by `rollback` and by `--load`. Until 0.156.5 only the
+apply asked them, after the CGNAT and the interfaces had been written:
+`commit check` passed a block with no gateway that `commit` then refused.
+At boot each is a warning, and the rest of the saved file is applied.
+
+**Every address-pool inside a CGNAT pool.** The session hook attaches every
+session to `bpa-in2out`, and `bpa-in2out` drops a source no pool claims
+("no pool for source address") - everything the subscriber sends except to
+the box itself. So a commit refuses an `address-pool` any part of which no
+CGNAT pool covers, and names the part: `address-pool 100.64.0.0/24` beside
+a pool of `prefix-inside 100.64.0.0/25` is refused as "pppoe: not applied",
+with `100.64.0.128-100.64.0.255` named as the range in no CGNAT pool and
+what to do about it.
+
+Covered means by the prefix-inside (or the prefix-list-inside's permits) of
+a pool that serves every VRF or VRF 0 - accel-ppp adds every session in VRF
+0 (its VPP hooks pass no `decap_vrf_id` and ignore the VRF a route is handed)
+- or by a prefix-list-inside DENY of such a pool, which is how a box routes
+PPPoE subscribers with public addresses untranslated (#589): those leave
+with their own address. A change that removes or shrinks the covering pool
+is refused the same way. The example above therefore needs a pool such as
+`prefix-inside 100.64.0.0/22` beside it, as `lab/pppoe.sh` has.
+
+**A RADIUS Framed-IP-Address is not checked**, because it is not in the
+configuration: the same rule holds for it at runtime, and an address RADIUS
+hands out that no pool covers - and no deny leaves untranslated - is a
+session with no traffic. Keep the addresses RADIUS gives inside a pool's
+inside, or inside its prefix-list's denies.
+
 **Secrets.** A RADIUS shared secret and a lab user's password are held like
 SNMP's community: in the saved configuration and in `pppoe.conf` (0660, group prisma-cgnat, as `prisma-routing.conf`)
 so that rollback can restore them, and blanked on every screen -
@@ -629,7 +663,14 @@ with a rate that is not one, or past 10 Gbit/s, is NAKed and the limit kept:
 upstream ACKed both, and a bad rate in a CoA REMOVED the session's limit.
 There is no firewall on the box for the listener to be opened in: it listens
 only when `dynamic-authorization listen` is configured, on that address, and
-the client list is what admits a request. With management in a VRF (#580),
+the client list is what admits a request. The address MUST be one the box holds: accel-ppp
+binds it once, when it starts (`dm_coa.c` `init()`), and a bind that fails
+is one line in the container's own log, after which accel-ppp runs on and
+every Disconnect and CoA goes unanswered. So a commit that moves the
+listener refuses an address the host does not hold, and one on an interface
+in a VRF that management is not in (the listener binds in the main table,
+as sshd does - ssh listen-address's rule, #593) (#622). The wildcard
+`0.0.0.0` is never refused. With management in a VRF (#580),
 `udp_l3mdev_accept`, which the box already sets, is what lets the listener in
 the main table answer a request that arrives there - not measured by a lab.
 

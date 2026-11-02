@@ -55,7 +55,7 @@ import ipaddress
 import os
 import re
 
-from system import is_number
+from system import host_addresses, is_number
 
 #: The words, at the top of configuration mode and under it.
 AAA_HIERARCHY = "aaa"
@@ -509,6 +509,47 @@ def check(held):
         why.append("aaa radius: no server takes authentication: give one "
                    "'role auth' or 'role both'")
     return why
+
+
+def dae_unbound(held, addr_text, links, mgmt_vrf=""):
+    """
+    Why the Disconnect/CoA listener could not open where `held` asks, as
+    [(verdict, prose)] (#622), from the host's `ip -o addr show` `addr_text`
+    and doors.ip_links() `links`; empty when it can, or listens nowhere.
+
+    SILENT AT RUNTIME OTHERWISE, read in accel-ppp at the pin: dm_coa.c
+    init() binds the address once, when accel-pppd starts, and a failed
+    bind() is one log_emerg line in the container's own log and a `return` -
+    accel-pppd runs on, every session dials, and every Disconnect and CoA
+    goes unanswered, as a request from a client not on the list does. The
+    container shares the host's network (appliance/compose.yaml), so the
+    address must be one of the host's; and accel-ppp is given no bind
+    device, so it binds in the main table, where an address on a VRF's
+    interface is EADDRNOTAVAIL unless management is that VRF (#580, which
+    turns nonlocal bind on) - ssh listen-address's rule (#593,
+    system.ssh_listen_unbound), on the same kernel. The wildcard always
+    binds.
+    """
+    word = held["dae"]["listen"]
+    if not word:
+        return []
+    a = ipaddress.ip_address(word)
+    if a.is_unspecified:
+        return []
+    dev = host_addresses(addr_text).get(a)
+    if dev is None:
+        return [(f"dynamic-authorization listen {word}: not on this box",
+                 "Disconnect and CoA would go unanswered: accel-ppp binds "
+                 "the address once, at start, and logs the failure only in "
+                 "its own log. Give an interface the address first, or "
+                 "listen on one the box has")]
+    master = (links.get(dev) or {}).get("master")
+    if master and master != mgmt_vrf:
+        return [(f"dynamic-authorization listen {word}: in vrf {master}",
+                 f"it is {dev}'s, and the listener binds in the main table, "
+                 "which takes a VRF's address only when management is in "
+                 "that VRF; Disconnect and CoA would go unanswered")]
+    return []
 
 
 def _levels(held):
