@@ -79,6 +79,10 @@ version has a chance of seeing it.
 
 ### Fixed
 
+## 0.156.4 - the API refuses a root certificate unless told to
+
+### Fixed
+
 * **The management API refused nothing about root: a certificate naming it
   ran every call as root.** ([#621](https://github.com/andrediashexa/hexarouting/issues/621))
   The VTY lets nobody act as root by name, and a certificate is a file,
