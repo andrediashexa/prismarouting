@@ -923,7 +923,7 @@ openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 8
 En el equipo van `server.key`, `server.crt` y el `ca.crt` con el nombre `clients-ca.crt`; el cliente usa `ca.crt`, `webui.crt` y `webui.key`.
 
 
-2. **La cuenta.** El certificado del cliente dice, en el campo CN, **qué cuenta del equipo** es. La llamada tiene exactamente los permisos que esa cuenta tiene en la VTY: `prisma-admin` configura todo, `prisma-cgnat` solo el CGNAT, y cualquier otra solo lee; una cuenta con `operator` también actualiza, reinicia y apaga el equipo y reinicia el dataplane. Todo lo que cambia queda registrado en el historial a su nombre.
+2. **La cuenta.** El certificado del cliente dice, en el campo CN, **qué cuenta del equipo** es. La llamada tiene exactamente los permisos que esa cuenta tiene en la VTY: `prisma-admin` configura todo, `prisma-cgnat` solo el CGNAT, y cualquier otra solo lee; una cuenta con `operator` también actualiza, reinicia y apaga el equipo y reinicia el dataplane. Todo lo que cambia queda registrado en el historial a su nombre. Un CN que no es una cuenta del equipo se rechaza. **Root se rechaza** desde la 0.156.3, salvo que `api permit-root yes` esté configurado: cree una cuenta para el sistema, con `role administrator` si configura todo, en lugar de usar root.
 3. **La dirección.** La API escucha **solo en la red de gestión**:
 
 ```

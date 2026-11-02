@@ -60,7 +60,10 @@ VTY's refusal in the VTY's words and a change made through the API is in
   `Diagnostics`): `INVALID_ARGUMENT` for a line the VTY refuses,
   `FAILED_PRECONDITION` for a commit it refuses or a candidate whose base has
   moved, `PERMISSION_DENIED` for an account without the role, `NOT_FOUND` for
-  a candidate that does not exist, `UNAVAILABLE` when the box cannot answer.
+  a candidate that does not exist, `UNAVAILABLE` when the box cannot answer,
+  `UNAUTHENTICATED` for a client certificate whose Common Name is no
+  account on the box, or is root without `api permit-root yes` (see
+  [Security](#security)).
   `Check` is not an error when it finds problems: answering that is its job.
   **Why**, as a code a client acts on, is `Diagnostics.reason` (#558, see
   [Why a change was refused](#why-a-change-was-refused)); the VTY's words
@@ -885,6 +888,26 @@ restart and upgrade are measured on one.
   restart the dataplane, whatever its role), and the
   configuration trail records it as the author. An account without the role
   is refused exactly as the VTY refuses it.
+* **A Common Name that is no account on the box is refused up front**, on
+  every call, with `UNAUTHENTICATED` and "certificate CN `<name>` names no
+  account on this box" - before 0.156.3 it reached a session that could not
+  start and was answered `UNAVAILABLE`, as if the box were at fault.
+* **Root is refused unless `api permit-root yes`** (0.156.3), with
+  `UNAUTHENTICATED` and "the client certificate names root (uid 0), refused
+  unless 'api permit-root yes'". By uid, not by name: an alias of root is
+  refused as root is. The VTY lets nobody act as root by name - root cannot
+  be given `operator`, `no user root` is refused - and a certificate is a
+  file, easier to copy than a shell session. Give the client an account of
+  its own with the role it needs (`user webui` / `role administrator`, which
+  is `prisma-admin`) instead. Root keeps one thing no other account has: the
+  host's files the VTY changes through root-only doors (`dns server`'s
+  resolv.conf, sshd's settings, snmpd's configuration, the SNMPv3 users,
+  another account's keys); an integrator who needs those over the API sets
+  `api permit-root yes`, and `no api permit-root` refuses root again. The
+  server reads the setting at the next call, with no restart, and changing
+  it alone does not restart the listener. It is configuration read and
+  written as lines: `GetRunning` shows it, and `ApiConfig` has no field for
+  it.
 * **The management network only.** `api listen-address` is the management
   address and enabling the API without one is refused at the check. The host
   listens there and carries each connection, unopened, to the server on the

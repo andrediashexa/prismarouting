@@ -39,9 +39,11 @@ Three things: the certificates on the box's disk, the account the client will be
 | `api enabled yes` | `no`    | serves the API. Without `listen-address`, the commit refuses |
 | `api listen-address <address> [<address> ...]` | none    | the management address to listen on; takes a list, IPv4 and IPv6 together, since 0.151.8 |
 | `api port <1-65535>` | `50051` | the TCP port |
+| `api permit-root yes` | `no`    | serves a certificate naming root; since 0.156.3, without it root is refused (see "The account", below) |
 | `no api enabled` | —       | turns it off |
 | `no api listen-address` | —       | removes the address |
 | `no api port` | —       | back to 50051 |
+| `no api permit-root` | —       | refuses root again |
 
 ```
 configure
@@ -76,8 +78,14 @@ The client certificate's **Common Name (CN)** is the name of an account on the b
 | Situation | What happens |
 |-----------|--------------|
 | a CN that is not a valid account name, or more than one CN | the call is refused with `UNAUTHENTICATED` |
+| a CN that is no account on this box | refused up front with `UNAUTHENTICATED`, saying the CN names no account on the box (since 0.156.3; before, the call came back `UNAVAILABLE`, as if the box were at fault) |
+| the CN `root`, or any account with uid 0 | refused with `UNAUTHENTICATED`, saying it is served only with `api permit-root yes` (since 0.156.3) |
 | a role or `operator` given to or taken from the account | it holds from the next call; a candidate opened before the change reads as expired, so no commit runs with rights the account no longer has |
 | a system that must lose access | the box consults no revocation list: the certificate holds as long as the CA signed it and it has not expired. To cut it off, remove the account from the box, or take its role away to leave it read-only |
+
+**Root is refused by default.** The VTY lets nobody act as root by name — root cannot be given `operator`, and `no user root` is refused — and a certificate is a file, easier to copy than a shell session. The refusal goes by uid, not by name: an alias account with uid 0 is refused the same way. The right way is an account of the system's own, with `role administrator` (the `prisma-admin` group) if it configures everything: it does through the API all an administrator does at the prompt, and the revision history shows the system's name, not "root".
+
+Root keeps one thing no other account has: the host's files the VTY changes through root-only doors — the `dns server` resolvers, the SSH settings, the SNMP agent's configuration, the SNMPv3 users and another account's keys. An integrator who needs those through the API sets `api permit-root yes`; `no api permit-root` refuses it again. The server reads the change at the next call, with no restart, and changing only that does not drop the open connections. The setting is read and written as a line (`Edit`, `GetRunning`): the `api` block's typed read does not carry it.
 
 # Roles: who may call what
 
@@ -135,7 +143,7 @@ The rules a client must respect:
 * **A partial write names its fields.** In a `SetConfig`, `fields` says what to change; empty means **all**, so an object sent half-filled erases what was not sent. Name the fields.
 * **Secrets are never read.** Passwords, keys, SNMP communities and RADIUS secrets come back only as "set or not"; the lines returned mask the value, as `show running-config` does.
 
-A refusal is a gRPC status — `INVALID_ARGUMENT` for a line the VTY refuses, `FAILED_PRECONDITION` for a refused commit or a base that moved, `PERMISSION_DENIED` for an account without the role, `NOT_FOUND` for a candidate that does not exist, `UNAVAILABLE` when the box cannot answer — and carries, in the trailing metadata `prisma-diagnostics-bin`, the VTY's explanation and a **reason code** the client can act on (stale base, permission, candidate expired, size limit, one of the warnings that need acknowledging, grammar, validation, apply failed). The VTY's sentence stays the message for the person.
+A refusal is a gRPC status — `INVALID_ARGUMENT` for a line the VTY refuses, `FAILED_PRECONDITION` for a refused commit or a base that moved, `PERMISSION_DENIED` for an account without the role, `NOT_FOUND` for a candidate that does not exist, `UNAVAILABLE` when the box cannot answer, `UNAUTHENTICATED` for a certificate whose CN is no account on the box, or is root without `api permit-root yes` — and carries, in the trailing metadata `prisma-diagnostics-bin`, the VTY's explanation and a **reason code** the client can act on (stale base, permission, candidate expired, size limit, one of the warnings that need acknowledging, grammar, validation, apply failed). The VTY's sentence stays the message for the person.
 
 ## Operational reads
 

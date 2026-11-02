@@ -79,6 +79,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The management API refused nothing about root: a certificate naming it
+  ran every call as root.** ([#621](https://github.com/andrediashexa/hexarouting/issues/621))
+  The VTY lets nobody act as root by name, and a certificate is a file,
+  easier to copy than a shell session. A client certificate whose account
+  has uid 0 - root, or an alias of it - is now refused `UNAUTHENTICATED`,
+  "the client certificate names root (uid 0), refused unless 'api
+  permit-root yes'". The new `api permit-root yes` (default no; shown in
+  `show running-config` only when set, `no api permit-root` resets it)
+  serves it again, for an integrator who needs root's host file doors
+  (resolv.conf, sshd, snmpd, SNMPv3 users, another account's keys); the
+  server reads it from api.env at the next call, a stat per call (2.8 us
+  against 68 us for reading the file, measured on the build host), and a
+  change of it alone does not restart the API's listener. A Common Name
+  naming no account on the box is now refused up front, `UNAUTHENTICATED`
+  "certificate CN `<name>` names no account on this box", where it used to
+  reach a session that could not start and answer `UNAVAILABLE`.
+  `lab/api-grpc.sh` sets `api permit-root yes` for its root client and
+  asserts both refusals. Not a field of the typed `ApiConfig`, which would
+  be a contract change: written and read as lines.
+
 ## 0.156.3 - documents that agree with the product
 
 ### Fixed

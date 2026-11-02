@@ -27,6 +27,12 @@ rpc in [docs/api.md](api.md). Which VTY command each rpc reaches, and which
 commands no rpc reaches yet, is [docs/api-coverage.md](api-coverage.md),
 generated from the VTY's grammar.
 
+## 0.156.3 - the API refuses a root certificate unless told to
+
+* **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.2). No message, field or number changes.
+* **Behaviour, breaking for a client that uses root:** a client certificate whose Common Name is root - or any account with uid 0 - is refused on every call with `UNAUTHENTICATED` and "the client certificate names root (uid 0), refused unless 'api permit-root yes'" (#621). The box's new statement `api permit-root yes` (default no) serves it again, read by the server at the next call with no restart; it is configuration written and read as lines (`Edit`, `GetRunning`), and `ApiConfig` has no field for it. A client that acts as root should get an account of its own with the role it needs (`prisma-admin` configures everything); root keeps only the host's root-only file doors (resolv.conf, sshd, snmpd, the SNMPv3 users, another account's keys).
+* **Behaviour:** a Common Name that is no account on the box is now refused up front with `UNAUTHENTICATED` and "certificate CN `<name>` names no account on this box". It used to reach a session that could not start and was answered `UNAVAILABLE` with getpwnam's KeyError in the message, which read as the box being at fault. A patch release: the API is down only for the usual upgrade window.
+
 ## 0.156.3 - documents that agree with the product
 
 * **Contract:** unchanged (`prisma.proto` sha256 `9b298af151af06689e5e694c5b2e5b832d9b154241567f64fa5c1cf303e8ce32`, the same as 0.156.2). No message, field or number changes.
