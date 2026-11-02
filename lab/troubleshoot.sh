@@ -209,7 +209,7 @@ expect_in "and a box with no forwards says that, rather than printing a heading"
   "no forwards configured" "$NOFWD"
 
 expect "the dynamic subscriber was translated at all" test -n "${DPUB:-}"
-expect_in "a dynamic answer says it is dynamic" "DYNAMIC" "$DTR"
+expect_in "a dynamic answer says it is BPA (#619)" ", BPA" "$DTR"
 expect_in "and refuses to be read as evidence about the past" \
   "NOW ONLY" "$DTR"
 expect_in "and says where the past answer is instead, whole" \

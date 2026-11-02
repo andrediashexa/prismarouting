@@ -500,7 +500,7 @@ expect "the pool has a block nobody holds, by its own count" \
 expect_in "a port in a block nobody holds answers nobody, rather than naming a subscriber" \
   "->  nobody, right now" "$REV_FREE"
 expect_in "and says which pool and block, and that the block is dynamic" \
-  ", DYNAMIC: no subscriber holds this block at the moment" "$REV_FREE"
+  ", BPA: no subscriber holds this block at the moment" "$REV_FREE"
 # AND THE CAVEAT UNDER IT, which is the load-bearing sentence on that screen.
 # Without it "nobody, right now" reads as "nobody, ever", and an operator
 # holding a complaint about last Tuesday closes it as unfounded. The screen

@@ -79,6 +79,38 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show cgnat translation` says `BPA` for a block allocated on demand, not
+  `DYNAMIC`.** ([#619](https://github.com/andrediashexa/hexarouting/issues/619))
+  0.151.1 made `bpa` the word every screen uses for the on-demand mode, and
+  this one - the dataplane's `show bpa translation` - still printed
+  `pool <name>, block <n>, DYNAMIC`. The VTY and the API's
+  `LookupTranslation` read both words, because after an upgrade the old
+  dataplane answers until it is restarted. The configuration trail and
+  `prPoolMode` keep `dynamic`, as before; docs/logging.md and
+  docs/snmp-mib.md now say so.
+* **The repository's documents agree with the product again.**
+  ([#619](https://github.com/andrediashexa/hexarouting/issues/619)) Found
+  by the wiki audit (#615, #620): README.md and docs/bng.md said BNG was not
+  built or still being built (phase 1 shipped); docs/context.md listed the
+  IANA enterprise number as absent (67033 since 0.149.13); docs/appliance.md
+  said the management container runs no daemon and is the third (it hosts
+  the API server, beside three others and the BNG's), set the RAM floor at
+  4 GB in one place and 6 GB in another (6 GB), had no `tune.env` row for
+  `PRISMA_ALLOW_UNSUPPORTED_SFP` or the management VRF's two keys, gave the
+  upgrade package as about 120 MB (189 MB) and its gate as root's;
+  docs/api.md said reboot, shutdown, upgrade and dataplane restart were
+  root's (and `prisma-operator`'s members' since 0.149.26); docs/ha.md's
+  mapping fields omitted the prefix-list sides and the NAT64 fields, and
+  its examples and docs/nat64.md's used a lab's interface names;
+  docs/nat64.md put PREF64 on a branch (shipped in 0.150.2) and named only
+  `clear cgnat subscriber`; docs/snmp-mib.md had `prSystemDataplaneCurrent`
+  cleared only by a reboot. docs/routing.md's and docs/api.md's examples
+  carried a lab box's real management addresses and public IPv6 prefix -
+  inside every medium, since docs/ is copied into the ISO - and now use the
+  documentation ranges. test/test_doc_copies.py now draws `show system
+  management` and compares it with every copy the documents quote, which
+  nothing read.
+
 ## 0.156.2 - wiki pages for what shipped with none
 
 ### Added

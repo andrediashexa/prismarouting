@@ -265,7 +265,7 @@ def rfc5424(ev, hostname):
     """
     One event as an RFC 5424 message, bytes, unframed:
 
-      <29>1 2026-10-07T00:01:01.250Z edge-1 prisma-routing - LINK
+      <28>1 2026-10-07T00:01:01.250Z edge-1 prisma-routing - LINK
       [event@67033 source="dataplane" kind="link" subject="memif1/0"
       reason="link"] interface memif1/0: link down, ...
 

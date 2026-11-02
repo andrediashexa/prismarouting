@@ -1183,6 +1183,12 @@ appended to a file, dated in UTC, with the complete definition:
 Every line ends with ` seq <n> sha256 <64 hex>`; the examples below elide it to
 keep the definition readable.
 
+A `mode bpa` pool is written `mode dynamic` here, before and since #573 renamed
+the statement: the trail keeps the dataplane's word, because a record is never
+reworded and `show cgnat history verify` reads every entry ever written. The
+VTY's screens say `bpa`; the trail and PRISMA-ROUTING-MIB's `prPoolMode`
+(`dynamic(2)`, [snmp-mib.md](snmp-mib.md)) say `dynamic`, and mean the same.
+
 The question this answers: *what block size was in effect on the date named in
 the court order?* Without the trail, the **current** formula answers with the
 current block for a date when the pool used another — and names the wrong

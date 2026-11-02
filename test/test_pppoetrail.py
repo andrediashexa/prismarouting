@@ -376,7 +376,7 @@ print("\n=== the VTY ===")
 OUT_FORMULA = ("200.150.0.16:1024  ->  100.64.0.10\n"
                "  pool lab, block 0, DETERMINISTIC\n"
                "  from the FORMULA. It holds for any instant, past or present.")
-OUT_DYN = ("200.150.0.16:1024  ->  100.64.0.10\n  pool lab, block 0, DYNAMIC\n"
+OUT_DYN = ("200.150.0.16:1024  ->  100.64.0.10\n  pool lab, block 0, BPA\n"
            "  this answers for NOW ONLY.")
 check(prismash.translation_inside(OUT_FORMULA) == ("100.64.0.10", "formula")
       and prismash.translation_inside(OUT_DYN) == ("100.64.0.10", "now")
@@ -426,7 +426,7 @@ check("'at' needs a formula" in out and "sub3" not in out
       "show_cgnat_translation: a dynamic block is never joined to the past")
 sh = shell(OUT_DYN)
 out = said(lambda: sh.show_cgnat_translation(["200.150.0.16", "1024"]))
-check("DYNAMIC" in out and "sub1 held 100.64.0.10" in out
+check("BPA" in out and "sub1 held 100.64.0.10" in out
       and sh.dp.commands == ["show bpa translation 200.150.0.16 1024"],
       f"show_cgnat_translation: now, the session holding it now: {out!r}")
 out = said(lambda: shell(OUT_FORMULA.replace("100.64.0.10", "100.64.0.99"))

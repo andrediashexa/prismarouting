@@ -797,7 +797,7 @@ Este é o comando que responde uma ordem judicial, e a resposta dele **diz quant
 flowchart TD
     T["show cgnat translation<br/>&lt;ip-público&gt; &lt;porta&gt;"] --> Q{"A resposta traz…"}
     Q -->|"FORMULA<br/>past or present"| A["Determinístico.<br/>A conta é estável, logo vale<br/>para um instante passado —<br/>junto com show cgnat history."]
-    Q -->|"DYNAMIC ou DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, ou bloco da reserva.<br/>Descreve o AGORA.<br/>O passado está nos registros<br/>IPFIX que foram ao coletor."]
+    Q -->|"BPA ou DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, ou bloco da reserva.<br/>Descreve o AGORA.<br/>O passado está nos registros<br/>IPFIX que foram ao coletor."]
 ```
 
 Uma resposta de bloco BPA ou da reserva **nunca** afirma `FORMULA`. Essa recusa é deliberada: tratar uma alocação sob demanda como se fosse aritmética estável seria apresentar como prova algo que não sustenta a afirmação.
@@ -808,7 +808,7 @@ Uma resposta de bloco BPA ou da reserva **nunca** afirma `FORMULA`. Essa recusa 
 |---------|---------------------------|
 | `show cgnat subscriber <ip>` | o endereço público, a faixa de portas e `sessions N` |
 | `show cgnat subscriber` de um IP fora dos pools | `not inside any configured pool` — é resposta, não erro |
-| `show cgnat translation` | o assinante, mais `FORMULA`/`past or present`, ou `DYNAMIC` (ou `DETERMINISTIC RESERVE`)/`NOW ONLY` |
+| `show cgnat translation` | o assinante, mais `FORMULA`/`past or present`, ou `BPA` (ou `DETERMINISTIC RESERVE`)/`NOW ONLY` |
 | `show cgnat top` | os assinantes mais carregados, com as portas que seguram (ex.: `3/512`) |
 | `show cgnat drops` | seção *packets that did not get through* com o motivo, por exemplo `no pool for source address` |
 

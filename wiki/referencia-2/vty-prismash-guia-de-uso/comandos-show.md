@@ -797,7 +797,7 @@ Este es el comando que responde una orden judicial, y su respuesta **dice cuánt
 flowchart TD
     T["show cgnat translation<br/>&lt;ip-pública&gt; &lt;puerto&gt;"] --> Q{"La respuesta trae…"}
     Q -->|"FORMULA<br/>past or present"| A["Determinístico.<br/>El cálculo es estable, por lo tanto vale<br/>para un instante pasado —<br/>junto con show cgnat history."]
-    Q -->|"DYNAMIC o DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, o bloque de la reserva.<br/>Describe el AHORA.<br/>El pasado está en los registros<br/>IPFIX que fueron al colector."]
+    Q -->|"BPA o DETERMINISTIC RESERVE<br/>NOW ONLY"| B["BPA, o bloque de la reserva.<br/>Describe el AHORA.<br/>El pasado está en los registros<br/>IPFIX que fueron al colector."]
 ```
 
 Una respuesta de bloque BPA o de la reserva **nunca** afirma `FORMULA`. Ese rechazo es deliberado: tratar una asignación bajo demanda como si fuera aritmética estable sería presentar como prueba algo que no sostiene la afirmación.
@@ -808,7 +808,7 @@ Una respuesta de bloque BPA o de la reserva **nunca** afirma `FORMULA`. Ese rech
 |---------|---------------------------------|
 | `show cgnat subscriber <ip>` | la dirección pública, el rango de puertos y `sessions N` |
 | `show cgnat subscriber` de una IP fuera de los pools | `not inside any configured pool` — es una respuesta, no un error |
-| `show cgnat translation` | el suscriptor, más `FORMULA`/`past or present`, o `DYNAMIC` (o `DETERMINISTIC RESERVE`)/`NOW ONLY` |
+| `show cgnat translation` | el suscriptor, más `FORMULA`/`past or present`, o `BPA` (o `DETERMINISTIC RESERVE`)/`NOW ONLY` |
 | `show cgnat top` | los suscriptores más cargados, con los puertos que tienen (ej.: `3/512`) |
 | `show cgnat drops` | sección *packets that did not get through* con el motivo, por ejemplo `no pool for source address` |
 

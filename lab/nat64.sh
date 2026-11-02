@@ -733,7 +733,7 @@ for _p in A B; do
     grep -q 'subscriber="2001:db8:1200:ab00::/56" .*subscriberId="ana@isp"' \
       /tmp/n64-sys-$_p.lines
   expect "$_who: translation answers a dynamic port with A's prefix, now" \
-    sh -c "grep -q \"203.0.113.3:\$(cat /tmp/n64-alo-$_p.txt)  ->  2001:db8:1200:ab00::/56\" /tmp/n64-dxlt-$_p.txt && grep -q 'DYNAMIC' /tmp/n64-dxlt-$_p.txt"
+    sh -c "grep -q \"203.0.113.3:\$(cat /tmp/n64-alo-$_p.txt)  ->  2001:db8:1200:ab00::/56\" /tmp/n64-dxlt-$_p.txt && grep -q ', BPA' /tmp/n64-dxlt-$_p.txt"
 done
 expect "the log was carried by the dataplane, then by the log container" \
   sh -c "grep -q 'carried by the dataplane' /tmp/n64-carrier-A.txt && grep -q 'carried by the log container' /tmp/n64-carrier-B.txt"

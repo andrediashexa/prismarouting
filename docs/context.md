@@ -346,8 +346,6 @@ Not what it contains — what question it is the answer to.
 * **A graceful pool migration.** Deliberately not offered: it would mean two
   mappings for one subscriber, and the reverse arithmetic could not tell them
   apart — giving up the property deterministic mode exists to provide.
-* **An IANA enterprise number.** The SNMP enterprise MIB stays dark until a
-  maintainer registers one and sets `snmp enterprise-number`.
 * **A kernel of the appliance's own design.** The kernel IS Prisma Routing's
   since 0.136.0 ([#449](https://github.com/andrediashexa/hexarouting/issues/449)):
   Debian's source at Debian's security version, Debian's configuration, the

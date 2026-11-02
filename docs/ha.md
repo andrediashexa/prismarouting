@@ -177,11 +177,11 @@ now asks, over the binary API, and the virtual router lives on the interface
 that carries the packets:
 
 ```
-interface ens18
+interface enp2s0
  ipv4 address 100.64.3.252/22
  vrrp 1 address 100.64.3.254
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp1s0 decrement 150
  exit
 ```
 
@@ -299,8 +299,12 @@ product has already made, and the two would disagree the first time one of them
 was edited.
 
 What that derivation yields today, for the record rather than as a list to
-maintain: the inside and outside prefixes, the block size, the port range, the
-policy, the mode, the reserve, and both VRFs. Note what is **absent** - the
+maintain: the inside and outside prefixes - the sets the dataplane is given,
+so a side named by a `prefix-list-inside` or `prefix-list-outside` counts by
+what the list resolves to, and two peers that reach one set two ways agree
+(#589) - for a NAT64 pool its `subscriber-length` and `nat64-prefix`, the
+block size, the port range, the policy, the mode, the reserve, and both
+VRFs. Note what is **absent** - the
 timeouts, the ALG switches, the TCP clamp, the bypass lists, the session and
 rate ceilings, the port forwards, the stride, the utilisation alarm. Those the
 dataplane changes on a pool that is carrying traffic, and they move no
@@ -534,14 +538,14 @@ that moves with the master.
 ### The IPv6 virtual router
 
 ```
-interface ens18
+interface enp2s0
  ipv6 address 2001:db8:1200:ab00::2/56
  ipv4 address 100.64.3.252/22
  vrrp 1 address 100.64.3.254
  vrrp 1 address fe80::1
  vrrp 1 address 2001:db8:1200:ab00::1
  vrrp 1 priority 200
- vrrp 1 track ens19 decrement 150
+ vrrp 1 track enp1s0 decrement 150
  exit
 ```
 

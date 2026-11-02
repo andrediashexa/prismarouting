@@ -5,7 +5,7 @@
 | **Who** | Whoever builds the NAT64 phases of #485; read by whoever reviews them. |
 | **What** | What a NAT64 pool is in this product, what exists today, and what each phase adds. |
 | **Where** | `src/plugins/bpa/bpa_nat64.h`, `ref/bpa_model.py`, `test/test_bpa_nat64.c`; FTP64 in `src/plugins/bpa/bpa_ftp.c` and `test/test_bpa_ftp64.c`; PREF64 in `src/prismash/config.py` (`with_pref64`, `take_pref64`) and `lab/pref64.sh`; the plan is on issue #485. |
-| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) shipped in 0.150.0; phase 5 (FTP64, RFC 6384) in 0.150.1; phase 6 (PREF64 in the advertisements, a 464XLAT lab) is on `cgnat/nat64-pref64`. |
+| **When** | NAT64 ships from 0.150 on. Phases 1 (the arithmetic), 2 (the deterministic datapath, the grammar, the lab), 3 (dynamic mode and the log) and 4 (every per-pool setting) shipped in 0.150.0; phase 5 (FTP64, RFC 6384) in 0.150.1; phase 6 (PREF64 in the advertisements, a 464XLAT lab) in 0.150.2. |
 | **How** | One release per phase; nothing configurable before the datapath that serves it. |
 
 ## What it is
@@ -149,9 +149,11 @@ container sends the NAT64 template and records itself.
 
 Releases come from the hold-down's reap, from a pool's drain and from
 `bpa stop-drain`, through the one walk every IPv4 release takes. `clear
-cgnat subscriber` takes an IPv6 address, and clears by pool and index: it
-matched the private address alone, across pools, and a NAT64 subscriber's
-index read as an IPv4 address is somebody's.
+nat64 subscriber <IPv6 address>` (#572) clears a NAT64 subscriber by any
+address in its delegated prefix, and `clear cgnat subscriber` takes the same
+IPv6 address; both clear by pool and index: the clear matched the private
+address alone, across pools, and a NAT64 subscriber's index read as an IPv4
+address is somebody's.
 
 `show cgnat translation` answers a dynamic NAT64 port with the subscriber's
 prefix, now; for a past instant the log is the answer, as for IPv4. For a
@@ -284,7 +286,7 @@ a pool on anything but the well-known prefix, it cannot guess it.
 RFC 8781, typed under the subscriber-facing interface:
 
 ```
-interface ens19
+interface enp2s0
  no ipv6 nd suppress-ra
  ipv6 nd nat64 64:ff9b:1::/48
  exit

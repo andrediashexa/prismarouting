@@ -2,17 +2,17 @@
 
 ## TL;DR
 
-**Phase 1 is being built** ([#597](https://github.com/andrediashexa/hexarouting/issues/597),
-started 2026-10-12): PPPoE subscribers terminated on this box, authenticated
-against RADIUS and translated by the CGNAT. Its first increment is in section
-0 - the `prisma-bng` container (accel-ppp-ng driving VPP's pppoe plugin), the
+**Phase 1 shipped** ([#597](https://github.com/andrediashexa/hexarouting/issues/597),
+started 2026-10-12, built in 0.153.8 to 0.155.11 and closed in 0.155.14):
+PPPoE subscribers terminated on this box, authenticated against RADIUS and
+translated by the CGNAT. Its first increment is in section 0 - the `prisma-bng` container (accel-ppp-ng driving VPP's pppoe plugin), the
 `pppoe` hierarchy in the VTY with the container's configuration generated
 from the candidate, PAP/CHAP/MS-CHAPv2 against RADIUS with accounting, IPv4
 by IPCP from RADIUS or a pool, each session attached to a BPA pool,
 `show pppoe sessions|summary`, `clear pppoe session`, and `lab/pppoe.sh`
 proving it end to end. The box's own session trail - who held which inside
 address from when to when, hash-chained, `show pppoe history` - is 0.7.
-Section 0.4 is what remains of phase 1. IPv6 on the sessions - IPv6CP, the
+Section 0.4 is the rest of phase 1, every item done. IPv6 on the sessions - IPv6CP, the
 WAN /64 by SLAAC, DHCPv6 prefix delegation, with the dataplane's PPPoE guard
 taking the CPE's RS and DHCPv6 to the control plane - is 0.8
 ([#609](https://github.com/andrediashexa/hexarouting/issues/609)).
@@ -101,7 +101,7 @@ it did claim:
 | **What** | Terminating subscribers on this box: PPPoE server, or IPoE with DHCP. |
 | **Why** | The question was asked, and it **MUST** be answered on evidence rather than on impression. It is not asked again cheaply. |
 | **Who** | The provider who today buys a BNG from one vendor and this box from another. |
-| **When** | Phase 1 started 2026-10-12 ([#597](https://github.com/andrediashexa/hexarouting/issues/597)); its first increment ships in 0.154.0 (section 0.5). Section 5 is the list #170 asked to be answered first. |
+| **When** | Phase 1 started 2026-10-12 ([#597](https://github.com/andrediashexa/hexarouting/issues/597)); its first increment shipped in 0.154.0 (section 0.5) and phase 1 was complete in 0.155.11. Section 5 is the list #170 asked to be answered first. |
 | **Where** | The access side, where the subscriber's inside address comes from. |
 | **How** | `accel-ppp-ng` on the `pppoe` plugin's control-plane interface, in a container of its own (`prisma-bng`), configured from the VTY's candidate (section 0). |
 | **How much** | The termination is days. What it obliges is a second product: see section 4. |

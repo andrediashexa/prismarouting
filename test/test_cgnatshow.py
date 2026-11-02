@@ -55,14 +55,20 @@ check(t["subscriber"] == "2001:db8:1200:ab00::/56" and t["nat64"]
       and not t["now_only"],
       f"a NAT64 pool's formula names the subscriber's prefix: {t}")
 t = C.parse_translation("200.150.0.18:4000  ->  2001:db8:1200:ab00::/56\n"
-                        "  pool v6-dyn, block 9, DYNAMIC\n" + XLT_PROSE_NOW + "\n")
+                        "  pool v6-dyn, block 9, BPA\n" + XLT_PROSE_NOW + "\n")
 check(t["source"] == "bpa" and t["now_only"] and t["nat64"]
       and t["pool"] == "v6-dyn", f"a dynamic NAT64 holder, for now only: {t}")
 t = C.parse_translation("200.150.0.18:4000  ->  nobody, right now\n"
-                        "  pool dyn, block 9, DYNAMIC: no subscriber holds this "
+                        "  pool dyn, block 9, BPA: no subscriber holds this "
                         "block at the moment\n" + XLT_PROSE_NOW + "\n")
 check(t["subscriber"] == "" and t["source"] == "bpa" and t["now_only"]
       and t["block"] == 9, f"nobody holds it now: {t}")
+# #619: a dataplane from before 0.156.3 says DYNAMIC, and after an upgrade it
+# is the one answering until it is restarted.
+t = C.parse_translation("200.150.0.18:4000  ->  100.64.0.9\n"
+                        "  pool dyn, block 9, DYNAMIC\n" + XLT_PROSE_NOW + "\n")
+check(t["source"] == "bpa" and t["now_only"] and t["subscriber"] == "100.64.0.9",
+      f"an older dataplane's DYNAMIC is still a BPA block: {t}")
 t = C.parse_translation("200.150.0.19:2100  ->  100.64.1.7\n"
                         "  pool nb, reserve block 2, DETERMINISTIC RESERVE\n"
                         + XLT_PROSE_NOW + "\n")
@@ -422,7 +428,7 @@ for fmt in (
         "%U:%u  ->  %U", "  pool %v, block %u, DETERMINISTIC NAT64",
         "  pool %v, block %u, DETERMINISTIC\"", "%U:%u  ->  nobody, right now",
         "  pool %v, %s %u, %s", "\"reserve block\" : \"block\"",
-        "\"DETERMINISTIC RESERVE\"", ": \"DYNAMIC\"",
+        "\"DETERMINISTIC RESERVE\"", ": \"BPA\"",
         # top
         "%v %v %v/%v %4u%% %7u %v", "%u subscriber(s) holding blocks",
         "no subscriber holds a block right now",

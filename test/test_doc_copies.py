@@ -939,6 +939,62 @@ if _lost:
     bad(f"the '?' transcript(s) {_lost} are in no document this check reads: "
         f"a prompt has been reworded or moved and this went quiet")
 
+print("\n=== show system management, as the pages quote it, driven ===")
+# The screen carries no verdict marker, so test_wiki_screens.py - which reads
+# the blocks that do - never read it: a typo put into the wiki's copy stayed
+# green (#619, found by #620). Each quoted copy is the screen of a box whose
+# host agrees with its configuration, so the box is made of the copy's own
+# VRF, table and interfaces, the screen is drawn by show_system_management()
+# and the two are compared row for row.
+_MGMT_PAGES = ("docs/routing.md",
+               "wiki/operate/management-in-a-vrf-of-its-own.md",
+               "wiki/operar/gerencia-numa-vrf-propria.md",
+               "wiki/operar-2/gestion-en-una-vrf-propia.md")
+for _path in _MGMT_PAGES:
+    _lines = read(_path).split("\n")
+    _found = 0
+    for _i, _line in enumerate(_lines[:-1]):
+        if _line != "configured:" or \
+                not _lines[_i + 1].startswith("  management VRF "):
+            continue
+        _found += 1
+        _quoted = []
+        for _row in _lines[_i:]:
+            if _row.startswith("```"):
+                break
+            _quoted.append(_row)
+        _m = re.match(r"^  management VRF +(\S+), table (\d+)$", _quoted[1])
+        _ifs = next((r.split(None, 3)[3] for r in _quoted
+                     if r.startswith("  interfaces in it ")), "")
+        if not _m or not _ifs:
+            bad(f"{_path}:{_i + 1}: a show system management screen this "
+                f"check cannot read its VRF, table or interfaces from")
+            continue
+        _name, _table = _m.group(1), int(_m.group(2))
+        _sh = _shell("operational")
+        _cfg = prismash.Config.parse(
+            f"vrf {_name} table {_table}\nsystem\n management\n"
+            f"  vrf {_name}\n  exit\n exit\n")
+        _sh.running_config = lambda _c=_cfg: _c
+        _facts = {"tables": {"ipv4": _table, "ipv6": _table},
+                  "main": {"ipv4": True, "ipv6": True},
+                  "sysctls": {k: "1" for k in prismash.doors.MGMT_SYSCTLS},
+                  "links": {n: {"master": _name}
+                            for n in _ifs.split(", ")}}
+        _out = io.StringIO()
+        with contextlib.redirect_stdout(_out):
+            _sh.show_system_management(_facts)
+        _drawn = _out.getvalue().rstrip("\n").split("\n")
+        if _drawn != _quoted:
+            bad(f"{_path}:{_i + 1}: show system management is quoted as "
+                f"{_quoted!r} and the box draws {_drawn!r}")
+        else:
+            ok(f"{_path}:{_i + 1}: show system management, all "
+               f"{len(_quoted)} rows")
+    if not _found:
+        bad(f"{_path}: quotes no show system management screen any more: "
+            f"it moved, and this check went quiet")
+
 print("\n=== the reserve's cost, against the model that is its definition ===")
 # architecture.md states what a reserve of one block costs under each policy,
 # and names ref/validate.py as where it was measured. The blocked row said
