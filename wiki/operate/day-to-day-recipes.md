@@ -20,7 +20,7 @@ flowchart TD
 ```
 
 * `**FORMULA**` **+** `**past or present**` — the answer came from arithmetic, which is stable. It answers for a past instant **as long as you prove which configuration was in effect**. Attach the output of `show cgnat history` for that date.
-* `**BPA**` **+** `**NOW ONLY**` — the block was allocated on demand (a dataplane from before 0.156.6 prints `DYNAMIC` here). This answer describes the present and is **not** evidence about the past. What answers for the past are the IPFIX records that went to the collector.
+* `**BPA**` **+** `**NOW ONLY**` — the block was allocated on demand (a dataplane from before 0.156.3 prints `DYNAMIC` here). This answer describes the present and is **not** evidence about the past. What answers for the past are the IPFIX records that went to the collector.
 * `**DETERMINISTIC RESERVE**` **+** `**NOW ONLY**` — the port belongs to a reserve block of a deterministic pool, which the formula does not assign to anyone. The box says who holds that block now, if anyone does; for the past, the records that went to the collector answer, as in dynamic mode.
 
 The command is explicit about this difference on purpose: the two sources are not worth the same, and confusing one with the other is the kind of mistake that only shows up in court.

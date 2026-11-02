@@ -20,7 +20,7 @@ flowchart TD
 ```
 
 * `**FORMULA**` **+** `**past or present**` — la respuesta vino de la aritmética, que es estable. Responde por un instante pasado **siempre que usted compruebe qué configuración estaba vigente**. Adjunte la salida de `show cgnat history` correspondiente a la fecha.
-* `**BPA**` **+** `**NOW ONLY**` — el bloque se asignó bajo demanda (un dataplane anterior a la 0.156.6 imprime `DYNAMIC` aquí). Esa respuesta describe el presente y **no** es evidencia sobre el pasado. Lo que responde por el pasado son los registros IPFIX que fueron al colector.
+* `**BPA**` **+** `**NOW ONLY**` — el bloque se asignó bajo demanda (un dataplane anterior a la 0.156.3 imprime `DYNAMIC` aquí). Esa respuesta describe el presente y **no** es evidencia sobre el pasado. Lo que responde por el pasado son los registros IPFIX que fueron al colector.
 * `**DETERMINISTIC RESERVE**` **+** `**NOW ONLY**` — el puerto es de un bloque de la reserva de un pool determinístico, que la fórmula no atribuye a nadie. El equipo dice quién tiene ese bloque ahora, si alguien lo tiene; por el pasado responden los registros que fueron al colector, como en el dinámico.
 
 El comando es explícito en esa diferencia de propósito: las dos fuentes no valen lo mismo, y confundir una con la otra es el tipo de error que solo aparece en el tribunal.

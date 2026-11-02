@@ -63,7 +63,7 @@ t = C.parse_translation("200.150.0.18:4000  ->  nobody, right now\n"
                         "block at the moment\n" + XLT_PROSE_NOW + "\n")
 check(t["subscriber"] == "" and t["source"] == "bpa" and t["now_only"]
       and t["block"] == 9, f"nobody holds it now: {t}")
-# #619: a dataplane from before 0.156.6 says DYNAMIC, and after an upgrade it
+# #619: a dataplane from before 0.156.3 says DYNAMIC, and after an upgrade it
 # is the one answering until it is restarted.
 t = C.parse_translation("200.150.0.18:4000  ->  100.64.0.9\n"
                         "  pool dyn, block 9, DYNAMIC\n" + XLT_PROSE_NOW + "\n")
