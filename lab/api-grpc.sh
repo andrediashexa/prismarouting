@@ -191,6 +191,8 @@ sign server prisma-api server
 sign root root
 sign netview netview
 sign opsman opsman
+# #621: a CN naming no account on the box.
+sign ghost no-such-account-621
 # The layout the box reads: server.key, server.crt, clients-ca.crt.
 mkdir -p $C/box
 cp $C/server.key $C/server.crt $C/box/; cp $C/ca.crt $C/box/clients-ca.crt
@@ -220,6 +222,46 @@ sleep 900 | python3 src/prismash/apiserver.py --listen 127.0.0.1:50551 --dir $C/
   --stubs /tmp/apistubs --stop-on-eof > /tmp/apiserver.log 2>&1 &
 n=0; until grep -q "prisma.v1 on" /tmp/apiserver.log || [ $n -ge 30 ]; do sleep 0.5; n=$((n+1)); done
 sed 's/^/  /' /tmp/apiserver.log
+
+echo "=========== who may call: root, and an account the box does not have (#621) ==========="
+# GetVersion as one certificate: "OK" or the status code and its message.
+as_cert() {  # as_cert <certificate name>
+  python3 - /tmp/apistubs $C 127.0.0.1:50551 "$1" <<'PY' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import grpc
+from prisma.v1 import prisma_pb2 as pb, prisma_pb2_grpc as rpc
+c, name = sys.argv[2], sys.argv[4]
+creds = grpc.ssl_channel_credentials(open(f"{c}/ca.crt", "rb").read(),
+                                     open(f"{c}/{name}.key", "rb").read(),
+                                     open(f"{c}/{name}.crt", "rb").read())
+ch = grpc.secure_channel(sys.argv[3], creds,
+                         options=(("grpc.ssl_target_name_override", "prisma-api"),))
+try:
+    rpc.OperationalServiceStub(ch).GetVersion(pb.GetVersionRequest(), timeout=60)
+    print("OK")
+except grpc.RpcError as e:
+    print(f"{e.code().name} {e.details()}")
+PY
+}
+# The box as it is installed: no `api permit-root`, which is no.
+ROOT_OFF=$(as_cert root); GHOST=$(as_cert ghost); NETV=$(as_cert netview)
+echo "  root, the setting absent: $ROOT_OFF"
+echo "  CN no-such-account-621:   $GHOST"
+echo "  netview:                  $NETV"
+# Turned on and off at the prompt, read by the running server at the next
+# call. Committed HERE, before any revision the API's rollback below goes
+# back to, so every later revision carries it and root's calls go on.
+PR_YES=$($HX -c configure -c "api permit-root yes" -c commit 2>&1)
+ROOT_ON=$(as_cert root)
+PR_RUN=$($HX -c "show running-config" 2>&1 | grep '^api ')
+PR_NO=$($HX -c configure -c "no api permit-root" -c commit 2>&1)
+ROOT_NO=$(as_cert root)
+PR_NORUN=$($HX -c "show running-config" 2>&1 | grep -c '^api permit-root')
+$HX -c configure -c "api permit-root yes" -c commit > /tmp/permit-root.txt 2>&1
+ROOT_BACK=$(as_cert root)
+echo "  root, 'api permit-root yes': $ROOT_ON; then 'no api permit-root': $ROOT_NO; yes again: $ROOT_BACK"
+printf '%s\n' "$PR_RUN" | sed 's/^/  running: /'
 
 # Traffic through pg0 while the stream is read.
 # Traffic through pg0, sent by the client once the stream has its first
@@ -1046,4 +1088,19 @@ expect_in "enabling the API with no address is refused at the check" \
 expect_in "with one, the commit writes api.env for the host" "API_LISTEN=127.0.0.1" "$APIENV"
 expect_in "and the running configuration reads it back" "api listen-address 127.0.0.1" "$APIRUN"
 expect_in "a box with no service manager says when it applies" "next boot" "$APIOK"
+expect_in "#621: a root certificate is refused UNAUTHENTICATED by default" \
+  "UNAUTHENTICATED the client certificate names root (uid 0), refused unless 'api permit-root yes'" \
+  "$ROOT_OFF"
+expect_in "  a CN naming no account is refused UNAUTHENTICATED, up front" \
+  "UNAUTHENTICATED certificate CN no-such-account-621 names no account on this box" \
+  "$GHOST"
+expect "  an ordinary account is served meanwhile" test "$NETV" = OK
+expect "  'api permit-root yes' serves root, at the next call" test "$ROOT_ON" = OK
+expect_in "  and show running-config says it" "api permit-root yes" "$PR_RUN"
+expect_not_in "  a change of it alone does not ask the host for the listener" \
+  "next boot" "$PR_YES"
+expect_in "  'no api permit-root' refuses root again" \
+  "UNAUTHENTICATED the client certificate names root" "$ROOT_NO"
+expect "  and leaves no line in the running configuration" test "$PR_NORUN" = 0
+expect "  and yes again serves it, for the rest of this lab" test "$ROOT_BACK" = OK
 verdict

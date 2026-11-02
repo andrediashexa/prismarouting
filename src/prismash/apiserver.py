@@ -359,6 +359,67 @@ def account_from_auth(auth):
     return name if re.match(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$", name) else None
 
 
+#: The refusal of a certificate whose account is uid 0 (#621), in one
+#: 79-column row whatever the account is called: the name is not in it,
+#: since an alias of root is refused by its uid as root is.
+ROOT_REFUSED = ("the client certificate names root (uid 0), refused unless "
+                "'api permit-root yes'")
+
+
+def admission_refusal(account, key, permit_root):
+    """
+    Why a call whose certificate names `account` is refused before any
+    worker starts, or None: `key` is account_key(account) - None when the
+    box has no such account - and `permit_root` is `api permit-root yes`.
+
+    By uid and not by name (#621), so an alias with uid 0 is root too. An
+    account that does not exist used to reach Worker(), whose process
+    failed at become() and was answered as a session that could not
+    start: UNAVAILABLE in most rpcs, with getpwnam's KeyError in it - a
+    status that said the server was at fault, not the certificate.
+    """
+    if key is None:
+        # At most 15 + 32 + 29 = 76 columns: an account name is 32.
+        return f"certificate CN {account} names no account on this box"
+    if key[0] == 0 and not permit_root:
+        return ROOT_REFUSED
+    return None
+
+
+class PermitRoot:
+    """
+    Whether the running configuration says `api permit-root yes` (#621):
+    api.env, where the VTY's commit writes the api settings and the running
+    configuration reads them back from, read again only when it changed.
+
+    Asked on every call, so it is a stat and not a read: measured on the
+    build host, ApiService.read() of the file took 68 us and an os.stat
+    2.8 us, against 14 us for the getpwnam each call already makes.
+    Keyed on mtime_ns, size and inode, since the VTY replaces the file
+    (os.replace): a new inode even within one mtime tick.
+    """
+
+    def __init__(self, path=None, stat=os.stat):
+        from system import API_ENV
+        self.path = path or API_ENV
+        self.stat = stat
+        self.seen = ()
+        self.value = False
+
+    def __call__(self):
+        from system import ApiService
+        try:
+            st = self.stat(self.path)
+            seen = (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            seen = None
+        if seen != self.seen:
+            self.value = ApiService(path=self.path).read().get(
+                "permit-root") == "yes"
+            self.seen = seen
+        return self.value
+
+
 # ---------------------------------------------------- what a worker computes
 
 def feed_lines(sh, lines):
@@ -3656,23 +3717,29 @@ def progress_pb(pb, st, started=None, output=""):
 # not a unit: builds the gRPC servicers around the core above; it needs grpc
 # and the generated stubs, and lab/api-grpc.sh drives every rpc through it.
 def build(sessions, stats_factory, pb, rpc, grpc, history=None, health=None,
-          meter=None, logwatch=None, cpus=None):
+          meter=None, logwatch=None, cpus=None, permit_root=None):
     """
     The servicers, bound to `sessions`, a statistics reader factory and the
     counter history: prisma.v1's five, and grpc.health.v1's when its
-    modules `health` (messages, services) are given.
+    modules `health` (messages, services) are given. `permit_root` answers
+    whether `api permit-root yes` is configured (PermitRoot by default).
     """
     from google.protobuf.timestamp_pb2 import Timestamp
     history = history if history is not None else History()
     meter = meter if meter is not None else BusyMeter()
     cpus = cpus if cpus is not None else CpuUsage()
+    permit_root = permit_root if permit_root is not None else PermitRoot()
 
-    # not a unit: a closure of build(), driven by lab/api-grpc.sh.
+    # not a unit: a closure of build(), driven by lab/api-grpc.sh;
+    # admission_refusal() is the decision, and test_apiserver.py's.
     def account(context):
         a = account_from_auth(context.auth_context())
         if a is None:
             context.abort(grpc.StatusCode.UNAUTHENTICATED,
                           "the client certificate names no box account")
+        why = admission_refusal(a, account_key(a), permit_root())
+        if why:
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, why)
         return a
 
     # not a unit: a closure of build(), driven by lab/api-grpc.sh.

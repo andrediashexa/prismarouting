@@ -22,7 +22,7 @@
 | Class | Commands |
 |---|---|
 | typed | 846 |
-| text | 1 |
+| text | 4 |
 | none | 0 |
 | n/a | 58 |
 
@@ -229,6 +229,7 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `no api enabled` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no api listen-address` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no api port` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
+| `no api permit-root` | text | ConfigService.Edit (lines) / GetRunning | not a field of ApiConfig: written and read as lines (#621) |
 | `no snmp enabled` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no snmp listen-address` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `no snmp port` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
@@ -284,6 +285,8 @@ Entered with `configure`; `EditRequest.path` = `[]`; changed by: administrator.
 | `api enabled no` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `api listen-address <A.B.C.D\|X:X::X:X>...` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
 | `api port <1-65535>` | typed | ConfigService.GetConfig / SetConfig / DeleteConfig | area system: read and written as fields (0.149.24) |
+| `api permit-root yes` | text | ConfigService.Edit (lines) / GetRunning | not a field of ApiConfig: written and read as lines (#621) |
+| `api permit-root no` | text | ConfigService.Edit (lines) / GetRunning | not a field of ApiConfig: written and read as lines (#621) |
 | `commit check` | typed | ConfigService.Check |  |
 | `commit remap` | typed | ConfigService.Commit (acknowledge_remap) |  |
 | `commit cutoff` | typed | ConfigService.Commit (acknowledge_cutoff) |  |

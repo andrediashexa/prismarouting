@@ -86,6 +86,47 @@ check(A.account_from_auth({"x509_common_name": [b"a", b"b"]}) is None
       and A.account_from_auth({"x509_common_name": [b"../etc"]}) is None,
       "none, two, or one no account could be called is no account")
 
+print("=== admission_refusal: root, and an account the box does not have (#621) ===")
+_ROOT, _ADMIN = (0, 0, (0,)), (1001, 1001, (1001, 994))
+check(A.admission_refusal("root", _ROOT, False) == A.ROOT_REFUSED
+      and "'api permit-root yes'" in A.ROOT_REFUSED,
+      "a certificate naming root is refused, and says how to allow it")
+check(A.admission_refusal("toor", _ROOT, False) == A.ROOT_REFUSED,
+      "an alias with uid 0 is refused by its uid, as root is")
+check(A.admission_refusal("root", _ROOT, True) is None,
+      "and served with 'api permit-root yes'")
+check(A.admission_refusal("alice", _ADMIN, False) is None
+      and A.admission_refusal("alice", _ADMIN, True) is None,
+      "an ordinary account is served either way")
+_ghost = A.admission_refusal("ghost", None, True)
+check(_ghost == "certificate CN ghost names no account on this box",
+      f"a CN naming no account is refused up front, with or without the setting: {_ghost!r}")
+# The widest each refusal can be: an account name is 32 characters
+# (account_from_auth), and a status message is read on a console.
+_wide = A.admission_refusal("a" * 32, None, False)
+check(len(A.ROOT_REFUSED) <= 79 and len(_wide) <= 79,
+      f"both fit 79 columns at their widest: {len(A.ROOT_REFUSED)}, {len(_wide)}")
+
+print("=== PermitRoot: api.env's permit-root, read again only when it changes ===")
+import tempfile as _tf621
+with _tf621.TemporaryDirectory() as _d621:
+    _env621 = os.path.join(_d621, "api.env")
+    _stat = os.stat
+    _pr = A.PermitRoot(path=_env621, stat=_stat)
+    check(_pr.__call__() is False, "no api.env is the default: refused")
+    with open(_env621 + ".new", "w") as _f:
+        _f.write("API_ENABLED=yes\nAPI_LISTEN=10.0.0.1\nAPI_PORT=50051\n"
+                 "API_PERMIT_ROOT=yes\n")
+    os.replace(_env621 + ".new", _env621)
+    check(_pr() is True, "the VTY's commit writing yes is read at the next call")
+    _seen = _pr.seen
+    check(_pr() is True and _pr.seen == _seen,
+          "an unchanged file is not read again")
+    with open(_env621 + ".new", "w") as _f:
+        _f.write("API_ENABLED=yes\nAPI_PERMIT_ROOT=maybe\n")
+    os.replace(_env621 + ".new", _env621)
+    check(_pr() is False, "a value the VTY would refuse is the default, refused")
+
 print("=== the readers' parsers ===")
 V = A.parse_version("Prisma Routing 0.149.0 (abcd)\n  dataplane: vpp v26.06-release built\n"
                     "  plugin:    0.149.0 (abcd)\n  routing:   FRRouting 10.7.1 (x)\n"

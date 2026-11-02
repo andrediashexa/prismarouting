@@ -39,9 +39,11 @@ Tres cosas: los certificados en el disco del equipo, la cuenta que va a ser el c
 | `api enabled yes` | `no`        | sirve la API. Sin `listen-address`, el commit la rechaza |
 | `api listen-address <dirección> [<dirección> ...]` | ninguna     | la dirección de gestión donde escuchar; acepta una lista, IPv4 e IPv6 juntas, desde la 0.151.8 |
 | `api port <1-65535>` | `50051`     | el puerto TCP |
+| `api permit-root yes` | `no`        | atiende un certificado que nombra a root; desde la 0.156.4, sin esto root se rechaza (vea "La cuenta", más abajo) |
 | `no api enabled` | —           | la desactiva |
 | `no api listen-address` | —           | quita la dirección |
 | `no api port` | —           | vuelve a 50051 |
+| `no api permit-root` | —           | vuelve a rechazar a root |
 
 ```
 configure
@@ -76,8 +78,14 @@ El **Common Name (CN)** del certificado del cliente es el nombre de una cuenta d
 | Situación | Qué pasa |
 |-----------|----------|
 | un CN que no es un nombre de cuenta válido, o más de un CN | la llamada se rechaza con `UNAUTHENTICATED` |
+| un CN que no es una cuenta de este equipo | se rechaza de entrada con `UNAUTHENTICATED`, diciendo que el CN no nombra ninguna cuenta del equipo (desde la 0.156.4; antes, la llamada volvía `UNAVAILABLE`, como si el equipo tuviera un problema) |
+| el CN `root`, o cualquier cuenta con uid 0 | se rechaza con `UNAUTHENTICATED`, diciendo que solo pasa con `api permit-root yes` (desde la 0.156.4) |
 | un rol u `operator` dado o quitado a la cuenta | vale desde la llamada siguiente; una candidata abierta antes del cambio pasa a leerse como expirada, para que ningún commit corra con derechos que la cuenta ya no tiene |
 | un sistema que debe perder el acceso | el equipo no consulta lista de revocación: el certificado vale mientras la CA lo haya firmado y no haya expirado. Para cortarlo, elimine la cuenta del equipo, o quítele el rol para dejarla de solo lectura |
+
+**Root se rechaza por defecto.** La VTY no deja a nadie actuar como root por el nombre — root no recibe `operator`, y `no user root` se rechaza —, y un certificado es un archivo, más fácil de copiar que una sesión de shell. El rechazo es por el uid, no por el nombre: una cuenta alias con uid 0 se rechaza igual. El camino correcto es una cuenta propia para el sistema, con `role administrator` (el grupo `prisma-admin`) si configura todo: hace por la API todo lo que un administrador hace en el prompt, y el historial de revisiones muestra el nombre del sistema, no "root".
+
+Root conserva una cosa que ninguna otra cuenta tiene: los archivos del sistema que la VTY cambia por puertas solo de root — los resolvedores de `dns server`, la configuración de SSH, la del agente SNMP, los usuarios SNMPv3 y las llaves de otra cuenta. Un integrador que necesita eso por la API activa `api permit-root yes`; `no api permit-root` vuelve a rechazar. El servidor lee el cambio en la llamada siguiente, sin reiniciar, y cambiar solo eso no corta las conexiones abiertas. Esta configuración se lee y se escribe como línea (`Edit`, `GetRunning`): la lectura en campos del bloque `api` no la trae.
 
 # Roles: quién puede llamar qué
 
@@ -135,7 +143,7 @@ Las reglas que un cliente tiene que respetar:
 * **Una escritura parcial nombra los campos.** En un `SetConfig`, `fields` dice qué cambiar; vacío quiere decir **todos**, así que un objeto enviado a medias borra lo que no se envió. Nombre los campos.
 * **Los secretos nunca se leen.** Contraseñas, claves, comunidades SNMP y secretos de RADIUS vuelven solo como "definido o no"; las líneas devueltas enmascaran el valor, como el `show running-config`.
 
-Un rechazo es un status gRPC — `INVALID_ARGUMENT` para una línea que la VTY rechaza, `FAILED_PRECONDITION` para un commit rechazado o una base que cambió, `PERMISSION_DENIED` para quien no tiene el rol, `NOT_FOUND` para una candidata que no existe, `UNAVAILABLE` cuando el equipo no puede responder — y trae, en los metadatos finales `prisma-diagnostics-bin`, la explicación de la VTY y un **código de motivo** sobre el que el cliente puede decidir (base desactualizada, permiso, candidata expirada, límite de tamaño, uno de los avisos que exigen reconocimiento, gramática, validación, fallo al aplicar). La frase de la VTY sigue siendo el mensaje para la persona.
+Un rechazo es un status gRPC — `INVALID_ARGUMENT` para una línea que la VTY rechaza, `FAILED_PRECONDITION` para un commit rechazado o una base que cambió, `PERMISSION_DENIED` para quien no tiene el rol, `NOT_FOUND` para una candidata que no existe, `UNAVAILABLE` cuando el equipo no puede responder, `UNAUTHENTICATED` para un certificado cuyo CN no es una cuenta del equipo, o es root sin `api permit-root yes` — y trae, en los metadatos finales `prisma-diagnostics-bin`, la explicación de la VTY y un **código de motivo** sobre el que el cliente puede decidir (base desactualizada, permiso, candidata expirada, límite de tamaño, uno de los avisos que exigen reconocimiento, gramática, validación, fallo al aplicar). La frase de la VTY sigue siendo el mensaje para la persona.
 
 ## Lecturas operativas
 

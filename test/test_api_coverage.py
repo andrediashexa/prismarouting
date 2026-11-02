@@ -63,6 +63,13 @@ check(by.get(("operational", "ping"), (0, 0, 0, ""))[3] == "typed",
 #: RADIUS dictionary, a file for the RADIUS server's operator, which Show
 #: hands out as it prints it.
 PENDING_597 = {"show aaa"}
+#: #621's `api permit-root`, which the server refuses root without: a typed
+#: field is `ApiConfig.permit_root`, a contract change the maintainer had
+#: not decided when the statement was added, so it is written through Edit
+#: and read in GetRunning's text until then. Named, as #597's are, so that
+#: nothing else joins it and the day it is typed it is taken out.
+PENDING_621 = {"api permit-root", "no api permit-root"}
+PENDING_597 |= PENDING_621
 
 
 def pending(path):

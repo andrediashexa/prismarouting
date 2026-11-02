@@ -923,7 +923,7 @@ openssl x509 -req -in webui.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 8
 Na caixa vão `server.key`, `server.crt` e o `ca.crt` com o nome `clients-ca.crt`; o cliente usa `ca.crt`, `webui.crt` e `webui.key`.
 
 
-2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê; uma conta com `operator` também atualiza, reinicia e desliga a caixa e reinicia o plano de dados. Tudo o que ela muda fica registrado no histórico em nome dela.
+2. **A conta.** O certificado do cliente diz, no campo CN, **qual conta da caixa** ele é. A chamada tem exatamente as permissões que essa conta tem na VTY: `prisma-admin` configura tudo, `prisma-cgnat` só o CGNAT, e qualquer outra só lê; uma conta com `operator` também atualiza, reinicia e desliga a caixa e reinicia o plano de dados. Tudo o que ela muda fica registrado no histórico em nome dela. Um CN que não é conta da caixa é recusado. **O root é recusado** desde a 0.156.4, a menos que `api permit-root yes` esteja configurado: crie uma conta para o sistema, com `role administrator` se ele configura tudo, em vez de usar o root.
 3. **O endereço.** A API escuta **só na rede de gerência**:
 
 ```

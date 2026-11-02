@@ -39,9 +39,11 @@ Três coisas: os certificados no disco da caixa, a conta que o cliente vai ser, 
 | `api enabled yes` | `no`   | serve a API. Sem `listen-address`, o commit recusa |
 | `api listen-address <endereço> [<endereço> ...]` | nenhum | o endereço de gerência onde escutar; aceita uma lista, IPv4 e IPv6 juntos, desde a 0.151.8 |
 | `api port <1-65535>` | `50051` | a porta TCP |
+| `api permit-root yes` | `no`   | atende um certificado que nomeia o root; desde a 0.156.4, sem isso ele é recusado (veja "A conta", abaixo) |
 | `no api enabled` | —      | desliga   |
 | `no api listen-address` | —      | tira o endereço |
 | `no api port` | —      | volta a 50051 |
+| `no api permit-root` | —      | volta a recusar o root |
 
 ```
 configure
@@ -76,8 +78,14 @@ O **Common Name (CN)** do certificado do cliente é o nome de uma conta da caixa
 | Situação | O que acontece |
 |----------|----------------|
 | CN que não é um nome de conta válido, ou mais de um CN | a chamada é recusada com `UNAUTHENTICATED` |
+| CN que não é uma conta desta caixa | recusada logo de entrada com `UNAUTHENTICATED`, dizendo que o CN não nomeia nenhuma conta da caixa (desde a 0.156.4; antes, a chamada voltava `UNAVAILABLE`, como se a caixa estivesse com problema) |
+| CN `root`, ou qualquer conta com uid 0 | recusada com `UNAUTHENTICATED`, dizendo que só passa com `api permit-root yes` (desde a 0.156.4) |
 | papel ou `operator` dado ou tirado da conta | vale já na chamada seguinte; um candidato aberto antes da mudança passa a ler como expirado, para nenhum commit rodar com direitos que a conta não tem mais |
 | um sistema que deve perder o acesso | a caixa não consulta lista de revogação: o certificado vale enquanto a CA o assinar e não expirar. Para cortar, remova a conta da caixa, ou tire o papel dela para deixá-la só de leitura |
+
+**O root é recusado por padrão.** A VTY não deixa ninguém agir como root pelo nome — o root não recebe `operator`, e `no user root` é recusado —, e um certificado é um arquivo, mais fácil de copiar do que uma sessão de shell. A recusa é pelo uid, não pelo nome: uma conta apelido com uid 0 é recusada do mesmo jeito. O caminho certo é uma conta própria para o sistema, com `role administrator` (o grupo `prisma-admin`) se ele configura tudo: ela faz pela API tudo o que um administrador faz no prompt, e o histórico de revisões mostra o nome do sistema, não "root".
+
+O root guarda uma coisa que nenhuma outra conta tem: os arquivos do sistema que a VTY muda por portas só do root — os resolvedores do `dns server`, as configurações do SSH, a configuração do agente SNMP, os usuários SNMPv3 e as chaves de outra conta. Um integrador que precisa disso pela API liga `api permit-root yes`; `no api permit-root` volta a recusar. O servidor lê a mudança na chamada seguinte, sem reiniciar, e mudar só isso não derruba as conexões abertas. Essa configuração é lida e escrita como linha (`Edit`, `GetRunning`): a leitura em campos do bloco `api` não a traz.
 
 # Papéis: quem pode chamar o quê
 
@@ -135,7 +143,7 @@ As regras que um cliente precisa respeitar:
 * **Escrita parcial nomeia os campos.** Num `SetConfig`, `fields` diz o que mudar; vazio quer dizer **todos**, então um objeto enviado pela metade apaga o que não foi enviado. Nomeie os campos.
 * **Segredos nunca são lidos.** Senhas, chaves, comunidades SNMP e segredos de RADIUS voltam só como "definido ou não"; as linhas devolvidas mascaram o valor, como o `show running-config`.
 
-Uma recusa é um status gRPC — `INVALID_ARGUMENT` para uma linha que a VTY recusa, `FAILED_PRECONDITION` para um commit recusado ou uma base que mudou, `PERMISSION_DENIED` para quem não tem o papel, `NOT_FOUND` para um candidato que não existe, `UNAVAILABLE` quando a caixa não consegue responder — e traz, nos metadados finais `prisma-diagnostics-bin`, a explicação da VTY e um **código de motivo** em que o cliente pode decidir (base desatualizada, permissão, candidato expirado, limite de tamanho, um dos avisos que exigem reconhecimento, gramática, validação, falha ao aplicar). A frase da VTY continua sendo a mensagem para a pessoa.
+Uma recusa é um status gRPC — `INVALID_ARGUMENT` para uma linha que a VTY recusa, `FAILED_PRECONDITION` para um commit recusado ou uma base que mudou, `PERMISSION_DENIED` para quem não tem o papel, `NOT_FOUND` para um candidato que não existe, `UNAVAILABLE` quando a caixa não consegue responder, `UNAUTHENTICATED` para um certificado cujo CN não é conta da caixa, ou é o root sem `api permit-root yes` — e traz, nos metadados finais `prisma-diagnostics-bin`, a explicação da VTY e um **código de motivo** em que o cliente pode decidir (base desatualizada, permissão, candidato expirado, limite de tamanho, um dos avisos que exigem reconhecimento, gramática, validação, falha ao aplicar). A frase da VTY continua sendo a mensagem para a pessoa.
 
 ## Leituras operacionais
 
