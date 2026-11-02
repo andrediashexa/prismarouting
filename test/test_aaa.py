@@ -658,7 +658,10 @@ A.stage(tgt.aaa, "aaa radius dynamic-authorization client 10.0.0.9 secret "
 rv, out, asked = commit(tgt)
 check(asked == ["apply"],
       "the Disconnect/CoA listener is opened at start only: a restart")
-local = Config.parse("pppoe\n interface host-acc0\n gateway 100.64.0.1\n"
+local = Config.parse("nat\n cgnat\n  pool lab\n   prefix-inside "
+                     "100.64.0.0/16\n   prefix-outside 203.0.113.0/28\n"
+                     "   exit\n  exit\n exit\n"
+                     "pppoe\n interface host-acc0\n gateway 100.64.0.1\n"
                      " address-pool 100.64.0.0/24\n local-user a password b\n"
                      " exit\n")
 tgt = Config.parse(local.text())

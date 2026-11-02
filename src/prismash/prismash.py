@@ -11541,6 +11541,25 @@ class Shell:
                                   doors.ip_links(links) if rc == 0 else {},
                                   target.management.get("vrf", ""))
 
+    def dae_listen_refusals(self, target, running):
+        """
+        Why the Disconnect/CoA listener could not open where `target` asks,
+        as [(verdict, prose)] (#622): aaa.dae_unbound() over the host's
+        addresses and links, read through its doors, as ssh_listen_refusals()
+        reads them. Only when this change moves the listener - one accel-ppp
+        already listens on is not this commit's to refuse - and nothing when
+        the host cannot be asked.
+        """
+        if target.aaa["dae"]["listen"] == running.aaa["dae"]["listen"]:
+            return []
+        rc, addrs = self.sys._run(list(doors.ADDRS_ARGV))
+        if rc != 0:
+            return []
+        rc, links = self.sys._run(list(doors.LINKS_ARGV))
+        return aaa_mod.dae_unbound(target.aaa, addrs,
+                                   doors.ip_links(links) if rc == 0 else {},
+                                   target.management.get("vrf", ""))
+
     def vrf_tables_free(self, target):
         """
         False, said, when a `vrf <name> table <id>` of `target` takes a table
@@ -13048,6 +13067,28 @@ class Shell:
                         if d["ssh_changed"] and not self.booting else ()):
                 self.err_prose(*why)
                 ok = False
+            # PPPoE's and RADIUS's refusals, the apply's own (#622): asked
+            # here they refuse the commit before anything is written, and
+            # `commit check` says them. A CGNAT pool change asks only
+            # whether the address-pools are still covered - removing the
+            # pool that covered them is the same outage as adding a range
+            # no pool covers. Not at boot: apply_pppoe() warns there and
+            # the rest of the file is loaded.
+            if not self.booting:
+                pppoe_why = []
+                if d.get("pppoe_changed") or d.get("aaa_changed"):
+                    pppoe_why = self.pppoe_refusals(target)[0]
+                elif d["pool_add"] or d["pool_replace"] \
+                        or d["pool_remove"] or d["lists_set"]:
+                    pppoe_why = pppoe_mod.coverage_check(
+                        target.pppoe, target.pools.values())
+                if pppoe_why:
+                    self.say_pppoe_refusals(pppoe_why)
+                    ok = False
+                for why in (self.dae_listen_refusals(target, running)
+                            if d.get("aaa_changed") else ()):
+                    self.err_prose(*why)
+                    ok = False
             # The management API names its address before it listens (#532).
             why = api_enable_error(target.api)
             if why:
@@ -16769,31 +16810,22 @@ class Shell:
         """
         held, aaa = target.pppoe, target.aaa
         was_format = pppoe_mod.file_format()
-        why = aaa_mod.check(aaa) + pppoe_mod.check(held, aaa)
-        acc, room = [], {}
+        why, acc, room = self.pppoe_refusals(target)
         limit = pppoe_mod.session_limit(held)
-        if not why and not pppoe_mod.is_empty(held):
-            acc, bad = pppoe_mod.access(held, target.vlans)
-            why = [bad] if bad else []
-            rc, out = self.dp.run("show interface")
-            have = pppoe_mod.interface_names(out) if rc == 0 else set()
-            missing = [n for n in held["interfaces"] if have and n not in have]
-            if missing:
-                why.append("pppoe: the dataplane has no interface "
-                           + ", ".join(missing))
-            room = self.pppoe_room(target)
-            # AT A COMMIT, NOT AT BOOT: a saved file holding more than this
-            # box can is still loaded, and held at what the segment holds
-            # below - a box with no subscribers is the worse outage.
-            bad = None if self.booting else pppoe_mod.limit_error(
-                limit, room.get("box_room"), room.get("threads"),
-                room.get("box_mb"))
-            if bad:
-                why.append(bad)
-        if why:
+        if why and self.booting:
+            # AT BOOT A REFUSAL IS A WARNING, and the rest of the file is
+            # applied (#593's rule): returning False here ended _apply()
+            # where PPPoE sits, with everything after it - the CGNAT's
+            # memory, sshd, the routing - not applied, on a box nobody is
+            # watching. The container starts at boot from the files it has
+            # (prisma-bng boot); they are not rewritten.
             for w in why:
-                self.err_prose(w.split(":", 1)[0] + ": not applied",
-                               w.split(":", 1)[1].strip())
+                print_prose("warning: " + w.split(":", 1)[0]
+                            + ": not applied, " + w.split(":", 1)[1].strip(),
+                            indent="")
+            return True
+        if why:
+            self.say_pppoe_refusals(why)
             return False
         ok, msg = aaa_mod.write_conf(aaa)
         if not ok:
@@ -16860,6 +16892,53 @@ class Shell:
                                   ", no session dropped"
                                   if said == "reloaded" else ""))
         return True
+
+    def pppoe_refusals(self, target):
+        """
+        Why `target`'s `pppoe` and `aaa` blocks cannot be applied, as rows
+        ("<what>: <why>"), with what the apply goes on to use: (rows, the
+        access interfaces as pppoe.access() gives them, pppoe_room()).
+
+        ONE PATH FOR `commit check` AND THE APPLY (#622). These were asked
+        only in apply_pppoe(), which _apply() reaches after the CGNAT, the
+        interfaces and the system settings are written: `commit check`
+        returned before it and said "configuration check succeeds" about a
+        `pppoe` block with no gateway, and `commit` refused the same block
+        with the rest of the change already in force. The check now asks
+        this, and the apply asks it again of the same target - the second
+        answer is the first, nothing between them having changed what it
+        reads.
+        """
+        held, aaa = target.pppoe, target.aaa
+        why = aaa_mod.check(aaa) + pppoe_mod.check(held, aaa)
+        acc, room = [], {}
+        if not why and not pppoe_mod.is_empty(held):
+            acc, bad = pppoe_mod.access(held, target.vlans)
+            why = [bad] if bad else []
+            rc, out = self.dp.run("show interface")
+            have = pppoe_mod.interface_names(out) if rc == 0 else set()
+            missing = [n for n in held["interfaces"] if have and n not in have]
+            if missing:
+                why.append("pppoe: the dataplane has no interface "
+                           + ", ".join(missing))
+            why += pppoe_mod.coverage_check(held, target.pools.values())
+            room = self.pppoe_room(target)
+            # AT A COMMIT, NOT AT BOOT: a saved file holding more than this
+            # box can is still loaded, and held at what the segment holds
+            # below - a box with no subscribers is the worse outage.
+            bad = None if self.booting else pppoe_mod.limit_error(
+                pppoe_mod.session_limit(held), room.get("box_room"),
+                room.get("threads"), room.get("box_mb"))
+            if bad:
+                why.append(bad)
+        return why, acc, room
+
+    def say_pppoe_refusals(self, why):
+        """pppoe_refusals()' rows, each a refusal: what was not applied, and
+        why as prose."""
+        for w in why:
+            self.err_prose(w.split(":", 1)[0] + ": not applied",
+                           w.split(":", 1)[1].strip())
 
     def pppoe_room(self, target):
         """

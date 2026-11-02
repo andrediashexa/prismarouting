@@ -87,9 +87,12 @@ def blocks():
             pb.RadiusClientConfig(address="192.0.2.1", secret="Dae-S3c")],
         rate_profiles=[pb.RateProfileConfig(name="UP15", down_kbit=0,
                                             up_kbit=15000)]))
+    # Inside phase 6's residential-cgnat (100.64.16.0/22), away from its
+    # subscribers: an address-pool no CGNAT pool covers is refused (#622),
+    # and 100.64.200.0/24 was in none.
     pppoe = pb.PppoeConfig(
-        interfaces=["pg0"], gateway="100.64.200.1",
-        address_pools=["100.64.200.10-100.64.200.200"],
+        interfaces=["pg0"], gateway="100.64.19.1",
+        address_pools=["100.64.19.10-100.64.19.200"],
         dns_servers=["8.8.8.8"], tcp_mss=1452,
         rate_limit_default_down_kbit=20000, rate_limit_default_up_kbit=10000,
         local_users=[pb.PppoeLocalUser(name="bob", password="Loc-Pw1")])

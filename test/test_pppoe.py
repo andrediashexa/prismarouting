@@ -626,7 +626,11 @@ check(shell(Dp({"show tap": (0, 'Interface: tap1863 (ifindex 2)\n'
       "device_pppoe_taps: read off the box")
 
 IFS = (0, "  Name  Idx\nhost-acc0  1  up\nhost-acc0.100  2  up\n")
-tgt = Config.parse("interface host-acc0.100\n vlan 100\n exit\n"
+# The CGNAT pool that covers the address-pool: without it the block is
+# refused (#622), and the boxes below are about something else.
+LAB_POOL = ("nat\n cgnat\n  pool lab\n   prefix-inside 100.64.0.0/16\n"
+            "   prefix-outside 203.0.113.0/28\n   exit\n  exit\n exit\n")
+tgt = Config.parse(LAB_POOL + "interface host-acc0.100\n vlan 100\n exit\n"
                    "aaa\n radius\n  server 192.0.2.1 secret s\n  exit\n"
                    " exit\npppoe\n"
                    " interface host-acc0\n interface host-acc0.100\n"
@@ -1043,6 +1047,251 @@ check(any(x.startswith("shaper down") for x in one_s)
 check(any("download by a shaper, upload by a policer" in x
           for x in P.summary_screen(h6, "stopped", {})),
       "summary_screen: what enforces each way")
+
+
+print("\n=== the address-pools against the CGNAT pools (#622) ===")
+
+
+def cgnat(text):
+    """A configuration of pools (and routing), prefix-lists resolved."""
+    c = Config.parse(text)
+    check(not c.unknown, f"the pools parse: {c.unknown}")
+    check(c.resolve_pool_lists() == [], "the pools' lists resolve")
+    return c
+
+
+def pool_text(name, inside, extra=""):
+    return (f"nat\n cgnat\n  pool {name}\n   prefix-inside {inside}\n"
+            f"   prefix-outside 203.0.113.0/28\n{extra}   exit\n  exit\n"
+            f" exit\n")
+
+
+A1 = int(P.ipaddress.IPv4Address("100.64.0.0"))
+check(P.pool_span("100.64.0.0/24") == (A1, A1 + 255)
+      and P.pool_span("100.64.0.10-100.64.0.20") == (A1 + 10, A1 + 20)
+      and P.pool_span("nonsense") is None and P.pool_span("1.2.3/x") is None,
+      "pool_span: a prefix and a range as their first and last address")
+check(P.span_text(A1, A1) == "100.64.0.0"
+      and P.span_text(A1, A1 + 9) == "100.64.0.0-100.64.0.9",
+      "span_text: one address, or a range")
+check(P.unclaimed((10, 20), [(0, 9)]) == [(10, 20)]
+      and P.unclaimed((10, 20), [(0, 30)]) == []
+      and P.unclaimed((10, 20), [(12, 13), (15, 15)])
+      == [(10, 11), (14, 14), (16, 20)]
+      and P.unclaimed((10, 20), [(5, 12), (18, 40)]) == [(13, 17)],
+      "unclaimed: what no claim covers, in order, at either end and between")
+held = P.empty()
+for w in ("pppoe interface host-acc0", "pppoe gateway 100.64.0.1",
+          "pppoe address-pool 100.64.0.10-100.64.0.200"):
+    check(P.stage(held, w.split()) is None, f"stage {w}")
+covered = cgnat(pool_text("lab", "100.64.0.0/22"))
+check(P.coverage_check(held, covered.pools.values()) == [],
+      "coverage_check: a range a pool's prefix-inside covers says nothing")
+half = cgnat(pool_text("lab", "100.64.0.0/25"))
+rows = P.coverage_check(held, half.pools.values())
+check(len(rows) == 1 and "address-pool 100.64.0.10-100.64.0.200 has "
+      "100.64.0.128-100.64.0.200 in no CGNAT pool" in rows[0]
+      and "dropped" in rows[0] and rows[0].startswith("pppoe: "),
+      f"coverage_check: the part no pool covers, named: {rows}")
+rows = P.coverage_check(held, [])
+check(len(rows) == 1 and " is 100.64.0.10-100.64.0.200 in no CGNAT" in rows[0],
+      f"coverage_check: no pool at all, the whole range: {rows}")
+vrf = cgnat(pool_text("t", "100.64.0.0/22", "   vrf 100\n"))
+check(len(P.cgnat_claims(vrf.pools.values())) == 0
+      and len(P.coverage_check(held, vrf.pools.values())) == 1,
+      "cgnat_claims: a pool of another VRF does not reach the sessions, "
+      "which are in VRF 0")
+vrf0 = cgnat(pool_text("t", "100.64.0.0/22", "   vrf 0\n"))
+check(P.coverage_check(held, vrf0.pools.values()) == [],
+      "coverage_check: a pool of VRF 0 does")
+pub = P.empty()
+for w in ("pppoe interface host-acc0", "pppoe gateway 100.64.0.1",
+          "pppoe address-pool 198.51.100.0/24"):
+    P.stage(pub, w.split())
+listed = cgnat("nat\n cgnat\n  pool lab\n   prefix-list-inside SUBS\n"
+               "   prefix-outside 203.0.113.0/28\n   exit\n  exit\n exit\n"
+               "! routing\nip prefix-list SUBS seq 5 deny 198.51.100.0/24\n"
+               "ip prefix-list SUBS seq 10 permit 100.64.0.0/10\n")
+check(listed.pools["lab"].untranslated == ["198.51.100.0/24"]
+      and P.coverage_check(pub, listed.pools.values()) == [],
+      "coverage_check: public addresses a prefix-list-inside denies are "
+      "routed as they are, and said nothing about")
+check(P.coverage_check(pub, covered.pools.values()) != [],
+      "coverage_check: the same public range with no deny is refused")
+n64 = cgnat("nat\n nat64\n  pool six\n   prefix-inside 2001:db8::/48\n"
+            "   prefix-outside 203.0.113.0/28\n   subscriber-length 56\n"
+            "   exit\n  exit\n exit\n")
+check(P.cgnat_claims(n64.pools.values()) == [],
+      "cgnat_claims: a NAT64 pool claims no IPv4 source")
+gappy = P.empty()
+P.stage(gappy, "pppoe address-pool 100.64.0.0/24".split())
+P.stage(gappy, "pppoe gateway 100.64.0.1".split())
+holes = Config.parse("".join(pool_text(f"p{i}", f"100.64.0.{i * 32}/28")
+                             for i in range(5)))
+rows = P.coverage_check(gappy, holes.pools.values())
+check(len(rows) == 1 and "and 2 range(s) more" in rows[0],
+      f"coverage_check: five gaps, three named and the rest counted: {rows}")
+check(P.coverage_check(P.empty(), []) == [],
+      "coverage_check: no pppoe block, nothing to say")
+
+print("\n=== commit check and commit refuse a pppoe block alike (#622) ===")
+
+
+class _Api:
+    def available(self):
+        return prismash.vppapi.OK, ""
+
+    def call(self, message, args):
+        return 0, {}
+
+    def dump(self, message, args):
+        return 0, []
+
+
+class _Frr(prismash.Frr):
+    def available(self):
+        return False
+
+    def show(self, c):
+        return 1, ""
+
+    def reload(self, lines, check_only=False):
+        return 0, ""
+
+
+def committing(text, running=""):
+    sh = shell(Dp({"show interface": IFS}))
+    sh.api = _Api()
+    sh.frr = _Frr()
+    sh.running_config = lambda: Config.parse(running)
+    sh.candidate = Config.parse(text)
+    check(not sh.candidate.unknown, f"the candidate parses: "
+          f"{sh.candidate.unknown}")
+    return sh
+
+
+def errors(out):
+    return [x for x in out.splitlines()
+            if x.startswith(("error: pppoe", "error: aaa", "    "))
+            and "nothing applied" not in x]
+
+
+AAA = "aaa\n radius\n  server 192.0.2.1 secret s\n  exit\n exit\n"
+# The issue's case: no gateway - refused by the apply, and passed by the
+# check before #622.
+NOGW = AAA + ("pppoe\n interface host-acc0\n address-pool 100.64.0.0/24\n"
+              " exit\n")
+log = ctl(0, "started")
+sh = committing(LAB_POOL + NOGW)
+rv, chk = said(lambda: sh.do_commit(["check"]))
+check("error: pppoe: not applied" in chk and "no gateway" in chk
+      and "check succeeds" not in chk,
+      f"commit check refuses a pppoe block with no gateway: {chk!r}")
+sh = committing(LAB_POOL + NOGW)
+rv, com = said(lambda: sh.do_commit([]))
+check(errors(com) == errors(chk) and errors(chk)
+      and "nothing applied" in com and not os.path.exists(log),
+      f"and commit refuses it with the same rows, before anything is "
+      f"applied: {com!r}")
+# An address-pool no CGNAT pool covers: the same, both ways.
+UNCOV = AAA + ("pppoe\n interface host-acc0\n gateway 100.64.0.1\n"
+               " address-pool 100.64.0.0/24\n exit\n")
+sh = committing(pool_text("lab", "100.64.0.0/25") + UNCOV)
+rv, chk = said(lambda: sh.do_commit(["check"]))
+sh = committing(pool_text("lab", "100.64.0.0/25") + UNCOV)
+rv, com = said(lambda: sh.do_commit([]))
+check("100.64.0.128-100.64.0.255 in no CGNAT pool" in chk
+      and errors(com) == errors(chk) and "check succeeds" not in chk
+      and not os.path.exists(log),
+      f"an address-pool half covered: commit check and commit alike: "
+      f"{chk!r} / {com!r}")
+sh = committing(LAB_POOL + UNCOV)
+rv, chk = said(lambda: sh.do_commit(["check"]))
+check("check succeeds" in chk and "error" not in chk,
+      f"covered, the check passes: {chk!r}")
+# Taking the covering pool away is the same outage, and a pool change
+# alone asks it.
+sh = committing(UNCOV, running=LAB_POOL + UNCOV)
+rv, chk = said(lambda: sh.do_commit(["check"]))
+check("error: pppoe: not applied" in chk and "in no CGNAT pool" in chk,
+      f"removing the pool that covered the address-pool is refused: {chk!r}")
+check(sh.pppoe_refusals(Config.parse(LAB_POOL + UNCOV))[0] == []
+      and sh.pppoe_refusals(Config.parse(UNCOV))[0] != [],
+      "pppoe_refusals: the apply's rows, empty for a block it can apply")
+rv, out = said(lambda: sh.say_pppoe_refusals(["pppoe: no gateway, here"]))
+check(out.startswith("error: pppoe: not applied\n    no gateway, here"),
+      f"say_pppoe_refusals: the verdict, then the reason: {out!r}")
+# At boot the same block is a warning and the rest of the file is applied
+# (#593's rule): before, apply_pppoe() returned False and _apply() stopped
+# where PPPoE sits.
+sh = shell(Dp({"show interface": IFS}), booting=True)
+rv, out = said(lambda: sh.apply_pppoe(Config.parse(UNCOV)))
+check(rv is True and out.startswith("warning: pppoe: not applied")
+      and sh.failed == 0 and not os.path.exists(log),
+      f"apply_pppoe: at boot a refusal is a warning: {out!r}")
+
+print("\n=== dynamic-authorization listen, against the host (#622) ===")
+ADDRS = ("1: lo    inet 127.0.0.1/8 scope host lo\n"
+         "2: ens18    inet 192.0.2.5/24 brd 192.0.2.255 scope global ens18\n"
+         "3: ens19    inet 198.51.100.7/24 scope global ens19\n")
+LINKS = ("1: lo: <LOOPBACK,UP> mtu 65536\n"
+         "2: ens18: <UP> mtu 1500 master mgmt \n"
+         "3: ens19: <UP> mtu 1500 master cust \n")
+
+
+def dae(addr):
+    h = A_mod.empty()
+    A_mod.stage(h, f"aaa radius dynamic-authorization listen {addr}".split())
+    return h
+
+
+links = doors.ip_links(LINKS)
+check(A_mod.dae_unbound(dae("127.0.0.1"), ADDRS, links) == []
+      and A_mod.dae_unbound(dae("0.0.0.0"), ADDRS, links) == []
+      and A_mod.dae_unbound(A_mod.empty(), ADDRS, links) == [],
+      "dae_unbound: an address of the host, the wildcard, no listener")
+r = A_mod.dae_unbound(dae("10.9.9.9"), ADDRS, links)
+check(len(r) == 1 and r[0][0] == "dynamic-authorization listen 10.9.9.9: "
+      "not on this box" and "unanswered" in r[0][1],
+      f"dae_unbound: an address the host does not hold: {r}")
+r = A_mod.dae_unbound(dae("198.51.100.7"), ADDRS, links, "mgmt")
+check(len(r) == 1 and "in vrf cust" in r[0][0],
+      f"dae_unbound: an address in a VRF management is not in: {r}")
+check(A_mod.dae_unbound(dae("192.0.2.5"), ADDRS, links, "mgmt") == [],
+      "dae_unbound: management's own VRF binds (#580)")
+
+
+def host(argv, stdin=None, timeout=30):
+    if list(argv) == list(doors.ADDRS_ARGV):
+        return 0, ADDRS
+    if list(argv) == list(doors.LINKS_ARGV):
+        return 0, LINKS
+    return 0, ""
+
+
+DAE = (LAB_POOL + "aaa\n radius\n  server 192.0.2.1 secret s\n"
+       "  dynamic-authorization listen 10.9.9.9\n"
+       "  dynamic-authorization client 192.0.2.1 secret d\n  exit\n exit\n"
+       "pppoe\n interface host-acc0\n gateway 100.64.0.1\n"
+       " address-pool 100.64.0.0/24\n exit\n")
+sh = committing(DAE)
+sh.sys = system.System(runner=host)
+check(len(sh.dae_listen_refusals(sh.candidate, Config.parse(""))) == 1
+      and sh.dae_listen_refusals(sh.candidate, Config.parse(DAE)) == [],
+      "dae_listen_refusals: a listener this change moves, not one already "
+      "there")
+rv, chk = said(lambda: sh.do_commit(["check"]))
+check("error: dynamic-authorization listen 10.9.9.9: not on this box" in chk
+      and "check succeeds" not in chk,
+      f"commit check refuses a listener on an address the box lacks: {chk!r}")
+sh = committing(DAE.replace("10.9.9.9", "127.0.0.1"))
+sh.sys = system.System(runner=host)
+rv, chk = said(lambda: sh.do_commit(["check"]))
+check("check succeeds" in chk, f"and passes one on loopback: {chk!r}")
+sh = committing(DAE)
+sh.sys = system.System(runner=lambda argv, stdin=None, timeout=30: (1, ""))
+check(sh.dae_listen_refusals(sh.candidate, Config.parse("")) == [],
+      "dae_listen_refusals: a host that cannot be asked refuses nothing")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

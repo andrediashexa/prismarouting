@@ -789,6 +789,126 @@ def ipv6_check(held, aaa):
     return why
 
 
+#: The VRF a PPPoE session's traffic arrives in: accel-ppp's VPP hooks add
+#: the session with no `decap_vrf_id` (session_hooks/vyos_vpp/vpppoe.c at
+#: the pin, so 0) and route its /32 with the `vrf_name` they are handed
+#: ignored (vpphooks.c), so every session is in the default table - and a
+#: CGNAT pool reaches it only when it serves every VRF ("") or VRF 0.
+SESSION_VRFS = ("", "0")
+
+
+def pool_span(word):
+    """An address-pool's value - a prefix or a range, as pool_error() takes
+    it - as (first, last) integers, or None."""
+    if "/" in word:
+        try:
+            net = ipaddress.IPv4Network(word, strict=False)
+        except ValueError:
+            return None
+        return int(net.network_address), int(net.broadcast_address)
+    first, _, last = word.partition("-")
+    a, b = _addr4(first), _addr4(last)
+    if not a or not b:
+        return None
+    return int(ipaddress.IPv4Address(a)), int(ipaddress.IPv4Address(b))
+
+
+def span_text(first, last):
+    """(first, last) as an operator reads it: one address, or a range."""
+    a = str(ipaddress.IPv4Address(first))
+    return a if first == last else f"{a}-{ipaddress.IPv4Address(last)}"
+
+
+def cgnat_claims(pools):
+    """
+    The IPv4 spans [(first, last)] some CGNAT pool decides for a PPPoE
+    session's source, from `pools` (config.Pool, prefix-lists resolved): its
+    inside, translated, and what its prefix-list-inside denies, which leaves
+    with its own address (#589) - the two answers bpa-in2out has for a
+    source before it drops it. Only pools that serve the sessions' VRF
+    (SESSION_VRFS); never a NAT64 pool, whose inside is IPv6.
+    """
+    out = []
+    for p in pools:
+        if p.vrf not in SESSION_VRFS or p.is_nat64 or p.level == "nat64":
+            continue
+        for prefix in list(p.eff_inside) + list(p.untranslated):
+            if ":" in prefix:
+                continue
+            net = ipaddress.IPv4Network(prefix, strict=False)
+            out.append((int(net.network_address),
+                        int(net.broadcast_address)))
+    return sorted(out)
+
+
+def unclaimed(span, claims):
+    """The parts of `span` (first, last) that no span in `claims` (sorted,
+    as cgnat_claims() gives them) covers, in order."""
+    first, last = span
+    out = []
+    for a, b in claims:
+        if b < first:
+            continue
+        if a > last:
+            break
+        if a > first:
+            out.append((first, a - 1))
+        first = max(first, b + 1)
+        if first > last:
+            return out
+    out.append((first, last))
+    return out
+
+
+# A REFUSAL, AND NOT THE WARNING THE ISSUE EXPECTED (#622). The issue read an
+# address-pool outside every CGNAT pool as subscribers "routed untranslated
+# (or not at all)". Read in the dataplane it is only the second: the session
+# hook attaches bpa-in2out to EVERY session (appliance/prisma-bng-session),
+# and bpa-in2out drops a source no pool's inside claims as "no pool for
+# source address" (bpa_in2out.c, BPA_IN2OUT_ERROR_NO_POOL) - everything the
+# subscriber sends except to the box itself. The box CAN route a PPPoE
+# subscriber with a public address untranslated, which is the ISP case of
+# public /32s, but only through a pool's prefix-list-inside deny (#589,
+# bpa_untranslated_packet()), and that is counted as claimed here. So what
+# is left over is a range whose subscribers get a session, an address and
+# no traffic - which no operator means, and a warning would have the box say
+# "routed without translation" about packets it drops. AT BOOT the commit
+# check is not where this is said and apply_pppoe() warns instead (#593's
+# rule): a saved file that holds such a range still brings the box up.
+#
+# A RADIUS Framed-IP-Address is not a range in the configuration and cannot
+# be checked here; docs/bng.md says the same rule holds for it.
+def coverage_check(held, pools):
+    """
+    check()'s rows for the address-pools no CGNAT pool claims, in part or
+    whole (#622): each range not covered, named, with what happens to its
+    subscribers' traffic. `pools` are the configuration's CGNAT pools with
+    their prefix-lists resolved.
+    """
+    if is_empty(held) or not held["pools"]:
+        return []
+    claims = cgnat_claims(pools)
+    why = []
+    for word in held["pools"]:
+        span = pool_span(word)
+        if span is None:
+            continue
+        gaps = unclaimed(span, claims)
+        if not gaps:
+            continue
+        what = ", ".join(span_text(a, b) for a, b in gaps[:3])
+        if len(gaps) > 3:
+            what += f" and {len(gaps) - 3} range(s) more"
+        part = "is" if gaps == [span] else "has"
+        why.append(f"pppoe: address-pool {word} {part} {what} in no CGNAT "
+                   f"pool: those subscribers' traffic would be dropped "
+                   f"('no pool for source address'). Cover it with a "
+                   f"pool's prefix-inside (VRF 0 or none), or route "
+                   f"public addresses as they are with a prefix-list-inside "
+                   f"deny")
+    return why
+
+
 def access(held, vlans):
     """
     The access interfaces as the plumbing needs them, [(name, parent, vlan)],
