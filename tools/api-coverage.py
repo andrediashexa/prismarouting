@@ -242,6 +242,13 @@ CONFIG_RULES = [
     (["rename"], "n/a", "-",
      "an edit of the candidate, not a statement: ConfigService.Edit takes "
      "the line, SetConfig the whole result (#585)"),
+    # #621: not a field of ApiConfig, which would be a contract change of
+    # its own; written through Edit and read back in GetRunning's text.
+    (["api", "permit-root"], "text", "ConfigService.Edit (lines) / GetRunning",
+     "not a field of ApiConfig: written and read as lines (#621)"),
+    (["no", "api", "permit-root"], "text",
+     "ConfigService.Edit (lines) / GetRunning",
+     "not a field of ApiConfig: written and read as lines (#621)"),
 ]
 
 #: What a typed rpc reads back of a configuration level, though the level

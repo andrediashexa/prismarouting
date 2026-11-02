@@ -1331,12 +1331,25 @@ PRODUCT_PEN = SNMP_DEFAULTS["enterprise-number"]
 
 
 #: The management API's settings (#532), in the order they are written.
-API_FIELDS = ("enabled", "listen-address", "port")
+API_FIELDS = ("enabled", "listen-address", "port", "permit-root")
 API_DEFAULTS = {
     "enabled": "no",            # off until an operator asks for it
     "listen-address": "",       # the management address; no default listener
     "port": "50051",
+    # Whether a client certificate whose account is uid 0 is served (#621):
+    # not by default. The VTY lets nobody act as root by name - root cannot
+    # be given `operator`, `no user root` is refused - and a certificate is
+    # a file, easier to copy than a shell session. Root keeps rights no
+    # other account has (the host's file doors: resolv.conf, sshd, snmpd,
+    # authorized_keys), so it is refused unless asked for, not abolished.
+    "permit-root": "no",
 }
+#: The settings the HOST applies, the listener; `permit-root` is the
+#: server's own, read by it from api.env (apiserver.PermitRoot), and a
+#: change of it alone does not restart the listener - api-configure stops
+#: the proxy, which ends every connection open through it, the one that
+#: carried the commit among them.
+API_LISTENER_FIELDS = ("enabled", "listen-address", "port")
 #: Where they live: under the directory the management container shares with
 #: the host, read by appliance/api-configure, which writes the listener.
 API_ENV = "/etc/prisma-routing/api.env"
@@ -1349,8 +1362,8 @@ def validate_api(settings: dict):
     for k, v in settings.items():
         if k not in API_FIELDS:
             return f"'{k}' is not an api setting"
-        if k == "enabled" and v not in ("yes", "no"):
-            return f"api enabled '{v}': expected yes or no"
+        if k in ("enabled", "permit-root") and v not in ("yes", "no"):
+            return f"api {k} '{v}': expected yes or no"
         if k == "port" and (not is_number(str(v)) or not 1 <= int(v) <= 65535):
             return f"api port '{v}': expected 1-65535"
         if k == "listen-address" and v:
@@ -1376,7 +1389,9 @@ def api_env_text(settings: dict) -> str:
     """api.env's text for `settings`."""
     return (f"API_ENABLED={settings.get('enabled', 'no')}\n"
             f"API_LISTEN={settings.get('listen-address', '')}\n"
-            f"API_PORT={settings.get('port', API_DEFAULTS['port'])}\n")
+            f"API_PORT={settings.get('port', API_DEFAULTS['port'])}\n"
+            f"API_PERMIT_ROOT="
+            f"{settings.get('permit-root', API_DEFAULTS['permit-root'])}\n")
 
 
 class ApiService:
@@ -1393,7 +1408,7 @@ class ApiService:
         """The settings in effect: api.env's, or the defaults without one."""
         out = dict(API_DEFAULTS)
         keys = {"API_ENABLED": "enabled", "API_LISTEN": "listen-address",
-                "API_PORT": "port"}
+                "API_PORT": "port", "API_PERMIT_ROOT": "permit-root"}
         try:
             with open(self.path) as f:
                 for line in f:
@@ -1409,6 +1424,12 @@ class ApiService:
         why = validate_api(settings) or api_enable_error(settings)
         if why:
             return False, why
+        before = self.read()
+        # Only the server's own setting changed (#621): written, and the
+        # host not asked - the server reads the file again itself.
+        quiet = before != {**API_DEFAULTS, **settings} and all(
+            before[k] == settings.get(k, API_DEFAULTS[k])
+            for k in API_LISTENER_FIELDS)
         tmp = self.path + ".new"
         try:
             with open(tmp, "w") as f:
@@ -1416,6 +1437,8 @@ class ApiService:
             os.replace(tmp, self.path)
         except OSError as e:
             return False, f"{self.path}: {e.strerror}"
+        if quiet:
+            return True, ""
         rc, out = self._run(list(API_CONFIGURE))
         # No service manager to ask - no systemctl at all, or one with no
         # systemd behind it, as lab/api-grpc.sh's container answered ("Failed

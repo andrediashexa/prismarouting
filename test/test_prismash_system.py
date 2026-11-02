@@ -1073,8 +1073,13 @@ check(system.api_enable_error({"enabled": "yes", "listen-address": ""}) is not N
       and system.api_enable_error({"enabled": "no"}) is None,
       "api_enable_error: enabling names the management address")
 check(system.api_env_text({"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443"})
-      == "API_ENABLED=yes\nAPI_LISTEN=10.0.0.1\nAPI_PORT=9443\n",
-      "api_env_text: the three lines api-configure reads")
+      == "API_ENABLED=yes\nAPI_LISTEN=10.0.0.1\nAPI_PORT=9443\nAPI_PERMIT_ROOT=no\n",
+      "api_env_text: the three lines api-configure reads, and the server's own")
+check(system.validate_api({"permit-root": "yes"}) is None
+      and system.validate_api({"permit-root": "no"}) is None
+      and system.validate_api({"permit-root": "always"})
+      == "api permit-root 'always': expected yes or no",
+      "validate_api: permit-root is yes or no (#621)")
 with _tf.TemporaryDirectory() as _d:
     _env = os.path.join(_d, "api.env")
     _ran = []
@@ -1083,13 +1088,25 @@ with _tf.TemporaryDirectory() as _d:
     check(_svc.read() == system.API_DEFAULTS, "ApiService.__init__/read: no file is the defaults")
     ok, msg = _svc.apply({"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443"})
     check(ok and msg == "" and _ran == [list(system.API_CONFIGURE)]
-          and _svc.read() == {"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443"},
+          and _svc.read() == {"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443",
+                              "permit-root": "no"},
           "ApiService.apply writes api.env, asks the host through its door, and reads back")
+    _ran.clear()
+    ok, msg = _svc.apply({"enabled": "yes", "listen-address": "10.0.0.1", "port": "9443",
+                          "permit-root": "yes"})
+    check(ok and msg == "" and _ran == [] and _svc.read()["permit-root"] == "yes",
+          "permit-root alone is written and the host not asked: its proxy restart "
+          "would end the connection that carried the commit (#621)")
+    ok, msg = _svc.apply({"enabled": "yes", "listen-address": "10.0.0.1", "port": "9444",
+                          "permit-root": "yes"})
+    check(ok and _ran == [list(system.API_CONFIGURE)],
+          "a listener change still asks the host")
     ok, msg = _svc.apply({"enabled": "yes", "listen-address": "", "port": "9443"})
     check(not ok and "listen-address" in msg, "and refuses enabling with no address")
     with open(_env, "w") as _f:
         _f.write("API_ENABLED=yes\nAPI_PORT=99999\nAPI_LISTEN=;reboot\n")
-    check(_svc.read() == {"enabled": "yes", "listen-address": "", "port": "50051"},
+    check(_svc.read() == {"enabled": "yes", "listen-address": "", "port": "50051",
+                          "permit-root": "no"},
           "a hand-written value the VTY would refuse is read as the default")
     _down = system.ApiService(path=_env)
     ok, msg = _down.apply({"enabled": "no", "listen-address": "", "port": "50051"})

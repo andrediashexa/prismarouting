@@ -4831,6 +4831,8 @@ TREE = {
                 "enabled": ("the API off, which is the default", None),
                 "listen-address": ("no listener", None),
                 "port": ("back to 50051", None),
+                "permit-root": ("a certificate naming root refused again, "
+                                "the default", None),
             }),
             "snmp": ("put an SNMP setting back to its default", {
                 "enabled": ("the agent off, which is the default", None),
@@ -4948,6 +4950,13 @@ TREE = {
             "listen-address": ("the management addresses it listens on, "
                                "one or more", ARG_LOCAL_ADDRESSES),
             "port": ("TCP port", ARG_PORT),
+            # #621: refused by default; root keeps the host's file doors,
+            # so an integrator who needs them may still ask for it.
+            "permit-root": ("whether a client certificate naming root "
+                            "(uid 0) is served", {
+                "yes": ("served, as root", None),
+                "no": ("refused, the default: give the client an account",
+                       None)}),
         }),
         "commit": ("apply the candidate configuration", COMMIT),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
